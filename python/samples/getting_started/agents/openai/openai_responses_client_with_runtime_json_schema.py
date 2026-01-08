@@ -42,7 +42,7 @@ async def non_streaming_example() -> None:
 
     response = await agent.run(
         query,
-        additional_chat_options={
+        options={
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -76,7 +76,7 @@ async def streaming_example() -> None:
     chunks: list[str] = []
     async for chunk in agent.run_stream(
         query,
-        additional_chat_options={
+        options={
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {

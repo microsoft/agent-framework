@@ -434,8 +434,7 @@ async def test_response_format_parse_path() -> None:
     ):
         response = await client.get_response(
             messages=[ChatMessage(role="user", text="Test message")],
-            response_format=OutputStruct,
-            store=True,
+            options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
         assert response.conversation_id == "parsed_response_123"
@@ -2291,7 +2290,7 @@ async def test_openai_responses_client_agent_thread_storage_with_store_true():
         response = await agent.run(
             "Hello! Please remember that my name is Alex.",
             thread=thread,
-            chat_options={"store": True},
+            options={"store": True},
         )
 
         # Validate response

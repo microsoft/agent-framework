@@ -198,7 +198,7 @@ async def test_cmc_additional_properties(
     chat_history.append(ChatMessage(role="user", text="hello world"))
 
     openai_chat_completion = OpenAIChatClient()
-    await openai_chat_completion.get_response(messages=chat_history, additional_properties={"reasoning_effort": "low"})
+    await openai_chat_completion.get_response(messages=chat_history, options={"reasoning_effort": "low"})
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,

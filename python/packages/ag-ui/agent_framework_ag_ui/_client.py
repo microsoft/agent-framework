@@ -8,7 +8,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterable, MutableSequence
 from functools import wraps
-from typing import Any, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import httpx
 from agent_framework import (
@@ -20,7 +20,6 @@ from agent_framework import (
     DataContent,
     FunctionCallContent,
 )
-from agent_framework._clients import TOptions
 from agent_framework._middleware import use_chat_middleware
 from agent_framework._tools import use_function_invocation
 from agent_framework._types import BaseContent, Contents
@@ -31,11 +30,19 @@ from ._http_service import AGUIHttpService
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
 
+if TYPE_CHECKING:
+    from ._types import AGUIChatOptions
+
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # pragma: no cover
+
+else:
+    from typing_extensions import Self, TypedDict  # pragma: no cover
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -61,7 +68,14 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Contents | d
             contents[idx] = content.function_call_content  # type: ignore[assignment]
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient])
+TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
+
+TAGUIChatOptions = TypeVar(
+    "TAGUIChatOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AGUIChatOptions",
+    contravariant=True,
+)
 
 
 def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
@@ -97,7 +111,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AGUIChatClient(BaseChatClient[TOptions], Generic[TOptions]):
+class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
     """Chat client for communicating with AG-UI compliant servers.
 
     This client implements the BaseChatClient interface and automatically handles:
@@ -174,6 +188,19 @@ class AGUIChatClient(BaseChatClient[TOptions], Generic[TOptions]):
             async with AGUIChatClient(endpoint="http://localhost:8888/") as client:
                 response = await client.get_response("Hello!")
                 print(response.messages[0].text)
+
+        Using custom ChatOptions with type safety:
+
+        .. code-block:: python
+
+            from typing import TypedDict
+            from agent_framework_ag_ui import AGUIChatClient, AGUIChatOptions
+
+            class MyOptions(AGUIChatOptions, total=False):
+                my_custom_option: str
+
+            client: AGUIChatClient[MyOptions] = AGUIChatClient(endpoint="http://localhost:8888/")
+            response = await client.get_response("Hello", options={"my_custom_option": "value"})
     """
 
     OTEL_PROVIDER_NAME = "agui"
@@ -207,7 +234,7 @@ class AGUIChatClient(BaseChatClient[TOptions], Generic[TOptions]):
         """Close the HTTP client."""
         await self._http_service.close()
 
-    async def __aenter__(self) -> "AGUIChatClient":
+    async def __aenter__(self) -> Self:
         """Enter async context manager."""
         return self
 

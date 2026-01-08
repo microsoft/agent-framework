@@ -2,6 +2,8 @@
 
 """Example agent demonstrating human-in-the-loop with function approvals."""
 
+from typing import Any
+
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework.ag_ui import AgentFrameworkAgent, TaskPlannerConfirmationStrategy
 
@@ -59,7 +61,7 @@ _TASK_PLANNER_INSTRUCTIONS = (
 )
 
 
-def task_planner_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def task_planner_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
     """Create a task planner agent with user approval for actions.
 
     Args:

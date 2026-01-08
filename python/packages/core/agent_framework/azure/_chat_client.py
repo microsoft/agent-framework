@@ -20,10 +20,9 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
-from agent_framework.openai._chat_client import OpenAIBaseChatClient
+from agent_framework.openai._chat_client import OpenAIBaseChatClient, OpenAIChatOptions
 
 from ._shared import (
     AzureOpenAIConfigMixin,
@@ -31,11 +30,104 @@ from ._shared import (
 )
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+__all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
+
+
+# region Azure OpenAI Chat Options TypedDict
+
+
+class AzureUserSecurityContext(TypedDict, total=False):
+    """User security context for Azure AI applications.
+
+    These fields help security operations teams investigate and mitigate security
+    incidents by providing context about the application and end user.
+
+    Learn more: https://learn.microsoft.com/azure/well-architected/service-guides/cosmos-db
+    """
+
+    application_name: str
+    """Name of the application making the request."""
+
+    end_user_id: str
+    """Unique identifier for the end user (recommend hashing username/email)."""
+
+    end_user_tenant_id: str
+    """Microsoft 365 tenant ID the end user belongs to. Required for multi-tenant apps."""
+
+    source_ip: str
+    """The original client's IP address."""
+
+
+class AzureOpenAIChatOptions(OpenAIChatOptions, total=False):
+    """Azure OpenAI-specific chat options dict.
+
+    Extends OpenAIChatOptions with Azure-specific options including
+    the "On Your Data" feature and enhanced security context.
+
+    See: https://learn.microsoft.com/azure/ai-foundry/openai/reference-preview-latest
+
+    Keys:
+        # Inherited from OpenAIChatOptions/ChatOptions:
+        model_id: The model to use for the request,
+            translates to ``model`` in Azure OpenAI API.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``max_completion_tokens`` in Azure OpenAI API.
+        stop: Stop sequences.
+        seed: Random seed for reproducibility.
+        frequency_penalty: Frequency penalty between -2.0 and 2.0.
+        presence_penalty: Presence penalty between -2.0 and 2.0.
+        tools: List of tools (functions) available to the model.
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls,
+            translates to ``parallel_tool_calls`` in Azure OpenAI API.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+        user: End-user identifier for abuse monitoring.
+        store: Whether to store the conversation.
+        instructions: System instructions for the model.
+        logit_bias: Token bias values (-100 to 100).
+        logprobs: Whether to return log probabilities.
+        top_logprobs: Number of top log probabilities to return (0-20).
+
+        # Azure-specific options:
+        data_sources: Azure "On Your Data" data sources configuration.
+        user_security_context: Enhanced security context for Azure Defender.
+        n: Number of chat completions to generate (not recommended, incurs costs).
+    """
+
+    # Azure-specific options
+    data_sources: list[dict[str, Any]]
+    """Azure "On Your Data" data sources for retrieval-augmented generation.
+
+    Supported types: azure_search, azure_cosmos_db, elasticsearch, pinecone, mongo_db.
+    See: https://learn.microsoft.com/azure/ai-foundry/openai/references/on-your-data
+    """
+
+    user_security_context: AzureUserSecurityContext
+    """Enhanced security context for Azure Defender integration."""
+
+    n: int
+    """Number of chat completion choices to generate for each input message.
+    Note: You will be charged based on tokens across all choices. Keep n=1 to minimize costs."""
+
+
+TAzureOpenAIChatOptions = TypeVar(
+    "TAzureOpenAIChatOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AzureOpenAIChatOptions",
+    contravariant=True,
+)
+
+
+# endregion
 
 TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
 TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAIChatClient")
@@ -44,7 +136,9 @@ TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAICha
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient[TOptions], Generic[TOptions]):
+class AzureOpenAIChatClient(
+    AzureOpenAIConfigMixin, OpenAIBaseChatClient[TAzureOpenAIChatOptions], Generic[TAzureOpenAIChatOptions]
+):
     """Azure OpenAI Chat completion class."""
 
     def __init__(
@@ -115,6 +209,18 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient[TOption
 
                 # Or loading from a .env file
                 client = AzureOpenAIChatClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIChatOptions
+
+
+                class MyOptions(AzureOpenAIChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIChatClient[MyOptions] = AzureOpenAIChatClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             # Filter out any None values from the arguments

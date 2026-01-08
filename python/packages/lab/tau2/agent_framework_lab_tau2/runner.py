@@ -3,18 +3,20 @@
 import uuid
 from typing import cast
 
-from agent_framework._agents import ChatAgent
-from agent_framework._types import AgentRunResponse, ChatMessage, Role
-from agent_framework._workflows import (
+from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    AgentRunResponse,
+    ChatAgent,
+    ChatClientProtocol,
+    ChatMessage,
     FunctionExecutor,
+    Role,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
 )
-from agent_framework.openai import OpenAIChatClient
 from loguru import logger
 from tau2.data_model.simulation import SimulationRun, TerminationReason  # type: ignore[import-untyped]
 from tau2.data_model.tasks import Task  # type: ignore[import-untyped]
@@ -156,7 +158,7 @@ class TaskRunner:
         """Check if user wants to stop the conversation."""
         return STOP in text or TRANSFER in text or OUT_OF_SCOPE in text
 
-    def assistant_agent(self, assistant_chat_client: OpenAIChatClient) -> ChatAgent:
+    def assistant_agent(self, assistant_chat_client: ChatClientProtocol) -> ChatAgent:
         """Create an assistant agent.
 
         Users can override this method to provide a custom assistant agent.
@@ -205,7 +207,7 @@ class TaskRunner:
             ),
         )
 
-    def user_simulator(self, user_simuator_chat_client: OpenAIChatClient, task: Task) -> ChatAgent:
+    def user_simulator(self, user_simuator_chat_client: ChatClientProtocol, task: Task) -> ChatAgent:
         """Create a user simulator agent.
 
         Users can override this method to provide a custom user simulator agent.
@@ -301,8 +303,8 @@ class TaskRunner:
     async def run(
         self,
         task: Task,
-        assistant_chat_client: OpenAIChatClient,
-        user_simuator_chat_client: OpenAIChatClient,
+        assistant_chat_client: ChatClientProtocol,
+        user_simulator_chat_client: ChatClientProtocol,
     ) -> list[ChatMessage]:
         """Run a tau2 task using workflow-based agent orchestration.
 
@@ -317,18 +319,18 @@ class TaskRunner:
         Args:
             task: Tau2 task containing scenario, policy, and evaluation criteria
             assistant_chat_client: LLM client for the assistant agent
-            user_simuator_chat_client: LLM client for the user simulator
+            user_simulator_chat_client: LLM client for the user simulator
 
         Returns:
             Complete conversation history as ChatMessage list for evaluation
         """
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore[unused-ignore]
         logger.info(f"Assistant chat client: {assistant_chat_client}")
-        logger.info(f"User simulator chat client: {user_simuator_chat_client}")
+        logger.info(f"User simulator chat client: {user_simulator_chat_client}")
 
         # STEP 1: Create agents
         assistant_agent = self.assistant_agent(assistant_chat_client)
-        user_simulator_agent = self.user_simulator(user_simuator_chat_client, task)
+        user_simulator_agent = self.user_simulator(user_simulator_chat_client, task)
 
         # STEP 2: Create the conversation workflow
         workflow = self.build_conversation_workflow(assistant_agent, user_simulator_agent)

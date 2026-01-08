@@ -5,8 +5,8 @@ import json
 import os
 import re
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic
+from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Generic, TypeVar
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -42,7 +42,6 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.observability import use_instrumentation
 from azure.ai.agents.aio import AgentsClient
@@ -101,18 +100,113 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
+
+__all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
+
+
+# region Azure AI Agent Options TypedDict
+
+
+class AzureAIAgentOptions(ChatOptions, total=False):
+    """Azure AI Foundry Agent Service-specific options dict.
+
+    Extends base ChatOptions with Azure AI Agent Service parameters.
+    Azure AI Agents provides a managed agent runtime with built-in
+    tools for code interpreter, file search, and web search.
+
+    See: https://learn.microsoft.com/azure/ai-services/agents/
+
+    Keys:
+        # Inherited from ChatOptions:
+        model_id: The model deployment name,
+            translates to ``model`` in Azure AI API.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``max_completion_tokens`` in Azure AI API.
+        tools: List of tools available to the agent.
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls,
+            translates to ``parallel_tool_calls`` in Azure AI API.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+        instructions: System instructions for the agent.
+
+        # Options not supported in Azure AI Agent Service:
+        stop: Not supported.
+        seed: Not supported.
+        frequency_penalty: Not supported.
+        presence_penalty: Not supported.
+        user: Not supported.
+        store: Not supported.
+        logit_bias: Not supported.
+
+        # Azure AI Agent-specific options:
+        conversation_id: Thread ID to continue conversation in.
+        tool_resources: Resources for tools (file IDs, vector stores).
+    """
+
+    # Azure AI Agent-specific options
+    conversation_id: str  # type: ignore[misc]
+    """Thread ID to continue a conversation in an existing thread."""
+
+    tool_resources: dict[str, Any]
+    """Tool-specific resources for code_interpreter and file_search.
+    For code_interpreter: {"file_ids": ["file-abc123"]}
+    For file_search: {"vector_store_ids": ["vs-abc123"]}
+    """
+
+    # ChatOptions fields not supported in Azure AI Agent Service
+    stop: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    seed: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    frequency_penalty: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    presence_penalty: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    logit_bias: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+
+AZURE_AI_AGENT_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "max_tokens": "max_completion_tokens",
+    "allow_multiple_tool_calls": "parallel_tool_calls",
+}
+"""Maps ChatOptions keys to Azure AI Agents API parameter names."""
+
+TAzureAIAgentOptions = TypeVar(
+    "TAzureAIAgentOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AzureAIAgentOptions",
+    contravariant=True,
+)
+
+
+# endregion
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureAIAgentClient(BaseChatClient[TOptions], Generic[TOptions]):
+class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIAgentOptions]):
     """Azure AI Agent Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -178,6 +272,18 @@ class AzureAIAgentClient(BaseChatClient[TOptions], Generic[TOptions]):
 
                 # Or loading from a .env file
                 client = AzureAIAgentClient(credential=credential, env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework_azure_ai import AzureAIAgentOptions
+
+
+                class MyOptions(AzureAIAgentOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureAIAgentClient[MyOptions] = AzureAIAgentClient(credential=credential)
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -261,7 +367,7 @@ class AzureAIAgentClient(BaseChatClient[TOptions], Generic[TOptions]):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # prepare
@@ -786,7 +892,7 @@ class AzureAIAgentClient(BaseChatClient[TOptions], Generic[TOptions]):
     async def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        chat_options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent | FunctionApprovalResponseContent] | None]:
         agent_definition = await self._load_agent_definition_if_needed()
@@ -866,7 +972,7 @@ class AzureAIAgentClient(BaseChatClient[TOptions], Generic[TOptions]):
         return run_options, required_action_results
 
     def _prepare_tool_choice_mode(
-        self, chat_options: ChatOptions
+        self, chat_options: Mapping[str, Any]
     ) -> AgentsToolChoiceOptionMode | AgentsNamedToolChoice | None:
         """Prepare the tool choice mode for Azure AI Agents API."""
         tool_choice = chat_options.get("tool_choice")
@@ -889,7 +995,7 @@ class AzureAIAgentClient(BaseChatClient[TOptions], Generic[TOptions]):
 
     async def _prepare_tool_definitions_and_resources(
         self,
-        chat_options: ChatOptions,
+        chat_options: Mapping[str, Any],
         agent_definition: Agent | None,
         run_options: dict[str, Any],
     ) -> list[ToolDefinition | dict[str, Any]]:

@@ -490,7 +490,7 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
         mock_response = ChatResponse(role=Role.ASSISTANT, text="Hello back")
         mock_from_generator.return_value = mock_response
 
-        result = await chat_client._inner_get_response(messages=messages, chat_options=chat_options)  # type: ignore
+        result = await chat_client._inner_get_response(messages=messages, options=chat_options)  # type: ignore
 
         assert result is mock_response
         mock_from_generator.assert_called_once()

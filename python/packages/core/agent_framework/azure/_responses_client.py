@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
 from typing import Any, Generic, TypeVar
 from urllib.parse import urljoin
@@ -9,15 +10,98 @@ from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
 from agent_framework import use_chat_middleware, use_function_invocation
-from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
-from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
+from agent_framework.openai._responses_client import (
+    OpenAIBaseResponsesClient,
+    OpenAIResponsesOptions,
+)
 
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
 )
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore[import] # pragma: no cover
+
+
+__all__ = ["AzureOpenAIResponsesClient", "AzureOpenAIResponsesOptions"]
+
+
+# region Azure OpenAI Responses Options TypedDict
+
+
+class AzureOpenAIResponsesOptions(OpenAIResponsesOptions, total=False):
+    """Azure OpenAI Responses API-specific options dict.
+
+    Extends OpenAIResponsesOptions for Azure-hosted OpenAI Responses API.
+    Azure's Responses API supports the same options as the OpenAI Responses API.
+
+    See: https://learn.microsoft.com/azure/ai-foundry/openai/how-to/responses
+
+    Keys:
+        # Inherited from OpenAIResponsesOptions/ChatOptions:
+        model_id: The model to use for the request.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate.
+        stop: Stop sequences.
+        seed: Random seed for reproducibility.
+        frequency_penalty: Frequency penalty between -2.0 and 2.0.
+        presence_penalty: Presence penalty between -2.0 and 2.0.
+        tools: List of tools (functions) available to the model.
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+        user: End-user identifier for abuse monitoring.
+        store: Whether to store the response.
+        instructions: System instructions for the model.
+
+        # Responses API-specific options (inherited):
+        include: Additional output data to include.
+        max_tool_calls: Maximum number of tool calls.
+        prompt: Reference to prompt template.
+        reasoning: Configuration for reasoning models.
+        service_tier: Processing tier.
+        stream_options: Streaming options.
+        top_logprobs: Number of top log probabilities.
+        truncation: Truncation strategy.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework.azure import AzureOpenAIResponsesOptions
+
+            # Basic usage
+            options: AzureOpenAIResponsesOptions = {
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            }
+
+            # With reasoning model configuration
+            options: AzureOpenAIResponsesOptions = {
+                "model_id": "gpt-4o",
+                "reasoning": {"effort": "high", "summary": "detailed"},
+            }
+    """
+
+    pass  # Currently no Azure-specific options; uses OpenAIResponsesOptions
+
+
+TAzureOpenAIResponsesOptions = TypeVar(
+    "TAzureOpenAIResponsesOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AzureOpenAIResponsesOptions",
+    contravariant=True,
+)
+
+
+# endregion
+
 
 TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="AzureOpenAIResponsesClient")
 
@@ -25,7 +109,11 @@ TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="Azur
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient[TOptions], Generic[TOptions]):
+class AzureOpenAIResponsesClient(
+    AzureOpenAIConfigMixin,
+    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
+    Generic[TAzureOpenAIResponsesOptions],
+):
     """Azure Responses completion class."""
 
     def __init__(
@@ -96,6 +184,18 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
 
                 # Or loading from a .env file
                 client = AzureOpenAIResponsesClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIResponsesOptions
+
+
+                class MyOptions(AzureOpenAIResponsesOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIResponsesClient[MyOptions] = AzureOpenAIResponsesClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)

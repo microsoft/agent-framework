@@ -3,6 +3,7 @@
 """Human-in-the-loop agent demonstrating step customization (Feature 5)."""
 
 from enum import Enum
+from typing import Any
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from pydantic import BaseModel, Field
@@ -42,7 +43,7 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return f"Generated {len(steps)} execution steps for the task."
 
 
-def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
+def human_in_the_loop_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
     """Create a human-in-the-loop agent using tool-based approach for predictive state.
 
     Args:

@@ -1,23 +1,45 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Generic
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
 
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
-from .._clients import TOptions
 from ..exceptions import ServiceInitializationError
 from ..openai import OpenAIAssistantsClient
+from ..openai._assistants_client import OpenAIAssistantsOptions
 from ._shared import AzureOpenAISettings
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
 
+if sys.version_info >= (3, 12):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore[import] # pragma: no cover
+
 __all__ = ["AzureOpenAIAssistantsClient"]
 
 
-class AzureOpenAIAssistantsClient(OpenAIAssistantsClient[TOptions], Generic[TOptions]):
+# region Azure OpenAI Assistants Options TypedDict
+
+
+TAzureOpenAIAssistantsOptions = TypeVar(
+    "TAzureOpenAIAssistantsOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIAssistantsOptions",
+    contravariant=True,
+)
+
+
+# endregion
+
+
+class AzureOpenAIAssistantsClient(
+    OpenAIAssistantsClient[TAzureOpenAIAssistantsOptions], Generic[TAzureOpenAIAssistantsOptions]
+):
     """Azure OpenAI Assistants client."""
 
     DEFAULT_AZURE_API_VERSION: ClassVar[str] = "2024-05-01-preview"
@@ -96,6 +118,18 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient[TOptions], Generic[TOpt
 
                 # Or loading from a .env file
                 client = AzureOpenAIAssistantsClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIAssistantsOptions
+
+
+                class MyOptions(AzureOpenAIAssistantsOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIAssistantsClient[MyOptions] = AzureOpenAIAssistantsClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             azure_openai_settings = AzureOpenAISettings(

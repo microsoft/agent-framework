@@ -425,7 +425,7 @@ async def test_ai_function_invoke_ignores_additional_kwargs() -> None:
     result = await simple_tool.invoke(
         arguments=args,
         api_token="secret-token",
-        chat_options={"model_id": "dummy"},
+        options={"model_id": "dummy"},
     )
 
     assert result == "HELLO WORLD"
@@ -1031,7 +1031,7 @@ async def test_non_streaming_single_function_no_approval():
     wrapped = _handle_function_calls_response(mock_get_response)
 
     # Execute
-    result = await wrapped(mock_client, messages=[], tools=[no_approval_tool])
+    result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]})
 
     # Verify: should have 3 messages: function call, function result, final answer
     assert len(result.messages) == 3
@@ -1071,7 +1071,7 @@ async def test_non_streaming_single_function_requires_approval():
     wrapped = _handle_function_calls_response(mock_get_response)
 
     # Execute
-    result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
+    result = await wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]})
 
     # Verify: should return 1 message with function call and approval request
     from agent_framework import FunctionApprovalRequestContent
@@ -1117,7 +1117,7 @@ async def test_non_streaming_two_functions_both_no_approval():
     wrapped = _handle_function_calls_response(mock_get_response)
 
     # Execute
-    result = await wrapped(mock_client, messages=[], tools=[no_approval_tool])
+    result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]})
 
     # Verify: should have function calls, results, and final answer
     from agent_framework import FunctionResultContent
@@ -1163,7 +1163,7 @@ async def test_non_streaming_two_functions_both_require_approval():
     wrapped = _handle_function_calls_response(mock_get_response)
 
     # Execute
-    result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
+    result = await wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]})
 
     # Verify: should return 1 message with function calls and approval requests
     from agent_framework import FunctionApprovalRequestContent
@@ -1209,7 +1209,7 @@ async def test_non_streaming_two_functions_mixed_approval():
     wrapped = _handle_function_calls_response(mock_get_response)
 
     # Execute
-    result = await wrapped(mock_client, messages=[], tools=[no_approval_tool, requires_approval_tool])
+    result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool, requires_approval_tool]})
 
     # Verify: should return approval requests for both (when one needs approval, all are sent for approval)
     from agent_framework import FunctionApprovalRequestContent
@@ -1249,7 +1249,7 @@ async def test_streaming_single_function_no_approval():
 
     # Execute and collect updates
     updates = []
-    async for update in wrapped(mock_client, messages=[], tools=[no_approval_tool]):
+    async for update in wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]}):
         updates.append(update)
 
     # Verify: should have function call update, tool result update (injected), and final update
@@ -1294,7 +1294,7 @@ async def test_streaming_single_function_requires_approval():
 
     # Execute and collect updates
     updates = []
-    async for update in wrapped(mock_client, messages=[], tools=[requires_approval_tool]):
+    async for update in wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]}):
         updates.append(update)
 
     # Verify: should yield function call and then approval request
@@ -1339,7 +1339,7 @@ async def test_streaming_two_functions_both_no_approval():
 
     # Execute and collect updates
     updates = []
-    async for update in wrapped(mock_client, messages=[], tools=[no_approval_tool]):
+    async for update in wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]}):
         updates.append(update)
 
     # Verify: should have both function calls, one tool result update with both results, and final message
@@ -1388,7 +1388,7 @@ async def test_streaming_two_functions_both_require_approval():
 
     # Execute and collect updates
     updates = []
-    async for update in wrapped(mock_client, messages=[], tools=[requires_approval_tool]):
+    async for update in wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]}):
         updates.append(update)
 
     # Verify: should yield both function calls and then approval requests
@@ -1435,7 +1435,9 @@ async def test_streaming_two_functions_mixed_approval():
 
     # Execute and collect updates
     updates = []
-    async for update in wrapped(mock_client, messages=[], tools=[no_approval_tool, requires_approval_tool]):
+    async for update in wrapped(
+        mock_client, messages=[], options={"tools": [no_approval_tool, requires_approval_tool]}
+    ):
         updates.append(update)
 
     # Verify: should yield both function calls and then approval requests (when one needs approval, all wait)
