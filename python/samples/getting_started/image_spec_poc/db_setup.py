@@ -519,3 +519,4 @@ class SQLiteImageStore:
             ".webp": "image/webp",
         }
         return mapping.get(suffix.lower(), "image/png")
+
