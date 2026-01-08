@@ -69,7 +69,7 @@ async def test_service_thread_id_when_no_user_message():
 
 
 async def test_service_thread_id_when_user_supplied_thread_id():
-    """Test when user submits no messages, emitted events still have with a thread_id"""
+    """Test that user-supplied thread IDs are preserved in emitted events."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     updates: list[AgentRunResponseUpdate] = []

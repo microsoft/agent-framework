@@ -96,7 +96,10 @@ class ExecutionContext:
     @property
     def run_id(self) -> str:
         """Get supplied run ID or generate a new run ID."""
-        if self.supplied_run_id is not None:
+        if self._run_id:
+            return self._run_id
+
+        if self.supplied_run_id:
             self._run_id = self.supplied_run_id
 
         if self._run_id is None:
@@ -114,7 +117,10 @@ class ExecutionContext:
     @property
     def thread_id(self) -> str:
         """Get supplied thread ID or generate a new thread ID."""
-        if self.supplied_thread_id is not None:
+        if self._thread_id:
+            return self._thread_id
+
+        if self.supplied_thread_id:
             self._thread_id = self.supplied_thread_id
 
         if self._thread_id is None:
@@ -129,6 +135,7 @@ class ExecutionContext:
             new_run_id: The new run ID to set
         """
         self._supplied_run_id = new_run_id
+        self._run_id = new_run_id
 
     def update_thread_id(self, new_thread_id: str) -> None:
         """Update the thread ID in the context.
@@ -137,6 +144,7 @@ class ExecutionContext:
             new_thread_id: The new thread ID to set
         """
         self._supplied_thread_id = new_thread_id
+        self._thread_id = new_thread_id
 
 
 class Orchestrator(ABC):
@@ -521,8 +529,8 @@ class DefaultOrchestrator(Orchestrator):
                 should_recreate_event_bridge = False
 
             if update_count == 0:
-                for events in self._create_initial_events(event_bridge, state_manager):
-                    yield events
+                for event in self._create_initial_events(event_bridge, state_manager):
+                    yield event
 
             update_count += 1
             logger.info(f"[STREAM] Received update #{update_count} from agent")

@@ -14,7 +14,7 @@ from agent_framework._types import ChatResponseUpdate
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_helpers_ag_ui import StreamingChatClientStub
+from .test_helpers_ag_ui import StreamingChatClientStub
 
 
 async def test_agent_initialization_basic():
@@ -630,3 +630,59 @@ async def test_suppressed_summary_with_document_state():
     # Should contain some reference to the document
     full_text = "".join(e.delta for e in text_events)
     assert "written" in full_text.lower() or "document" in full_text.lower()
+
+
+async def test_agent_with_use_service_thread_is_false():
+    """Test that when use_service_thread is False, the AgentThread used to run the agent is NOT set to the service thread ID."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    request_service_thread_id: str | None = None
+
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal request_service_thread_id
+        thread = kwargs.get("thread")
+        request_service_thread_id = thread.service_thread_id if thread else None
+        yield ChatResponseUpdate(
+            contents=[TextContent(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
+        )
+
+    agent = ChatAgent(chat_client=StreamingChatClientStub(stream_fn))
+    wrapper = AgentFrameworkAgent(agent=agent, use_service_thread=False)
+
+    input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
+
+    events: list[Any] = []
+    async for event in wrapper.run_agent(input_data):
+        events.append(event)
+
+    assert request_service_thread_id is None  # type: ignore[attr-defined] (service_thread_id should be set)
+
+
+async def test_agent_with_use_service_thread_is_true():
+    """Test that when use_service_thread is True, the AgentThread used to run the agent is set to the service thread ID."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    request_service_thread_id: str | None = None
+
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal request_service_thread_id
+        thread = kwargs.get("thread")
+        request_service_thread_id = thread.service_thread_id if thread else None
+        yield ChatResponseUpdate(
+            contents=[TextContent(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
+        )
+
+    agent = ChatAgent(chat_client=StreamingChatClientStub(stream_fn))
+    wrapper = AgentFrameworkAgent(agent=agent, use_service_thread=True)
+
+    input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
+
+    events: list[Any] = []
+    async for event in wrapper.run_agent(input_data):
+        events.append(event)
+
+    assert request_service_thread_id == "conv_123456"  # type: ignore[attr-defined] (service_thread_id should be set)

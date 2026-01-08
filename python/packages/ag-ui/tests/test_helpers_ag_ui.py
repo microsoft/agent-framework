@@ -75,14 +75,14 @@ class StubAgent(AgentProtocol):
         *,
         agent_id: str = "stub-agent",
         agent_name: str | None = "stub-agent",
-        chat_options: Any | None = None,
-        chat_client: Any | None = None,
+        chat_options: ChatOptions | None = None,
+        chat_client: BaseChatClient | None = None,
     ) -> None:
         self._id = agent_id
         self._name = agent_name
         self._description = "stub agent"
         self.updates = updates or [AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
-        self.chat_options = chat_options or SimpleNamespace(tools=None, response_format=None)
+        self.chat_options = chat_options or ChatOptions(tools=None, response_format=None)
         self.chat_client = chat_client or SimpleNamespace(function_invocation_configuration=None)
         self.messages_received: list[Any] = []
         self.tools_received: list[Any] | None = None
@@ -122,8 +122,23 @@ class StubAgent(AgentProtocol):
         async def _stream() -> AsyncIterator[AgentRunResponseUpdate]:
             self.messages_received = [] if messages is None else list(messages)  # type: ignore[arg-type]
             self.tools_received = kwargs.get("tools")
-            for update in self.updates:
-                yield update
+            if hasattr(self.chat_client, "get_streaming_response"):
+                # Simulate streaming from chat client if available
+                async for update in self.chat_client.get_streaming_response(
+                    messages=self.messages_received,
+                    chat_options=self.chat_options,
+                    **kwargs,
+                ):
+                    yield AgentRunResponseUpdate(
+                        contents=update.contents,
+                        role=update.role,
+                        response_id=update.response_id,
+                        raw_representation=update,
+                    )
+                return
+            else:
+                for update in self.updates:
+                    yield update
 
         return _stream()
 
