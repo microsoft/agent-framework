@@ -844,6 +844,54 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     assert options3.additional_properties.get("p") == 1
 
 
+def test_chat_options_and_tool_choice_override() -> None:
+    """Test that tool_choice from other takes precedence in ChatOptions merge."""
+    # Agent-level defaults to "auto"
+    agent_options = ChatOptions(model_id="gpt-4o", tool_choice="auto")
+    # Run-level specifies "required"
+    run_options = ChatOptions(tool_choice="required")
+
+    merged = agent_options & run_options
+
+    # Run-level should override agent-level
+    assert merged.tool_choice == "required"
+    assert merged.model_id == "gpt-4o"  # Other fields preserved
+
+
+def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
+    """Test that when other.tool_choice is None, self.tool_choice is used."""
+    agent_options = ChatOptions(tool_choice="auto")
+    run_options = ChatOptions(model_id="gpt-4.1")  # tool_choice is None
+
+    merged = agent_options & run_options
+
+    # Should keep agent-level tool_choice since run-level is None
+    assert merged.tool_choice == "auto"
+    assert merged.model_id == "gpt-4.1"
+
+
+def test_chat_options_and_tool_choice_with_tool_mode() -> None:
+    """Test ChatOptions merge with ToolMode objects."""
+    agent_options = ChatOptions(tool_choice=ToolMode.AUTO)
+    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED_ANY)
+
+    merged = agent_options & run_options
+
+    assert merged.tool_choice == ToolMode.REQUIRED_ANY
+    assert merged.tool_choice == "required"  # ToolMode equality with string
+
+
+def test_chat_options_and_tool_choice_required_specific_function() -> None:
+    """Test ChatOptions merge with required specific function."""
+    agent_options = ChatOptions(tool_choice="auto")
+    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED(function_name="get_weather"))
+
+    merged = agent_options & run_options
+
+    assert merged.tool_choice == "required"
+    assert merged.tool_choice.required_function_name == "get_weather"
+
+
 # region Agent Response Fixtures
 
 
@@ -2085,3 +2133,55 @@ def test_prepare_function_call_results_nested_pydantic_model():
     assert "Seattle" in json_result
     assert "rainy" in json_result
     assert "18.0" in json_result or "18" in json_result
+
+
+# region prepare_function_call_results with MCP TextContent-like objects
+
+
+def test_prepare_function_call_results_text_content_single():
+    """Test that objects with text attribute (like MCP TextContent) are properly handled."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    result = [MockTextContent("Hello from MCP tool!")]
+    json_result = prepare_function_call_results(result)
+
+    # Should extract text and serialize as JSON array of strings
+    assert isinstance(json_result, str)
+    assert json_result == '["Hello from MCP tool!"]'
+
+
+def test_prepare_function_call_results_text_content_multiple():
+    """Test that multiple TextContent-like objects are serialized correctly."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    result = [MockTextContent("First result"), MockTextContent("Second result")]
+    json_result = prepare_function_call_results(result)
+
+    # Should extract text from each and serialize as JSON array
+    assert isinstance(json_result, str)
+    assert json_result == '["First result", "Second result"]'
+
+
+def test_prepare_function_call_results_text_content_with_non_string_text():
+    """Test that objects with non-string text attribute are not treated as TextContent."""
+
+    class BadTextContent:
+        def __init__(self):
+            self.text = 12345  # Not a string!
+
+    result = [BadTextContent()]
+    json_result = prepare_function_call_results(result)
+
+    # Should not extract text since it's not a string, will serialize the object
+    assert isinstance(json_result, str)
+
+
+# endregion
