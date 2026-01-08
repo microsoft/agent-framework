@@ -723,9 +723,10 @@ async def test_azure_ai_client_agent_creation_with_response_format(
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
 
-    run_options = {"model": "test-model", "response_format": ResponseFormatModel}
+    run_options = {"model": "test-model"}
+    chat_options = ChatOptions(response_format=ResponseFormatModel)
 
-    await client._get_agent_reference_or_create(run_options, None)  # type: ignore
+    await client._get_agent_reference_or_create(run_options, None, chat_options)  # type: ignore
 
     # Verify agent was created with response format configuration
     call_args = mock_project_client.agents.create_version.call_args
@@ -776,19 +777,18 @@ async def test_azure_ai_client_agent_creation_with_mapping_response_format(
         "additionalProperties": False,
     }
 
-    run_options = {
-        "model": "test-model",
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": runtime_schema["title"],
-                "strict": True,
-                "schema": runtime_schema,
-            },
+    run_options = {"model": "test-model"}
+    response_format_mapping = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": runtime_schema["title"],
+            "strict": True,
+            "schema": runtime_schema,
         },
     }
+    chat_options = ChatOptions(response_format=response_format_mapping)  # type: ignore
 
-    await client._get_agent_reference_or_create(run_options, None)  # type: ignore
+    await client._get_agent_reference_or_create(run_options, None, chat_options)  # type: ignore
 
     call_args = mock_project_client.agents.create_version.call_args
     created_definition = call_args[1]["definition"]
@@ -805,7 +805,7 @@ async def test_azure_ai_client_agent_creation_with_mapping_response_format(
 async def test_azure_ai_client_prepare_options_excludes_response_format(
     mock_project_client: MagicMock,
 ) -> None:
-    """Test that prepare_options excludes response_format from final run options."""
+    """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
@@ -815,7 +815,12 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
         patch.object(
             client.__class__.__bases__[0],
             "_prepare_options",
-            return_value={"model": "test-model", "response_format": ResponseFormatModel},
+            return_value={
+                "model": "test-model",
+                "response_format": ResponseFormatModel,
+                "text": {"format": {"type": "json_schema", "name": "test"}},
+                "text_format": ResponseFormatModel,
+            },
         ),
         patch.object(
             client,
@@ -825,8 +830,11 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
     ):
         run_options = await client._prepare_options(messages, chat_options)
 
-        # response_format should be excluded from final run options
+        # response_format, text, and text_format should be excluded from final run options
+        # because they are configured at agent level, not request level
         assert "response_format" not in run_options
+        assert "text" not in run_options
+        assert "text_format" not in run_options
         # But extra_body should contain agent reference
         assert "extra_body" in run_options
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
@@ -1009,3 +1017,91 @@ async def test_azure_ai_chat_client_agent_with_tools() -> None:
         assert response.text is not None
         assert len(response.text) > 0
         assert any(word in response.text.lower() for word in ["sunny", "25"])
+
+
+class ReleaseBrief(BaseModel):
+    """Structured output model for release brief."""
+
+    title: str = Field(description="A short title for the release.")
+    summary: str = Field(description="A brief summary of what was released.")
+    highlights: list[str] = Field(description="Key highlights from the release.")
+    model_config = ConfigDict(extra="forbid")
+
+
+@pytest.mark.flaky
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_with_response_format() -> None:
+    """Test ChatAgent with response_format (structured output) using AzureAIClient."""
+    async with (
+        temporary_chat_client(agent_name="ResponseFormatAgent") as chat_client,
+        ChatAgent(chat_client=chat_client) as agent,
+    ):
+        response = await agent.run(
+            "Summarize the following release notes into a ReleaseBrief:\n\n"
+            "Version 2.0 Release Notes:\n"
+            "- Added new streaming API for real-time responses\n"
+            "- Improved error handling with detailed messages\n"
+            "- Performance boost of 50% in batch processing\n"
+            "- Fixed memory leak in connection pooling",
+            response_format=ReleaseBrief,
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.value is not None
+        assert isinstance(response.value, ReleaseBrief)
+
+        # Validate structured output fields
+        brief = response.value
+        assert len(brief.title) > 0
+        assert len(brief.summary) > 0
+        assert len(brief.highlights) > 0
+
+
+@pytest.mark.flaky
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_with_runtime_json_schema() -> None:
+    """Test ChatAgent with runtime JSON schema (structured output) using AzureAIClient."""
+    runtime_schema = {
+        "title": "WeatherDigest",
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"},
+            "conditions": {"type": "string"},
+            "temperature_c": {"type": "number"},
+            "advisory": {"type": "string"},
+        },
+        "required": ["location", "conditions", "temperature_c", "advisory"],
+        "additionalProperties": False,
+    }
+
+    async with (
+        temporary_chat_client(agent_name="RuntimeSchemaAgent") as chat_client,
+        ChatAgent(chat_client=chat_client) as agent,
+    ):
+        response = await agent.run(
+            "Give a brief weather digest for Seattle.",
+            additional_chat_options={
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": runtime_schema["title"],
+                        "strict": True,
+                        "schema": runtime_schema,
+                    },
+                },
+            },
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+
+        # Parse JSON and validate structure
+        import json
+
+        parsed = json.loads(response.text)
+        assert "location" in parsed
+        assert "conditions" in parsed
+        assert "temperature_c" in parsed
+        assert "advisory" in parsed

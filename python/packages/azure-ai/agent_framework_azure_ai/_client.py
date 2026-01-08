@@ -300,13 +300,26 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
 
     async def _get_agent_reference_or_create(
-        self, run_options: dict[str, Any], messages_instructions: str | None
+        self,
+        run_options: dict[str, Any],
+        messages_instructions: str | None,
+        chat_options: ChatOptions | None = None,
     ) -> dict[str, str]:
         """Determine which agent to use and create if needed.
+
+        Args:
+            run_options: The prepared options for the API call.
+            messages_instructions: Instructions extracted from messages.
+            chat_options: The chat options containing response_format and other settings.
 
         Returns:
             dict[str, str]: The agent reference to use.
         """
+        # chat_options is needed separately because the base class excludes response_format
+        # from run_options (transforming it to text/text_format for OpenAI). Azure's agent
+        # creation API requires the original response_format to build its own config format.
+        if chat_options is None:
+            chat_options = ChatOptions()
         # Agent name must be explicitly provided by the user.
         if self.agent_name is None:
             raise ServiceInitializationError(
@@ -341,8 +354,14 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             if "top_p" in run_options:
                 args["top_p"] = run_options["top_p"]
 
-            if "response_format" in run_options:
-                response_format = run_options["response_format"]
+            # response_format is accessed from chat_options or additional_properties
+            # since the base class excludes it from run_options
+            response_format: Any = (
+                chat_options.response_format
+                if chat_options.response_format is not None
+                else chat_options.additional_properties.get("response_format")
+            )
+            if response_format:
                 args["text"] = PromptAgentDefinitionText(format=self._create_text_format_config(response_format))
 
             # Combine instructions from messages and options
@@ -390,12 +409,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         if not self._is_application_endpoint:
             # Application-scoped response APIs do not support "agent" property.
-            agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
+            agent_reference = await self._get_agent_reference_or_create(run_options, instructions, chat_options)
             run_options["extra_body"] = {"agent": agent_reference}
 
         # Remove properties that are not supported on request level
         # but were configured on agent level
-        exclude = ["model", "tools", "response_format", "temperature", "top_p"]
+        exclude = ["model", "tools", "response_format", "temperature", "top_p", "text", "text_format"]
 
         for property in exclude:
             run_options.pop(property, None)
