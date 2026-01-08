@@ -326,4 +326,3 @@ class DatabaseImageTool:
         payload["tags"] = record.tags()
         payload["image_path"] = record.image_path
         return payload
-
