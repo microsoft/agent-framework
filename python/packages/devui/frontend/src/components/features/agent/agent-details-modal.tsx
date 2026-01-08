@@ -196,19 +196,15 @@ export function AgentDetailsModal({
             )}
 
             {/* Context Provider */}
-            {agent.context_provider && agent.context_provider.length > 0 && (
+            {agent.context_provider && (
               <DetailCard
-                title={`Context Provider (${agent.context_provider.length})`}
+                title="Context Provider"
                 icon={<Database className="h-4 w-4 text-muted-foreground" />}
-                className={!agent.middlewares || agent.middlewares.length === 0 ? "md:col-start-2\" : \"\"}
+                className={!agent.middlewares || agent.middlewares.length === 0 ? "md:col-start-2" : ""}
               >
-                <ul className="space-y-1">
-                  {agent.context_provider.map((cp, index) => (
-                    <li key={index} className="font-mono text-xs text-foreground">
-                      • {cp}
-                    </li>
-                  ))}
-                </ul>
+                <div className="font-mono text-xs text-foreground">
+                  {agent.context_provider}
+                </div>
               </DetailCard>
             )}
           </div>
