@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// Represents the result of analyzing a class with [MessageHandler] methods.
 /// Combines the executor info (if valid) with any diagnostics to report.
 /// Note: This type is used after the caching layer (in RegisterSourceOutput),
-/// so it can contain Diagnostic objects directly.
+/// so it should not cause issue to contain Diagnostic objects directly.
 /// </summary>
 internal sealed class AnalysisResult
 {
