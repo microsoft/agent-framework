@@ -3,7 +3,7 @@
 """Tests for message adapters."""
 
 import pytest
-from agent_framework import ChatMessage, FunctionCallContent, Role, TextContent
+from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
 
 from agent_framework_ag_ui._message_adapters import (
     agent_framework_messages_to_agui,
@@ -278,3 +278,119 @@ def test_extract_text_from_custom_contents():
     result = extract_text_from_contents(contents)
 
     assert result == "Custom Mixed"
+
+
+# Tests for FunctionResultContent serialization in agent_framework_messages_to_agui
+
+
+def test_agent_framework_to_agui_function_result_dict():
+    """Test converting FunctionResultContent with dict result to AG-UI."""
+    msg = ChatMessage(
+        role=Role.TOOL,
+        contents=[FunctionResultContent(call_id="call-123", result={"key": "value", "count": 42})],
+        message_id="msg-789",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 1
+    agui_msg = messages[0]
+    assert agui_msg["role"] == "tool"
+    assert agui_msg["toolCallId"] == "call-123"
+    assert agui_msg["content"] == '{"key": "value", "count": 42}'
+
+
+def test_agent_framework_to_agui_function_result_none():
+    """Test converting FunctionResultContent with None result to AG-UI."""
+    msg = ChatMessage(
+        role=Role.TOOL,
+        contents=[FunctionResultContent(call_id="call-123", result=None)],
+        message_id="msg-789",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 1
+    agui_msg = messages[0]
+    # None serializes as JSON null
+    assert agui_msg["content"] == "null"
+
+
+def test_agent_framework_to_agui_function_result_string():
+    """Test converting FunctionResultContent with string result to AG-UI."""
+    msg = ChatMessage(
+        role=Role.TOOL,
+        contents=[FunctionResultContent(call_id="call-123", result="plain text result")],
+        message_id="msg-789",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 1
+    agui_msg = messages[0]
+    assert agui_msg["content"] == "plain text result"
+
+
+def test_agent_framework_to_agui_function_result_empty_list():
+    """Test converting FunctionResultContent with empty list result to AG-UI."""
+    msg = ChatMessage(
+        role=Role.TOOL,
+        contents=[FunctionResultContent(call_id="call-123", result=[])],
+        message_id="msg-789",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 1
+    agui_msg = messages[0]
+    # Empty list serializes as JSON empty array
+    assert agui_msg["content"] == "[]"
+
+
+def test_agent_framework_to_agui_function_result_single_text_content():
+    """Test converting FunctionResultContent with single TextContent-like item."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    msg = ChatMessage(
+        role=Role.TOOL,
+        contents=[FunctionResultContent(call_id="call-123", result=[MockTextContent("Hello from MCP!")])],
+        message_id="msg-789",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 1
+    agui_msg = messages[0]
+    # TextContent text is extracted and serialized as JSON array
+    assert agui_msg["content"] == '["Hello from MCP!"]'
+
+
+def test_agent_framework_to_agui_function_result_multiple_text_contents():
+    """Test converting FunctionResultContent with multiple TextContent-like items."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    msg = ChatMessage(
+        role=Role.TOOL,
+        contents=[
+            FunctionResultContent(
+                call_id="call-123",
+                result=[MockTextContent("First result"), MockTextContent("Second result")],
+            )
+        ],
+        message_id="msg-789",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 1
+    agui_msg = messages[0]
+    # Multiple items should return JSON array
+    assert agui_msg["content"] == '["First result", "Second result"]'

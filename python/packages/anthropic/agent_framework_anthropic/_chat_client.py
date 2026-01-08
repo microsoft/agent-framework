@@ -505,7 +505,7 @@ class AnthropicClient(BaseChatClient):
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model_id=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
-            raw_response=message,
+            raw_representation=message,
         )
 
     def _process_stream_event(self, event: BetaRawMessageStreamEvent) -> ChatResponseUpdate | None:
@@ -530,13 +530,14 @@ class AnthropicClient(BaseChatClient):
                     finish_reason=FINISH_REASON_MAP.get(event.message.stop_reason)
                     if event.message.stop_reason
                     else None,
-                    raw_response=event,
+                    raw_representation=event,
                 )
             case "message_delta":
                 usage = self._parse_usage_from_anthropic(event.usage)
                 return ChatResponseUpdate(
                     contents=[UsageContent(details=usage, raw_representation=event.usage)] if usage else [],
-                    raw_response=event,
+                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
+                    raw_representation=event,
                 )
             case "message_stop":
                 logger.debug("Received message_stop event; no content to process.")
@@ -544,13 +545,13 @@ class AnthropicClient(BaseChatClient):
                 contents = self._parse_contents_from_anthropic([event.content_block])
                 return ChatResponseUpdate(
                     contents=contents,
-                    raw_response=event,
+                    raw_representation=event,
                 )
             case "content_block_delta":
                 contents = self._parse_contents_from_anthropic([event.delta])
                 return ChatResponseUpdate(
                     contents=contents,
-                    raw_response=event,
+                    raw_representation=event,
                 )
             case "content_block_stop":
                 logger.debug("Received content_block_stop event; no content to process.")
