@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from ag_ui.core import BaseEvent, RunFinishedEvent
-from agent_framework import AgentRunResponseUpdate, AgentThread, TextContent, ai_function
+from agent_framework import AgentRunResponseUpdate, AgentThread, ChatResponseUpdate, TextContent, ai_function
 from agent_framework._tools import FunctionInvocationConfiguration
 
 from agent_framework_ag_ui._agent import AgentConfig
@@ -44,9 +44,11 @@ class DummyAgent:
             contents=[TextContent(text="ok")],
             role="assistant",
             response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
-            additional_properties={
-                "conversation_id": thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
-            },
+            raw_representation=ChatResponseUpdate(
+                contents=[TextContent(text="ok")],
+                conversation_id=thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+                response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+            ),
         )
 
 
