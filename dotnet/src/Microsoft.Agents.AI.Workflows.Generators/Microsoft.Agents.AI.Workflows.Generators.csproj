@@ -1,10 +1,31 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project>
 
+  <!-- Detect incompatible TFM BEFORE importing SDK -->
+  <PropertyGroup Condition="'$(TargetFramework)' != '' AND '$(TargetFramework)' != 'netstandard2.0'">
+    <_SkipIncompatibleBuild>true</_SkipIncompatibleBuild>
+    <!-- Skip ResolvePackageAssets which causes NETSDK1005 - must be set before SDK import -->
+    <SkipResolvePackageAssets>true</SkipResolvePackageAssets>
+  </PropertyGroup>
+
+  <!-- Import SDK props -->
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- Source generators MUST target netstandard2.0 only -->
   <PropertyGroup>
-    <!-- Source generators must target netstandard2.0 only -->
-    <!-- Clear inherited TargetFrameworks from Directory.Build.props -->
-    <TargetFrameworks></TargetFrameworks>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFrameworks>netstandard2.0</TargetFrameworks>
+  </PropertyGroup>
+
+  <!-- Skip build settings for incompatible TFM -->
+  <PropertyGroup Condition="'$(_SkipIncompatibleBuild)' == 'true'">
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_SkipIncompatibleBuild)' != 'true'">
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
 
@@ -39,9 +60,36 @@
     <DevelopmentDependency>true</DevelopmentDependency>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(_SkipIncompatibleBuild)' != 'true'">
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
   </ItemGroup>
+
+  <!-- Import SDK targets -->
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- Skip incompatible TFM builds by setting property that SDK checks -->
+  <PropertyGroup Condition="'$(_SkipIncompatibleBuild)' == 'true'">
+    <!-- This tells the SDK to skip the ResolvePackageAssets check -->
+    <SkipResolvePackageAssets>true</SkipResolvePackageAssets>
+    <ResolvePackageAssets>false</ResolvePackageAssets>
+    <!-- Make project.assets.json check pass by pretending we have it -->
+    <ProjectAssetsFile></ProjectAssetsFile>
+    <RestoreSuccess>true</RestoreSuccess>
+    <!-- Skip copy to output directory -->
+    <SkipCopyBuildProduct>true</SkipCopyBuildProduct>
+    <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+    <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
+  </PropertyGroup>
+
+  <!-- Override Core targets for incompatible TFM -->
+  <Target Name="CoreCompile" Condition="'$(_SkipIncompatibleBuild)' == 'true'">
+    <Message Importance="high" Text="Skipping $(MSBuildProjectName) - TFM $(TargetFramework) is not supported (requires netstandard2.0)" />
+  </Target>
+
+  <Target Name="CreateManifestResourceNames" Condition="'$(_SkipIncompatibleBuild)' == 'true'" />
+
+  <!-- Skip file copy operations for incompatible TFM -->
+  <Target Name="CopyFilesToOutputDirectory" Condition="'$(_SkipIncompatibleBuild)' == 'true'" />
 
 </Project>
