@@ -12,7 +12,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, cast
+from typing import Any, Generic, Literal, TypeVar, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -37,7 +37,7 @@ from openai.types.responses.web_search_tool_param import (
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BaseChatClient, TOptions
+from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
 from .._tools import (
@@ -133,34 +133,6 @@ class OpenAIResponsesOptions(ChatOptions, total=False):
     reasoning, and API behavior.
 
     See: https://platform.openai.com/docs/api-reference/responses/create
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.openai import OpenAIResponsesOptions
-
-            # Basic usage
-            options: OpenAIResponsesOptions = {
-                "temperature": 0.7,
-                "max_output_tokens": 1000,
-            }
-
-            # With reasoning configuration (for gpt-5, o-series models)
-            options: OpenAIResponsesOptions = {
-                "model_id": "gpt-5",
-                "reasoning": {"effort": "high", "summary": "detailed"},
-            }
-
-            # With text format options
-            options: OpenAIResponsesOptions = {
-                "text": {"format": {"type": "json_object"}},
-            }
-
-            # Background processing
-            options: OpenAIResponsesOptions = {
-                "background": True,
-                "store": True,
-            }
     """
 
     # Responses API-specific parameters
@@ -217,6 +189,14 @@ class OpenAIResponsesOptions(ChatOptions, total=False):
     - 'disabled': Fail with 400 error if exceeds context"""
 
 
+TOpenAIResponsesOptions = TypeVar(
+    "TOpenAIResponsesOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
+    contravariant=True,
+)
+
+
 # endregion
 
 
@@ -224,7 +204,9 @@ class OpenAIResponsesOptions(ChatOptions, total=False):
 
 
 class OpenAIBaseResponsesClient(
-    OpenAIBase, BaseChatClient[TOptions], Generic[TOptions]
+    OpenAIBase,
+    BaseChatClient[TOpenAIResponsesOptions],
+    Generic[TOpenAIResponsesOptions],
 ):
     """Base class for all OpenAI Responses based API's."""
 
@@ -1586,7 +1568,9 @@ class OpenAIBaseResponsesClient(
 @use_instrumentation
 @use_chat_middleware
 class OpenAIResponsesClient(
-    OpenAIConfigMixin, OpenAIBaseResponsesClient[TOptions], Generic[TOptions]
+    OpenAIConfigMixin,
+    OpenAIBaseResponsesClient[TOpenAIResponsesOptions],
+    Generic[TOpenAIResponsesOptions],
 ):
     """OpenAI Responses client class."""
 
@@ -1640,6 +1624,18 @@ class OpenAIResponsesClient(
 
                 # Or loading from a .env file
                 client = OpenAIResponsesClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.openai import OpenAIResponsesOptions
+
+
+                class MyOptions(OpenAIResponsesOptions, total=False):
+                    my_custom_option: str
+
+
+                client: OpenAIResponsesClient[MyOptions] = OpenAIResponsesClient(model_id="gpt-4o")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             openai_settings = OpenAISettings(

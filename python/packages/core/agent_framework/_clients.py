@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
 TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", covariant=True)
+TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", contravariant=True)  # type: ignore[valid-type]
 
 logger = get_logger()
 
@@ -93,9 +93,11 @@ class ChatClientProtocol(Protocol[TOptions]):
             assert isinstance(client, ChatClientProtocol)
     """
 
+    additional_properties: dict[str, Any]
+
     async def get_response(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         options: TOptions | None = None,
         **kwargs: Any,
@@ -117,7 +119,7 @@ class ChatClientProtocol(Protocol[TOptions]):
 
     def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         options: TOptions | None = None,
         **kwargs: Any,
@@ -326,7 +328,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         options: TOptions | None = None,
         **kwargs: Any,
@@ -354,7 +356,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         options: TOptions | None = None,
         **kwargs: Any,

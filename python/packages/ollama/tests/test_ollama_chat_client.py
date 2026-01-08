@@ -16,6 +16,7 @@ from agent_framework import (
     TextContent,
     TextReasoningContent,
     UriContent,
+    ai_function,
     chat_middleware,
 )
 from agent_framework.exceptions import (
@@ -113,6 +114,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
     )
 
 
+@ai_function
 def hello_world(arg1: str) -> str:
     return "Hello World"
 
@@ -207,8 +209,7 @@ async def test_function_choice_required_argument() -> None:
     with pytest.raises(ServiceInvalidRequestError):
         await ollama_chat_client.get_response(
             messages=[ChatMessage(text="hello world", role="user")],
-            tool_choice="required",
-            tools=[hello_world],
+            options={"tool_choice": "required", "tools": [hello_world]},
         )
 
 
@@ -373,7 +374,9 @@ async def test_cmc_with_hosted_tool_call(
         ollama_client = OllamaChatClient()
         await ollama_client.get_response(
             messages=chat_history,
-            tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+            options={
+                "tools": HostedWebSearchTool(additional_properties=additional_properties),
+            },
         )
 
 

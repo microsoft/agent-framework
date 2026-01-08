@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Mapping, MutableSequence
-from typing import Any, ClassVar, Generic, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -13,7 +13,6 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
@@ -32,24 +31,34 @@ from pydantic import BaseModel, ValidationError
 
 from ._shared import AzureAISettings
 
+if TYPE_CHECKING:
+    from agent_framework.openai import OpenAIResponsesOptions
+
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
+
+TAzureAIClientOptions = TypeVar(
+    "TAzureAIClientOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
+    contravariant=True,
+)
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureAIClient(OpenAIBaseResponsesClient[TOptions], Generic[TOptions]):
+class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
     """Azure AI Agent client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -112,6 +121,18 @@ class AzureAIClient(OpenAIBaseResponsesClient[TOptions], Generic[TOptions]):
 
                 # Or loading from a .env file
                 client = AzureAIClient(credential=credential, env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework import ChatOptions
+
+
+                class MyOptions(ChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureAIClient[MyOptions] = AzureAIClient(credential=credential)
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             azure_ai_settings = AzureAISettings(

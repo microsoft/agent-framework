@@ -597,31 +597,35 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
-    from agent_framework import ChatOptions, ToolMode
+    from agent_framework import ToolMode
 
-    captured_options: list[ChatOptions] = []
+    captured_options: list[dict[str, Any]] = []
 
     # Store the original inner method
     original_inner = chat_client_base._inner_get_response
 
     async def capturing_inner(
-        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(chat_options)
-        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+        captured_options.append(options)
+        return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
 
     # Create agent with agent-level tool_choice="auto" and a tool (tools required for tool_choice to be meaningful)
-    agent = ChatAgent(chat_client=chat_client_base, tool_choice="auto", tools=[ai_function_tool])
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=[ai_function_tool],
+        options={"tool_choice": "auto"},
+    )
 
     # Run with run-level tool_choice="required"
-    await agent.run("Hello", tool_choice="required")
+    await agent.run("Hello", options={"tool_choice": "required"})
 
     # Verify the client received tool_choice="required", not "auto"
     assert len(captured_options) >= 1
-    assert captured_options[0].tool_choice == "required"
-    assert captured_options[0].tool_choice == ToolMode.REQUIRED_ANY
+    assert captured_options[0]["tool_choice"] == "required"
+    assert captured_options[0]["tool_choice"] == ToolMode.REQUIRED_ANY
 
 
 async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
@@ -635,23 +639,27 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     original_inner = chat_client_base._inner_get_response
 
     async def capturing_inner(
-        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(chat_options)
-        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+        captured_options.append(options)
+        return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
 
     # Create agent with agent-level tool_choice="required" and a tool
-    agent = ChatAgent(chat_client=chat_client_base, tool_choice="required", tools=[ai_function_tool])
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=[ai_function_tool],
+        default_options={"tool_choice": "required"},
+    )
 
     # Run without specifying tool_choice
     await agent.run("Hello")
 
     # Verify the client received tool_choice="required" from agent-level
     assert len(captured_options) >= 1
-    assert captured_options[0].tool_choice == "required"
-    assert captured_options[0].tool_choice == ToolMode.REQUIRED_ANY
+    assert captured_options[0]["tool_choice"] == "required"
+    assert captured_options[0]["tool_choice"] == ToolMode.REQUIRED_ANY
 
 
 async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
@@ -665,19 +673,23 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     original_inner = chat_client_base._inner_get_response
 
     async def capturing_inner(
-        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(chat_options)
-        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+        captured_options.append(options)
+        return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
 
     # Create agent with agent-level tool_choice="auto" and a tool
-    agent = ChatAgent(chat_client=chat_client_base, tool_choice="auto", tools=[ai_function_tool])
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=[ai_function_tool],
+        default_options={"tool_choice": "auto"},
+    )
 
     # Run with explicitly passing None (same as not specifying)
-    await agent.run("Hello", tool_choice=None)
+    await agent.run("Hello", options={"tool_choice": None})
 
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
-    assert captured_options[0].tool_choice == "auto"
+    assert captured_options[0]["tool_choice"] == "auto"

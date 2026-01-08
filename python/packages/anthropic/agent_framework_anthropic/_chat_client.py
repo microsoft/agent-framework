@@ -2,15 +2,15 @@
 
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, Generic
+from typing import Any, ClassVar, Final, Generic, Literal, TypeVar
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AIFunction,
     Annotations,
     BaseChatClient,
-    BaseChatOptionsDict,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
@@ -38,9 +38,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework._types import ChatOptionsDictValidator
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
 from anthropic import AsyncAnthropic
@@ -62,11 +60,18 @@ from anthropic.types.beta.beta_code_execution_tool_result_error import (
 from pydantic import SecretStr, ValidationError
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import (  # type: ignore[import] # pragma: no cover
+        TypedDict,
+        override,
+    )
 
-__all__ = ["AnthropicChatOptions", "AnthropicClient"]
+__all__ = [
+    "AnthropicChatOptions",
+    "AnthropicClient",
+    "AnthropicThinkingConfig",
+]
 
 logger = get_logger("agent_framework.anthropic")
 
@@ -77,38 +82,62 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08
 # region Anthropic Chat Options TypedDict
 
 
-class AnthropicChatOptions(BaseChatOptionsDict, total=False):
+class AnthropicThinkingConfig(TypedDict, total=False):
+    """Configuration for enabling Claude's extended thinking.
+
+    When enabled, responses include ``thinking`` content blocks showing Claude's
+    thinking process before the final answer. Requires a minimum budget of 1,024
+    tokens and counts towards your ``max_tokens`` limit.
+
+    See https://docs.claude.com/en/docs/build-with-claude/extended-thinking for details.
+
+    Keys:
+        type: "enabled" to enable extended thinking, "disabled" to disable.
+        budget_tokens: The token budget for thinking (minimum 1024, required when type="enabled").
+    """
+
+    type: Literal["enabled", "disabled"]
+    budget_tokens: int
+
+
+class AnthropicChatOptions(ChatOptions, total=False):
     """Anthropic-specific chat options.
 
-    Extends BaseChatOptionsDict with options specific to Anthropic's Messages API.
-    These options are validated at runtime - unsupported options will raise an error.
+    Extends ChatOptions with options specific to Anthropic's Messages API.
+    Options that Anthropic doesn't support are typed as None to indicate they're unavailable.
 
     Note:
         Anthropic REQUIRES max_tokens to be specified. If not provided,
         a default of 1024 will be used.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.anthropic import AnthropicChatOptions
-
-            options: AnthropicChatOptions = {
-                "temperature": 0.7,
-                "max_tokens": 2048,  # Required for Anthropic
-                "top_k": 40,
-            }
-
-            # With extended thinking
-            options: AnthropicChatOptions = {
-                "thinking": {"type": "enabled", "budget_tokens": 10000},
-            }
+    Keys:
+        model_id: The model to use for the request,
+            translates to ``model`` in Anthropic API.
+        temperature: Sampling temperature between 0 and 1.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate (REQUIRED).
+        stop: Stop sequences,
+            translates to ``stop_sequences`` in Anthropic API.
+        tools: List of tools (functions) available to the model.
+        tool_choice: How the model should use tools.
+        response_format: Structured output schema.
+        metadata: Request metadata with user_id for tracking.
+        user: User identifier, translates to ``metadata.user_id`` in Anthropic API.
+        instructions: System instructions for the model,
+            translates to ``system`` in Anthropic API.
+        top_k: Number of top tokens to consider for sampling.
+        service_tier: Service tier ("auto" or "standard_only").
+        thinking: Extended thinking configuration for Claude models.
+        container: Container configuration for skills.
+        additional_beta_flags: Additional beta flags to enable on the request.
     """
 
-    # Anthropic-specific generation parameters
+    # Anthropic-specific generation parameters (supported by all models)
     top_k: int
+    service_tier: Literal["auto", "standard_only"]
 
     # Extended thinking (Claude models)
-    thinking: dict[str, Any]
+    thinking: AnthropicThinkingConfig
 
     # Skills
     container: dict[str, Any]
@@ -116,17 +145,27 @@ class AnthropicChatOptions(BaseChatOptionsDict, total=False):
     # Beta features
     additional_beta_flags: list[str]
 
+    # Unsupported base options (override with None to indicate not supported)
+    logit_bias: None  # type: ignore[misc]
+    seed: None  # type: ignore[misc]
+    frequency_penalty: None  # type: ignore[misc]
+    presence_penalty: None  # type: ignore[misc]
+    store: None  # type: ignore[misc]
 
-# Define which BASE options are NOT supported by Anthropic (for validation)
-_ANTHROPIC_UNSUPPORTED_OPTIONS: frozenset[str] = frozenset({
-    "logit_bias",  # Anthropic doesn't support logit_bias
-    "logprobs",  # Anthropic doesn't support logprobs
-})
 
-_anthropic_options_validator = ChatOptionsDictValidator(
-    provider_name="Anthropic",
-    unsupported_base_options=_ANTHROPIC_UNSUPPORTED_OPTIONS,
+TAnthropicOptions = TypeVar(
+    "TAnthropicOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AnthropicChatOptions",
+    contravariant=True,
 )
+
+# Translation between framework options keys and Anthropic Messages API
+OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "stop": "stop_sequences",
+    "instructions": "system",
+}
 
 
 # region Role and Finish Reason Maps
@@ -188,7 +227,7 @@ class AnthropicSettings(AFBaseSettings):
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
+class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptions]):
     """Anthropic Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -247,6 +286,18 @@ class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
                     model_id="claude-sonnet-4-5-20250929",
                     anthropic_client=anthropic_client,
                 )
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.anthropic import AnthropicChatOptions
+
+
+                class MyOptions(AnthropicChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AnthropicClient[MyOptions] = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
         try:
@@ -331,23 +382,12 @@ class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
 
         Returns:
             A dictionary of run options for the Anthropic client.
-
-        Raises:
-            ValueError: If unsupported options like logit_bias or logprobs are provided.
         """
-        # Validate that no unsupported options are used
-        _anthropic_options_validator.validate(**options)
-
         # Start with a copy of options
         run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None}
 
-        # translations between options keys and Anthropic API
-        translations = {
-            "model_id": "model",
-            "stop": "stop_sequences",
-            "instructions": "system",
-        }
-        for old_key, new_key in translations.items():
+        # Translation between options keys and Anthropic Messages API
+        for old_key, new_key in OPTION_TRANSLATIONS.items():
             if old_key in run_options and old_key != new_key:
                 run_options[new_key] = run_options.pop(old_key)
 
@@ -373,6 +413,13 @@ class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
 
         # extra headers
         run_options["extra_headers"] = {"User-Agent": AGENT_FRAMEWORK_USER_AGENT}
+
+        # Handle user option -> metadata.user_id (Anthropic uses metadata.user_id instead of user)
+        if user := run_options.pop("user", None):
+            metadata = run_options.get("metadata", {})
+            if "user_id" not in metadata:
+                metadata["user_id"] = user
+            run_options["metadata"] = metadata
 
         # tools, mcp servers and tool choice
         if tools_config := self._prepare_tools_for_anthropic(options):
@@ -529,7 +576,17 @@ class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
         tool_choice_value = options.get("tool_choice")
         allow_multiple = options.get("allow_multiple_tool_calls")
         if tool_choice_value is not None:
-            tool_choice_mode = tool_choice_value if isinstance(tool_choice_value, str) else tool_choice_value.mode
+            # Handle tool_choice as string, dict, or object with .mode attribute
+            if isinstance(tool_choice_value, str):
+                tool_choice_mode = tool_choice_value
+                required_function_name = None
+            elif isinstance(tool_choice_value, dict):
+                tool_choice_mode = tool_choice_value.get("mode", "auto")
+                required_function_name = tool_choice_value.get("required_function_name")
+            else:
+                tool_choice_mode = tool_choice_value.mode
+                required_function_name = getattr(tool_choice_value, "required_function_name", None)
+
             match tool_choice_mode:
                 case "auto":
                     tool_choice: dict[str, Any] = {"type": "auto"}
@@ -537,10 +594,10 @@ class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
                         tool_choice["disable_parallel_tool_use"] = not allow_multiple
                     result["tool_choice"] = tool_choice
                 case "required":
-                    if not isinstance(tool_choice_value, str) and tool_choice_value.required_function_name:
+                    if required_function_name:
                         tool_choice = {
                             "type": "tool",
-                            "name": tool_choice_value.required_function_name,
+                            "name": required_function_name,
                         }
                     else:
                         tool_choice = {"type": "any"}

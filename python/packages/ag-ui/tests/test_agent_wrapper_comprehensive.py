@@ -25,7 +25,11 @@ async def test_agent_initialization_basic():
     ) -> AsyncIterator[ChatResponseUpdate]:
         yield ChatResponseUpdate(contents=[TextContent(text="Hello")])
 
-    agent = ChatAgent(name="test_agent", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
+    agent = ChatAgent[ChatOptions](
+        chat_client=StreamingChatClientStub(stream_fn),
+        name="test_agent",
+        instructions="Test",
+    )
     wrapper = AgentFrameworkAgent(agent=agent)
 
     assert wrapper.name == "test_agent"
@@ -424,7 +428,7 @@ async def test_thread_metadata_tracking():
     async def stream_fn(
         messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        metadata = chat_options.get("metadata")
+        metadata = options.get("metadata")
         if metadata:
             thread_metadata.update(metadata)
         yield ChatResponseUpdate(contents=[TextContent(text="Hello")])
@@ -448,14 +452,14 @@ async def test_thread_metadata_tracking():
 
 async def test_state_context_injection():
     """Test that current state is injected into thread metadata."""
-    from agent_framework.ag_ui import AgentFrameworkAgent
+    from agent_framework_ag_ui import AgentFrameworkAgent
 
     thread_metadata: dict[str, Any] = {}
 
     async def stream_fn(
         messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        metadata = chat_options.get("metadata")
+        metadata = options.get("metadata")
         if metadata:
             thread_metadata.update(metadata)
         yield ChatResponseUpdate(contents=[TextContent(text="Hello")])

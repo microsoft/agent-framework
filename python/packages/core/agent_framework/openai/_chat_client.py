@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal
+from typing import Any, Generic, TypeVar
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -16,14 +16,13 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import ValidationError
 
-from .._clients import BaseChatClient, TOptions
+from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
 from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
-    BaseChatOptionsDict,
     ChatMessage,
-    ChatOptionsDictValidator,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Contents,
@@ -51,9 +50,9 @@ from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
 
 __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
@@ -63,60 +62,54 @@ logger = get_logger("agent_framework.openai")
 # region OpenAI Chat Options TypedDict
 
 
-class OpenAIChatOptions(BaseChatOptionsDict, total=False):
-    """OpenAI-specific chat options.
+class OpenAIChatOptions(ChatOptions, total=False):
+    """OpenAI-specific chat options dict.
 
-    Extends BaseChatOptionsDict with options specific to OpenAI's Chat Completions API.
-    These options are validated at runtime - unsupported options will raise an error.
+    Extends ChatOptions with options specific to OpenAI's Chat Completions API.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.openai import OpenAIChatOptions
-
-            options: OpenAIChatOptions = {
-                "temperature": 0.7,
-                "logprobs": True,
-                "top_logprobs": 5,
-                "allow_multiple_tool_calls": False,
-            }
-
-            # With reasoning models (o1, o3)
-            options: OpenAIChatOptions = {
-                "model_id": "o1",
-                "reasoning_effort": "high",
-            }
+    Keys:
+        model_id: The model to use for the request,
+            translates to ``model`` in OpenAI API.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``max_completion_tokens`` in OpenAI API.
+        stop: Stop sequences.
+        seed: Random seed for reproducibility.
+        frequency_penalty: Frequency penalty between -2.0 and 2.0.
+        presence_penalty: Presence penalty between -2.0 and 2.0.
+        tools: List of tools (functions) available to the model.
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls,
+            translates to ``parallel_tool_calls`` in OpenAI API.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+        user: End-user identifier for abuse monitoring.
+        store: Whether to store the conversation.
+        instructions: System instructions for the model (prepended as system message).
+        # OpenAI-specific options (supported by all models):
+        logit_bias: Token bias values (-100 to 100).
+        logprobs: Whether to return log probabilities.
+        top_logprobs: Number of top log probabilities to return (0-20).
     """
 
-    # OpenAI-specific generation parameters
-    logit_bias: dict[str | int, float]
+    # OpenAI-specific generation parameters (supported by all models)
+    logit_bias: dict[str | int, float]  # type: ignore[misc]
     logprobs: bool
     top_logprobs: int
 
-    # Reasoning models (o1, o3)
-    reasoning_effort: Literal["low", "medium", "high"]
 
-    # Response behavior
-    response_prediction: dict[str, Any]
+TOpenAIChatOptions = TypeVar("TOpenAIChatOptions", bound=TypedDict, default="OpenAIChatOptions", contravariant=True)  # type: ignore[valid-type]
 
-    # Audio features
-    audio: dict[str, Any]
-    modalities: list[Literal["text", "audio"]]
-
-
-# Define which options are NOT supported by OpenAI (for validation)
-_OPENAI_UNSUPPORTED_OPTIONS: frozenset[str] = frozenset({
-    # OpenAI supports all base options
-})
-
-_openai_options_validator = ChatOptionsDictValidator(
-    provider_name="OpenAI",
-    unsupported_base_options=_OPENAI_UNSUPPORTED_OPTIONS,
-)
+OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "allow_multiple_tool_calls": "parallel_tool_calls",
+    "max_tokens": "max_completion_tokens",
+}
 
 
 # region Base Client
-class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOptions]):
+class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
     """OpenAI Chat completion class."""
 
     @override
@@ -232,12 +225,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOption
             raise ServiceInvalidRequestError("Messages are required for chat completions")
 
         # Translation between options keys and Chat Completion API
-        translations = {
-            "model_id": "model",
-            "allow_multiple_tool_calls": "parallel_tool_calls",
-            "max_tokens": "max_completion_tokens",
-        }
-        for old_key, new_key in translations.items():
+        for old_key, new_key in OPTION_TRANSLATIONS.items():
             if old_key in run_options and old_key != new_key:
                 run_options[new_key] = run_options.pop(old_key)
 
@@ -265,12 +253,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOption
         # response format
         response_format = options.get("response_format")
         if response_format:
-            run_options["response_format"] = type_to_response_format_param(response_format)
-
-        # additional_properties - extract and merge to root level
-        additional_properties = run_options.pop("additional_properties", None)
-        if additional_properties:
-            run_options.update({k: v for k, v in additional_properties.items() if v is not None})
+            if isinstance(response_format, dict):
+                run_options["response_format"] = response_format
+            else:
+                run_options["response_format"] = type_to_response_format_param(response_format)
 
         return run_options
 
@@ -559,7 +545,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOption
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOptions], Generic[TOptions]):
+class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
     """OpenAI Chat completion class."""
 
     def __init__(
@@ -611,6 +597,18 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOptions], Generi
 
                 # Or loading from a .env file
                 client = OpenAIChatClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.openai import OpenAIChatOptions
+
+
+                class MyOptions(OpenAIChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="gpt-4o")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             openai_settings = OpenAISettings(

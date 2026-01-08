@@ -46,7 +46,7 @@ def test_get_response_invokes_bedrock_runtime() -> None:
         ChatMessage(role=Role.USER, contents=[TextContent(text="hello")]),
     ]
 
-    response = asyncio.run(client.get_response(messages=messages, chat_options={"max_tokens": 32}))
+    response = asyncio.run(client.get_response(messages=messages, options={"max_tokens": 32}))
 
     assert stub.calls, "Expected the runtime client to be called"
     payload = stub.calls[0]

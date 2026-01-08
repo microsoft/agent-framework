@@ -2,10 +2,16 @@
 
 """Example agent demonstrating Tool-based Generative UI (Feature 5)."""
 
-from typing import Any
+import sys
+from typing import Any, TypeVar
 
-from agent_framework import AIFunction, ChatAgent, ChatClientProtocol
+from agent_framework import AIFunction, ChatAgent, ChatClientProtocol, ChatOptions
 from agent_framework.ag_ui import AgentFrameworkAgent
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
 generate_haiku = AIFunction[Any, str](
@@ -150,15 +156,17 @@ _UI_GENERATOR_INSTRUCTIONS = """You MUST use the provided tools to generate cont
     For other requests, use the appropriate tool (create_chart, display_timeline, show_comparison_table).
     """
 
+TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
 
-def ui_generator_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
-    """Create a UI generator agent with frontend rendering tools.
+
+def ui_generator_agent(chat_client: ChatClientProtocol[TOptions]) -> AgentFrameworkAgent:
+    """Create a UI generator agent with custom React component rendering.
 
     Args:
         chat_client: The chat client to use for the agent
 
     Returns:
-        A configured AgentFrameworkAgent instance with UI generation tools
+        A configured AgentFrameworkAgent instance with UI generation capabilities
     """
     agent = ChatAgent(
         name="ui_generator",
@@ -166,7 +174,7 @@ def ui_generator_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
         chat_client=chat_client,
         tools=[generate_haiku, create_chart, display_timeline, show_comparison_table],
         # Force tool usage - the LLM MUST call a tool, cannot respond with plain text
-        default_options={"tool_choice": "required"},
+        default_options={"tool_choice": "required"},  # type: ignore
     )
 
     return AgentFrameworkAgent(

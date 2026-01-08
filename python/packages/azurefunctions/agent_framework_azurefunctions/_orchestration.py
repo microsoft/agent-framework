@@ -6,7 +6,7 @@ This module provides support for using agents inside Durable Function orchestrat
 """
 
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from agent_framework import (
@@ -193,7 +193,7 @@ class DurableAIAgent(AgentProtocol):
     # a typed AgentRunResponse result.
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
@@ -282,7 +282,7 @@ class DurableAIAgent(AgentProtocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -327,7 +327,7 @@ class DurableAIAgent(AgentProtocol):
         """
         return "\n".join([msg.text or "" for msg in messages])
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def _normalize_messages(self, messages: str | ChatMessage | Sequence[str | ChatMessage] | None) -> str:
         """Convert supported message inputs to a single string."""
         if messages is None:
             return ""

@@ -42,11 +42,10 @@ __all__ = [
     "AnnotatedRegions",
     "Annotations",
     "BaseAnnotation",
-    "BaseChatOptionsDict",  # Backward compatibility alias
     "BaseContent",
     "ChatMessage",
+    "ChatOptions",  # Backward compatibility alias
     "ChatOptions",
-    "ChatOptionsDictValidator",
     "ChatResponse",
     "ChatResponseUpdate",
     "CitationAnnotation",
@@ -2471,7 +2470,7 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+    messages: str | ChatMessage | Sequence[str | ChatMessage], system_instructions: str | Sequence[str] | None = None
 ) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
@@ -3400,11 +3399,6 @@ class ToolMode(SerializationMixin, metaclass=EnumLike):
 # region TypedDict-based Chat Options
 
 
-# Note: ToolsType uses string annotation to avoid circular import issues
-# The actual type is: ToolProtocol | Callable | MutableMapping | Sequence[...]
-ToolsType = "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"
-
-
 class ChatOptions(TypedDict, total=False):
     """Common request settings for AI services as a TypedDict.
 
@@ -3453,12 +3447,12 @@ class ChatOptions(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: ToolsType
+    tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
     tool_choice: "ToolMode | Literal['auto', 'required', 'none'] | dict[str, Any]"
     allow_multiple_tool_calls: bool
 
     # Response configuration
-    response_format: type[BaseModel]
+    response_format: type[BaseModel] | dict[str, Any]
 
     # Metadata
     metadata: dict[str, Any]
@@ -3468,60 +3462,6 @@ class ChatOptions(TypedDict, total=False):
 
     # System/instructions
     instructions: str
-
-
-# Backward compatibility alias
-BaseChatOptionsDict = ChatOptions
-
-
-class ChatOptionsDictValidator:
-    """Validates that provided options are supported by a specific provider.
-
-    This class provides runtime validation to ensure users don't pass
-    unsupported options to a provider, giving clear error messages.
-
-    Examples:
-        .. code-block:: python
-
-            validator = ChatOptionsDictValidator(
-                provider_name="Anthropic",
-                unsupported_base_options={"logit_bias", "logprobs"},
-            )
-
-            # This will raise ValueError
-            validator.validate(logit_bias={50256: -100})
-    """
-
-    def __init__(
-        self,
-        *,
-        provider_name: str,
-        unsupported_base_options: frozenset[str],
-    ) -> None:
-        """Initialize the validator.
-
-        Keyword Args:
-            provider_name: Name of the provider for error messages.
-            unsupported_base_options: Set of ChatOptions keys not supported.
-        """
-        self.provider_name = provider_name
-        self.unsupported_base_options = unsupported_base_options
-
-    def validate(self, **options: Any) -> None:
-        """Validate that no unsupported options are provided.
-
-        Keyword Args:
-            options: The options to validate.
-
-        Raises:
-            ValueError: If an unsupported option is provided with a non-None value.
-        """
-        unsupported_used = [key for key in options if key in self.unsupported_base_options and options[key] is not None]
-        if unsupported_used:
-            raise ValueError(
-                f"{self.provider_name} does not support the following options: {', '.join(unsupported_used)}. "
-                f"Remove these options or use a different provider."
-            )
 
 
 # endregion TypedDict-based Chat Options

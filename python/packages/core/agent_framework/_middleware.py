@@ -2,7 +2,7 @@
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from enum import Enum
 from functools import update_wrapper
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypedDict, TypeVar
@@ -38,7 +38,7 @@ __all__ = [
 ]
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
+TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 TContext = TypeVar("TContext")
 
 
@@ -206,7 +206,7 @@ class ChatContext(SerializationMixin):
     Attributes:
         chat_client: The chat client being invoked.
         messages: The messages being sent to the chat client.
-        chat_options: The options for the chat request as a dict.
+        options: The options for the chat request as a dict.
         is_streaming: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between chat middleware.
         result: Chat execution result. Can be observed after calling ``next()``
@@ -227,7 +227,7 @@ class ChatContext(SerializationMixin):
                 async def process(self, context: ChatContext, next):
                     print(f"Chat client: {context.chat_client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
-                    print(f"Model: {context.chat_options.get('model_id')}")
+                    print(f"Model: {context.options.get('model_id')}")
 
                     # Store metadata
                     context.metadata["input_tokens"] = self.count_tokens(context.messages)
@@ -246,7 +246,7 @@ class ChatContext(SerializationMixin):
         self,
         chat_client: "ChatClientProtocol",
         messages: "MutableSequence[ChatMessage]",
-        chat_options: dict[str, Any],
+        options: Mapping[str, Any] | None,
         is_streaming: bool = False,
         metadata: dict[str, Any] | None = None,
         result: "ChatResponse | AsyncIterable[ChatResponseUpdate] | None" = None,
@@ -258,7 +258,7 @@ class ChatContext(SerializationMixin):
         Args:
             chat_client: The chat client being invoked.
             messages: The messages being sent to the chat client.
-            chat_options: The options for the chat request as a dict.
+            options: The options for the chat request as a dict.
             is_streaming: Whether this is a streaming invocation.
             metadata: Metadata dictionary for sharing data between chat middleware.
             result: Chat execution result.
@@ -267,7 +267,7 @@ class ChatContext(SerializationMixin):
         """
         self.chat_client = chat_client
         self.messages = messages
-        self.chat_options = chat_options
+        self.options = options
         self.is_streaming = is_streaming
         self.metadata = metadata if metadata is not None else {}
         self.result = result
@@ -974,7 +974,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         self,
         chat_client: "ChatClientProtocol",
         messages: "MutableSequence[ChatMessage]",
-        chat_options: dict[str, Any],
+        options: Mapping[str, Any] | None,
         context: ChatContext,
         final_handler: Callable[[ChatContext], Awaitable["ChatResponse"]],
         **kwargs: Any,
@@ -984,7 +984,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         Args:
             chat_client: The chat client being invoked.
             messages: The messages being sent to the chat client.
-            chat_options: The options for the chat request as a dict.
+            options: The options for the chat request as a dict.
             context: The chat invocation context.
             final_handler: The final handler that performs the actual chat execution.
             **kwargs: Additional keyword arguments.
@@ -995,7 +995,8 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         # Update context with chat client, messages, and options
         context.chat_client = chat_client
         context.messages = messages
-        context.chat_options = chat_options
+        if options:
+            context.options = options
 
         if not self._middleware:
             return await final_handler(context)
@@ -1023,7 +1024,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         self,
         chat_client: "ChatClientProtocol",
         messages: "MutableSequence[ChatMessage]",
-        chat_options: dict[str, Any],
+        options: Mapping[str, Any] | None,
         context: ChatContext,
         final_handler: Callable[[ChatContext], AsyncIterable["ChatResponseUpdate"]],
         **kwargs: Any,
@@ -1033,7 +1034,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         Args:
             chat_client: The chat client being invoked.
             messages: The messages being sent to the chat client.
-            chat_options: The options for the chat request as a dict.
+            options: The options for the chat request as a dict.
             context: The chat invocation context.
             final_handler: The final handler that performs the actual streaming chat execution.
             **kwargs: Additional keyword arguments.
@@ -1044,7 +1045,8 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         # Update context with chat client, messages, and options
         context.chat_client = chat_client
         context.messages = messages
-        context.chat_options = chat_options
+        if options:
+            context.options = options
         context.is_streaming = True
 
         if not self._middleware:
@@ -1346,6 +1348,8 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     async def middleware_enabled_get_response(
         self: Any,
         messages: Any,
+        *,
+        options: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Middleware-enabled get_response method."""
@@ -1366,55 +1370,35 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
 
         # If no chat middleware, use original method
         if not chat_middleware_list:
-            return await original_get_response(self, messages, **kwargs)
+            return await original_get_response(
+                self,
+                messages,
+                options=options,  # type: ignore[arg-type]
+                **kwargs,
+            )
 
         # Create pipeline and execute with middleware
-        # Extract options or create empty dict
-        chat_options: dict[str, Any] = kwargs.pop("options", {}) or {}
-        # Handle legacy chat_options parameter from agents
-        legacy_chat_options = kwargs.pop("chat_options", None)
-        if legacy_chat_options is not None:
-            # Merge fields from ChatOptions object into chat_options dict
-            for field in (
-                "model_id",
-                "temperature",
-                "top_p",
-                "max_tokens",
-                "stop",
-                "seed",
-                "logit_bias",
-                "frequency_penalty",
-                "presence_penalty",
-                "tools",
-                "tool_choice",
-                "response_format",
-                "metadata",
-                "user",
-                "store",
-                "conversation_id",
-                "instructions",
-                "allow_multiple_tool_calls",
-            ):
-                value = getattr(legacy_chat_options, field, None)
-                if value is not None and field not in chat_options:
-                    chat_options[field] = value
-
         pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
         context = ChatContext(
             chat_client=self,
             messages=prepare_messages(messages),
-            chat_options=chat_options,
+            options=options,
             is_streaming=False,
             kwargs=kwargs,
         )
 
         async def final_handler(ctx: ChatContext) -> Any:
-            return await original_get_response(self, list(ctx.messages), options=ctx.chat_options, **ctx.kwargs)
+            return await original_get_response(
+                self,
+                list(ctx.messages),
+                options=ctx.options,  # type: ignore[arg-type]
+                **ctx.kwargs,
+            )
 
         return await pipeline.execute(
             chat_client=self,
             messages=context.messages,
-            chat_options=context.chat_options,
+            options=options,
             context=context,
             final_handler=final_handler,
             **kwargs,
@@ -1423,6 +1407,8 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     def middleware_enabled_get_streaming_response(
         self: Any,
         messages: Any,
+        *,
+        options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Middleware-enabled get_streaming_response method."""
@@ -1443,57 +1429,37 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
 
             # If no chat middleware, use original method
             if not chat_middleware_list:
-                async for update in original_get_streaming_response(self, messages, **kwargs):
+                async for update in original_get_streaming_response(
+                    self,
+                    messages,
+                    options=options,  # type: ignore[arg-type]
+                    **kwargs,
+                ):
                     yield update
                 return
 
             # Create pipeline and execute with middleware
-            # Extract options or create empty dict
-            chat_options: dict[str, Any] = kwargs.pop("options", {}) or {}
-            # Handle legacy chat_options parameter from agents
-            legacy_chat_options = kwargs.pop("chat_options", None)
-            if legacy_chat_options is not None:
-                # Merge fields from ChatOptions object into chat_options dict
-                for field in (
-                    "model_id",
-                    "temperature",
-                    "top_p",
-                    "max_tokens",
-                    "stop",
-                    "seed",
-                    "logit_bias",
-                    "frequency_penalty",
-                    "presence_penalty",
-                    "tools",
-                    "tool_choice",
-                    "response_format",
-                    "metadata",
-                    "user",
-                    "store",
-                    "conversation_id",
-                    "instructions",
-                    "allow_multiple_tool_calls",
-                ):
-                    value = getattr(legacy_chat_options, field, None)
-                    if value is not None and field not in chat_options:
-                        chat_options[field] = value
-
             pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
             context = ChatContext(
                 chat_client=self,
                 messages=prepare_messages(messages),
-                chat_options=chat_options,
+                options=options or {},
                 is_streaming=True,
                 kwargs=kwargs,
             )
 
             def final_handler(ctx: ChatContext) -> Any:
-                return original_get_streaming_response(self, list(ctx.messages), options=ctx.chat_options, **ctx.kwargs)
+                return original_get_streaming_response(
+                    self,
+                    list(ctx.messages),
+                    options=ctx.options,  # type: ignore[arg-type]
+                    **ctx.kwargs,
+                )
 
             async for update in pipeline.execute_stream(
                 chat_client=self,
                 messages=context.messages,
-                chat_options=context.chat_options,
+                options=options or {},
                 context=context,
                 final_handler=final_handler,
                 **kwargs,

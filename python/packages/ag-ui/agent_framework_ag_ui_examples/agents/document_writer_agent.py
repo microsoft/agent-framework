@@ -2,6 +2,8 @@
 
 """Example agent demonstrating predictive state updates with document writing."""
 
+from typing import Any
+
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework.ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
 
@@ -38,7 +40,7 @@ _DOCUMENT_WRITER_INSTRUCTIONS = (
 )
 
 
-def document_writer_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def document_writer_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
     """Create a document writer agent with predictive state updates.
 
     Args:

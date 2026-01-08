@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -10,7 +10,6 @@ from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
 from agent_framework import use_chat_middleware, use_function_invocation
-from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
@@ -20,18 +19,38 @@ from ._shared import (
     AzureOpenAISettings,
 )
 
+if TYPE_CHECKING:
+    from agent_framework.openai._responses_client import OpenAIResponsesOptions
+
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore[import] # pragma: no cover
 
-TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="AzureOpenAIResponsesClient")
+
+__all__ = ["AzureOpenAIResponsesClient"]
+
+
+TAzureOpenAIResponsesOptions = TypeVar(
+    "TAzureOpenAIResponsesOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
+    contravariant=True,
+)
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient[TOptions], Generic[TOptions]):
+class AzureOpenAIResponsesClient(
+    AzureOpenAIConfigMixin,
+    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
+    Generic[TAzureOpenAIResponsesOptions],
+):
     """Azure Responses completion class."""
 
     def __init__(
@@ -102,6 +121,18 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
 
                 # Or loading from a .env file
                 client = AzureOpenAIResponsesClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIResponsesOptions
+
+
+                class MyOptions(AzureOpenAIResponsesOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIResponsesClient[MyOptions] = AzureOpenAIResponsesClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)
@@ -127,9 +158,13 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
                 and azure_openai_settings.endpoint.host
                 and azure_openai_settings.endpoint.host.endswith(".openai.azure.com")
             ):
-                azure_openai_settings.base_url = urljoin(str(azure_openai_settings.endpoint), "/openai/v1/")  # type: ignore
+                azure_openai_settings.base_url = urljoin(
+                    str(azure_openai_settings.endpoint), "/openai/v1/"
+                )  # type: ignore
         except ValidationError as exc:
-            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
+            raise ServiceInitializationError(
+                f"Failed to validate settings: {exc}"
+            ) from exc
 
         if not azure_openai_settings.responses_deployment_name:
             raise ServiceInitializationError(
@@ -142,7 +177,9 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
             endpoint=azure_openai_settings.endpoint,
             base_url=azure_openai_settings.base_url,
             api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
+            api_key=azure_openai_settings.api_key.get_secret_value()
+            if azure_openai_settings.api_key
+            else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings.token_endpoint,

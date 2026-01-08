@@ -59,7 +59,7 @@ __all__ = [
 
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
+TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 
 
 logger = get_logger()
@@ -1063,6 +1063,8 @@ def _trace_get_response(
         async def trace_get_response(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> "ChatResponse":
             global OBSERVABILITY_SETTINGS
@@ -1071,13 +1073,14 @@ def _trace_get_response(
                 return await func(
                     self,
                     messages=messages,
+                    options=options,
                     **kwargs,
                 )
             if "token_usage_histogram" not in self.additional_properties:
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
-            options: dict[str, Any] = kwargs.get("options") or {}
+            options = options or {}
             model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
             service_url = str(
                 service_url_func()
@@ -1097,7 +1100,7 @@ def _trace_get_response(
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
                 try:
-                    response = await func(self, messages=messages, **kwargs)
+                    response = await func(self, messages=messages, options=options, **kwargs)
                     end_time_stamp = perf_counter()
                 except Exception as exception:
                     end_time_stamp = perf_counter()
@@ -1148,12 +1151,16 @@ def _trace_get_streaming_response(
 
         @wraps(func)
         async def trace_get_streaming_response(
-            self: "ChatClientProtocol", messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
+            self: "ChatClientProtocol",
+            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
+            **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
             global OBSERVABILITY_SETTINGS
             if not OBSERVABILITY_SETTINGS.ENABLED:
                 # If model diagnostics are not enabled, just return the completion
-                async for update in func(self, messages=messages, **kwargs):
+                async for update in func(self, messages=messages, options=options, **kwargs):
                     yield update
                 return
             if "token_usage_histogram" not in self.additional_properties:
@@ -1161,7 +1168,7 @@ def _trace_get_streaming_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
-            options: dict[str, Any] = kwargs.get("options") or {}
+            options = options or {}
             model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
             service_url = str(
                 service_url_func()
@@ -1186,7 +1193,7 @@ def _trace_get_streaming_response(
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
                 try:
-                    async for update in func(self, messages=messages, **kwargs):
+                    async for update in func(self, messages=messages, options=options, **kwargs):
                         all_updates.append(update)
                         yield update
                     end_time_stamp = perf_counter()
@@ -1333,7 +1340,7 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+        agent_options = getattr(self, "default_options", None)
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1341,8 +1348,8 @@ def _trace_agent_run(
             agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            chat_options=getattr(self, "chat_options", None),
-            **filtered_kwargs,
+            options=agent_options,
+            **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1350,7 +1357,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_chat_options(getattr(self, "chat_options", None)),
+                    system_instructions=_get_instructions_from_chat_options(agent_options),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1405,7 +1412,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+        agent_options = getattr(self, "default_options", None)
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1413,8 +1420,8 @@ def _trace_agent_run_stream(
             agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            chat_options=getattr(self, "chat_options", None),
-            **filtered_kwargs,
+            options=agent_options,
+            **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1422,7 +1429,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_chat_options(getattr(self, "chat_options", None)),
+                    system_instructions=_get_instructions_from_chat_options(agent_options),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1603,9 +1610,9 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     from ._tools import _tools_to_dict
 
     attributes: dict[str, Any] = {}
-    # Support 'options' dict from chat clients and agents
+    # Support 'options' and 'chat_options' dict from chat clients and agents
     options: dict[str, Any] = {}
-    if (opts := kwargs.get("options")) and isinstance(opts, dict):
+    if (opts := kwargs.get("options") or kwargs.get("chat_options")) and isinstance(opts, dict):
         options = opts
     if operation_name := kwargs.get("operation_name"):
         attributes[OtelAttr.OPERATION] = operation_name

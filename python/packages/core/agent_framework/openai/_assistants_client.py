@@ -10,7 +10,7 @@ from collections.abc import (
     MutableMapping,
     MutableSequence,
 )
-from typing import Any, Generic, cast
+from typing import Any, Generic, Literal, TypeVar, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -27,7 +27,7 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import ValidationError
 
-from .._clients import BaseChatClient, TOptions
+from .._clients import BaseChatClient
 from .._middleware import use_chat_middleware
 from .._tools import (
     AIFunction,
@@ -37,6 +37,7 @@ from .._tools import (
 )
 from .._types import (
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CodeInterpreterToolCallContent,
@@ -61,20 +62,155 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import (  # type: ignore[import] # pragma: no cover
+        TypedDict,
+        override,
+    )
 
 
-__all__ = ["OpenAIAssistantsClient"]
+__all__ = [
+    "AssistantToolResources",
+    "OpenAIAssistantsClient",
+    "OpenAIAssistantsOptions",
+]
+
+
+# region OpenAI Assistants Options TypedDict
+
+
+class VectorStoreToolResource(TypedDict, total=False):
+    """Vector store configuration for file search tool resources."""
+
+    vector_store_ids: list[str]
+    """IDs of vector stores attached to this assistant."""
+
+
+class CodeInterpreterToolResource(TypedDict, total=False):
+    """Code interpreter tool resource configuration."""
+
+    file_ids: list[str]
+    """File IDs accessible by the code interpreter tool. Max 20 files per assistant."""
+
+
+class AssistantToolResources(TypedDict, total=False):
+    """Tool resources attached to the assistant.
+
+    See: https://platform.openai.com/docs/api-reference/assistants/createAssistant#assistants-createassistant-tool_resources
+    """
+
+    code_interpreter: CodeInterpreterToolResource
+    """Resources for code interpreter tool, including file IDs."""
+
+    file_search: VectorStoreToolResource
+    """Resources for file search tool, including vector store IDs."""
+
+
+class OpenAIAssistantsOptions(ChatOptions, total=False):
+    """OpenAI Assistants API-specific options dict.
+
+    Extends base ChatOptions with Assistants API-specific parameters
+    for creating and running assistants.
+
+    See: https://platform.openai.com/docs/api-reference/assistants
+
+    Keys:
+        # Inherited from ChatOptions:
+        model_id: The model to use for the assistant,
+            translates to ``model`` in OpenAI API.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``max_completion_tokens`` in OpenAI API.
+        tools: List of tools (functions, code_interpreter, file_search).
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls,
+            translates to ``parallel_tool_calls`` in OpenAI API.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+
+        # Options not supported in Assistants API (inherited but unused):
+        stop: Not supported.
+        seed: Not supported (use assistant-level configuration instead).
+        frequency_penalty: Not supported.
+        presence_penalty: Not supported.
+        user: Not supported.
+        store: Not supported.
+
+        # Assistants-specific options:
+        name: Name of the assistant.
+        description: Description of the assistant.
+        instructions: System instructions for the assistant.
+        tool_resources: Resources for tools (file IDs, vector stores).
+        reasoning_effort: Effort level for o-series reasoning models.
+        conversation_id: Thread ID to continue conversation in.
+    """
+
+    # Assistants-specific options
+    name: str
+    """Name of the assistant (max 256 characters)."""
+
+    description: str
+    """Description of the assistant (max 512 characters)."""
+
+    tool_resources: AssistantToolResources
+    """Tool-specific resources like file IDs and vector stores."""
+
+    reasoning_effort: Literal["low", "medium", "high"]
+    """Effort level for o-series reasoning models (o1, o3-mini).
+    Higher effort = more reasoning time and potentially better results."""
+
+    conversation_id: str  # type: ignore[misc]
+    """Thread ID to continue a conversation in an existing thread."""
+
+    # OpenAI/ChatOptions fields not supported in Assistants API
+    stop: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    seed: None  # type: ignore[misc]
+    """Not supported in Assistants API (use assistant-level configuration)."""
+
+    frequency_penalty: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    presence_penalty: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+
+ASSISTANTS_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "max_tokens": "max_completion_tokens",
+    "allow_multiple_tool_calls": "parallel_tool_calls",
+}
+"""Maps ChatOptions keys to OpenAI Assistants API parameter names."""
+
+TOpenAIAssistantsOptions = TypeVar(
+    "TOpenAIAssistantsOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIAssistantsOptions",
+    contravariant=True,
+)
+
+
+# endregion
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
 class OpenAIAssistantsClient(
-    OpenAIConfigMixin, BaseChatClient[TOptions], Generic[TOptions]
+    OpenAIConfigMixin,
+    BaseChatClient[TOpenAIAssistantsOptions],
+    Generic[TOpenAIAssistantsOptions],
 ):
     """OpenAI Assistants client."""
 
@@ -136,6 +272,18 @@ class OpenAIAssistantsClient(
 
                 # Or loading from a .env file
                 client = OpenAIAssistantsClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.openai import OpenAIAssistantsOptions
+
+
+                class MyOptions(OpenAIAssistantsOptions, total=False):
+                    my_custom_option: str
+
+
+                client: OpenAIAssistantsClient[MyOptions] = OpenAIAssistantsClient(model_id="gpt-4")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             openai_settings = OpenAISettings(
@@ -554,13 +702,16 @@ class OpenAIAssistantsClient(
                 }
 
         if response_format is not None:
-            run_options["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_format.__name__,
-                    "schema": response_format.model_json_schema(),
-                },
-            }
+            if isinstance(response_format, dict):
+                run_options["response_format"] = response_format
+            else:
+                run_options["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": response_format.model_json_schema(),
+                    },
+                }
 
         instructions: list[str] = []
         tool_results: list[FunctionResultContent] | None = None

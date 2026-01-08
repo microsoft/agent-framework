@@ -5,7 +5,7 @@ import json
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic
+from typing import Any, ClassVar, Generic, Literal, TypeVar
 from uuid import uuid4
 
 from agent_framework import (
@@ -13,6 +13,7 @@ from agent_framework import (
     AIFunction,
     BaseChatClient,
     ChatMessage,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Contents,
@@ -29,7 +30,6 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from agent_framework.observability import use_instrumentation
@@ -39,14 +39,144 @@ from botocore.config import Config as BotoConfig
 from pydantic import SecretStr, ValidationError
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import TypedDict, override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
 
 logger = get_logger("agent_framework.bedrock")
 
+
+__all__ = [
+    "BedrockChatClient",
+    "BedrockChatOptions",
+    "BedrockGuardrailConfig",
+    "BedrockSettings",
+]
+
+
+# region Bedrock Chat Options TypedDict
+
+
 DEFAULT_REGION = "us-east-1"
 DEFAULT_MAX_TOKENS = 1024
+
+
+class BedrockGuardrailConfig(TypedDict, total=False):
+    """Amazon Bedrock Guardrails configuration.
+
+    See: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
+    """
+
+    guardrailIdentifier: str
+    """The identifier of the guardrail to apply."""
+
+    guardrailVersion: str
+    """The version of the guardrail to use."""
+
+    trace: Literal["enabled", "disabled"]
+    """Whether to include guardrail trace information in the response."""
+
+    streamProcessingMode: Literal["sync", "async"]
+    """How to process guardrails during streaming (sync blocks, async does not)."""
+
+
+class BedrockChatOptions(ChatOptions, total=False):
+    """Amazon Bedrock Converse API-specific chat options dict.
+
+    Extends base ChatOptions with Bedrock-specific parameters.
+    Bedrock uses a unified Converse API that works across multiple
+    foundation models (Claude, Titan, Llama, etc.).
+
+    See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
+
+    Keys:
+        # Inherited from ChatOptions (mapped to Bedrock):
+        model_id: The Bedrock model identifier (e.g., 'anthropic.claude-3-sonnet-20240229-v1:0'),
+            translates to ``modelId`` in Bedrock API.
+        temperature: Sampling temperature,
+            translates to ``inferenceConfig.temperature``.
+        top_p: Nucleus sampling parameter,
+            translates to ``inferenceConfig.topP``.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``inferenceConfig.maxTokens``.
+        stop: Stop sequences,
+            translates to ``inferenceConfig.stopSequences``.
+        tools: List of tools available to the model,
+            translates to ``toolConfig.tools``.
+        tool_choice: How the model should use tools,
+            translates to ``toolConfig.toolChoice``.
+
+        # Options not supported in Bedrock Converse API:
+        seed: Not supported.
+        frequency_penalty: Not supported.
+        presence_penalty: Not supported.
+        allow_multiple_tool_calls: Not supported (models handle parallel calls automatically).
+        response_format: Not directly supported (use model-specific prompting).
+        user: Not supported.
+        store: Not supported.
+        logit_bias: Not supported.
+        metadata: Not supported (use additional_properties for additionalModelRequestFields).
+
+        # Bedrock-specific options:
+        guardrailConfig: Guardrails configuration for content filtering.
+        performanceConfig: Performance optimization settings.
+        requestMetadata: Key-value metadata for the request.
+        promptVariables: Variables for prompt management (if using managed prompts).
+    """
+
+    # Bedrock-specific options
+    guardrailConfig: BedrockGuardrailConfig
+    """Guardrails configuration for content filtering and safety."""
+
+    performanceConfig: dict[str, Any]
+    """Performance optimization settings (e.g., latency optimization).
+    See: https://docs.aws.amazon.com/bedrock/latest/userguide/inference-performance.html"""
+
+    requestMetadata: dict[str, str]
+    """Key-value metadata for the request (max 2048 characters total)."""
+
+    promptVariables: dict[str, dict[str, str]]
+    """Variables for prompt management when using managed prompts."""
+
+    # ChatOptions fields not supported in Bedrock
+    seed: None  # type: ignore[misc]
+    """Not supported in Bedrock Converse API."""
+
+    frequency_penalty: None  # type: ignore[misc]
+    """Not supported in Bedrock Converse API."""
+
+    presence_penalty: None  # type: ignore[misc]
+    """Not supported in Bedrock Converse API."""
+
+    allow_multiple_tool_calls: None  # type: ignore[misc]
+    """Not supported. Bedrock models handle parallel tool calls automatically."""
+
+    response_format: None  # type: ignore[misc]
+    """Not directly supported. Use model-specific prompting for JSON output."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Bedrock Converse API."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Bedrock Converse API."""
+
+    logit_bias: None  # type: ignore[misc]
+    """Not supported in Bedrock Converse API."""
+
+
+BEDROCK_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "modelId",
+    "max_tokens": "maxTokens",
+    "top_p": "topP",
+    "stop": "stopSequences",
+}
+"""Maps ChatOptions keys to Bedrock Converse API parameter names."""
+
+TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="BedrockChatOptions", contravariant=True)  # type: ignore[valid-type]
+
+
+# endregion
+
 
 ROLE_MAP: dict[Role, str] = {
     Role.USER: "user",
@@ -80,7 +210,7 @@ class BedrockSettings(AFBaseSettings):
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class BedrockChatClient(BaseChatClient[TOptions], Generic[TOptions]):
+class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockChatOptions]):
     """Async chat client for Amazon Bedrock's Converse API."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -112,6 +242,28 @@ class BedrockChatClient(BaseChatClient[TOptions], Generic[TOptions]):
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
             kwargs: Additional arguments forwarded to ``BaseChatClient``.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.bedrock import BedrockChatClient
+
+                # Basic usage with default credentials
+                client = BedrockChatClient(model_id="anthropic.claude-3-sonnet-20240229-v1:0")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework_bedrock import BedrockChatOptions
+
+
+                class MyOptions(BedrockChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: BedrockChatClient[MyOptions] = BedrockChatClient(
+                    model_id="anthropic.claude-3-sonnet-20240229-v1:0"
+                )
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             settings = BedrockSettings(

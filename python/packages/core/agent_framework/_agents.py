@@ -7,7 +7,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from itertools import chain
-from typing import Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
 
 from mcp import types
@@ -15,7 +15,7 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
-from ._clients import BaseChatClient, ChatClientProtocol, TOptions
+from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import Context, ContextProvider
@@ -34,22 +34,30 @@ from ._types import (
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
 
-if sys.version_info >= (3, 11):
-    pass
+if TYPE_CHECKING:
+    from ._types import ChatOptions
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import (
+        Self,  # pragma: no cover
+        TypedDict,  # pragma: no cover
+    )
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import (
+        Self,  # pragma: no cover
+        TypedDict,  # pragma: no cover
+    )
 
 
 logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
+TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", contravariant=True)  # type: ignore[valid-type]
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -184,7 +192,7 @@ class AgentProtocol(Protocol):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -215,7 +223,7 @@ class AgentProtocol(Protocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -478,7 +486,7 @@ class BaseAgent(SerializationMixin):
 
     def _normalize_messages(
         self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
     ) -> list[ChatMessage]:
         if messages is None:
             return []
@@ -666,27 +674,26 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         self.chat_message_store_factory = chat_message_store_factory
 
         # Get tools from options or named parameter (named param takes precedence)
-        _tools = tools if tools is not None else opts.pop("tools", None)
+        tools_ = tools if tools is not None else opts.pop("tools", None)
 
         # Handle instructions - named parameter takes precedence over options
-        _instructions = instructions if instructions is not None else opts.pop("instructions", None)
+        instructions_ = instructions if instructions is not None else opts.pop("instructions", None)
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if _tools is None else _tools if isinstance(_tools, list) else [_tools]  # type: ignore[list-item]
+            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
         )
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         # Build chat options dict
         self.default_options: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None)
-            or (str(chat_client.model_id) if hasattr(chat_client, "model_id") else None),
+            "model_id": opts.pop("model_id", None) or (getattr(chat_client, "model_id", None)),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "conversation_id": conversation_id,
             "frequency_penalty": opts.pop("frequency_penalty", None),
-            "instructions": _instructions,
+            "instructions": instructions_,
             "logit_bias": opts.pop("logit_bias", None),
             "max_tokens": opts.pop("max_tokens", None),
             "metadata": opts.pop("metadata", None),
@@ -755,7 +762,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -794,14 +801,14 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         opts = dict(options) if options else {}
 
         # Get tools from options or named parameter (named param takes precedence)
-        _tools = tools if tools is not None else opts.pop("tools", None)
+        tools_ = tools if tools is not None else opts.pop("tools", None)
 
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if _tools is None else _tools if isinstance(_tools, list) else [_tools]
+            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         agent_name = self._get_agent_name()
 
@@ -852,7 +859,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response = await self.chat_client.get_response(
             messages=thread_messages,
-            options=co,
+            options=co,  # type: ignore[arg-type]
             **filtered_kwargs,
         )
 
@@ -883,7 +890,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -922,7 +929,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         opts = dict(options) if options else {}
 
         # Get tools from options or named parameter (named param takes precedence)
-        _tools = tools if tools is not None else opts.pop("tools", None)
+        tools_ = tools if tools is not None else opts.pop("tools", None)
 
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
@@ -932,7 +939,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         # Resolve final tool list (runtime provided tools + local MCP server tools)
         final_tools: list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]] = []
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
-            [] if _tools is None else _tools if isinstance(_tools, list) else [_tools]
+            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         # Normalize tools argument to a list without mutating the original parameter
         for tool in normalized_tools:
@@ -980,7 +987,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         response_updates: list[ChatResponseUpdate] = []
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,
-            options=co,
+            options=co,  # type: ignore[arg-type]
             **filtered_kwargs,
         ):
             response_updates.append(update)
