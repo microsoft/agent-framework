@@ -9,9 +9,9 @@ from agent_framework import AIFunction, ChatAgent, ChatClientProtocol, ChatOptio
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
 generate_haiku = AIFunction[Any, str](

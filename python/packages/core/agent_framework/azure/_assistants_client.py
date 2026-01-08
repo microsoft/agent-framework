@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
@@ -13,6 +14,11 @@ from ._shared import AzureOpenAISettings
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 from typing import TypedDict
 

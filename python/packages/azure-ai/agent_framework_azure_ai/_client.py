@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Mapping, MutableSequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -34,13 +34,14 @@ from ._shared import AzureAISettings
 if TYPE_CHECKING:
     from agent_framework.openai import OpenAIResponsesOptions
 
-from typing import TypedDict
-
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:

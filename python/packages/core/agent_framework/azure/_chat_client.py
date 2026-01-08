@@ -4,7 +4,7 @@ import json
 import logging
 import sys
 from collections.abc import Mapping
-from typing import Any, Generic, TypedDict, TypeVar
+from typing import Any, Generic, TypedDict
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
@@ -29,6 +29,10 @@ from ._shared import (
     AzureOpenAISettings,
 )
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
