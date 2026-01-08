@@ -342,7 +342,6 @@ def test_agent_decorator_with_valid_class():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
             self.description = "Test agent description"
 
         async def run(self, messages=None, *, thread=None, **kwargs):
@@ -384,7 +383,6 @@ def test_agent_decorator_with_partial_methods():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return Mock()
@@ -406,7 +404,6 @@ def mock_chat_agent():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
             self.description = "Test agent description"
             self.chat_options = ChatOptions(model_id="TestModel")
 
@@ -441,10 +438,10 @@ async def test_agent_instrumentation_enabled(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "invoke_agent Test Agent"
+    assert span.name == "invoke_agent test_agent"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
@@ -469,10 +466,10 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "invoke_agent Test Agent"
+    assert span.name == "invoke_agent test_agent"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     if enable_sensitive_data:

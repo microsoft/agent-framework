@@ -60,7 +60,7 @@ class _KwargsCapturingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentRunResponse:
         self.captured_kwargs.append(dict(kwargs))
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.display_name} response")])
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} response")])
 
     async def run_stream(
         self,
@@ -70,7 +70,7 @@ class _KwargsCapturingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         self.captured_kwargs.append(dict(kwargs))
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.display_name} response")])
+        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.name} response")])
 
 
 class _EchoAgent(BaseAgent):
@@ -83,7 +83,7 @@ class _EchoAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.display_name} reply")])
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} reply")])
 
     async def run_stream(
         self,
@@ -92,7 +92,7 @@ class _EchoAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.display_name} reply")])
+        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.name} reply")])
 
 
 # region Sequential Builder Tests

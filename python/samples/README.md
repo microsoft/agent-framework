@@ -178,6 +178,7 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | File | Description |
 |------|-------------|
 | [`getting_started/context_providers/simple_context_provider.py`](./getting_started/context_providers/simple_context_provider.py) | Simple context provider implementation example |
+| [`getting_started/context_providers/aggregate_context_provider.py`](./getting_started/context_providers/aggregate_context_provider.py) | Shows how to combine multiple context providers using an AggregateContextProvider |
 
 ## DevUI
 

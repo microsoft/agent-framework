@@ -39,7 +39,7 @@ class TestChatMiddleware:
                 execution_order.append("chat_middleware_after")
 
         # Add middleware to chat client
-        chat_client_base.middleware = [LoggingChatMiddleware()]
+        chat_client_base.middlewares = [LoggingChatMiddleware()]
 
         # Execute chat client directly
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -64,7 +64,7 @@ class TestChatMiddleware:
             execution_order.append("function_middleware_after")
 
         # Add middleware to chat client
-        chat_client_base.middleware = [logging_chat_middleware]
+        chat_client_base.middlewares = [logging_chat_middleware]
 
         # Execute chat client directly
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -92,7 +92,7 @@ class TestChatMiddleware:
             await next(context)
 
         # Add middleware to chat client
-        chat_client_base.middleware = [message_modifier_middleware]
+        chat_client_base.middlewares = [message_modifier_middleware]
 
         # Execute chat client
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -119,7 +119,7 @@ class TestChatMiddleware:
             context.terminate = True
 
         # Add middleware to chat client
-        chat_client_base.middleware = [response_override_middleware]
+        chat_client_base.middlewares = [response_override_middleware]
 
         # Execute chat client
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -148,7 +148,7 @@ class TestChatMiddleware:
             execution_order.append("second_after")
 
         # Add middleware to chat client (order should be preserved)
-        chat_client_base.middleware = [first_middleware, second_middleware]
+        chat_client_base.middlewares = [first_middleware, second_middleware]
 
         # Execute chat client
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -176,7 +176,7 @@ class TestChatMiddleware:
         chat_client = MockBaseChatClient()
 
         # Create ChatAgent with chat middleware
-        agent = ChatAgent(chat_client=chat_client, middleware=[agent_level_chat_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[agent_level_chat_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -207,7 +207,7 @@ class TestChatMiddleware:
             execution_order.append("second_after")
 
         # Create ChatAgent with multiple chat middleware
-        agent = ChatAgent(chat_client=chat_client_base, middleware=[first_middleware, second_middleware])
+        agent = ChatAgent(chat_client=chat_client_base, middlewares=[first_middleware, second_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -233,7 +233,7 @@ class TestChatMiddleware:
             execution_order.append("streaming_after")
 
         # Add middleware to chat client
-        chat_client_base.middleware = [streaming_middleware]
+        chat_client_base.middlewares = [streaming_middleware]
 
         # Execute streaming response
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -258,7 +258,7 @@ class TestChatMiddleware:
 
         # First call with run-level middleware
         messages = [ChatMessage(role=Role.USER, text="first message")]
-        response1 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
+        response1 = await chat_client_base.get_response(messages, middlewares=[counting_middleware])
         assert response1 is not None
         assert execution_count["count"] == 1
 
@@ -270,7 +270,7 @@ class TestChatMiddleware:
 
         # Third call with run-level middleware again - should execute
         messages = [ChatMessage(role=Role.USER, text="third message")]
-        response3 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
+        response3 = await chat_client_base.get_response(messages, middlewares=[counting_middleware])
         assert response3 is not None
         assert execution_count["count"] == 2  # Should be 2 now
 
@@ -297,7 +297,7 @@ class TestChatMiddleware:
             await next(context)
 
         # Add middleware to chat client
-        chat_client_base.middleware = [kwargs_middleware]
+        chat_client_base.middlewares = [kwargs_middleware]
 
         # Execute chat client with custom parameters
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -341,7 +341,7 @@ class TestChatMiddleware:
         chat_client = use_chat_middleware(use_function_invocation(MockBaseChatClient))()
 
         # Set function middleware directly on the chat client
-        chat_client.middleware = [test_function_middleware]
+        chat_client.middlewares = [test_function_middleware]
 
         # Prepare responses that will trigger function invocation
         function_call_response = ChatResponse(
@@ -423,7 +423,7 @@ class TestChatMiddleware:
         # Execute the chat client directly with run-level middleware and tools
         messages = [ChatMessage(role=Role.USER, text="What's the weather in New York?")]
         response = await chat_client.get_response(
-            messages, tools=[sample_tool], middleware=[run_level_function_middleware]
+            messages, tools=[sample_tool], middlewares=[run_level_function_middleware]
         )
 
         # Verify response

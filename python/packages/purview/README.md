@@ -69,7 +69,7 @@ async def main():
 	agent = ChatAgent(
 		chat_client=chat_client,
 		instructions="You are a helpful assistant.",
-		middleware=[purview_middleware]
+		middlewares=[purview_middleware]
 	)
 
 	response = await agent.run(ChatMessage(role=Role.USER, text="Summarize zero trust in one sentence."))
@@ -229,7 +229,7 @@ client = AzureOpenAIChatClient()
 agent = ChatAgent(
 	chat_client=client,
 	instructions="You are helpful.",
-	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
+	middlewares=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
 )
 ```
 
@@ -248,7 +248,7 @@ chat_client = AzureOpenAIChatClient(
 	deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
 	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
-	middleware=[
+	middlewares=[
 		PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="My App (Chat)"))
 	],
 )

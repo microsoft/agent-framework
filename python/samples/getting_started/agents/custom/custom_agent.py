@@ -158,7 +158,6 @@ async def main() -> None:
     # Test non-streaming
     print(f"Agent Name: {echo_agent.name}")
     print(f"Agent ID: {echo_agent.id}")
-    print(f"Display Name: {echo_agent.display_name}")
 
     query = "Hello, custom agent!"
     print(f"\nUser: {query}")

@@ -31,7 +31,7 @@ async def example_global_thread_scope() -> None:
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 user_id=user_id,
                 thread_id=global_thread_id,
                 scope_to_per_operation_thread_id=False,  # Share memories across all threads
@@ -69,7 +69,7 @@ async def example_per_operation_thread_scope() -> None:
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 user_id=user_id,
                 scope_to_per_operation_thread_id=True,  # Isolate memories per thread
             ),
@@ -116,14 +116,14 @@ async def example_multiple_agents() -> None:
         AzureAIAgentClient(credential=credential).create_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 agent_id=agent_id_1,
             ),
         ) as personal_agent,
         AzureAIAgentClient(credential=credential).create_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 agent_id=agent_id_2,
             ),
         ) as work_agent,

@@ -38,7 +38,7 @@ class _CountingAgent(BaseAgent):
     ) -> AgentRunResponse:
         self.call_count += 1
         return AgentRunResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, text=f"Response #{self.call_count}: {self.display_name}")]
+            messages=[ChatMessage(role=Role.ASSISTANT, text=f"Response #{self.call_count}: {self.name}")]
         )
 
     async def run_stream(  # type: ignore[override]
@@ -49,7 +49,7 @@ class _CountingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         self.call_count += 1
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"Response #{self.call_count}: {self.display_name}")])
+        yield AgentRunResponseUpdate(contents=[TextContent(text=f"Response #{self.call_count}: {self.name}")])
 
 
 async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:

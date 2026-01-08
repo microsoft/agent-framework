@@ -3,7 +3,7 @@
 from collections.abc import MutableMapping, Sequence
 from typing import Any, Protocol, TypeVar
 
-from ._memory import AggregateContextProvider
+from ._memory import ContextProvider
 from ._serialization import SerializationMixin
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
@@ -327,7 +327,7 @@ class AgentThread:
         *,
         service_thread_id: str | None = None,
         message_store: ChatMessageStoreProtocol | None = None,
-        context_provider: AggregateContextProvider | None = None,
+        context_provider: ContextProvider | None = None,
     ) -> None:
         """Initialize an AgentThread, do not use this method manually, always use: ``agent.get_new_thread()``.
 

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, create_model
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
-from ._memory import AggregateContextProvider, Context, ContextProvider
+from ._memory import Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
@@ -116,24 +116,9 @@ class AgentProtocol(Protocol):
             # No need to inherit from AgentProtocol or use any framework classes
             class CustomAgent:
                 def __init__(self):
-                    self._id = "custom-agent-001"
-                    self._name = "Custom Agent"
-
-                @property
-                def id(self) -> str:
-                    return self._id
-
-                @property
-                def name(self) -> str | None:
-                    return self._name
-
-                @property
-                def display_name(self) -> str:
-                    return self.name or self.id
-
-                @property
-                def description(self) -> str | None:
-                    return "A fully custom agent implementation"
+                    self.id = "custom-agent-001"
+                    self.name = "Custom Agent"
+                    self.description = "A fully custom agent implementation"
 
                 async def run(self, messages=None, *, thread=None, **kwargs):
                     # Your custom implementation
@@ -160,25 +145,9 @@ class AgentProtocol(Protocol):
             assert isinstance(instance, AgentProtocol)
     """
 
-    @property
-    def id(self) -> str:
-        """Returns the ID of the agent."""
-        ...
-
-    @property
-    def name(self) -> str | None:
-        """Returns the name of the agent."""
-        ...
-
-    @property
-    def display_name(self) -> str:
-        """Returns the display name of the agent."""
-        ...
-
-    @property
-    def description(self) -> str | None:
-        """Returns the description of the agent."""
-        ...
+    id: str
+    name: str | None
+    description: str | None
 
     async def run(
         self,
@@ -289,7 +258,6 @@ class BaseAgent(SerializationMixin):
 
             # Access agent properties
             print(agent.id)  # Custom or auto-generated UUID
-            print(agent.display_name)  # Returns name or id
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
@@ -300,8 +268,8 @@ class BaseAgent(SerializationMixin):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: ContextProvider | Sequence[ContextProvider] | None = None,
-        middleware: Middleware | Sequence[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+        middlewares: Sequence[Middleware] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -312,8 +280,8 @@ class BaseAgent(SerializationMixin):
                 a new UUID will be generated.
             name: The name of the agent, can be None.
             description: The description of the agent.
-            context_providers: The collection of multiple context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: The context provider to include during agent invocation.
+            middlewares: List of middleware to intercept agent and function invocations.
             additional_properties: Additional properties set on the agent.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
@@ -322,11 +290,10 @@ class BaseAgent(SerializationMixin):
         self.id = id
         self.name = name
         self.description = description
-        self.context_provider = self._prepare_context_providers(context_providers)
-        if middleware is None or isinstance(middleware, Sequence):
-            self.middleware: list[Middleware] | None = cast(list[Middleware], middleware) if middleware else None
-        else:
-            self.middleware = [middleware]
+        self.context_provider = context_provider
+        self.middlewares: list[Middleware] | None = (
+            cast(list[Middleware], middlewares) if middlewares is not None else None
+        )
 
         # Merge kwargs into additional_properties
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
@@ -355,14 +322,6 @@ class BaseAgent(SerializationMixin):
             await thread.on_new_messages(response_messages)
         if thread.context_provider:
             await thread.context_provider.invoked(input_messages, response_messages, **kwargs)
-
-    @property
-    def display_name(self) -> str:
-        """Returns the display name of the agent.
-
-        This is the name if present, otherwise the id.
-        """
-        return self.name or self.id
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         """Return a new AgentThread instance that is compatible with the agent.
@@ -499,18 +458,6 @@ class BaseAgent(SerializationMixin):
 
         return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
-    def _prepare_context_providers(
-        self,
-        context_providers: ContextProvider | Sequence[ContextProvider] | None = None,
-    ) -> AggregateContextProvider | None:
-        if not context_providers:
-            return None
-
-        if isinstance(context_providers, AggregateContextProvider):
-            return context_providers
-
-        return AggregateContextProvider(context_providers)
-
 
 # region ChatAgent
 
@@ -594,8 +541,8 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         name: str | None = None,
         description: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+        middlewares: list[Middleware] | None = None,
         # chat options
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
@@ -639,8 +586,8 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             description: A brief description of the agent's purpose.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            context_providers: The collection of multiple context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: The context provider to include during agent invocation.
+            middlewares: List of middleware to intercept agent and function invocations.
             allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             conversation_id: The conversation ID for service-managed threads.
                 Cannot be used together with chat_message_store_factory.
@@ -683,8 +630,8 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             id=id,
             name=name,
             description=description,
-            context_providers=context_providers,
-            middleware=middleware,
+            context_provider=context_provider,
+            middlewares=middlewares,
             **kwargs,
         )
         self.chat_client = chat_client

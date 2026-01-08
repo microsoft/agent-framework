@@ -8,7 +8,6 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
-    AggregateContextProvider,
     BaseAgent,
     ChatMessage,
     ContextProvider,
@@ -79,8 +78,8 @@ class CopilotStudioAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: AgentMiddlewares | list[AgentMiddlewares] | None = None,
+        context_provider: ContextProvider | None = None,
+        middlewares: list[AgentMiddlewares] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
@@ -107,8 +106,8 @@ class CopilotStudioAgent(BaseAgent):
             id: id of the CopilotAgent
             name: Name of the CopilotAgent
             description: Description of the CopilotAgent
-            context_providers: Context Providers, to be used by the copilot agent.
-            middleware: Agent middlewares used by the agent.
+            context_provider: Context Provider, to be used by the copilot agent.
+            middlewares: Agent middlewares used by the agent.
             environment_id: Environment ID of the Power Platform environment containing
                 the Copilot Studio app. Can also be set via COPILOTSTUDIOAGENT__ENVIRONMENTID
                 environment variable.
@@ -138,8 +137,8 @@ class CopilotStudioAgent(BaseAgent):
             id=id,
             name=name,
             description=description,
-            context_providers=context_providers,
-            middleware=middleware,
+            context_provider=context_provider,
+            middlewares=middlewares,
         )
         if not client:
             try:

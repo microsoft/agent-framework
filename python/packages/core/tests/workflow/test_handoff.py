@@ -78,7 +78,7 @@ class _RecordingAgent(BaseAgent):
         text_handoff: bool = False,
         extra_properties: dict[str, object] | None = None,
     ) -> None:
-        super().__init__(id=name, name=name, display_name=name)
+        super().__init__(id=name, name=name)
         self._agent_name = name
         self.handoff_to = handoff_to
         self.calls: list[list[ChatMessage]] = []
@@ -102,7 +102,7 @@ class _RecordingAgent(BaseAgent):
         reply = ChatMessage(
             role=Role.ASSISTANT,
             contents=contents,
-            author_name=self.display_name,
+            author_name=self.name,
             additional_properties=additional_properties,
         )
         return AgentRunResponse(messages=[reply])

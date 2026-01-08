@@ -199,11 +199,6 @@ class DurableAIAgent(AgentProtocol):
         return self._name
 
     @property
-    def display_name(self) -> str:
-        """Get the display name of the agent."""
-        return self._display_name
-
-    @property
     def description(self) -> str | None:
         """Get the description of the agent."""
         return self._description

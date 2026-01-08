@@ -76,7 +76,7 @@ async def main() -> None:
                 "You are a helpful assistant. Use the provided context from the "
                 "knowledge base to answer questions accurately."
             ),
-            context_providers=[search_provider],
+            context_provider=search_provider,
         ) as agent,
     ):
         print("=== Azure AI Agent with Search Context (Semantic Mode) ===\n")

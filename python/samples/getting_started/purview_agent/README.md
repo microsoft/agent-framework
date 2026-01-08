@@ -103,7 +103,7 @@ agent = ChatAgent(
 	chat_client=chat_client,
 	instructions="You are good at telling jokes.",
 	name="Joker",
-	middleware=[
+	middlewares=[
 		PurviewPolicyMiddleware(credential, PurviewSettings(app_name="Sample App"))
 	],
 )

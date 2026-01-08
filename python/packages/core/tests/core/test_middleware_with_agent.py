@@ -56,7 +56,7 @@ class TestChatAgentClassBasedMiddleware:
 
         # Create ChatAgent with middleware
         middleware = TrackingAgentMiddleware("agent_middleware")
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -91,7 +91,7 @@ class TestChatAgentClassBasedMiddleware:
 
         # Create ChatAgent with function middleware (no tools, so function middleware won't be triggered)
         middleware = TrackingFunctionMiddleware("function_middleware")
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -125,7 +125,7 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Create ChatAgent with terminating middleware
         middleware = PreTerminationMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
 
         # Execute the agent with multiple messages
         messages = [
@@ -155,7 +155,7 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Create ChatAgent with terminating middleware
         middleware = PostTerminationMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
 
         # Execute the agent with multiple messages
         messages = [
@@ -216,7 +216,7 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Create ChatAgent with function middleware and test function
         middleware = PreTerminationFunctionMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware], tools=[test_function])
 
         # Execute the agent
         await agent.run(messages)
@@ -271,7 +271,7 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Create ChatAgent with function middleware and test function
         middleware = PostTerminationFunctionMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware], tools=[test_function])
 
         # Execute the agent
         response = await agent.run(messages)
@@ -298,7 +298,7 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("agent_function_after")
 
         # Create ChatAgent with function middleware
-        agent = ChatAgent(chat_client=chat_client, middleware=[tracking_agent_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[tracking_agent_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -326,7 +326,7 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("function_function_after")
 
         # Create ChatAgent with function middleware (no tools, so function middleware won't be triggered)
-        agent = ChatAgent(chat_client=chat_client, middleware=[tracking_function_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[tracking_function_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -360,7 +360,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Create ChatAgent with middleware
         middleware = StreamingTrackingMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
 
         # Set up mock streaming responses
         chat_client.streaming_responses = [
@@ -399,7 +399,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Create ChatAgent with middleware
         middleware = FlagTrackingMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
         messages = [ChatMessage(role=Role.USER, text="test message")]
 
         # Test non-streaming execution
@@ -438,7 +438,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         middleware3 = OrderedMiddleware("third")
 
         # Create ChatAgent with multiple middlewares
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2, middleware3])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware1, middleware2, middleware3])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -491,7 +491,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         # Create ChatAgent with mixed middleware types (no tools, focusing on agent middleware)
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[
+            middlewares=[
                 ClassAgentMiddleware(),
                 function_agent_middleware,
                 ClassFunctionMiddleware(),  # Won't execute without function calls
@@ -567,7 +567,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         middleware = TrackingFunctionMiddleware("function_middleware")
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[middleware],
+            middlewares=[middleware],
             tools=[sample_tool_function],
         )
 
@@ -626,7 +626,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         # Create ChatAgent with function middleware and tools
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[tracking_function_middleware],
+            middlewares=[tracking_function_middleware],
             tools=[sample_tool_function],
         )
 
@@ -698,7 +698,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         # Create ChatAgent with both agent and function middleware and tools
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[TrackingAgentMiddleware(), TrackingFunctionMiddleware()],
+            middlewares=[TrackingAgentMiddleware(), TrackingFunctionMiddleware()],
             tools=[sample_tool_function],
         )
 
@@ -798,7 +798,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         ]
 
         # Create ChatAgent with function middleware
-        agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware], tools=[sample_tool_function])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[kwargs_middleware], tools=[sample_tool_function])
 
         # Execute the agent with custom parameters
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -848,7 +848,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Create agent with initial middleware
         middleware1 = self.TrackingAgentMiddleware("middleware1", execution_log)
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware1])
 
         # First execution - should use middleware1
         await agent.run("Test message 1")
@@ -860,7 +860,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Modify the middleware collection by adding another middleware
         middleware2 = self.TrackingAgentMiddleware("middleware2", execution_log)
-        agent.middleware = [middleware1, middleware2]
+        agent.middlewares = [middleware1, middleware2]
 
         # Second execution - should use both middleware1 and middleware2
         await agent.run("Test message 2")
@@ -873,7 +873,7 @@ class TestMiddlewareDynamicRebuild:
         execution_log.clear()
 
         # Modify the middleware collection by replacing with just middleware2
-        agent.middleware = [middleware2]
+        agent.middlewares = [middleware2]
 
         # Third execution - should use only middleware2
         await agent.run("Test message 3")
@@ -886,7 +886,7 @@ class TestMiddlewareDynamicRebuild:
         execution_log.clear()
 
         # Remove all middleware
-        agent.middleware = []
+        agent.middlewares = []
 
         # Fourth execution - should use no middleware
         await agent.run("Test message 4")
@@ -898,7 +898,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Create agent with initial middleware
         middleware1 = self.TrackingAgentMiddleware("stream_middleware1", execution_log)
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware1])
 
         # First streaming execution
         updates: list[AgentRunResponseUpdate] = []
@@ -913,7 +913,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Modify the middleware collection
         middleware2 = self.TrackingAgentMiddleware("stream_middleware2", execution_log)
-        agent.middleware = [middleware2]
+        agent.middlewares = [middleware2]
 
         # Second streaming execution - should use only middleware2
         updates = []
@@ -933,7 +933,7 @@ class TestMiddlewareDynamicRebuild:
         middleware2 = self.TrackingAgentMiddleware("second", execution_log)
 
         # Create agent with middleware in order [first, second]
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware1, middleware2])
 
         # First execution
         await agent.run("Test message 1")
@@ -943,7 +943,7 @@ class TestMiddlewareDynamicRebuild:
         execution_log.clear()
 
         # Change order to [second, first]
-        agent.middleware = [middleware2, middleware1]
+        agent.middlewares = [middleware2, middleware1]
 
         # Second execution - should reflect new order
         await agent.run("Test message 2")
@@ -977,14 +977,14 @@ class TestRunLevelMiddleware:
         run_middleware2 = self.TrackingAgentMiddleware("run2", execution_log)
 
         # First run with run_middleware1
-        await agent.run("Test message 1", middleware=[run_middleware1])
+        await agent.run("Test message 1", middlewares=[run_middleware1])
         assert execution_log == ["run1_start", "run1_end"]
 
         # Clear execution log
         execution_log.clear()
 
         # Second run with run_middleware2 - should not see run_middleware1
-        await agent.run("Test message 2", middleware=[run_middleware2])
+        await agent.run("Test message 2", middlewares=[run_middleware2])
         assert execution_log == ["run2_start", "run2_end"]
         assert "run1_start" not in execution_log
         assert "run1_end" not in execution_log
@@ -1000,7 +1000,7 @@ class TestRunLevelMiddleware:
         execution_log.clear()
 
         # Fourth run with both run middlewares - should see both
-        await agent.run("Test message 4", middleware=[run_middleware1, run_middleware2])
+        await agent.run("Test message 4", middlewares=[run_middleware1, run_middleware2])
         assert execution_log == ["run1_start", "run2_start", "run2_end", "run1_end"]
 
     async def test_agent_plus_run_middleware_execution_order(self, chat_client: "MockChatClient") -> None:
@@ -1039,13 +1039,13 @@ class TestRunLevelMiddleware:
 
         # Create agent with agent-level middleware
         agent_middleware = MetadataAgentMiddleware("agent")
-        agent = ChatAgent(chat_client=chat_client, middleware=[agent_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[agent_middleware])
 
         # Create run-level middleware
         run_middleware = MetadataRunMiddleware("run")
 
         # Execute with both agent and run middleware
-        await agent.run("Test message", middleware=[run_middleware])
+        await agent.run("Test message", middlewares=[run_middleware])
 
         # Verify execution order: agent middleware wraps run middleware
         expected_order = ["agent_start", "run_start", "run_end", "agent_end"]
@@ -1065,7 +1065,7 @@ class TestRunLevelMiddleware:
         run_middleware = self.TrackingAgentMiddleware("run_nonstream", execution_log)
 
         # Execute non-streaming with run middleware
-        response = await agent.run("Test non-streaming", middleware=[run_middleware])
+        response = await agent.run("Test non-streaming", middlewares=[run_middleware])
 
         # Verify response is correct
         assert response is not None
@@ -1109,7 +1109,7 @@ class TestRunLevelMiddleware:
 
         # Execute streaming with run middleware
         updates: list[AgentRunResponseUpdate] = []
-        async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
+        async for update in agent.run_stream("Test streaming", middlewares=[run_middleware]):
             updates.append(update)
 
         # Verify streaming response
@@ -1197,14 +1197,14 @@ class TestRunLevelMiddleware:
         # Create agent with agent-level middleware
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[AgentLevelAgentMiddleware(), AgentLevelFunctionMiddleware()],
+            middlewares=[AgentLevelAgentMiddleware(), AgentLevelFunctionMiddleware()],
             tools=[custom_tool],
         )
 
         # Execute with run-level middleware
         response = await agent.run(
             "Test message",
-            middleware=[RunLevelAgentMiddleware(), RunLevelFunctionMiddleware()],
+            middlewares=[RunLevelAgentMiddleware(), RunLevelFunctionMiddleware()],
         )
 
         # Verify response
@@ -1286,7 +1286,7 @@ class TestMiddlewareDecoratorLogic:
         # Should work without errors
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[matching_agent_middleware, matching_function_middleware],
+            middlewares=[matching_agent_middleware, matching_function_middleware],
             tools=[custom_tool],
         )
 
@@ -1310,7 +1310,7 @@ class TestMiddlewareDecoratorLogic:
             ) -> None:
                 await next(context)
 
-            agent = ChatAgent(chat_client=chat_client, middleware=[mismatched_middleware])
+            agent = ChatAgent(chat_client=chat_client, middlewares=[mismatched_middleware])
             await agent.run([ChatMessage(role=Role.USER, text="test")])
 
     async def test_only_decorator_specified(self, chat_client: Any) -> None:
@@ -1352,7 +1352,7 @@ class TestMiddlewareDecoratorLogic:
 
         # Should work - relies on decorator
         agent = ChatAgent(
-            chat_client=chat_client, middleware=[decorator_only_agent, decorator_only_function], tools=[custom_tool]
+            chat_client=chat_client, middlewares=[decorator_only_agent, decorator_only_function], tools=[custom_tool]
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1402,7 +1402,7 @@ class TestMiddlewareDecoratorLogic:
 
         # Should work - relies on type annotations
         agent = ChatAgent(
-            chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool]
+            chat_client=chat_client, middlewares=[type_only_agent, type_only_function], tools=[custom_tool]
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1419,7 +1419,7 @@ class TestMiddlewareDecoratorLogic:
 
         # Should raise MiddlewareException
         with pytest.raises(MiddlewareException, match="Cannot determine middleware type"):
-            agent = ChatAgent(chat_client=chat_client, middleware=[no_info_middleware])
+            agent = ChatAgent(chat_client=chat_client, middlewares=[no_info_middleware])
             await agent.run([ChatMessage(role=Role.USER, text="test")])
 
     async def test_insufficient_parameters_error(self, chat_client: Any) -> None:
@@ -1433,7 +1433,7 @@ class TestMiddlewareDecoratorLogic:
             async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
                 pass
 
-            agent = ChatAgent(chat_client=chat_client, middleware=[insufficient_params_middleware])
+            agent = ChatAgent(chat_client=chat_client, middlewares=[insufficient_params_middleware])
             await agent.run([ChatMessage(role=Role.USER, text="test")])
 
     async def test_decorator_markers_preserved(self) -> None:
@@ -1501,7 +1501,9 @@ class TestChatAgentThreadBehavior:
 
         # Create ChatAgent with thread tracking middleware and a message store factory
         middleware = ThreadTrackingMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], chat_message_store_factory=ChatMessageStore)
+        agent = ChatAgent(
+            chat_client=chat_client, middlewares=[middleware], chat_message_store_factory=ChatMessageStore
+        )
 
         # Create a thread that will persist messages between runs
         thread = agent.get_new_thread()
@@ -1584,7 +1586,7 @@ class TestChatAgentChatMiddleware:
         # Create ChatAgent with chat middleware
         chat_client = MockBaseChatClient()
         middleware = TrackingChatMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1610,7 +1612,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with function-based chat middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[tracking_chat_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[tracking_chat_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1642,7 +1644,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with message-modifying middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[message_modifier_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[message_modifier_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1668,7 +1670,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with response-overriding middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[response_override_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[response_override_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1698,7 +1700,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with multiple chat middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[first_middleware, second_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[first_middleware, second_middleware])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1722,7 +1724,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with chat middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[StreamingTrackingChatMiddleware()])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[StreamingTrackingChatMiddleware()])
 
         # Set up mock streaming responses
         chat_client.streaming_responses = [
@@ -1763,7 +1765,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with terminating middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[PreTerminationChatMiddleware()])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[PreTerminationChatMiddleware()])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1788,7 +1790,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with terminating middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[PostTerminationChatMiddleware()])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[PostTerminationChatMiddleware()])
 
         # Execute the agent
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -1846,7 +1848,7 @@ class TestChatAgentChatMiddleware:
         # Create ChatAgent with function middleware and tools
         agent = ChatAgent(
             chat_client=chat_client,
-            middleware=[chat_middleware, function_middleware, agent_middleware],
+            middlewares=[chat_middleware, function_middleware, agent_middleware],
             tools=[sample_tool_function],
         )
 
@@ -1905,7 +1907,7 @@ class TestChatAgentChatMiddleware:
 
         # Create ChatAgent with agent middleware
         chat_client = MockBaseChatClient()
-        agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware])
+        agent = ChatAgent(chat_client=chat_client, middlewares=[kwargs_middleware])
 
         # Execute the agent with custom parameters
         messages = [ChatMessage(role=Role.USER, text="test message")]

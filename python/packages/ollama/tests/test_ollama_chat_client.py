@@ -169,7 +169,7 @@ def test_chat_middleware(ollama_unit_test_env: dict[str, str]) -> None:
     async def sample_middleware(context, next):
         await next(context)
 
-    ollama_chat_client = OllamaChatClient(middleware=[sample_middleware])
+    ollama_chat_client = OllamaChatClient(middlewares=[sample_middleware])
     assert len(ollama_chat_client.middleware) == 1
     assert ollama_chat_client.middleware[0] == sample_middleware
 
