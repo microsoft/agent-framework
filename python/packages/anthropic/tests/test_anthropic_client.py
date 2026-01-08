@@ -595,6 +595,53 @@ def test_parse_contents_from_anthropic_tool_use(mock_anthropic_client: MagicMock
     assert result[0].name == "get_weather"
 
 
+def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(mock_anthropic_client: MagicMock) -> None:
+    """Test that input_json_delta events have empty name to prevent duplicate ToolCallStartEvents.
+
+    When streaming tool calls, the initial tool_use event provides the name,
+    and subsequent input_json_delta events should have name="" to prevent
+    ag-ui from emitting duplicate ToolCallStartEvents.
+    """
+    chat_client = create_test_anthropic_client(mock_anthropic_client)
+
+    # First, simulate a tool_use event that sets _last_call_id_name
+    tool_use_content = MagicMock()
+    tool_use_content.type = "tool_use"
+    tool_use_content.id = "call_123"
+    tool_use_content.name = "get_weather"
+    tool_use_content.input = {}
+
+    result = chat_client._parse_contents_from_anthropic([tool_use_content])
+    assert len(result) == 1
+    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].call_id == "call_123"
+    assert result[0].name == "get_weather"  # Initial event has name
+
+    # Now simulate input_json_delta events (argument streaming)
+    delta_content_1 = MagicMock()
+    delta_content_1.type = "input_json_delta"
+    delta_content_1.partial_json = '{"location":'
+
+    result = chat_client._parse_contents_from_anthropic([delta_content_1])
+    assert len(result) == 1
+    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].call_id == "call_123"
+    assert result[0].name == ""  # Delta events should have empty name
+    assert result[0].arguments == '{"location":'
+
+    # Another delta
+    delta_content_2 = MagicMock()
+    delta_content_2.type = "input_json_delta"
+    delta_content_2.partial_json = '"San Francisco"}'
+
+    result = chat_client._parse_contents_from_anthropic([delta_content_2])
+    assert len(result) == 1
+    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].call_id == "call_123"
+    assert result[0].name == ""  # Still empty name for subsequent deltas
+    assert result[0].arguments == '"San Francisco"}'
+
+
 # Stream Processing Tests
 
 
