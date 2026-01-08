@@ -321,7 +321,7 @@ def _create_otlp_exporters(
     if not actual_logs_endpoint and not actual_traces_endpoint and not actual_metrics_endpoint:
         return exporters
 
-    if protocol in ("grpc", "http/protobuf"):
+    if protocol == "grpc":
         # Import all gRPC exporters
         try:
             from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GRPCLogExporter
@@ -357,7 +357,7 @@ def _create_otlp_exporters(
                 )
             )
 
-    elif protocol == "http":
+    elif protocol in ("http/protobuf", "http"):
         # Import all HTTP exporters
         try:
             from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HTTPLogExporter
@@ -1680,13 +1680,12 @@ def _capture_messages(
     prepped = prepare_messages(messages, system_instructions=system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
-        otel_messages.append(_to_otel_message(message))
-        try:
-            message_data = message.to_dict(exclude_none=True)
-        except Exception:
-            message_data = {"role": message.role.value, "contents": message.contents}
+        # Reuse the otel message representation for logging instead of calling to_dict()
+        # to avoid expensive Pydantic serialization overhead
+        otel_message = _to_otel_message(message)
+        otel_messages.append(otel_message)
         logger.info(
-            message_data,
+            otel_message,
             extra={
                 OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role.value),
                 OtelAttr.PROVIDER_NAME: provider_name,
