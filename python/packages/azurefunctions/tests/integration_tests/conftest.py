@@ -11,8 +11,7 @@ from typing import Any
 
 import pytest
 import requests
-
-from .testutils import (
+from testutils import (
     FunctionAppStartupError,
     build_base_url,
     cleanup_function_app,

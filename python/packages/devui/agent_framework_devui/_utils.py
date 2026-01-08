@@ -32,7 +32,7 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         "instructions": None,
         "model": None,
         "chat_client_type": None,
-        "context_providers": None,
+        "context_provider": None,
         "middleware": None,
     }
 
@@ -60,20 +60,20 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         and entity_object.context_provider
         and hasattr(entity_object.context_provider, "__class__")
     ):
-        metadata["context_providers"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
+        metadata["context_provider"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
 
-    # Try to get middleware
-    if hasattr(entity_object, "middleware") and entity_object.middleware:
-        middleware_list: list[str] = []
-        for m in entity_object.middleware:
+    # Try to get middlewares
+    if hasattr(entity_object, "middlewares") and entity_object.middlewares:
+        middlewares_list: list[str] = []
+        for m in entity_object.middlewares:
             # Try multiple ways to get a good name for middleware
             if hasattr(m, "__name__"):  # Function or callable
-                middleware_list.append(m.__name__)
+                middlewares_list.append(m.__name__)
             elif hasattr(m, "__class__"):  # Class instance
-                middleware_list.append(m.__class__.__name__)
+                middlewares_list.append(m.__class__.__name__)
             else:
-                middleware_list.append(str(m))
-        metadata["middleware"] = middleware_list  # type: ignore
+                middlewares_list.append(str(m))
+        metadata["middlewares"] = middlewares_list  # type: ignore
 
     return metadata
 

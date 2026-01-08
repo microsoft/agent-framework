@@ -154,7 +154,7 @@ class TestResultOverrideMiddleware:
 
         # Create ChatAgent with override middleware
         middleware = ChatAgentResponseOverrideMiddleware()
-        agent = ChatAgent(chat_client=mock_chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=mock_chat_client, middlewares=[middleware])
 
         # Test override case
         override_messages = [ChatMessage(role=Role.USER, text="Give me a special response")]
@@ -191,7 +191,7 @@ class TestResultOverrideMiddleware:
 
         # Create ChatAgent with override middleware
         middleware = ChatAgentStreamOverrideMiddleware()
-        agent = ChatAgent(chat_client=mock_chat_client, middleware=[middleware])
+        agent = ChatAgent(chat_client=mock_chat_client, middlewares=[middleware])
 
         # Test streaming override case
         override_messages = [ChatMessage(role=Role.USER, text="Give me a custom stream")]

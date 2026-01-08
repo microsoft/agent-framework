@@ -146,7 +146,7 @@ agent = ChatAgent(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast, send_email],
-    middleware=[security_filter_middleware, atlantis_location_filter_middleware],
+    middlewares=[security_filter_middleware, atlantis_location_filter_middleware],
 )
 
 # Register cleanup hook - demonstrates resource cleanup on shutdown

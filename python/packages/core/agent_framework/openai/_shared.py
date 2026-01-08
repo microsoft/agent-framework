@@ -141,15 +141,15 @@ class OpenAIBase(SerializationMixin):
         # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
         # Extract known kwargs that belong to other base classes
         additional_properties = kwargs.pop("additional_properties", None)
-        middleware = kwargs.pop("middleware", None)
+        middlewares = kwargs.pop("middlewares", None)
         instruction_role = kwargs.pop("instruction_role", None)
 
         # Build super().__init__() args
         super_kwargs = {}
         if additional_properties is not None:
             super_kwargs["additional_properties"] = additional_properties
-        if middleware is not None:
-            super_kwargs["middleware"] = middleware
+        if middlewares is not None:
+            super_kwargs["middlewares"] = middlewares
 
         # Call super().__init__() with filtered kwargs
         super().__init__(**super_kwargs)

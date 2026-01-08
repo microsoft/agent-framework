@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, run
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._memory import AggregateContextProvider, ContextProvider
+from ._memory import ContextProvider
 from ._middleware import (
     ChatMiddleware,
     ChatMiddlewareCallable,
@@ -335,13 +335,8 @@ class BaseChatClient(SerializationMixin, ABC):
     def __init__(
         self,
         *,
-        middleware: (
-            ChatMiddleware
-            | ChatMiddlewareCallable
-            | FunctionMiddleware
-            | FunctionMiddlewareCallable
-            | list[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable]
-            | None
+        middlewares: (
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
         ) = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -349,7 +344,7 @@ class BaseChatClient(SerializationMixin, ABC):
         """Initialize a BaseChatClient instance.
 
         Keyword Args:
-            middleware: Middleware for the client.
+            middlewares: Middleware for the client.
             additional_properties: Additional properties for the client.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
@@ -357,7 +352,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs)
 
-        self.middleware = middleware
+        self.middlewares = middlewares
 
         self.function_invocation_configuration = (
             FunctionInvocationConfiguration() if hasattr(self.__class__, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) else None
@@ -722,8 +717,8 @@ class BaseChatClient(SerializationMixin, ABC):
         description: str | None = None,
         instructions: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+        middlewares: list[Middleware] | None = None,
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
         frequency_penalty: float | None = None,
@@ -761,8 +756,8 @@ class BaseChatClient(SerializationMixin, ABC):
                 These will be put into the messages sent to the chat client service as a system message.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            context_providers: Context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: Context provider to include during agent invocation.
+            middlewares: List of middleware to intercept agent and function invocations.
             allow_multiple_tool_calls: Whether to allow multiple tool calls per agent turn.
             conversation_id: The conversation ID to associate with the agent's messages.
             frequency_penalty: The frequency penalty to use.
@@ -813,8 +808,8 @@ class BaseChatClient(SerializationMixin, ABC):
             description=description,
             instructions=instructions,
             chat_message_store_factory=chat_message_store_factory,
-            context_providers=context_providers,
-            middleware=middleware,
+            context_provider=context_provider,
+            middlewares=middlewares,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,

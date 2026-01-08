@@ -575,10 +575,6 @@ async def test_executor_handles_non_streaming_agent():
         name = "Non-Streaming Test Agent"
         description = "Test agent without run_stream()"
 
-        @property
-        def display_name(self):
-            return self.name
-
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentRunResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=f"Processed: {messages}")])],

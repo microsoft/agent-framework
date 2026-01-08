@@ -305,7 +305,7 @@ class AgentMiddleware(ABC):
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=RetryMiddleware())
+            agent = ChatAgent(chat_client=client, name="assistant", middlewares=[RetryMiddleware()])
     """
 
     @abstractmethod
@@ -373,7 +373,7 @@ class FunctionMiddleware(ABC):
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=CachingMiddleware())
+            agent = ChatAgent(chat_client=client, name="assistant", middlewares=[CachingMiddleware()])
     """
 
     @abstractmethod
@@ -432,7 +432,9 @@ class ChatMiddleware(ABC):
 
             # Use with an agent
             agent = ChatAgent(
-                chat_client=client, name="assistant", middleware=SystemPromptMiddleware("You are a helpful assistant.")
+                chat_client=client,
+                name="assistant",
+                middlewares=[SystemPromptMiddleware("You are a helpful assistant.")],
             )
     """
 
@@ -511,7 +513,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=logging_middleware)
+            agent = ChatAgent(chat_client=client, name="assistant", middlewares=[logging_middleware])
     """
     # Add marker attribute to identify this as agent middleware
     func._middleware_type: MiddlewareType = MiddlewareType.AGENT  # type: ignore
@@ -544,7 +546,7 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=logging_middleware)
+            agent = ChatAgent(chat_client=client, name="assistant", middlewares=[logging_middleware])
     """
     # Add marker attribute to identify this as function middleware
     func._middleware_type: MiddlewareType = MiddlewareType.FUNCTION  # type: ignore
@@ -577,7 +579,7 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=logging_middleware)
+            agent = ChatAgent(chat_client=client, name="assistant", middlewares=[logging_middleware])
     """
     # Add marker attribute to identify this as chat middleware
     func._middleware_type: MiddlewareType = MiddlewareType.CHAT  # type: ignore
@@ -1204,14 +1206,14 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middlewares: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Middleware-enabled run method."""
         # Build fresh middleware pipelines from current middleware collection and run-level middleware
-        agent_middleware = getattr(self, "middleware", None)
+        agent_middleware = getattr(self, "middlewares", None)
 
-        agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middleware)
+        agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middlewares)
 
         # Add function middleware pipeline to kwargs if available
         if function_pipeline.has_middlewares:
@@ -1219,7 +1221,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
 
         # Pass chat middleware through kwargs for run-level application
         if chat_middlewares:
-            kwargs["middleware"] = chat_middlewares
+            kwargs["middlewares"] = chat_middlewares
 
         normalized_messages = self._normalize_messages(messages)
 
@@ -1253,13 +1255,13 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middlewares: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Middleware-enabled run_stream method."""
         # Build fresh middleware pipelines from current middleware collection and run-level middleware
-        agent_middleware = getattr(self, "middleware", None)
-        agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middleware)
+        agent_middleware = getattr(self, "middlewares", None)
+        agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middlewares)
 
         # Add function middleware pipeline to kwargs if available
         if function_pipeline.has_middlewares:
@@ -1267,7 +1269,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
 
         # Pass chat middleware through kwargs for run-level application
         if chat_middlewares:
-            kwargs["middleware"] = chat_middlewares
+            kwargs["middlewares"] = chat_middlewares
 
         normalized_messages = self._normalize_messages(messages)
 
@@ -1348,8 +1350,8 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     ) -> Any:
         """Middleware-enabled get_response method."""
         # Check if middleware is provided at call level or instance level
-        call_middleware = kwargs.pop("middleware", None)
-        instance_middleware = getattr(self, "middleware", None)
+        call_middleware = kwargs.pop("middlewares", None)
+        instance_middleware = getattr(self, "middlewares", None)
 
         # Merge all middleware and separate by type
         middleware = categorize_middleware(instance_middleware, call_middleware)
@@ -1402,8 +1404,8 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
 
         async def _stream_generator() -> Any:
             # Check if middleware is provided at call level or instance level
-            call_middleware = kwargs.pop("middleware", None)
-            instance_middleware = getattr(self, "middleware", None)
+            call_middleware = kwargs.pop("middlewares", None)
+            instance_middleware = getattr(self, "middlewares", None)
 
             # Merge all middleware and separate by type
             middleware = categorize_middleware(instance_middleware, call_middleware)
@@ -1556,8 +1558,8 @@ def extract_and_merge_function_middleware(
     existing_pipeline: FunctionMiddlewarePipeline | None = kwargs.get("_function_middleware_pipeline")
 
     # Get middleware sources
-    client_middleware = getattr(chat_client, "middleware", None) if hasattr(chat_client, "middleware") else None
-    run_level_middleware = kwargs.get("middleware")
+    client_middleware = getattr(chat_client, "middlewares", None) if hasattr(chat_client, "middlewares") else None
+    run_level_middleware = kwargs.get("middlewares")
 
     # If we have an existing pipeline but no additional middleware sources, return it directly
     if existing_pipeline and not client_middleware and not run_level_middleware:

@@ -31,7 +31,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         credential = ...  # TokenCredential or AsyncTokenCredential
         settings = PurviewSettings(app_name="My App")
         agent = ChatAgent(
-            chat_client=client, instructions="...", middleware=[PurviewPolicyMiddleware(credential, settings)]
+            chat_client=client, instructions="...", middlewares=[PurviewPolicyMiddleware(credential, settings)]
         )
     """
 
@@ -123,7 +123,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
         credential = ...  # TokenCredential or AsyncTokenCredential
         settings = PurviewSettings(app_name="My App")
-        client = ChatClient(..., middleware=[PurviewChatPolicyMiddleware(credential, settings)])
+        client = ChatClient(..., middlewares=[PurviewChatPolicyMiddleware(credential, settings)])
     """
 
     def __init__(

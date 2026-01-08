@@ -3,8 +3,7 @@
 """Tests for document writer predictive state flow with confirm_changes."""
 
 from ag_ui.core import EventType, StateDeltaEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
-from agent_framework import FunctionCallContent, FunctionResultContent, TextContent
-from agent_framework._types import AgentRunResponseUpdate
+from agent_framework import AgentRunResponseUpdate, FunctionCallContent, FunctionResultContent, TextContent
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 

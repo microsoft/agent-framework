@@ -155,7 +155,7 @@ async def pattern_1_single_agent_with_closure() -> None:
         ),
         tools=[send_email, send_notification],
         # Both tools share the same context container via middleware
-        middleware=[runtime_context.inject_context_middleware],
+        middlewares=[runtime_context.inject_context_middleware],
     )
 
     # Test 1: Send email with runtime context
@@ -298,14 +298,14 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
         name="email_agent",
         instructions="You send emails using the send_email_v2 tool.",
         tools=[send_email_v2],
-        middleware=[email_kwargs_tracker],
+        middlewares=[email_kwargs_tracker],
     )
 
     sms_agent = client.create_agent(
         name="sms_agent",
         instructions="You send SMS messages using the send_sms tool.",
         tools=[send_sms],
-        middleware=[sms_kwargs_tracker],
+        middlewares=[sms_kwargs_tracker],
     )
 
     # Create coordinator that delegates to sub-agents
@@ -400,7 +400,7 @@ async def pattern_3_hierarchical_with_middleware() -> None:
         name="protected_agent",
         instructions="You perform protected operations that require authentication.",
         tools=[protected_operation],
-        middleware=[auth_middleware.validate_and_track],
+        middlewares=[auth_middleware.validate_and_track],
     )
 
     # Coordinator delegates to protected agent
