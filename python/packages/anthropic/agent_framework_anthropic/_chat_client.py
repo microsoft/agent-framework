@@ -536,9 +536,7 @@ class AnthropicClient(BaseChatClient):
                 usage = self._parse_usage_from_anthropic(event.usage)
                 return ChatResponseUpdate(
                     contents=[UsageContent(details=usage, raw_representation=event.usage)] if usage else [],
-                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason)
-                    if event.delta.stop_reason
-                    else None,
+                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
                     raw_representation=event,
                 )
             case "message_stop":
