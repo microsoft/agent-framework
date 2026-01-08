@@ -833,6 +833,38 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_WithAgentMessageResponseMetadata_ReturnsMetadataAsAdditionalPropertiesAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response with metadata" }],
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                { "responseKey1", JsonSerializer.SerializeToElement("responseValue1") },
+                { "responseCount", JsonSerializer.SerializeToElement(99) }
+            }
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        var result = await this._agent.RunAsync(inputMessages);
+
+        // Assert
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.NotNull(result.AdditionalProperties["responseKey1"]);
+        Assert.Equal("responseValue1", ((JsonElement)result.AdditionalProperties["responseKey1"]!).GetString());
+        Assert.NotNull(result.AdditionalProperties["responseCount"]);
+        Assert.Equal(99, ((JsonElement)result.AdditionalProperties["responseCount"]!).GetInt32());
+    }
+
+    [Fact]
     public async Task RunAsync_WithAdditionalProperties_PropagatesThemAsMetadataToMessageSendParamsAsync()
     {
         // Arrange
