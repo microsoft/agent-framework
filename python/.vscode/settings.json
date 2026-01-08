@@ -38,6 +38,5 @@
             "name": "azure",
             "depth": 2
         }
-    ],
-    "editor.lineNumbers": "on"
+    ]
 }
