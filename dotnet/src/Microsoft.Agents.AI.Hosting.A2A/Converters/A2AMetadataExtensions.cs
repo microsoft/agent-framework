@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
-namespace A2A;
+namespace Microsoft.Agents.AI.Hosting.A2A.Converters;
 
 /// <summary>
 /// Extension methods for A2A metadata dictionary.
