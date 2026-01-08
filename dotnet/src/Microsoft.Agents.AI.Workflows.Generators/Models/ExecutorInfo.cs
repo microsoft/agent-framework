@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 
@@ -30,10 +30,10 @@ internal sealed record ExecutorInfo(
     /// Gets whether any protocol type overrides should be generated.
     /// </summary>
     public bool ShouldGenerateProtocolOverrides =>
-        !ClassSendTypes.IsEmpty ||
-        !ClassYieldTypes.IsEmpty ||
-        HasHandlerWithSendTypes ||
-        HasHandlerWithYieldTypes;
+        !this.ClassSendTypes.IsEmpty ||
+        !this.ClassYieldTypes.IsEmpty ||
+        this.HasHandlerWithSendTypes ||
+        this.HasHandlerWithYieldTypes;
 
     /// <summary>
     /// Gets whether any handler has explicit Send types.
@@ -42,7 +42,7 @@ internal sealed record ExecutorInfo(
     {
         get
         {
-            foreach (var handler in Handlers)
+            foreach (var handler in this.Handlers)
             {
                 if (!handler.SendTypes.IsEmpty)
                 {
@@ -61,7 +61,7 @@ internal sealed record ExecutorInfo(
     {
         get
         {
-            foreach (var handler in Handlers)
+            foreach (var handler in this.Handlers)
             {
                 if (!handler.YieldTypes.IsEmpty)
                 {

@@ -1,6 +1,5 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.Agents.AI.Workflows.Generators.Analysis;
@@ -26,7 +25,6 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         // Step 1: Use ForAttributeWithMetadataName to efficiently find methods with [MessageHandler]
-        // This is 99x+ more efficient than CreateSyntaxProvider according to the Roslyn cookbook
         var methodAnalysisResults = context.SyntaxProvider
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: MessageHandlerAttributeFullName,

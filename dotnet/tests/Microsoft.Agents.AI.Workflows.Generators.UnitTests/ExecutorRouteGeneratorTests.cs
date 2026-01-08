@@ -343,7 +343,7 @@ public class ExecutorRouteGeneratorTests
     #region Diagnostic Tests
 
     [Fact]
-    public void NonPartialClass_ProducesDiagnostic()
+    public void NonPartialClass_ProducesDiagnosticAndNoSource()
     {
         var source = """
             using System.Threading;
@@ -363,7 +363,12 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "WFGEN003");
+        // Should produce MAFGENWF003 diagnostic
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF003");
+
+        // Should NOT generate any source (to avoid CS0260)
+        result.RunResult.GeneratedTrees.Should().BeEmpty(
+            "non-partial classes should not have source generated to avoid CS0260 compiler error");
     }
 
     [Fact]
@@ -385,7 +390,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "WFGEN004");
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF004");
     }
 
     [Fact]
@@ -409,7 +414,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "WFGEN007");
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF007");
     }
 
     [Fact]
@@ -433,7 +438,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "WFGEN005");
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF005");
     }
 
     [Fact]
@@ -457,7 +462,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "WFGEN001");
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF001");
     }
 
     #endregion
@@ -491,7 +496,7 @@ public class ExecutorRouteGeneratorTests
         var result = GeneratorTestHelper.RunGenerator(source);
 
         // Should produce diagnostic but not generate code
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "WFGEN006");
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF006");
         result.RunResult.GeneratedTrees.Should().BeEmpty();
     }
 

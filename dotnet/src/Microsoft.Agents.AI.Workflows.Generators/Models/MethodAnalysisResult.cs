@@ -7,6 +7,11 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// Contains both the method's handler info and class context for grouping.
 /// Uses value-equatable types to support incremental generator caching.
 /// </summary>
+/// <remarks>
+/// Class-level validation (IsPartialClass, DerivesFromExecutor, HasManualConfigureRoutes)
+/// is extracted here but validated once per class in CombineMethodResults to avoid
+/// redundant validation work when a class has multiple handlers.
+/// </remarks>
 internal sealed record MethodAnalysisResult(
     // Class identification for grouping
     string ClassKey,
@@ -21,13 +26,16 @@ internal sealed record MethodAnalysisResult(
     EquatableArray<string> ClassSendTypes,
     EquatableArray<string> ClassYieldTypes,
 
-    // Class-level validation results
+    // Class-level facts (used for validation in CombineMethodResults)
     bool IsPartialClass,
     bool DerivesFromExecutor,
     bool HasManualConfigureRoutes,
 
+    // Class location for diagnostics (value-equatable)
+    LocationInfo? ClassLocation,
+
     // Method-level info (null if method validation failed)
     HandlerInfo? Handler,
 
-    // Any diagnostics from analyzing this method (uses DiagnosticInfo for value equality)
+    // Method-level diagnostics only (class-level diagnostics created in CombineMethodResults)
     EquatableArray<DiagnosticInfo> Diagnostics);

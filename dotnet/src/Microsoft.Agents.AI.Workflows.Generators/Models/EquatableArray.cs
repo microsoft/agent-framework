@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections;
@@ -21,40 +21,40 @@ internal readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnu
     /// </summary>
     public EquatableArray(ImmutableArray<T> array)
     {
-        _array = array.IsDefault ? ImmutableArray<T>.Empty : array;
+        this._array = array.IsDefault ? ImmutableArray<T>.Empty : array;
     }
 
     /// <summary>
     /// Gets the underlying array.
     /// </summary>
-    public ImmutableArray<T> AsImmutableArray() => _array;
+    public ImmutableArray<T> AsImmutableArray() => this._array;
 
     /// <summary>
     /// Gets the number of elements in the array.
     /// </summary>
-    public int Length => _array.Length;
+    public int Length => this._array.Length;
 
     /// <summary>
     /// Gets the element at the specified index.
     /// </summary>
-    public T this[int index] => _array[index];
+    public T this[int index] => this._array[index];
 
     /// <summary>
     /// Gets whether the array is empty.
     /// </summary>
-    public bool IsEmpty => _array.IsEmpty;
+    public bool IsEmpty => this._array.IsEmpty;
 
     /// <inheritdoc/>
     public bool Equals(EquatableArray<T> other)
     {
-        if (_array.Length != other._array.Length)
+        if (this._array.Length != other._array.Length)
         {
             return false;
         }
 
-        for (int i = 0; i < _array.Length; i++)
+        for (int i = 0; i < this._array.Length; i++)
         {
-            if (!_array[i].Equals(other._array[i]))
+            if (!this._array[i].Equals(other._array[i]))
             {
                 return false;
             }
@@ -66,19 +66,19 @@ internal readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnu
     /// <inheritdoc/>
     public override bool Equals(object? obj)
     {
-        return obj is EquatableArray<T> other && Equals(other);
+        return obj is EquatableArray<T> other && this.Equals(other);
     }
 
     /// <inheritdoc/>
     public override int GetHashCode()
     {
-        if (_array.IsEmpty)
+        if (this._array.IsEmpty)
         {
             return 0;
         }
 
         var hashCode = 17;
-        foreach (var item in _array)
+        foreach (var item in this._array)
         {
             hashCode = hashCode * 31 + item?.GetHashCode() ?? 0;
         }
@@ -89,13 +89,13 @@ internal readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnu
     /// <inheritdoc/>
     public IEnumerator<T> GetEnumerator()
     {
-        return ((IEnumerable<T>)_array).GetEnumerator();
+        return ((IEnumerable<T>)this._array).GetEnumerator();
     }
 
     /// <inheritdoc/>
     IEnumerator IEnumerable.GetEnumerator()
     {
-        return GetEnumerator();
+        return this.GetEnumerator();
     }
 
     /// <summary>

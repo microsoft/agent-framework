@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -30,12 +30,15 @@ internal static class SemanticAnalyzer
     /// Analyzes a method with [MessageHandler] attribute found by ForAttributeWithMetadataName.
     /// Returns a MethodAnalysisResult containing both method info and class context.
     /// </summary>
+    /// <remarks>
+    /// This method only extracts raw data and performs method-level validation.
+    /// Class-level validation is deferred to <see cref="CombineMethodResults"/> to avoid
+    /// redundant validation when a class has multiple handler methods.
+    /// </remarks>
     public static MethodAnalysisResult AnalyzeMethod(
         GeneratorAttributeSyntaxContext context,
         CancellationToken cancellationToken)
     {
-        var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-
         // The target should be a method
         if (context.TargetSymbol is not IMethodSymbol methodSymbol)
         {
@@ -52,7 +55,7 @@ internal static class SemanticAnalyzer
         // Get the method syntax for location info
         var methodSyntax = context.TargetNode as MethodDeclarationSyntax;
 
-        // Extract class-level info
+        // Extract class-level info (raw facts, no validation here)
         var classKey = GetClassKey(classSymbol);
         var isPartialClass = IsPartialClass(classSymbol, cancellationToken);
         var derivesFromExecutor = DerivesFromExecutor(classSymbol);
@@ -70,36 +73,30 @@ internal static class SemanticAnalyzer
         var classSendTypes = GetClassLevelTypes(classSymbol, SendsMessageAttributeName);
         var classYieldTypes = GetClassLevelTypes(classSymbol, YieldsMessageAttributeName);
 
-        // Validate class-level requirements and collect diagnostics
-        if (!derivesFromExecutor)
+        // Get class location for class-level diagnostics
+        var classLocation = GetClassLocation(classSymbol, cancellationToken);
+
+        // Analyze the handler method (method-level validation only)
+        // Skip method analysis if class doesn't derive from Executor (class-level diagnostic will be reported later)
+        var methodDiagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+        HandlerInfo? handler = null;
+        if (derivesFromExecutor)
         {
-            diagnostics.Add(DiagnosticInfo.Create(
-                "WFGEN004",
-                methodSyntax?.Identifier.GetLocation() ?? context.TargetNode.GetLocation(),
-                methodSymbol.Name,
-                classSymbol.Name));
-
-            return new MethodAnalysisResult(
-                classKey, @namespace, className, genericParameters, isNested, containingTypeChain,
-                baseHasConfigureRoutes, classSendTypes, classYieldTypes,
-                isPartialClass, derivesFromExecutor, hasManualConfigureRoutes,
-                Handler: null,
-                Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
+            handler = AnalyzeHandler(methodSymbol, methodSyntax, methodDiagnostics);
         }
-
-        // Analyze the handler method
-        var handler = AnalyzeHandler(methodSymbol, methodSyntax, diagnostics);
 
         return new MethodAnalysisResult(
             classKey, @namespace, className, genericParameters, isNested, containingTypeChain,
             baseHasConfigureRoutes, classSendTypes, classYieldTypes,
             isPartialClass, derivesFromExecutor, hasManualConfigureRoutes,
+            classLocation,
             handler,
-            Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
+            Diagnostics: new EquatableArray<DiagnosticInfo>(methodDiagnostics.ToImmutable()));
     }
 
     /// <summary>
     /// Combines multiple MethodAnalysisResults for the same class into an AnalysisResult.
+    /// Performs class-level validation once (instead of per-method) for efficiency.
     /// </summary>
     public static AnalysisResult CombineMethodResults(IEnumerable<MethodAnalysisResult> methodResults)
     {
@@ -111,38 +108,45 @@ internal static class SemanticAnalyzer
 
         // All methods should have same class info - take from first
         var first = methods[0];
+        var classLocation = first.ClassLocation?.ToLocation() ?? Location.None;
 
-        // Combine all diagnostics
-        var allDiagnostics = methods
-            .SelectMany(m => m.Diagnostics)
-            .ToImmutableArray();
+        // Collect method-level diagnostics
+        var allDiagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+        foreach (var method in methods)
+        {
+            foreach (var diag in method.Diagnostics)
+            {
+                allDiagnostics.Add(diag.ToDiagnostic(null));
+            }
+        }
 
-        // Check class-level validation
+        // Class-level validation (done once, not per-method)
         if (!first.DerivesFromExecutor)
         {
-            // Diagnostics already added per-method
-            return AnalysisResult.WithDiagnostics(
-                allDiagnostics.Select(d => d.ToDiagnostic(null)).ToImmutableArray());
+            allDiagnostics.Add(Diagnostic.Create(
+                DiagnosticDescriptors.NotAnExecutor,
+                classLocation,
+                first.ClassName,
+                first.ClassName));
+            return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
         if (!first.IsPartialClass)
         {
-            var diag = Diagnostic.Create(
+            allDiagnostics.Add(Diagnostic.Create(
                 DiagnosticDescriptors.ClassMustBePartial,
-                Location.None, // We don't have class location easily accessible here
-                first.ClassName);
-            return AnalysisResult.WithDiagnostics(
-                allDiagnostics.Select(d => d.ToDiagnostic(null)).Append(diag).ToImmutableArray());
+                classLocation,
+                first.ClassName));
+            return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
         if (first.HasManualConfigureRoutes)
         {
-            var diag = Diagnostic.Create(
+            allDiagnostics.Add(Diagnostic.Create(
                 DiagnosticDescriptors.ConfigureRoutesAlreadyDefined,
-                Location.None,
-                first.ClassName);
-            return AnalysisResult.WithDiagnostics(
-                allDiagnostics.Select(d => d.ToDiagnostic(null)).Append(diag).ToImmutableArray());
+                classLocation,
+                first.ClassName));
+            return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
         // Collect valid handlers
@@ -153,8 +157,7 @@ internal static class SemanticAnalyzer
 
         if (handlers.Length == 0)
         {
-            return AnalysisResult.WithDiagnostics(
-                allDiagnostics.Select(d => d.ToDiagnostic(null)).ToImmutableArray());
+            return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
         var executorInfo = new ExecutorInfo(
@@ -168,11 +171,9 @@ internal static class SemanticAnalyzer
             first.ClassSendTypes,
             first.ClassYieldTypes);
 
-        if (allDiagnostics.Length > 0)
+        if (allDiagnostics.Count > 0)
         {
-            return AnalysisResult.WithInfoAndDiagnostics(
-                executorInfo,
-                allDiagnostics.Select(d => d.ToDiagnostic(null)).ToImmutableArray());
+            return AnalysisResult.WithInfoAndDiagnostics(executorInfo, allDiagnostics.ToImmutable());
         }
 
         return AnalysisResult.Success(executorInfo);
@@ -184,7 +185,21 @@ internal static class SemanticAnalyzer
             string.Empty, null, string.Empty, null, false, string.Empty,
             false, EquatableArray<string>.Empty, EquatableArray<string>.Empty,
             false, false, false,
-            null, EquatableArray<DiagnosticInfo>.Empty);
+            null, null, EquatableArray<DiagnosticInfo>.Empty);
+    }
+
+    private static LocationInfo? GetClassLocation(INamedTypeSymbol classSymbol, CancellationToken cancellationToken)
+    {
+        foreach (var syntaxRef in classSymbol.DeclaringSyntaxReferences)
+        {
+            var syntax = syntaxRef.GetSyntax(cancellationToken);
+            if (syntax is ClassDeclarationSyntax classDecl)
+            {
+                return LocationInfo.FromLocation(classDecl.Identifier.GetLocation());
+            }
+        }
+
+        return null;
     }
 
     private static string GetClassKey(INamedTypeSymbol classSymbol)
@@ -273,14 +288,14 @@ internal static class SemanticAnalyzer
         // Check if static
         if (methodSymbol.IsStatic)
         {
-            diagnostics.Add(DiagnosticInfo.Create("WFGEN007", location, methodSymbol.Name));
+            diagnostics.Add(DiagnosticInfo.Create("MAFGENWF007", location, methodSymbol.Name));
             return null;
         }
 
         // Check parameter count
         if (methodSymbol.Parameters.Length < 2)
         {
-            diagnostics.Add(DiagnosticInfo.Create("WFGEN005", location, methodSymbol.Name));
+            diagnostics.Add(DiagnosticInfo.Create("MAFGENWF005", location, methodSymbol.Name));
             return null;
         }
 
@@ -288,7 +303,7 @@ internal static class SemanticAnalyzer
         var secondParam = methodSymbol.Parameters[1];
         if (secondParam.Type.ToDisplayString() != WorkflowContextTypeName)
         {
-            diagnostics.Add(DiagnosticInfo.Create("WFGEN001", location, methodSymbol.Name));
+            diagnostics.Add(DiagnosticInfo.Create("MAFGENWF001", location, methodSymbol.Name));
             return null;
         }
 
@@ -301,7 +316,7 @@ internal static class SemanticAnalyzer
         var signatureKind = GetSignatureKind(returnType);
         if (signatureKind == null)
         {
-            diagnostics.Add(DiagnosticInfo.Create("WFGEN002", location, methodSymbol.Name));
+            diagnostics.Add(DiagnosticInfo.Create("MAFGENWF002", location, methodSymbol.Name));
             return null;
         }
 

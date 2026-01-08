@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
@@ -18,8 +18,8 @@ internal sealed class AnalysisResult
 
     public AnalysisResult(ExecutorInfo? executorInfo, ImmutableArray<Diagnostic> diagnostics)
     {
-        ExecutorInfo = executorInfo;
-        Diagnostics = diagnostics.IsDefault ? ImmutableArray<Diagnostic>.Empty : diagnostics;
+        this.ExecutorInfo = executorInfo;
+        this.Diagnostics = diagnostics.IsDefault ? ImmutableArray<Diagnostic>.Empty : diagnostics;
     }
 
     /// <summary>

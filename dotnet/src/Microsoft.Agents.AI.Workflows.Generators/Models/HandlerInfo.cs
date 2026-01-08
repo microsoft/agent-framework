@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 
@@ -43,5 +43,5 @@ internal sealed record HandlerInfo(
     /// <summary>
     /// Gets whether this handler returns a value (either sync or async).
     /// </summary>
-    public bool HasOutput => SignatureKind == HandlerSignatureKind.ResultSync || SignatureKind == HandlerSignatureKind.ResultAsync;
+    public bool HasOutput => this.SignatureKind == HandlerSignatureKind.ResultSync || this.SignatureKind == HandlerSignatureKind.ResultAsync;
 }
