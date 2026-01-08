@@ -40,7 +40,7 @@ async def demo_anthropic_chat_client() -> None:
             "max_tokens": 1000,
             # Anthropic-specific options:
             "thinking": {"type": "enabled", "budget_tokens": 1000},
-            "top_k": 40,  # <-- Uncomment for Anthropic-specific option
+            # "top_k": 40,  # <-- Uncomment for Anthropic-specific option
         },
     )
 
