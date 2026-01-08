@@ -1,0 +1,169 @@
+### Health Check
+GET http://localhost:7071/api/health
+
+### Stream workflow - Research and poem
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "message": "Research the weather in Seattle and write a short poem about it"
+}
+
+### Stream workflow - Multiple locations
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "message": "Research the weather in Tokyo, London, and New York, then write a comparative summary"
+}
+
+### Stream workflow - Fact-based writing
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "message": "Search for facts about Seattle and write an interesting paragraph about the city"
+}
+
+### Stream workflow - Weather report
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "message": "Check the weather in Paris and create a travel advisory"
+}
+
+### Stream workflow - Creative task
+POST http localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "message": "Find information about weather patterns and write a haiku about rain"
+}
+
+### Stream workflow - Complex query
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "message": "Research weather conditions in Portland and Vancouver, then write a comparative analysis with recommendations for travelers"
+}
+
+### Test error handling - Missing message
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+{
+    "query": "This will fail because field is wrong"
+}
+
+### Test error handling - Invalid JSON
+POST http://localhost:7071/api/workflow/stream
+Content-Type: application/json
+
+This is not valid JSON
+
+###
+# cURL Examples (for terminal/command line use)
+###
+
+# Simple workflow request
+# curl -X POST http://localhost:7071/api/workflow/stream \
+#   -H "Content-Type: application/json" \
+#   -d '{"message": "Research Seattle weather and write a poem"}'
+
+# With streaming output visible
+# curl -N -X POST http://localhost:7071/api/workflow/stream \
+#   -H "Content-Type: application/json" \
+#   -d '{"message": "Find facts about London and write a story"}'
+
+###
+# Python Client Example
+###
+
+# import requests
+# import json
+#
+# response = requests.post(
+#     'http://localhost:7071/api/workflow/stream',
+#     json={'message': 'Research weather in Tokyo and write a haiku'},
+#     stream=True
+# )
+#
+# current_agent = None
+# print("Workflow execution:\n")
+#
+# for line in response.iter_lines():
+#     if line.startswith(b'data: '):
+#         try:
+#             data = json.loads(line[6:])
+#             
+#             event_type = data.get('type')
+#             
+#             if event_type == 'workflow_started':
+#                 print("=== Workflow Started ===\n")
+#             elif event_type == 'agent_started':
+#                 current_agent = data.get('agent')
+#                 print(f"\n[{current_agent} started]")
+#             elif event_type == 'agent_transition':
+#                 print(f"\n[Transition: {data.get('from')} → {data.get('to')}]")
+#             elif event_type == 'text':
+#                 print(data.get('text', ''), end='', flush=True)
+#             elif event_type == 'tool_call':
+#                 tool = data.get('tool')
+#                 print(f"\n  🔧 Calling tool: {tool}")
+#             elif event_type == 'tool_result':
+#                 result = data.get('result', '')[:100]
+#                 print(f"  ✓ Result: {result}...")
+#             elif event_type == 'done':
+#                 print(f"\n\n=== Workflow Completed ===")
+#                 print(f"Final agent: {data.get('final_agent')}")
+#             elif event_type == 'error':
+#                 print(f"\n❌ Error: {data.get('error')}")
+#                 
+#         except json.JSONDecodeError:
+#             pass
+
+###
+# JavaScript Browser Example
+###
+
+# const eventSource = new EventSource('http://localhost:7071/api/workflow/stream');
+# const output = document.getElementById('output');
+# let currentAgent = null;
+#
+# eventSource.onmessage = (event) => {
+#     const data = JSON.parse(event.data);
+#     
+#     switch(data.type) {
+#         case 'workflow_started':
+#             output.innerHTML += '<div class="workflow-start">Workflow Started</div>';
+#             break;
+#         case 'agent_started':
+#             currentAgent = data.agent;
+#             output.innerHTML += `<div class="agent-start">[${currentAgent}]</div>`;
+#             break;
+#         case 'agent_transition':
+#             output.innerHTML += `<div class="transition">${data.from} → ${data.to}</div>`;
+#             break;
+#         case 'text':
+#             output.innerHTML += data.text;
+#             break;
+#         case 'tool_call':
+#             output.innerHTML += `<div class="tool">🔧 ${data.tool}</div>`;
+#             break;
+#         case 'done':
+#             output.innerHTML += '<div class="complete">✓ Completed</div>';
+#             eventSource.close();
+#             break;
+#         case 'error':
+#             output.innerHTML += `<div class="error">Error: ${data.error}</div>`;
+#             eventSource.close();
+#             break;
+#     }
+# };
+#
+# eventSource.onerror = (error) => {
+#     console.error('EventSource error:', error);
+#     eventSource.close();
+# };
