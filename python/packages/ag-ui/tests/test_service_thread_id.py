@@ -8,7 +8,7 @@ from typing import Any
 
 from ag_ui.core import RunFinishedEvent, RunStartedEvent
 from agent_framework import TextContent
-from agent_framework._types import AgentRunResponseUpdate
+from agent_framework._types import AgentRunResponseUpdate, ChatResponseUpdate
 
 sys.path.insert(0, str(Path(__file__).parent))
 from .test_helpers_ag_ui import StubAgent
@@ -22,7 +22,11 @@ async def test_service_thread_id_when_there_are_updates():
         AgentRunResponseUpdate(
             contents=[TextContent(text="Hello, user!")],
             response_id="resp_67890",
-            additional_properties={"conversation_id": "conv_12345"},
+            raw_representation=ChatResponseUpdate(
+                contents=[TextContent(text="Hello, user!")],
+                conversation_id="conv_12345",
+                response_id="resp_67890",
+            ),
         )
     ]
     agent = StubAgent(updates=updates)

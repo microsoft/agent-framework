@@ -9,7 +9,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AgentRunResponseUpdate, AIFunction, ToolProtocol
+from agent_framework import AgentRunResponseUpdate, AIFunction, ChatResponseUpdate, ToolProtocol
 
 
 def generate_event_id() -> str:
@@ -175,8 +175,6 @@ def get_conversation_id_from_update(update: AgentRunResponseUpdate) -> str | Non
         Conversation ID if present, else None
 
     """
-    # if update.conversation_id:
-    #     return update.conversation_id
-    if update.additional_properties:
-        return update.additional_properties.get("conversation_id")
+    if isinstance(update.raw_representation, ChatResponseUpdate):
+        return update.raw_representation.conversation_id
     return None
