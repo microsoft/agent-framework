@@ -435,20 +435,27 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
-        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+        # tool_choice: ToolMode serializes to {"type": "tool_mode", "mode": "..."}, extract mode
+        if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
             run_options["tool_choice"] = tool_choice["mode"]
 
-        # additional properties
+        # additional properties (excluding response_format which is handled separately)
         additional_options = {
-            key: value for key, value in chat_options.additional_properties.items() if value is not None
+            key: value
+            for key, value in chat_options.additional_properties.items()
+            if value is not None and key != "response_format"
         }
         if additional_options:
             run_options.update(additional_options)
 
         # response format and text config (after additional_properties so user can pass text via additional_properties)
-        response_format = chat_options.response_format
-        text_config = run_options.pop("text", None)
+        # Check both chat_options.response_format and additional_properties for response_format
+        response_format: Any = (
+            chat_options.response_format
+            if chat_options.response_format is not None
+            else chat_options.additional_properties.get("response_format")
+        )
+        text_config: Any = run_options.pop("text", None)
         response_format, text_config = self._prepare_response_and_text_format(
             response_format=response_format, text_config=text_config
         )

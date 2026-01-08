@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
+import copy
 import functools
 import inspect
 import logging
@@ -263,8 +264,9 @@ class Executor(RequestInfoMixin, DictConvertible):
             )
 
             # Invoke the handler with the message and context
+            # Use deepcopy to capture original input state before handler can mutate it
             with _framework_event_origin():
-                invoke_event = ExecutorInvokedEvent(self.id, message)
+                invoke_event = ExecutorInvokedEvent(self.id, copy.deepcopy(message))
             await context.add_event(invoke_event)
             try:
                 await handler(message, context)
@@ -275,9 +277,11 @@ class Executor(RequestInfoMixin, DictConvertible):
                 await context.add_event(failure_event)
                 raise
             with _framework_event_origin():
-                # Include sent messages as the completion data
+                # Include sent messages and yielded outputs as the completion data
                 sent_messages = context.get_sent_messages()
-                completed_event = ExecutorCompletedEvent(self.id, sent_messages if sent_messages else None)
+                yielded_outputs = context.get_yielded_outputs()
+                completion_data = sent_messages + yielded_outputs
+                completed_event = ExecutorCompletedEvent(self.id, completion_data if completion_data else None)
             await context.add_event(completed_event)
 
     def _create_context_for_handler(
