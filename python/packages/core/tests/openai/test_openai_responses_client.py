@@ -2355,3 +2355,91 @@ async def test_openai_responses_client_agent_local_mcp_tool() -> None:
         assert len(response.text) > 0
         # Should contain Azure-related content since it's asking about Azure CLI
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
+
+
+class ReleaseBrief(BaseModel):
+    """Structured output model for release brief testing."""
+
+    title: str
+    summary: str
+    highlights: list[str]
+    model_config = {"extra": "forbid"}
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_with_response_format_pydantic() -> None:
+    """Integration test for response_format with Pydantic model using OpenAI Responses Client."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that returns structured JSON responses.",
+    ) as agent:
+        response = await agent.run(
+            "Summarize the following release notes into a ReleaseBrief:\n\n"
+            "Version 2.0 Release Notes:\n"
+            "- Added new streaming API for real-time responses\n"
+            "- Improved error handling with detailed messages\n"
+            "- Performance boost of 50% in batch processing\n"
+            "- Fixed memory leak in connection pooling",
+            response_format=ReleaseBrief,
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.value is not None
+        assert isinstance(response.value, ReleaseBrief)
+
+        # Validate structured output fields
+        brief = response.value
+        assert len(brief.title) > 0
+        assert len(brief.summary) > 0
+        assert len(brief.highlights) > 0
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_with_runtime_json_schema() -> None:
+    """Integration test for response_format with runtime JSON schema using OpenAI Responses Client."""
+    runtime_schema = {
+        "title": "WeatherDigest",
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"},
+            "conditions": {"type": "string"},
+            "temperature_c": {"type": "number"},
+            "advisory": {"type": "string"},
+        },
+        "required": ["location", "conditions", "temperature_c", "advisory"],
+        "additionalProperties": False,
+    }
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="Return only JSON that matches the provided schema. Do not add commentary.",
+    ) as agent:
+        response = await agent.run(
+            "Give a brief weather digest for Seattle.",
+            additional_chat_options={
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": runtime_schema["title"],
+                        "strict": True,
+                        "schema": runtime_schema,
+                    },
+                },
+            },
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+
+        # Parse JSON and validate structure
+        import json
+
+        parsed = json.loads(response.text)
+        assert "location" in parsed
+        assert "conditions" in parsed
+        assert "temperature_c" in parsed
+        assert "advisory" in parsed

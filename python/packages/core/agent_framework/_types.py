@@ -1869,6 +1869,9 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
         return content.model_dump()
     if hasattr(content, "to_dict"):
         return content.to_dict(exclude={"raw_representation", "additional_properties"})
+    # Handle objects with text attribute (e.g., MCP TextContent)
+    if hasattr(content, "text") and isinstance(content.text, str):
+        return content.text
     return content
 
 
