@@ -31,6 +31,12 @@ internal static class AdditionalPropertiesDictionaryExtensions
 
         foreach (var kvp in additionalProperties)
         {
+            if (kvp.Value is JsonElement)
+            {
+                metadata[kvp.Key] = (JsonElement)kvp.Value!;
+                continue;
+            }
+
             metadata[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value, A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
         }
 
