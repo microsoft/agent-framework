@@ -18,14 +18,16 @@ internal sealed class WorkflowThread : AgentThread
 {
     private readonly Workflow _workflow;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+    private readonly bool _includeExceptionDetails;
 
     private readonly CheckpointManager _checkpointManager;
     private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null)
+    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
+        this._includeExceptionDetails = includeExceptionDetails;
 
         // If the user provided an external checkpoint manager, use that, otherwise rely on an in-memory one.
         // TODO: Implement persist-only-last functionality for in-memory checkpoint manager, to avoid unbounded
@@ -36,7 +38,7 @@ internal sealed class WorkflowThread : AgentThread
         this.MessageStore = new WorkflowMessageStore();
     }
 
-    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
@@ -168,7 +170,11 @@ internal sealed class WorkflowThread : AgentThread
 
                         if (exception != null)
                         {
-                            ErrorContent errorContent = new(exception.Message);
+                            string message = this._includeExceptionDetails
+                                           ? exception.Message
+                                           : "An error occurred while executing the workflow.";
+
+                            ErrorContent errorContent = new(message);
                             yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
                         }
 

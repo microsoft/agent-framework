@@ -51,13 +51,13 @@ public class WorkflowHostSmokeTests
             return new Thread();
         }
 
-        public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             return await this.RunStreamingAsync(messages, thread, options, cancellationToken)
                              .ToAgentRunResponseAsync(cancellationToken);
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             const string ErrorMessage = "Simulated agent failure.";
             if (failByThrowing)
@@ -76,12 +76,22 @@ public class WorkflowHostSmokeTests
         return new WorkflowBuilder(agent).Build();
     }
 
-    private async static Task InvokeAsAgentAndProcessResponseAsync(Workflow workflow)
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Test_AsAgent_ErrorContentStreamedOutAsync(bool includeExceptionDetails, bool failByThrowing)
     {
+        string expectedMessage = !failByThrowing || includeExceptionDetails
+                               ? "Simulated agent failure."
+                               : "An error occurred while executing the workflow.";
+
         // Arrange is done by the caller.
+        Workflow workflow = CreateWorkflow(failByThrowing);
 
         // Act
-        List<AgentRunResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent")
+        List<AgentRunResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
                                                              .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
                                                              .ToListAsync();
 
@@ -94,19 +104,11 @@ public class WorkflowHostSmokeTests
                 // We should expect a single update which contains the error content.
                 update.Contents.Should().ContainSingle()
                                         .Which.Should().BeOfType<ErrorContent>()
-                                        .Which.Message.Should().Be("Simulated agent failure.");
+                                        .Which.Message.Should().Be(expectedMessage);
                 hadErrorContent = true;
             }
         }
 
         hadErrorContent.Should().BeTrue();
     }
-
-    [Fact]
-    public Task Test_AsAgent_ErrorContentStreamedOutAsync()
-        => InvokeAsAgentAndProcessResponseAsync(CreateWorkflow(failByThrowing: false));
-
-    [Fact]
-    public Task Test_AsAgent_ExceptionToErrorContentAsync()
-        => InvokeAsAgentAndProcessResponseAsync(CreateWorkflow(failByThrowing: true));
 }
