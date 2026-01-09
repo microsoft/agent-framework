@@ -62,10 +62,10 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
     ):
         metadata["context_provider"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
 
-    # Try to get middlewares
-    if hasattr(entity_object, "middlewares") and entity_object.middlewares:
+    # Try to get middleware
+    if hasattr(entity_object, "middleware") and entity_object.middleware:
         middlewares_list: list[str] = []
-        for m in entity_object.middlewares:
+        for m in entity_object.middleware:
             # Try multiple ways to get a good name for middleware
             if hasattr(m, "__name__"):  # Function or callable
                 middlewares_list.append(m.__name__)
@@ -73,7 +73,7 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
                 middlewares_list.append(m.__class__.__name__)
             else:
                 middlewares_list.append(str(m))
-        metadata["middlewares"] = middlewares_list  # type: ignore
+        metadata["middleware"] = middlewares_list  # type: ignore
 
     return metadata
 

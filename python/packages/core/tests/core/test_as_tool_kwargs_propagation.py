@@ -35,7 +35,7 @@ class TestAsToolKwargsPropagation:
         sub_agent = ChatAgent(
             chat_client=chat_client,
             name="sub_agent",
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         # Create tool from sub-agent
@@ -76,7 +76,7 @@ class TestAsToolKwargsPropagation:
         sub_agent = ChatAgent(
             chat_client=chat_client,
             name="sub_agent",
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         tool = sub_agent.as_tool(arg_name="custom_task")
@@ -130,7 +130,7 @@ class TestAsToolKwargsPropagation:
         agent_c = ChatAgent(
             chat_client=chat_client,
             name="agent_c",
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         # Create agent B (middle level) - delegates to C
@@ -138,7 +138,7 @@ class TestAsToolKwargsPropagation:
             chat_client=chat_client,
             name="agent_b",
             tools=[agent_c.as_tool(name="call_c")],
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         # Create tool from B for direct invocation
@@ -179,7 +179,7 @@ class TestAsToolKwargsPropagation:
         sub_agent = ChatAgent(
             chat_client=chat_client,
             name="sub_agent",
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         captured_updates: list[Any] = []
@@ -239,7 +239,7 @@ class TestAsToolKwargsPropagation:
         sub_agent = ChatAgent(
             chat_client=chat_client,
             name="sub_agent",
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         tool = sub_agent.as_tool()
@@ -287,7 +287,7 @@ class TestAsToolKwargsPropagation:
         sub_agent = ChatAgent(
             chat_client=chat_client,
             name="sub_agent",
-            middlewares=[capture_middleware],
+            middleware=[capture_middleware],
         )
 
         tool = sub_agent.as_tool()

@@ -335,7 +335,7 @@ class BaseChatClient(SerializationMixin, ABC):
     def __init__(
         self,
         *,
-        middlewares: (
+        middleware: (
             Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
         ) = None,
         additional_properties: dict[str, Any] | None = None,
@@ -344,7 +344,7 @@ class BaseChatClient(SerializationMixin, ABC):
         """Initialize a BaseChatClient instance.
 
         Keyword Args:
-            middlewares: Middleware for the client.
+            middleware: Middleware for the client.
             additional_properties: Additional properties for the client.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
@@ -352,7 +352,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs)
 
-        self.middlewares = middlewares
+        self.middleware = middleware
 
         self.function_invocation_configuration = (
             FunctionInvocationConfiguration() if hasattr(self.__class__, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) else None
@@ -718,7 +718,7 @@ class BaseChatClient(SerializationMixin, ABC):
         instructions: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middlewares: list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
         frequency_penalty: float | None = None,
@@ -757,7 +757,7 @@ class BaseChatClient(SerializationMixin, ABC):
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
             context_provider: Context provider to include during agent invocation.
-            middlewares: List of middleware to intercept agent and function invocations.
+            middleware: List of middleware to intercept chat and function invocations.
             allow_multiple_tool_calls: Whether to allow multiple tool calls per agent turn.
             conversation_id: The conversation ID to associate with the agent's messages.
             frequency_penalty: The frequency penalty to use.
@@ -809,7 +809,7 @@ class BaseChatClient(SerializationMixin, ABC):
             instructions=instructions,
             chat_message_store_factory=chat_message_store_factory,
             context_provider=context_provider,
-            middlewares=middlewares,
+            middleware=middleware,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,

@@ -1495,7 +1495,7 @@ async def _auto_invoke_function(
     runtime_kwargs: dict[str, Any] = {
         key: value
         for key, value in (custom_args or {}).items()
-        if key not in {"_function_middleware_pipeline", "middlewares"}
+        if key not in {"_function_middleware_pipeline", "middleware"}
     }
     try:
         args = tool.input_model.model_validate(parsed_args)

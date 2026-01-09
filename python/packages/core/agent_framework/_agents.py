@@ -269,7 +269,7 @@ class BaseAgent(SerializationMixin):
         name: str | None = None,
         description: str | None = None,
         context_provider: ContextProvider | None = None,
-        middlewares: Sequence[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -281,7 +281,7 @@ class BaseAgent(SerializationMixin):
             name: The name of the agent, can be None.
             description: The description of the agent.
             context_provider: The context provider to include during agent invocation.
-            middlewares: List of middleware to intercept agent and function invocations.
+            middleware: List of middleware.
             additional_properties: Additional properties set on the agent.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
@@ -291,8 +291,8 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_provider = context_provider
-        self.middlewares: list[Middleware] | None = (
-            cast(list[Middleware], middlewares) if middlewares is not None else None
+        self.middleware: list[Middleware] | None = (
+            cast(list[Middleware], middleware) if middleware is not None else None
         )
 
         # Merge kwargs into additional_properties
@@ -542,7 +542,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         description: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middlewares: list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         # chat options
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
@@ -587,7 +587,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
             context_provider: The context provider to include during agent invocation.
-            middlewares: List of middleware to intercept agent and function invocations.
+            middleware: List of middleware to intercept agent, chat and function invocations.
             allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             conversation_id: The conversation ID for service-managed threads.
                 Cannot be used together with chat_message_store_factory.
@@ -631,7 +631,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             name=name,
             description=description,
             context_provider=context_provider,
-            middlewares=middlewares,
+            middleware=middleware,
             **kwargs,
         )
         self.chat_client = chat_client

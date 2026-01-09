@@ -87,7 +87,7 @@ async def main() -> None:
             name="WeatherAgent",
             instructions="You are a helpful weather assistant. Use the weather tool to get current conditions.",
             tools=get_weather,
-            middlewares=[weather_override_middleware],
+            middleware=[weather_override_middleware],
         ) as agent,
     ):
         # Non-streaming example
