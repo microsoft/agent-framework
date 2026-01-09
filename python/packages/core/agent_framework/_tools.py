@@ -4,7 +4,15 @@ import asyncio
 import inspect
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from functools import wraps
 from time import perf_counter, time_ns
 from typing import (
@@ -18,6 +26,7 @@ from typing import (
     Protocol,
     TypedDict,
     TypeVar,
+    Union,
     cast,
     get_args,
     get_origin,
@@ -121,7 +130,13 @@ def _parse_inputs(
     if inputs is None:
         return []
 
-    from ._types import BaseContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
+    from ._types import (
+        BaseContent,
+        DataContent,
+        HostedFileContent,
+        HostedVectorStoreContent,
+        UriContent,
+    )
 
     parsed_inputs: list["Contents"] = []
     if not isinstance(inputs, list):
@@ -1010,6 +1025,27 @@ def _build_pydantic_model_from_json_schema(
     if not properties:
         return create_model(f"{model_name}_input")
 
+    def _resolve_literal_type(prop_details: dict[str, Any]) -> type | None:
+        """Check if property should be a Literal type (const or enum).
+
+        Args:
+            prop_details: The JSON Schema property details
+
+        Returns:
+            Literal type if const or enum is present, None otherwise
+        """
+        # const → Literal["value"]
+        if "const" in prop_details:
+            return Literal[prop_details["const"]]  # type: ignore
+
+        # enum → Literal["a", "b", ...]
+        if "enum" in prop_details and isinstance(prop_details["enum"], list):
+            enum_values = prop_details["enum"]
+            if enum_values:
+                return Literal[tuple(enum_values)]  # type: ignore
+
+        return None
+
     def _resolve_type(prop_details: dict[str, Any], parent_name: str = "") -> type:
         """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
 
@@ -1020,6 +1056,31 @@ def _build_pydantic_model_from_json_schema(
         Returns:
             Python type annotation (could be int, str, list[str], or a nested Pydantic model)
         """
+        # Handle oneOf + discriminator (polymorphic objects)
+        if "oneOf" in prop_details and "discriminator" in prop_details:
+            discriminator = prop_details["discriminator"]
+            disc_field = discriminator.get("propertyName")
+
+            variants = []
+            for variant in prop_details["oneOf"]:
+                if "$ref" in variant:
+                    ref = variant["$ref"]
+                    if ref.startswith("#/$defs/"):
+                        def_name = ref.split("/")[-1]
+                        resolved = definitions.get(def_name)
+                        if resolved:
+                            variant_model = _resolve_type(
+                                resolved,
+                                parent_name=f"{parent_name}_{def_name}",
+                            )
+                            variants.append(variant_model)
+
+            if variants and disc_field:
+                return Annotated[
+                    Union[tuple(variants)],  # type: ignore
+                    Field(discriminator=disc_field),
+                ]
+
         # Handle $ref by resolving the reference
         if "$ref" in prop_details:
             ref = prop_details["$ref"]
@@ -1070,9 +1131,15 @@ def _build_pydantic_model_from_json_schema(
                             else nested_prop_details
                         )
 
-                        nested_python_type = _resolve_type(
-                            nested_prop_details, f"{nested_model_name}_{nested_prop_name}"
-                        )
+                        # Check for Literal types first (const/enum)
+                        literal_type = _resolve_literal_type(nested_prop_details)
+                        if literal_type is not None:
+                            nested_python_type = literal_type
+                        else:
+                            nested_python_type = _resolve_type(
+                                nested_prop_details,
+                                f"{nested_model_name}_{nested_prop_name}",
+                            )
                         nested_description = nested_prop_details.get("description", "")
 
                         # Build field kwargs for nested property
@@ -1109,7 +1176,12 @@ def _build_pydantic_model_from_json_schema(
     for prop_name, prop_details in properties.items():
         prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
 
-        python_type = _resolve_type(prop_details, f"{model_name}_{prop_name}")
+        # Check for Literal types first (const/enum)
+        literal_type = _resolve_literal_type(prop_details)
+        if literal_type is not None:
+            python_type = literal_type
+        else:
+            python_type = _resolve_type(prop_details, f"{model_name}_{prop_name}")
         description = prop_details.get("description", "")
 
         # Build field kwargs (description, etc.)
