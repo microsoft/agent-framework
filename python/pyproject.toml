@@ -145,7 +145,8 @@ ignore = [
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
-    "B027" # allow empty non-abstract method in ABC
+    "B027", # allow empty non-abstract method in ABC
+    "RUF067", # allow version detection in __init__.py
 ]
 
 [tool.ruff.lint.per-file-ignores]

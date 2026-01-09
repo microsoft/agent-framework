@@ -52,8 +52,8 @@ async def test_tool_call_flow():
     update2 = AgentRunResponseUpdate(contents=[tool_result])
     events2 = await bridge.from_agent_run_update(update2)
 
-    # Should have: ToolCallEndEvent, ToolCallResultEvent, MessagesSnapshotEvent
-    assert len(events2) == 3
+    # Should have: ToolCallEndEvent, ToolCallResultEvent
+    assert len(events2) == 2
     assert isinstance(events2[0], ToolCallEndEvent)
     assert isinstance(events2[1], ToolCallResultEvent)
 
