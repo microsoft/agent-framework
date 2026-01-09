@@ -1,0 +1,22 @@
+# Function Tools Workflow - .NET-style
+#
+# This workflow demonstrates an agent with function tools in a loop
+# responding to user input, using the same minimal structure as .NET.
+#
+# Example input:
+# What is the soup of the day?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_menu_agent
+      agent:
+        name: MenuAgent
+      input:
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"

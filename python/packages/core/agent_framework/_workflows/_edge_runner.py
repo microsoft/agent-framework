@@ -112,7 +112,9 @@ class SingleEdgeRunner(EdgeRunner):
                     return False
 
                 if self._can_handle(self._edge.target_id, message):
-                    if self._edge.should_route(message.data):
+                    route_result = await self._edge.should_route(message.data)
+
+                    if route_result:
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: True,
                             OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
@@ -162,8 +164,8 @@ class FanOutEdgeRunner(EdgeRunner):
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-out edge group."""
-        deliverable_edges = []
-        single_target_edge = None
+        deliverable_edges: list[Edge] = []
+        single_target_edge: Edge | None = None
         # Process routing logic within span
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
@@ -192,7 +194,9 @@ class FanOutEdgeRunner(EdgeRunner):
                     if message.target_id in selection_results:
                         edge = self._target_map.get(message.target_id)
                         if edge and self._can_handle(edge.target_id, message):
-                            if edge.should_route(message.data):
+                            route_result = await edge.should_route(message.data)
+
+                            if route_result:
                                 span.set_attributes({
                                     OtelAttr.EDGE_GROUP_DELIVERED: True,
                                     OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DELIVERED.value,
@@ -223,8 +227,10 @@ class FanOutEdgeRunner(EdgeRunner):
                     # If no target ID, send the message to the selected targets
                     for target_id in selection_results:
                         edge = self._target_map[target_id]
-                        if self._can_handle(edge.target_id, message) and edge.should_route(message.data):
-                            deliverable_edges.append(edge)
+                        if self._can_handle(edge.target_id, message):
+                            route_result = await edge.should_route(message.data)
+                            if route_result:
+                                deliverable_edges.append(edge)
 
                     if len(deliverable_edges) > 0:
                         span.set_attributes({

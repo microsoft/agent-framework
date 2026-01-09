@@ -412,8 +412,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
                 case FunctionResultContent():
                     args["tool_call_id"] = content.call_id
-                    if content.result is not None:
-                        args["content"] = prepare_function_call_results(content.result)
+                    # Always include content for tool results - API requires it even if empty
+                    # Functions returning None should still have a tool result message
+                    args["content"] = (
+                        prepare_function_call_results(content.result) if content.result is not None else ""
+                    )
                 case TextReasoningContent(protected_data=protected_data) if protected_data is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
