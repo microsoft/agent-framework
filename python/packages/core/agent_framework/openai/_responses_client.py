@@ -463,7 +463,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
         return run_options
 
-    def _check_model_presence(self, run_options: dict[str, Any]):
+    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        """Check if the 'model' param is present, and if not raise a Error.
+
+        Since AzureAIClients use a different param for this, this method is overridden in those clients.
+        """
         if not run_options.get("model"):
             if not self.model_id:
                 raise ValueError("model_id must be a non-empty string")
