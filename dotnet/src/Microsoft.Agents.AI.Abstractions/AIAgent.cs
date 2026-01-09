@@ -61,18 +61,6 @@ public abstract class AIAgent
     public virtual string? Name { get; }
 
     /// <summary>
-    /// Gets a display-friendly name for the agent.
-    /// </summary>
-    /// <value>
-    /// The agent's <see cref="Name"/> if available, otherwise the <see cref="Id"/>.
-    /// </value>
-    /// <remarks>
-    /// This property provides a guaranteed non-null string suitable for display in user interfaces,
-    /// logs, or other contexts where a readable identifier is needed.
-    /// </remarks>
-    public virtual string DisplayName => this.Name ?? this.Id;
-
-    /// <summary>
     /// Gets a description of the agent's purpose, capabilities, or behavior.
     /// </summary>
     /// <value>

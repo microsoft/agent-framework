@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **agent-framework-azurefunctions**: Durable Agents: platforms should use consistent entity method names (#2234)
 
+## [1.0.0b251218] - 2025-12-18
+
+### Added
+
+- **agent-framework-core**: Azure AI Agent with Bing Grounding Citations sample ([#2892](https://github.com/microsoft/agent-framework/pull/2892))
+- **agent-framework-core**: Workflow option to visualize internal executors ([#2917](https://github.com/microsoft/agent-framework/pull/2917))
+- **agent-framework-core**: Workflow cancellation sample ([#2732](https://github.com/microsoft/agent-framework/pull/2732))
+- **agent-framework-core**: Azure Managed Redis support with credential provider ([#2887](https://github.com/microsoft/agent-framework/pull/2887))
+- **agent-framework-core**: Additional arguments for Azure AI agent configuration ([#2922](https://github.com/microsoft/agent-framework/pull/2922))
+
+### Changed
+
+- **agent-framework-ollama**: Updated Ollama package version ([#2920](https://github.com/microsoft/agent-framework/pull/2920))
+- **agent-framework-ollama**: Move Ollama samples to samples getting started directory ([#2921](https://github.com/microsoft/agent-framework/pull/2921))
+- **agent-framework-core**: Cleanup and refactoring of chat clients ([#2937](https://github.com/microsoft/agent-framework/pull/2937))
+- **agent-framework-core**: Align Run ID and Thread ID casing with AG-UI TypeScript SDK ([#2948](https://github.com/microsoft/agent-framework/pull/2948))
+
+### Fixed
+
+- **agent-framework-core**: Fix Pydantic error when using Literal types for tool parameters ([#2893](https://github.com/microsoft/agent-framework/pull/2893))
+- **agent-framework-core**: Correct MCP image type conversion in `_mcp.py` ([#2901](https://github.com/microsoft/agent-framework/pull/2901))
+- **agent-framework-core**: Fix BadRequestError when using Pydantic models in response formatting ([#1843](https://github.com/microsoft/agent-framework/pull/1843))
+- **agent-framework-core**: Propagate workflow kwargs to sub-workflows via WorkflowExecutor ([#2923](https://github.com/microsoft/agent-framework/pull/2923))
+- **agent-framework-core**: Fix WorkflowAgent event handling and kwargs forwarding ([#2946](https://github.com/microsoft/agent-framework/pull/2946))
+
 ## [1.0.0b251216] - 2025-12-16
 
 ### Added
@@ -392,7 +417,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251216...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251218...HEAD
+[1.0.0b251218]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251216...python-1.0.0b251218
 [1.0.0b251216]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...python-1.0.0b251216
 [1.0.0b251211]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...python-1.0.0b251211
 [1.0.0b251209]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...python-1.0.0b251209
