@@ -377,7 +377,7 @@ requires-dist = [
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "azure-identity", specifier = ">=1,<2" },
-    { name = "mcp", extras = ["ws"], specifier = ">=1.23" },
+    { name = "mcp", extras = ["ws"], specifier = ">=1.24.0,<2" },
     { name = "openai", specifier = ">=1.99.0" },
     { name = "opentelemetry-api", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.39.0" },
@@ -2595,7 +2595,7 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "1.2.4"
+version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -2609,9 +2609,9 @@ dependencies = [
     { name = "typer-slim", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/94/42ed2ff780f4bc58acbe4b8cb98eb4574310ad6feba12f76a820e7546120/huggingface_hub-1.2.4.tar.gz", hash = "sha256:7a1d9ec4802e64372d1d152d69fb8e26d943f15a2289096fbc8e09e7b90c21a5", size = 614771, upload-time = "2026-01-06T11:01:29.828Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/dd/1cc985c5dda36298b152f75e82a1c81f52243b78fb7e9cad637a29561ad1/huggingface_hub-1.3.1.tar.gz", hash = "sha256:e80e0cfb4a75557c51ab20d575bdea6bb6106c2f97b7c75d8490642f1efb6df5", size = 622356, upload-time = "2026-01-09T14:08:16.888Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/b0/113c4a688e7af9f0b92f5585cb425e71134e04c83a0a4a1e62db90edee20/huggingface_hub-1.2.4-py3-none-any.whl", hash = "sha256:2db69b91877d9d34825f5cd2a63b94f259011a77dcf761b437bf510fbe9522e9", size = 520980, upload-time = "2026-01-06T11:01:27.789Z" },
+    { url = "https://files.pythonhosted.org/packages/90/fb/cb8fe5f71d5622427f20bcab9e06a696a5aaf21bfe7bd0a8a0c63c88abf5/huggingface_hub-1.3.1-py3-none-any.whl", hash = "sha256:efbc7f3153cb84e2bb69b62ed90985e21ecc9343d15647a419fc0ee4b85f0ac3", size = 533351, upload-time = "2026-01-09T14:08:14.519Z" },
 ]
 
 [[package]]
@@ -3068,7 +3068,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.80.12"
+version = "1.80.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3086,9 +3086,9 @@ dependencies = [
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tokenizers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/fa/29cea38f88a024e835eced4630ede0d65a0d9e0d951b1e17c6921dfce393/litellm-1.80.12.tar.gz", hash = "sha256:75eca39cb00f3ae00f3b5282e34fb304ffc0d36f7d4cfd189c9191b3a17b5815", size = 13264051, upload-time = "2026-01-07T17:50:33.965Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/b4/ef75838159aabee15ad93d65ee0e91d04ba0e310784b7b0d3f490cca270c/litellm-1.80.13.tar.gz", hash = "sha256:61ed22dfad633ada3b97dd8a50d8e8d804da0115105006d2f9d77ba3fb247a0b", size = 13277620, upload-time = "2026-01-09T04:37:08.529Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/34/57b06609b0b637bd1b2d68ed5282a4dfa1d2c35535202de70d36352ea4d4/litellm-1.80.12-py3-none-any.whl", hash = "sha256:d602add4486cc32f30ebdf1a05c58e8074ef1e87838fb5f1306a862968496ff7", size = 11544878, upload-time = "2026-01-07T17:50:30.776Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/90/e8e0ad7f57d3a56c3411b3867e02768f9722b5975a263c8aaaaba6693d91/litellm-1.80.13-py3-none-any.whl", hash = "sha256:43dcdbca010961f17d7a5a6a995a38d1a46101350959b0e8269576cfe913cf0b", size = 11562501, upload-time = "2026-01-09T04:37:05.551Z" },
 ]
 
 [package.optional-dependencies]
@@ -3130,11 +3130,11 @@ wheels = [
 
 [[package]]
 name = "litellm-proxy-extras"
-version = "0.4.18"
+version = "0.4.20"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b8/96/ed23a3c3af1913b4a9b4afbdbd5176b8b1e06138f26a9584427f09f652c1/litellm_proxy_extras-0.4.18.tar.gz", hash = "sha256:898b28e3e74acdc29142906b84787ab05a90e30aa3c0c8aee849915e3a16adb3", size = 20676, upload-time = "2026-01-07T09:08:13.903Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/ab/df85ce715ebf488cacba338607f67d46c4e4db0b717c9d2f904b8dc7de12/litellm_proxy_extras-0.4.20.tar.gz", hash = "sha256:4fcc95db25cc8b75abbc3f00bb79fd6b94edd1b838ad7bb12cf839b39c67923a", size = 21044, upload-time = "2026-01-07T19:11:32.562Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/af/60/2465d2d58625af9ffc80c3933b43cf63e94f1722078b5da197398b0705de/litellm_proxy_extras-0.4.18-py3-none-any.whl", hash = "sha256:c3edee68bf8eb073c6158dcf7df05727dfc829e63c03a617fcb48853d11490df", size = 45338, upload-time = "2026-01-07T09:08:12.886Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/f5/eb350c49e7cf09db5b335aaeef410c2094e19c84bfe51733cab8470dc011/litellm_proxy_extras-0.4.20-py3-none-any.whl", hash = "sha256:7737cd693dd1aa0bd25ada6d300b37f42c8c18d1820535aceb0ed38ed21f68f5", size = 46565, upload-time = "2026-01-07T19:11:29.728Z" },
 ]
 
 [[package]]

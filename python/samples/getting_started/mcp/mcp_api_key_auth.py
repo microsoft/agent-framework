@@ -4,6 +4,7 @@ import os
 
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
+from httpx import AsyncClient
 
 """
 MCP Authentication Example
@@ -31,13 +32,16 @@ async def api_key_auth_example() -> None:
         "Authorization": f"Bearer {api_key}",
     }
 
-    # Create MCP tool with authentication headers
+    # Create HTTP client with authentication headers
+    http_client = AsyncClient(headers=auth_headers)
+
+    # Create MCP tool with the configured HTTP client
     async with (
         MCPStreamableHTTPTool(
             name="MCP tool",
             description="MCP tool description",
             url=mcp_server_url,
-            headers=auth_headers,  # Authentication headers
+            http_client=http_client,  # Pass HTTP client with authentication headers
         ) as mcp_tool,
         ChatAgent(
             chat_client=OpenAIResponsesClient(),
