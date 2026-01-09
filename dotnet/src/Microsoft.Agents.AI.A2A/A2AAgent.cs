@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI.A2A;
 /// Support for tasks will be added later as part of the long-running
 /// executions work.
 /// </remarks>
-internal sealed class A2AAgent : AIAgent
+public sealed class A2AAgent : AIAgent
 {
     private readonly A2AClient _a2aClient;
     private readonly string? _id;
@@ -84,9 +84,13 @@ internal sealed class A2AAgent : AIAgent
         }
         else
         {
-            var a2aMessage = CreateA2AMessage(typedThread, messages);
+            MessageSendParams sendParams = new()
+            {
+                Message = CreateA2AMessage(typedThread, messages),
+                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+            };
 
-            a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+            a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
         }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
@@ -143,20 +147,24 @@ internal sealed class A2AAgent : AIAgent
 
         if (options?.ContinuationToken is not null)
         {
-            // Task stream resumption is not well defined in the A2A v2.* specification, leaving it to the agent implementations.  
-            // The v3.0 specification improves this by defining task stream reconnection that allows obtaining the same stream  
-            // from the beginning, but it does not define stream resumption from a specific point in the stream.  
-            // Therefore, the code should be updated once the A2A .NET library supports the A2A v3.0 specification,  
-            // and AF has the necessary model to allow consumers to know whether they need to resume the stream and add new updates to  
-            // the existing ones or reconnect the stream and obtain all updates again.  
-            // For more details, see the following issue: https://github.com/microsoft/agent-framework/issues/1764  
+            // Task stream resumption is not well defined in the A2A v2.* specification, leaving it to the agent implementations.
+            // The v3.0 specification improves this by defining task stream reconnection that allows obtaining the same stream
+            // from the beginning, but it does not define stream resumption from a specific point in the stream.
+            // Therefore, the code should be updated once the A2A .NET library supports the A2A v3.0 specification,
+            // and AF has the necessary model to allow consumers to know whether they need to resume the stream and add new updates to
+            // the existing ones or reconnect the stream and obtain all updates again.
+            // For more details, see the following issue: https://github.com/microsoft/agent-framework/issues/1764
             throw new InvalidOperationException("Reconnecting to task streams using continuation tokens is not supported yet.");
-            // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
+            // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
 
-        var a2aMessage = CreateA2AMessage(typedThread, messages);
+        MessageSendParams sendParams = new()
+        {
+            Message = CreateA2AMessage(typedThread, messages),
+            Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+        };
 
-        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -198,10 +206,10 @@ internal sealed class A2AAgent : AIAgent
     protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name ?? base.Name;
+    public override string? Name => this._name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description ?? base.Description;
+    public override string? Description => this._description;
 
     private A2AAgentThread GetA2AThread(AgentThread? thread, AgentRunOptions? options)
     {

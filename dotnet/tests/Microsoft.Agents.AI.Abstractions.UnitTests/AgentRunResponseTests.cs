@@ -57,7 +57,7 @@ public class AgentRunResponseTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Usage = new UsageDetails(),
-            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })
         };
 
         AgentRunResponse response = new(chatResponse);
@@ -214,8 +214,32 @@ public class AgentRunResponseTests
         Assert.Equal(100, usageContent.Details.TotalTokenCount);
     }
 
+#if NETFRAMEWORK
+    /// <summary>
+    /// Since Json Serialization using reflection is disabled in .net core builds, and we are using a custom type here that wouldn't
+    /// be registered with the default source generated serializer, this test will only pass in .net framework builds where reflection-based
+    /// serialization is available.
+    /// </summary>
     [Fact]
     public void ParseAsStructuredOutputSuccess()
+    {
+        // Arrange.
+        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
+
+        // Act.
+        var animal = response.Deserialize<Animal>();
+
+        // Assert.
+        Assert.NotNull(animal);
+        Assert.Equal(expectedResult.Id, animal.Id);
+        Assert.Equal(expectedResult.FullName, animal.FullName);
+        Assert.Equal(expectedResult.Species, animal.Species);
+    }
+#endif
+
+    [Fact]
+    public void ParseAsStructuredOutputWithJSOSuccess()
     {
         // Arrange.
         var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
@@ -262,8 +286,32 @@ public class AgentRunResponseTests
         Assert.Throws<JsonException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
     }
 
+#if NETFRAMEWORK
+    /// <summary>
+    /// Since Json Serialization using reflection is disabled in .net core builds, and we are using a custom type here that wouldn't
+    /// be registered with the default source generated serializer, this test will only pass in .net framework builds where reflection-based
+    /// serialization is available.
+    /// </summary>
     [Fact]
     public void TryParseAsStructuredOutputSuccess()
+    {
+        // Arrange.
+        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
+        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
+
+        // Act.
+        response.TryDeserialize(out Animal? animal);
+
+        // Assert.
+        Assert.NotNull(animal);
+        Assert.Equal(expectedResult.Id, animal.Id);
+        Assert.Equal(expectedResult.FullName, animal.FullName);
+        Assert.Equal(expectedResult.Species, animal.Species);
+    }
+#endif
+
+    [Fact]
+    public void TryParseAsStructuredOutputWithJSOSuccess()
     {
         // Arrange.
         var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
