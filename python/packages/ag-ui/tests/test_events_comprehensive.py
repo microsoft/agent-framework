@@ -231,7 +231,12 @@ async def test_function_approval_request_basic():
     """Test FunctionApprovalRequestContent conversion."""
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
-    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+    # Set require_confirmation=False to test just the function_approval_request event
+    bridge = AgentFrameworkEventBridge(
+        run_id="test_run",
+        thread_id="test_thread",
+        require_confirmation=False,
+    )
 
     func_call = FunctionCallContent(
         call_id="call_123",
@@ -284,14 +289,12 @@ async def test_empty_predict_state_config():
     assert "STATE_DELTA" not in event_types
     assert "STATE_SNAPSHOT" not in event_types
 
-    # Should have: ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult, MessagesSnapshot
-    # MessagesSnapshotEvent is emitted after tool results to track the conversation
+    # Should have: ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult
     assert event_types == [
         "TOOL_CALL_START",
         "TOOL_CALL_ARGS",
         "TOOL_CALL_END",
         "TOOL_CALL_RESULT",
-        "MESSAGES_SNAPSHOT",
     ]
 
 
