@@ -40,8 +40,8 @@ Set the following environment variables:
 - `OLLAMA_HOST`: The base URL for your Ollama server (optional, defaults to `http://localhost:11434`)
   - Example: `export OLLAMA_HOST="http://localhost:11434"`
 
-- `OLLAMA_CHAT_MODEL_ID`: The model name to use
-  - Example: `export OLLAMA_CHAT_MODEL_ID="qwen2.5:8b"`
+- `OLLAMA_MODEL_ID`: The model name to use
+  - Example: `export OLLAMA_MODEL_ID="qwen2.5:8b"`
   - Must be a model you have pulled with Ollama
 
 ### For OpenAI Client with Ollama (`ollama_with_openai_chat_client.py`)

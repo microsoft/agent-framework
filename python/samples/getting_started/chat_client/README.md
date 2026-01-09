@@ -35,6 +35,6 @@ Depending on which client you're using, set the appropriate environment variable
 
 **For Ollama client:**
 - `OLLAMA_HOST`: Your Ollama server URL (defaults to `http://localhost:11434` if not set)
-- `OLLAMA_CHAT_MODEL_ID`: The Ollama model to use for chat (e.g., `llama3.2`, `llama2`, `codellama`)
+- `OLLAMA_MODEL_ID`: The Ollama model to use for chat (e.g., `llama3.2`, `llama2`, `codellama`)
 
 > **Note**: For Ollama, ensure you have Ollama installed and running locally with at least one model downloaded. Visit [https://ollama.com/](https://ollama.com/) for installation instructions.
