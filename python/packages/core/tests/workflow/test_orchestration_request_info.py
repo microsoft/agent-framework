@@ -45,11 +45,11 @@ class TestResolveRequestInfoFilter:
         assert result == {"agent1", "agent2"}
 
     def test_resolves_agent_display_names(self):
-        """Test resolving AgentProtocol instances by display_name attribute."""
+        """Test resolving AgentProtocol instances by name attribute."""
         agent1 = MagicMock(spec=AgentProtocol)
-        agent1.display_name = "writer"
+        agent1.name = "writer"
         agent2 = MagicMock(spec=AgentProtocol)
-        agent2.display_name = "reviewer"
+        agent2.name = "reviewer"
 
         result = resolve_request_info_filter([agent1, agent2])
         assert result == {"writer", "reviewer"}
@@ -57,7 +57,7 @@ class TestResolveRequestInfoFilter:
     def test_mixed_types(self):
         """Test resolving a mix of strings and agents."""
         agent = MagicMock(spec=AgentProtocol)
-        agent.display_name = "writer"
+        agent.name = "writer"
 
         result = resolve_request_info_filter(["manual_name", agent])
         assert result == {"manual_name", "writer"}

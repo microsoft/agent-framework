@@ -33,6 +33,7 @@ from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread
 from .._types import ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._agent_utils import resolve_agent_id
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
     GroupChatParticipantMessage,
@@ -301,7 +302,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             thread: Optional agent thread to use for the orchestrator agent.
         """
         super().__init__(
-            agent.display_name,
+            resolve_agent_id(agent),
             participant_registry,
             name=agent.name,
             max_rounds=max_rounds,
@@ -884,7 +885,7 @@ class GroupChatBuilder:
                 executors.append(participant)
             elif isinstance(participant, AgentProtocol):
                 if self._request_info_enabled and (
-                    not self._request_info_filter or participant.display_name in self._request_info_filter
+                    not self._request_info_filter or resolve_agent_id(participant) in self._request_info_filter
                 ):
                     # Handle request info enabled agents
                     executors.append(AgentApprovalExecutor(participant))

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .._agents import AgentProtocol
 from .._types import ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._agent_utils import resolve_agent_id
 from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
 from ._workflow import Workflow
@@ -31,7 +32,7 @@ def resolve_request_info_filter(agents: list[str | AgentProtocol] | None) -> set
         if isinstance(agent, str):
             result.add(agent)
         elif isinstance(agent, AgentProtocol):
-            result.add(agent.display_name)
+            result.add(resolve_agent_id(agent))
         else:
             raise TypeError(f"Unsupported type for request_info filter: {type(agent).__name__}")
 
@@ -122,7 +123,7 @@ class AgentApprovalExecutor(WorkflowExecutor):
         Args:
             agent: The agent protocol to use for generating responses.
         """
-        super().__init__(workflow=self._build_workflow(agent), id=agent.display_name, propagate_request=True)
+        super().__init__(workflow=self._build_workflow(agent), id=resolve_agent_id(agent), propagate_request=True)
         self._description = agent.description
 
     def _build_workflow(self, agent: AgentProtocol) -> Workflow:

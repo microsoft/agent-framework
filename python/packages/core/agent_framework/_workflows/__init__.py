@@ -6,6 +6,7 @@ from ._agent_executor import (
     AgentExecutorRequest,
     AgentExecutorResponse,
 )
+from ._agent_utils import resolve_agent_id
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
     GroupChatRequestMessage,
@@ -201,6 +202,7 @@ __all__ = [
     "executor",
     "get_checkpoint_summary",
     "handler",
+    "resolve_agent_id",
     "response_handler",
     "validate_workflow_graph",
 ]

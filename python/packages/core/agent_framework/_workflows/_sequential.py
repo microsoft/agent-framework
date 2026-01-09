@@ -47,6 +47,7 @@ from ._agent_executor import (
     AgentExecutor,
     AgentExecutorResponse,
 )
+from ._agent_utils import resolve_agent_id
 from ._checkpoint import CheckpointStorage
 from ._executor import (
     Executor,
@@ -263,7 +264,7 @@ class SequentialBuilder:
                 executors.append(p)
             elif isinstance(p, AgentProtocol):
                 if self._request_info_enabled and (
-                    not self._request_info_filter or p.display_name in self._request_info_filter
+                    not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
                 ):
                     # Handle request info enabled agents
                     executors.append(AgentApprovalExecutor(p))

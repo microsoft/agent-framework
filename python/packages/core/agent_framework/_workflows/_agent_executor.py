@@ -10,6 +10,7 @@ from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResp
 from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread
 from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ._agent_utils import resolve_agent_id
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._conversation_state import encode_chat_messages
@@ -88,9 +89,9 @@ class AgentExecutor(Executor):
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
-        exec_id = id or agent.name
+        exec_id = id or resolve_agent_id(agent)
         if not exec_id:
-            raise ValueError("Agent must have a name or an explicit id must be provided.")
+            raise ValueError("Agent must have a non-empty name or id or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()

@@ -11,6 +11,7 @@ from typing_extensions import Never
 from agent_framework import AgentProtocol, ChatMessage, Role
 
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._agent_utils import resolve_agent_id
 from ._checkpoint import CheckpointStorage
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
@@ -513,7 +514,7 @@ class ConcurrentBuilder:
                 executors.append(p)
             elif isinstance(p, AgentProtocol):
                 if self._request_info_enabled and (
-                    not self._request_info_filter or p.display_name in self._request_info_filter
+                    not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
                 ):
                     # Handle request info enabled agents
                     executors.append(AgentApprovalExecutor(p))

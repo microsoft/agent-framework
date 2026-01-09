@@ -44,6 +44,7 @@ from .._threads import AgentThread
 from .._tools import AIFunction, ai_function
 from .._types import AgentRunResponse, ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._agent_utils import resolve_agent_id
 from ._base_group_chat_orchestrator import TerminationCondition
 from ._checkpoint import CheckpointStorage
 from ._events import WorkflowEvent
@@ -101,7 +102,7 @@ class HandoffConfiguration:
             target: Target agent identifier or AgentProtocol instance
             description: Optional human-readable description of the handoff
         """
-        self.target_id = target.display_name if isinstance(target, AgentProtocol) else target
+        self.target_id = resolve_agent_id(target) if isinstance(target, AgentProtocol) else target
         self.description = description
 
     def __eq__(self, other: Any) -> bool:
@@ -328,7 +329,7 @@ class HandoffAgentExecutor(AgentExecutor):
             tool = self._create_handoff_tool(target.target_id, target.description)
             if tool.name in existing_names:
                 raise ValueError(
-                    f"Agent '{agent.display_name}' already has a tool named '{tool.name}'. "
+                    f"Agent '{resolve_agent_id(agent)}' already has a tool named '{tool.name}'. "
                     f"Handoff tool name '{tool.name}' conflicts with existing tool."
                     "Please rename the existing tool or modify the target agent ID to avoid conflicts."
                 )
@@ -402,8 +403,8 @@ class HandoffAgentExecutor(AgentExecutor):
         if handoff_target := self._is_handoff_requested(response):
             if handoff_target not in self._handoff_targets:
                 raise ValueError(
-                    f"Agent '{self._agent.display_name}' attempted to handoff to unknown target '{handoff_target}'. "
-                    f"Valid targets are: {', '.join(self._handoff_targets)}"
+                    f"Agent '{resolve_agent_id(self._agent)}' attempted to handoff to unknown "
+                    f"target '{handoff_target}'. Valid targets are: {', '.join(self._handoff_targets)}"
                 )
 
             await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
@@ -580,7 +581,7 @@ class HandoffBuilder:
                   If not provided, a default name will be generated.
             participants: Optional list of agents that will participate in the handoff workflow.
                           You can also call `.participants([...])` later. Each participant must have a
-                          unique identifier (display_name for agents).
+                          unique identifier (`.name` is preferred if set, otherwise `.id` is used).
             participant_factories: Optional mapping of factory names to callables that produce agents when invoked.
                                    This allows for lazy instantiation and state isolation per workflow instance
                                    created by this builder.
@@ -627,7 +628,7 @@ class HandoffBuilder:
         Args:
             participant_factories: Mapping of factory names to callables that return AgentProtocol
                                    instances. Each produced participant must have a unique identifier
-                                   (display_name for agents).
+                                   (`.name` is preferred if set, otherwise `.id` is used).
 
         Returns:
             Self for method chaining.
@@ -682,14 +683,9 @@ class HandoffBuilder:
     def participants(self, participants: Sequence[AgentProtocol]) -> "HandoffBuilder":
         """Register the agents that will participate in the handoff workflow.
 
-        Each participant must have a unique identifier (display_name for agents).
-        The workflow will automatically create an alias map so agents can be referenced by
-        their display_name when routing.
-
         Args:
             participants: Sequence of AgentProtocol instances. Each must have a unique identifier.
-                          For agents, the display_name attribute is used as the primary identifier
-                          and must match handoff target strings.
+                (`.name` is preferred if set, otherwise `.id` is used).
 
         Returns:
             Self for method chaining.
@@ -728,15 +724,15 @@ class HandoffBuilder:
         named: dict[str, AgentProtocol] = {}
         for participant in participants:
             if isinstance(participant, AgentProtocol):
-                identifier = self._resolve_to_id(participant)
+                resolved_id = self._resolve_to_id(participant)
             else:
                 raise TypeError(
                     f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
                 )
 
-            if identifier in named:
-                raise ValueError(f"Duplicate participant name '{identifier}' detected")
-            named[identifier] = participant
+            if resolved_id in named:
+                raise ValueError(f"Duplicate participant name '{resolved_id}' detected")
+            named[resolved_id] = participant
 
         self._participants = named
 
@@ -900,12 +896,13 @@ class HandoffBuilder:
                 raise ValueError("Call participant_factories(...) before with_start_agent(...)")
             self._start_id = agent
         elif isinstance(agent, AgentProtocol):
+            resolved_id = self._resolve_to_id(agent)
             if self._participants:
-                if agent.display_name not in self._participants:
-                    raise ValueError(f"Start agent '{agent.display_name}' is not in the participants list")
+                if resolved_id not in self._participants:
+                    raise ValueError(f"Start agent '{resolved_id}' is not in the participants list")
             else:
                 raise ValueError("Call participants(...) before with_start_agent(...)")
-            self._start_id = agent.display_name
+            self._start_id = resolved_id
         else:
             raise TypeError("Start agent must be a factory name (str) or an AgentProtocol instance")
 
@@ -1058,7 +1055,7 @@ class HandoffBuilder:
         executors = self._resolve_executors(resolved_agents, resolved_handoffs)
 
         # Build the workflow graph
-        start_executor = executors[resolved_agents[self._start_id].display_name]
+        start_executor = executors[self._resolve_to_id(resolved_agents[self._start_id])]
         builder = WorkflowBuilder(
             name=self._name,
             description=self._description,
@@ -1108,14 +1105,14 @@ class HandoffBuilder:
             for factory_name, factory in self._participant_factories.items():
                 instance = factory()
                 if isinstance(instance, AgentProtocol):
-                    identifier = instance.display_name
+                    resolved_id = self._resolve_to_id(instance)
                 else:
                     raise TypeError(
                         f"Participants must be AgentProtocol or Executor instances. Got {type(instance).__name__}."
                     )
 
-                if identifier in factory_names_to_agents:
-                    raise ValueError(f"Duplicate participant name '{identifier}' detected")
+                if resolved_id in factory_names_to_agents:
+                    raise ValueError(f"Duplicate participant name '{resolved_id}' detected")
 
                 # Map executors by factory name (not executor.id) because handoff configs reference factory names
                 # This allows users to configure handoffs using the factory names they provided
@@ -1134,7 +1131,7 @@ class HandoffBuilder:
         Returns:
             Map of executor IDs to list of HandoffConfiguration instances
         """
-        # Updated map that used agent display_name as keys
+        # Updated map that used agent resolved IDs as keys
         updated_handoff_configurations: dict[str, list[HandoffConfiguration]] = {}
         if self._handoff_config:
             # Use explicit handoff configuration from add_handoff() calls
@@ -1153,9 +1150,9 @@ class HandoffBuilder:
                             "Please make sure target has been added as either a participant or participant_factory."
                         )
 
-                    updated_handoff_configurations.setdefault(source_agent.display_name, []).append(
+                    updated_handoff_configurations.setdefault(self._resolve_to_id(source_agent), []).append(
                         HandoffConfiguration(
-                            target=target_agent.display_name,
+                            target=self._resolve_to_id(target_agent),
                             description=handoff_config.description or target_agent.description,
                         )
                     )
@@ -1165,9 +1162,9 @@ class HandoffBuilder:
                 for target_id, target_agent in agents.items():
                     if source_id == target_id:
                         continue  # Skip self-handoff
-                    updated_handoff_configurations.setdefault(source_agent.display_name, []).append(
+                    updated_handoff_configurations.setdefault(self._resolve_to_id(source_agent), []).append(
                         HandoffConfiguration(
-                            target=target_agent.display_name,
+                            target=self._resolve_to_id(target_agent),
                             description=target_agent.description,
                         )
                     )
@@ -1191,10 +1188,11 @@ class HandoffBuilder:
         executors: dict[str, HandoffAgentExecutor] = {}
 
         for id, agent in agents.items():
-            # Note that here `id` may be either factory name or agent display_name
-            if agent.display_name not in handoffs or not handoffs.get(agent.display_name):
+            # Note that here `id` may be either factory name or agent resolved ID
+            resolved_id = self._resolve_to_id(agent)
+            if resolved_id not in handoffs or not handoffs.get(resolved_id):
                 logger.warning(
-                    f"No handoff configuration found for agent '{agent.display_name}'. "
+                    f"No handoff configuration found for agent '{resolved_id}'. "
                     "This agent will not be able to hand off to any other agents and your workflow may get stuck."
                 )
 
@@ -1203,9 +1201,9 @@ class HandoffBuilder:
                 not self._autonomous_mode_enabled_agents or id in self._autonomous_mode_enabled_agents
             )
 
-            executors[agent.display_name] = HandoffAgentExecutor(
+            executors[resolved_id] = HandoffAgentExecutor(
                 agent=agent,
-                handoffs=handoffs.get(agent.display_name, []),
+                handoffs=handoffs.get(resolved_id, []),
                 is_start_agent=(id == self._start_id),
                 termination_condition=self._termination_condition,
                 autonomous_mode=autonomous_mode,
@@ -1218,7 +1216,7 @@ class HandoffBuilder:
     def _resolve_to_id(self, candidate: str | AgentProtocol) -> str:
         """Resolve a participant reference into a concrete executor identifier."""
         if isinstance(candidate, AgentProtocol):
-            return candidate.display_name
+            return resolve_agent_id(candidate)
         if isinstance(candidate, str):
             return candidate
 

@@ -13,6 +13,7 @@ from agent_framework import (
     HostedWebSearchTool,
     WorkflowEvent,
     WorkflowOutputEvent,
+    resolve_agent_id,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -119,11 +120,12 @@ async def main() -> None:
         .with_autonomous_mode(
             # You can set turn limits per agent to allow some agents to go longer.
             # If a limit is not set, the agent will get an default limit: 50.
-            # Internally, handoff uses the display_name as the agent identifier.
+            # Internally, handoff prefers agent names as the agent identifiers if set.
+            # Otherwise, it falls back to agent IDs.
             turn_limits={
-                coordinator.display_name: 5,
-                research_agent.display_name: 10,
-                summary_agent.display_name: 5,
+                resolve_agent_id(coordinator): 5,
+                resolve_agent_id(research_agent): 10,
+                resolve_agent_id(summary_agent): 5,
             }
         )
         .with_termination_condition(
