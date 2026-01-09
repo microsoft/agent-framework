@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Source generators MUST target netstandard2.0 only -->
   <PropertyGroup>
@@ -41,12 +41,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Use lower Roslyn version for broader SDK compatibility.
-         4.3.1 supports .NET 7+ SDK and VS 2022 17.4+.
+    <!-- Use Roslyn 4.4.0 - minimum version for ForAttributeWithMetadataName API.
+         Corresponds to .NET 7 SDK / VS 2022 17.4+.
          Higher versions would require newer SDKs, breaking users on older versions.
-         See: https://andrewlock.net/creating-a-source-generator-part-14-supporting-multiple-sdk-versions-in-a-source-generator/ -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="4.3.1" PrivateAssets="all" />
+         See: https://andrewlock.net/creating-a-source-generator-part-9-avoiding-performance-pitfalls-in-incremental-generators/ -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="4.4.0" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="3.3.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 
 </Project>
