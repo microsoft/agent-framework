@@ -357,7 +357,7 @@ class EntityDiscovery:
             model = agent_meta["model"]
             chat_client_type = agent_meta["chat_client_type"]
             context_provider_list = agent_meta["context_provider"]
-            middlewares_list = agent_meta["middlewares"]
+            middlewares_list = agent_meta["middleware"]
 
         # Log helpful info about agent capabilities (before creating EntityInfo)
         if entity_type == "agent":
@@ -396,7 +396,7 @@ class EntityDiscovery:
             model_id=model,
             chat_client_type=chat_client_type,
             context_provider=context_provider_list,
-            middlewares=middlewares_list,
+            middleware=middlewares_list,
             executors=tools_list if entity_type == "workflow" else [],
             input_schema={"type": "string"},  # Default schema
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
@@ -840,7 +840,7 @@ class EntityDiscovery:
                 model = agent_meta["model"]
                 chat_client_type = agent_meta["chat_client_type"]
                 context_provider_list = agent_meta["context_provider"]
-                middlewares_list = agent_meta["middlewares"]
+                middlewares_list = agent_meta["middleware"]
 
             entity_info = EntityInfo(
                 id=entity_id,
@@ -853,7 +853,7 @@ class EntityDiscovery:
                 model_id=model,
                 chat_client_type=chat_client_type,
                 context_provider=context_provider_list,
-                middlewares=middlewares_list,
+                middleware=middlewares_list,
                 metadata={
                     "module_path": module_path,
                     "entity_type": obj_type,

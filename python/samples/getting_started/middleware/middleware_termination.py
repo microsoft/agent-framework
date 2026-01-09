@@ -114,7 +114,7 @@ async def pre_termination_middleware() -> None:
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middlewares=[PreTerminationMiddleware(blocked_words=["bad", "inappropriate"])],
+            middleware=[PreTerminationMiddleware(blocked_words=["bad", "inappropriate"])],
         ) as agent,
     ):
         # Test with normal query
@@ -141,7 +141,7 @@ async def post_termination_middleware() -> None:
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middlewares=[PostTerminationMiddleware(max_responses=1)],
+            middleware=[PostTerminationMiddleware(max_responses=1)],
         ) as agent,
     ):
         # First run (should work)

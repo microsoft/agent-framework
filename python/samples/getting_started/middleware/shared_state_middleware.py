@@ -100,7 +100,7 @@ async def main() -> None:
             # Pass both middleware functions from the same container instance
             # Order matters: counter runs first to increment count,
             # then result enhancer uses the updated count
-            middlewares=[
+            middleware=[
                 middleware_container.call_counter_middleware,
                 middleware_container.result_enhancer_middleware,
             ],

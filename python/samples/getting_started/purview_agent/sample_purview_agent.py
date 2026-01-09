@@ -154,7 +154,7 @@ async def run_with_agent_middleware() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middlewares=[purview_agent_middleware],
+        middleware=[purview_agent_middleware],
     )
 
     print("-- Agent Middleware Path --")
@@ -178,7 +178,7 @@ async def run_with_chat_middleware() -> None:
         deployment_name=deployment,
         endpoint=endpoint,
         credential=AzureCliCredential(),
-        middlewares=[
+        middleware=[
             PurviewChatPolicyMiddleware(
                 build_credential(),
                 PurviewSettings(
@@ -239,7 +239,7 @@ async def run_with_custom_cache_provider() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middlewares=[purview_agent_middleware],
+        middleware=[purview_agent_middleware],
     )
 
     print("-- Custom Cache Provider Path --")
@@ -279,7 +279,7 @@ async def run_with_custom_cache_provider() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middlewares=[purview_agent_middleware],
+        middleware=[purview_agent_middleware],
     )
 
     print("-- Default Cache Path --")

@@ -2248,7 +2248,7 @@ async def test_terminate_loop_single_function_call(chat_client_base: ChatClientP
         "hello",
         tool_choice="auto",
         tools=[ai_func],
-        middlewares=[TerminateLoopMiddleware()],
+        middleware=[TerminateLoopMiddleware()],
     )
 
     # Function should NOT have been executed - middleware intercepted it
@@ -2316,7 +2316,7 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
         "hello",
         tool_choice="auto",
         tools=[normal_func, terminating_func],
-        middlewares=[SelectiveTerminateMiddleware()],
+        middleware=[SelectiveTerminateMiddleware()],
     )
 
     # normal_function should have executed (middleware calls next_handler)
@@ -2368,7 +2368,7 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: C
         "hello",
         tool_choice="auto",
         tools=[ai_func],
-        middlewares=[TerminateLoopMiddleware()],
+        middleware=[TerminateLoopMiddleware()],
     ):
         updates.append(update)
 

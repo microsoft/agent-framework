@@ -171,7 +171,7 @@ async def main() -> None:
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
             # Agent-level middleware: applied to ALL runs
-            middlewares=[
+            middleware=[
                 SecurityAgentMiddleware(),
                 performance_monitor_middleware,
                 function_logging_middleware,
@@ -202,7 +202,7 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middlewares=[HighPriorityMiddleware()],  # Run-level middleware
+            middleware=[HighPriorityMiddleware()],  # Run-level middleware
         )
         print(f"Agent: {result.text if result.text else 'No response'}")
         print()
@@ -215,7 +215,7 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middlewares=[debugging_middleware],  # Run-level middleware
+            middleware=[debugging_middleware],  # Run-level middleware
         )
         print(f"Agent: {result.text if result.text else 'No response'}")
         print()
@@ -229,7 +229,7 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middlewares=[caching, debugging_middleware],  # Multiple run-level middleware
+            middleware=[caching, debugging_middleware],  # Multiple run-level middleware
         )
         print(f"Agent: {result.text if result.text else 'No response'}")
         print()
@@ -241,7 +241,7 @@ async def main() -> None:
         print(f"User: {query}")  # Same query as Run 4
         result = await agent.run(
             query,
-            middlewares=[caching],  # Same caching middleware instance
+            middleware=[caching],  # Same caching middleware instance
         )
         print(f"Agent: {result.text if result.text else 'No response'}")
         print()

@@ -148,7 +148,7 @@ class TestAgentMiddlewarePipeline:
             context.terminate = True
 
     def test_init_empty(self) -> None:
-        """Test AgentMiddlewarePipeline initialization with no middlewares."""
+        """Test AgentMiddlewarePipeline initialization with no middleware."""
         pipeline = AgentMiddlewarePipeline()
         assert not pipeline.has_middlewares
 
@@ -457,7 +457,7 @@ class TestFunctionMiddlewarePipeline:
         assert execution_order == ["handler"]
 
     def test_init_empty(self) -> None:
-        """Test FunctionMiddlewarePipeline initialization with no middlewares."""
+        """Test FunctionMiddlewarePipeline initialization with no middleware."""
         pipeline = FunctionMiddlewarePipeline()
         assert not pipeline.has_middlewares
 
@@ -539,7 +539,7 @@ class TestChatMiddlewarePipeline:
             context.terminate = True
 
     def test_init_empty(self) -> None:
-        """Test ChatMiddlewarePipeline initialization with no middlewares."""
+        """Test ChatMiddlewarePipeline initialization with no middleware."""
         pipeline = ChatMiddlewarePipeline()
         assert not pipeline.has_middlewares
 
@@ -979,7 +979,7 @@ class TestMultipleMiddlewareOrdering:
     """Test cases for multiple middleware execution order."""
 
     async def test_agent_middleware_execution_order(self, mock_agent: AgentProtocol) -> None:
-        """Test that multiple agent middlewares execute in registration order."""
+        """Test that multiple agent middleware execute in registration order."""
         execution_order: list[str] = []
 
         class FirstMiddleware(AgentMiddleware):
@@ -1006,8 +1006,8 @@ class TestMultipleMiddlewareOrdering:
                 await next(context)
                 execution_order.append("third_after")
 
-        middlewares = [FirstMiddleware(), SecondMiddleware(), ThirdMiddleware()]
-        pipeline = AgentMiddlewarePipeline(middlewares)  # type: ignore
+        middleware = [FirstMiddleware(), SecondMiddleware(), ThirdMiddleware()]
+        pipeline = AgentMiddlewarePipeline(middleware)  # type: ignore
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
@@ -1030,7 +1030,7 @@ class TestMultipleMiddlewareOrdering:
         assert execution_order == expected_order
 
     async def test_function_middleware_execution_order(self, mock_function: AIFunction[Any, Any]) -> None:
-        """Test that multiple function middlewares execute in registration order."""
+        """Test that multiple function middleware execute in registration order."""
         execution_order: list[str] = []
 
         class FirstMiddleware(FunctionMiddleware):
@@ -1053,8 +1053,8 @@ class TestMultipleMiddlewareOrdering:
                 await next(context)
                 execution_order.append("second_after")
 
-        middlewares = [FirstMiddleware(), SecondMiddleware()]
-        pipeline = FunctionMiddlewarePipeline(middlewares)  # type: ignore
+        middleware = [FirstMiddleware(), SecondMiddleware()]
+        pipeline = FunctionMiddlewarePipeline(middleware)  # type: ignore
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 
@@ -1069,7 +1069,7 @@ class TestMultipleMiddlewareOrdering:
         assert execution_order == expected_order
 
     async def test_chat_middleware_execution_order(self, mock_chat_client: Any) -> None:
-        """Test that multiple chat middlewares execute in registration order."""
+        """Test that multiple chat middleware execute in registration order."""
         execution_order: list[str] = []
 
         class FirstChatMiddleware(ChatMiddleware):
@@ -1090,8 +1090,8 @@ class TestMultipleMiddlewareOrdering:
                 await next(context)
                 execution_order.append("third_after")
 
-        middlewares = [FirstChatMiddleware(), SecondChatMiddleware(), ThirdChatMiddleware()]
-        pipeline = ChatMiddlewarePipeline(middlewares)  # type: ignore
+        middleware = [FirstChatMiddleware(), SecondChatMiddleware(), ThirdChatMiddleware()]
+        pipeline = ChatMiddlewarePipeline(middleware)  # type: ignore
         messages = [ChatMessage(role=Role.USER, text="test")]
         chat_options = ChatOptions()
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
@@ -1542,7 +1542,7 @@ class TestMiddlewareExecutionControl:
         assert context.result is None
 
     async def test_multiple_middlewares_early_stop(self, mock_agent: AgentProtocol) -> None:
-        """Test that when first middleware doesn't call next(), subsequent middlewares are not called."""
+        """Test that when first middleware doesn't call next(), subsequent middleware are not called."""
         execution_order: list[str] = []
 
         class FirstMiddleware(AgentMiddleware):
@@ -1641,7 +1641,7 @@ class TestMiddlewareExecutionControl:
         assert context.result is None
 
     async def test_multiple_chat_middlewares_early_stop(self, mock_chat_client: Any) -> None:
-        """Test that when first chat middleware doesn't call next(), subsequent middlewares are not called."""
+        """Test that when first chat middleware doesn't call next(), subsequent middleware are not called."""
         execution_order: list[str] = []
 
         class FirstChatMiddleware(ChatMiddleware):

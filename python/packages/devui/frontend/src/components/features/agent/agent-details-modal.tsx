@@ -180,13 +180,13 @@ export function AgentDetailsModal({
             )}
 
             {/* Middlewares */}
-            {agent.middlewares && agent.middlewares.length > 0 && (
+            {agent.middleware && agent.middleware.length > 0 && (
               <DetailCard
-                title={`Middlewares (${agent.middlewares.length})`}
+                title={`Middlewares (${agent.middleware.length})`}
                 icon={<Package className="h-4 w-4 text-muted-foreground" />}
               >
                 <ul className="space-y-1">
-                  {agent.middlewares.map((mw, index) => (
+                  {agent.middleware.map((mw, index) => (
                     <li key={index} className="font-mono text-xs text-foreground">
                       • {mw}
                     </li>
@@ -200,7 +200,7 @@ export function AgentDetailsModal({
               <DetailCard
                 title="Context Provider"
                 icon={<Database className="h-4 w-4 text-muted-foreground" />}
-                className={!agent.middlewares || agent.middlewares.length === 0 ? "md:col-start-2" : ""}
+                className={!agent.middleware || agent.middleware.length === 0 ? "md:col-start-2" : ""}
               >
                 <div className="font-mono text-xs text-foreground">
                   {agent.context_provider}

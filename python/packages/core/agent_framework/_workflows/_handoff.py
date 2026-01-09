@@ -93,7 +93,7 @@ def _create_handoff_tool(alias: str, description: str | None = None) -> AIFuncti
 def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
     """Produce a deep copy of the ChatAgent while preserving runtime configuration."""
     options = agent.chat_options
-    middlewares = list(agent.middlewares or [])
+    middleware = list(agent.middleware or [])
 
     # Reconstruct the original tools list by combining regular tools with MCP tools.
     # ChatAgent.__init__ separates MCP tools into _local_mcp_tools during initialization,
@@ -111,7 +111,7 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
         description=agent.description,
         chat_message_store_factory=agent.chat_message_store_factory,
         context_provider=agent.context_provider,
-        middlewares=middlewares,
+        middleware=middleware,
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
         allow_multiple_tool_calls=False,
         frequency_penalty=options.frequency_penalty,
@@ -2026,9 +2026,9 @@ class HandoffBuilder:
         tool_targets = self._apply_auto_tools(cloned_agent, target_agents)
         if tool_targets:
             middleware = _AutoHandoffMiddleware(tool_targets)
-            existing_middlewares = list(cloned_agent.middlewares or [])
+            existing_middlewares = list(cloned_agent.middleware or [])
             existing_middlewares.append(middleware)
-            cloned_agent.middlewares = existing_middlewares
+            cloned_agent.middleware = existing_middlewares
 
         new_executor = AgentExecutor(
             cloned_agent,

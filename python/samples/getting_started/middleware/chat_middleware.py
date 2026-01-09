@@ -146,7 +146,7 @@ async def class_based_chat_middleware() -> None:
             name="EnhancedChatAgent",
             instructions="You are a helpful AI assistant.",
             # Register class-based middleware at agent level (applies to all runs)
-            middlewares=[InputObserverMiddleware()],
+            middleware=[InputObserverMiddleware()],
             tools=get_weather,
         ) as agent,
     ):
@@ -168,7 +168,7 @@ async def function_based_chat_middleware() -> None:
             name="FunctionMiddlewareAgent",
             instructions="You are a helpful AI assistant.",
             # Register function-based middleware at agent level
-            middlewares=[security_and_override_middleware],
+            middleware=[security_and_override_middleware],
         ) as agent,
     ):
         # Scenario with normal query
@@ -213,7 +213,7 @@ async def run_level_middleware() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middlewares=[
+            middleware=[
                 InputObserverMiddleware(replacement="What's the weather in Madrid?"),
                 security_and_override_middleware,
             ],
@@ -226,7 +226,7 @@ async def run_level_middleware() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middlewares=[security_and_override_middleware],
+            middleware=[security_and_override_middleware],
         )
         print(f"Response: {result.text if result.text else 'No response'}")
 

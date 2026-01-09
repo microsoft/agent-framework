@@ -74,7 +74,7 @@ async def main() -> None:
             name="TimeAgent",
             instructions="You are a helpful time assistant. Call get_current_time when asked about time.",
             tools=get_current_time,
-            middlewares=[simple_agent_middleware, simple_function_middleware],
+            middleware=[simple_agent_middleware, simple_function_middleware],
         ) as agent,
     ):
         query = "What time is it?"

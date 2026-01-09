@@ -260,7 +260,7 @@ class SerializationMixin:
 
             agent = CustomAgent(
                 context_provider=[...],
-                middlewares=[...]
+                middleware=[...]
             )
 
             # Serialization captures agent configuration but excludes runtime data

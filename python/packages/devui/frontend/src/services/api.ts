@@ -43,7 +43,7 @@ interface BackendEntityInfo {
   model_id?: string;
   chat_client_type?: string;
   context_provider?: string[];
-  middlewares?: string[];
+  middleware?: string[];
   // Workflow-specific fields (present when type === "workflow")
   executors?: string[];
   workflow_dump?: Record<string, unknown>;
@@ -222,7 +222,7 @@ class ApiClient {
           model_id: entity.model_id,
           chat_client_type: entity.chat_client_type,
           context_provider: entity.context_provider,
-          middlewares: entity.middlewares,
+          middleware: entity.middleware,
         };
       } else {
         // Workflow - prefer executors field, fall back to tools for backward compatibility

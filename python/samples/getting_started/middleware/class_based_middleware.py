@@ -103,7 +103,7 @@ async def main() -> None:
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middlewares=[SecurityAgentMiddleware(), LoggingFunctionMiddleware()],
+            middleware=[SecurityAgentMiddleware(), LoggingFunctionMiddleware()],
         ) as agent,
     ):
         # Test with normal query

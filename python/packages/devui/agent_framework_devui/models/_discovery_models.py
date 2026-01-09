@@ -44,7 +44,7 @@ class EntityInfo(BaseModel):
     model_id: str | None = None
     chat_client_type: str | None = None
     context_provider: list[str] | None = None
-    middlewares: list[str] | None = None
+    middleware: list[str] | None = None
 
     # Workflow-specific fields (populated only for detailed info requests)
     executors: list[str] | None = None
