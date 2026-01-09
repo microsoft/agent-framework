@@ -1,6 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+)
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, TypeVar, cast
@@ -12,7 +20,9 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_stream_event import ResponseStreamEvent as OpenAIResponseStreamEvent
+from openai.types.responses.response_stream_event import (
+    ResponseStreamEvent as OpenAIResponseStreamEvent,
+)
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
     CodeInterpreter,
@@ -20,7 +30,9 @@ from openai.types.responses.tool_param import (
     Mcp,
     ToolParam,
 )
-from openai.types.responses.web_search_tool_param import UserLocation as WebSearchUserLocation
+from openai.types.responses.web_search_tool_param import (
+    UserLocation as WebSearchUserLocation,
+)
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
 
@@ -139,13 +151,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             if "text_format" not in run_options:
                 async for chunk in await client.responses.create(stream=True, **run_options):
                     yield self._parse_chunk_from_openai(
-                        chunk, chat_options=chat_options, function_call_ids=function_call_ids
+                        chunk,
+                        chat_options=chat_options,
+                        function_call_ids=function_call_ids,
                     )
                 return
             async with client.responses.stream(**run_options) as response:
                 async for chunk in response:
                     yield self._parse_chunk_from_openai(
-                        chunk, chat_options=chat_options, function_call_ids=function_call_ids
+                        chunk,
+                        chat_options=chat_options,
+                        function_call_ids=function_call_ids,
                     )
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -555,7 +571,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if status := props.get("status"):
                         ret["status"] = status
                     if reasoning_text := props.get("reasoning_text"):
-                        ret["content"] = {"type": "reasoning_text", "text": reasoning_text}
+                        ret["content"] = {
+                            "type": "reasoning_text",
+                            "text": reasoning_text,
+                        }
                     if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
                 return ret
@@ -601,9 +620,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     return file_obj
                 return {}
             case FunctionCallContent():
+                if not content.call_id:
+                    logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
+                    return {}
+                # Use fc_id from additional_properties if available, otherwise fallback to call_id
+                fc_id = call_id_to_id.get(content.call_id, content.call_id)
+                # OpenAI Responses API requires IDs to start with `fc_`
+                if not fc_id.startswith("fc_"):
+                    fc_id = f"fc_{fc_id}"
                 return {
                     "call_id": content.call_id,
-                    "id": call_id_to_id[content.call_id],
+                    "id": fc_id,
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
@@ -739,11 +766,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                                     )
                                                 )
                                             case _:
-                                                logger.debug("Unparsed annotation type: %s", annotation.type)
+                                                logger.debug(
+                                                    "Unparsed annotation type: %s",
+                                                    annotation.type,
+                                                )
                                 contents.append(text_content)
                             case "refusal":
                                 contents.append(
-                                    TextContent(text=message_content.refusal, raw_representation=message_content)
+                                    TextContent(
+                                        text=message_content.refusal,
+                                        raw_representation=message_content,
+                                    )
                                 )
                 case "reasoning":  # ResponseOutputReasoning
                     if hasattr(item, "content") and item.content:
@@ -769,7 +802,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if item_outputs := getattr(item, "outputs", None):
                         for code_output in item_outputs:
                             if getattr(code_output, "type", None) == "logs":
-                                outputs.append(TextContent(text=code_output.logs, raw_representation=code_output))
+                                outputs.append(
+                                    TextContent(
+                                        text=code_output.logs,
+                                        raw_representation=code_output,
+                                    )
+                                )
                             elif getattr(code_output, "type", None) == "image":
                                 outputs.append(
                                     UriContent(
@@ -1008,7 +1046,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     # McpApprovalRequest,
                     # ResponseCustomToolCall,
                     case "function_call":
-                        function_call_ids[event.output_index] = (event_item.call_id, event_item.name)
+                        function_call_ids[event.output_index] = (
+                            event_item.call_id,
+                            event_item.name,
+                        )
                     case "mcp_approval_request":
                         contents.append(
                             FunctionApprovalRequestContent(
@@ -1061,7 +1102,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             for code_output in event_item.outputs:
                                 if getattr(code_output, "type", None) == "logs":
                                     outputs.append(
-                                        TextContent(text=cast(Any, code_output).logs, raw_representation=code_output)
+                                        TextContent(
+                                            text=cast(Any, code_output).logs,
+                                            raw_representation=code_output,
+                                        )
                                     )
                                 elif getattr(code_output, "type", None) == "image":
                                     outputs.append(
@@ -1075,7 +1119,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             contents.append(
                                 CodeInterpreterToolCallContent(
                                     call_id=call_id,
-                                    inputs=[TextContent(text=event_item.code, raw_representation=event_item)],
+                                    inputs=[
+                                        TextContent(
+                                            text=event_item.code,
+                                            raw_representation=event_item,
+                                        )
+                                    ],
                                     raw_representation=event_item,
                                 )
                             )
@@ -1113,7 +1162,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             call_id=call_id,
                             name=name,
                             arguments=event.delta,
-                            additional_properties={"output_index": event.output_index, "fc_id": event.item_id},
+                            additional_properties={
+                                "output_index": event.output_index,
+                                "fc_id": event.item_id,
+                            },
                             raw_representation=event,
                         )
                     )

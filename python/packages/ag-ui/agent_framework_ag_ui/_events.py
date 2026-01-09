@@ -160,10 +160,10 @@ class AgentFrameworkEventBridge:
             logger.warning(f"FunctionCallContent missing name and call_id. args_length={args_length}")
 
         tool_call_id = self._coalesce_tool_call_id(content)
+        # Only emit ToolCallStartEvent once per tool call (when it's a new tool call)
         if content.name and tool_call_id != self.current_tool_call_id:
             self.streaming_tool_args = ""
             self.state_delta_count = 0
-        if content.name:
             self.current_tool_call_id = tool_call_id
             self.current_tool_call_name = content.name
 
