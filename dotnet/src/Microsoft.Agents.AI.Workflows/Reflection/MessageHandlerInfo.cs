@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
-
 using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
