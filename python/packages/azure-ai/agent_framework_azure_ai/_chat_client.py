@@ -43,7 +43,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
     Agent,
@@ -107,7 +107,7 @@ TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class AzureAIAgentClient(BaseChatClient):
     """Azure AI Agent Chat client."""
@@ -278,22 +278,13 @@ class AzureAIAgentClient(BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # Extract necessary state from messages and options
-        run_options, required_action_results = await self._create_run_options(messages, chat_options, **kwargs)
-
-        # Get the thread ID
-        thread_id: str | None = (
-            chat_options.conversation_id
-            if chat_options.conversation_id is not None
-            else run_options.get("conversation_id", self.thread_id)
-        )
-
-        # Determine which agent to use and create if needed
+        # prepare
+        run_options, required_action_results = await self._prepare_options(messages, chat_options, **kwargs)
         agent_id = await self._get_agent_id_or_create(run_options)
 
-        # Process and yield each update from the stream
+        # execute and process
         async for update in self._process_stream(
-            *(await self._create_agent_stream(thread_id, agent_id, run_options, required_action_results))
+            *(await self._create_agent_stream(agent_id, run_options, required_action_results))
         ):
             yield update
 
@@ -342,7 +333,6 @@ class AzureAIAgentClient(BaseChatClient):
 
     async def _create_agent_stream(
         self,
-        thread_id: str | None,
         agent_id: str,
         run_options: dict[str, Any],
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
@@ -352,14 +342,14 @@ class AzureAIAgentClient(BaseChatClient):
         Returns:
             tuple: (stream, final_thread_id)
         """
+        thread_id = run_options.pop("thread_id", None)
+
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
         stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any]
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
-        tool_run_id, tool_outputs, tool_approvals = self._convert_required_action_to_tool_output(
-            required_action_results
-        )
+        tool_run_id, tool_outputs, tool_approvals = self._prepare_tool_outputs_for_azure_ai(required_action_results)
 
         if (
             thread_run is not None
@@ -421,19 +411,11 @@ class AzureAIAgentClient(BaseChatClient):
 
         # No thread ID was provided, so create a new thread.
         thread = await self.agents_client.threads.create(
-            tool_resources=run_options.get("tool_resources"), metadata=run_options.get("metadata")
+            tool_resources=run_options.get("tool_resources"),
+            metadata=run_options.get("metadata"),
+            messages=run_options.get("additional_messages"),
         )
-        thread_id = thread.id
-        # workaround for: https://github.com/Azure/azure-sdk-for-python/issues/42805
-        # this occurs when otel is enabled
-        # once fixed, in the function above, readd:
-        # `messages=run_options.pop("additional_messages")`
-        for msg in run_options.pop("additional_messages", []):
-            await self.agents_client.messages.create(
-                thread_id=thread_id, role=msg.role, content=msg.content, metadata=msg.metadata
-            )
-        # and remove until here.
-        return thread_id
+        return thread.id
 
     def _extract_url_citations(
         self, message_delta_chunk: MessageDeltaChunk, azure_search_tool_calls: list[dict[str, Any]]
@@ -611,7 +593,7 @@ class AzureAIAgentClient(BaseChatClient):
                                     "submit_tool_outputs",
                                     "submit_tool_approval",
                                 ]:
-                                    function_call_contents = self._create_function_call_contents(
+                                    function_call_contents = self._parse_function_calls_from_azure_ai(
                                         event_data, response_id
                                     )
                                     if function_call_contents:
@@ -753,8 +735,8 @@ class AzureAIAgentClient(BaseChatClient):
         except Exception as ex:
             logger.debug(f"Failed to capture Azure AI Search tool call: {ex}")
 
-    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
-        """Create function call contents from a tool action event."""
+    def _parse_function_calls_from_azure_ai(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
+        """Parse function call contents from an Azure AI tool action event."""
         if isinstance(event_data, ThreadRun) and event_data.required_action is not None:
             if isinstance(event_data.required_action, SubmitToolOutputsAction):
                 return [
@@ -815,117 +797,197 @@ class AzureAIAgentClient(BaseChatClient):
 
         chat_options.tool_choice = chat_tool_mode
 
-    async def _create_run_options(
+    async def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions | None,
+        chat_options: ChatOptions,
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent | FunctionApprovalResponseContent] | None]:
-        run_options: dict[str, Any] = {**kwargs}
-
         agent_definition = await self._load_agent_definition_if_needed()
 
-        if chat_options is not None:
-            run_options["max_completion_tokens"] = chat_options.max_tokens
-            if chat_options.model_id is not None:
-                run_options["model"] = chat_options.model_id
-            else:
-                run_options["model"] = self.model_id
-            run_options["top_p"] = chat_options.top_p
-            run_options["temperature"] = chat_options.temperature
-            run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
+        # Use to_dict with exclusions for properties handled separately
+        run_options: dict[str, Any] = chat_options.to_dict(
+            exclude={
+                "type",
+                "instructions",  # handled via messages
+                "tools",  # handled separately
+                "tool_choice",  # handled separately
+                "response_format",  # handled separately
+                "additional_properties",  # handled separately
+                "frequency_penalty",  # not supported
+                "presence_penalty",  # not supported
+                "user",  # not supported
+                "stop",  # not supported
+                "logit_bias",  # not supported
+                "seed",  # not supported
+                "store",  # not supported
+            }
+        )
 
-            tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+        # Translation between ChatOptions and Azure AI Agents API
+        translations = {
+            "model_id": "model",
+            "allow_multiple_tool_calls": "parallel_tool_calls",
+            "max_tokens": "max_completion_tokens",
+        }
+        for old_key, new_key in translations.items():
+            if old_key in run_options and old_key != new_key:
+                run_options[new_key] = run_options.pop(old_key)
 
-            # Add tools from existing agent
-            if agent_definition is not None:
-                # Don't include function tools, since they will be passed through chat_options.tools
-                agent_tools = [tool for tool in agent_definition.tools if not isinstance(tool, FunctionToolDefinition)]
-                if agent_tools:
-                    tool_definitions.extend(agent_tools)
-                if agent_definition.tool_resources:
-                    run_options["tool_resources"] = agent_definition.tool_resources
+        # model id fallback
+        if not run_options.get("model"):
+            run_options["model"] = self.model_id
 
-            if chat_options.tool_choice is not None:
-                if chat_options.tool_choice != "none" and chat_options.tools:
-                    # Add run tools
-                    tool_definitions.extend(await self._prep_tools(chat_options.tools, run_options))
+        # tools and tool_choice
+        if tool_definitions := await self._prepare_tool_definitions_and_resources(
+            chat_options, agent_definition, run_options
+        ):
+            run_options["tools"] = tool_definitions
 
-                    # Handle MCP tool resources for approval mode
-                    mcp_tools = [tool for tool in chat_options.tools if isinstance(tool, HostedMCPTool)]
-                    if mcp_tools:
-                        mcp_resources = []
-                        for mcp_tool in mcp_tools:
-                            server_label = mcp_tool.name.replace(" ", "_")
-                            mcp_resource: dict[str, Any] = {"server_label": server_label}
+        if tool_choice := self._prepare_tool_choice_mode(chat_options):
+            run_options["tool_choice"] = tool_choice
 
-                            # Add headers if they exist
-                            if mcp_tool.headers:
-                                mcp_resource["headers"] = mcp_tool.headers
-
-                            if mcp_tool.approval_mode is not None:
-                                match mcp_tool.approval_mode:
-                                    case str():
-                                        # Map agent framework approval modes to Azure AI approval modes
-                                        approval_mode = (
-                                            "always" if mcp_tool.approval_mode == "always_require" else "never"
-                                        )
-                                        mcp_resource["require_approval"] = approval_mode
-                                    case _:
-                                        if "always_require_approval" in mcp_tool.approval_mode:
-                                            mcp_resource["require_approval"] = {
-                                                "always": mcp_tool.approval_mode["always_require_approval"]
-                                            }
-                                        elif "never_require_approval" in mcp_tool.approval_mode:
-                                            mcp_resource["require_approval"] = {
-                                                "never": mcp_tool.approval_mode["never_require_approval"]
-                                            }
-
-                            mcp_resources.append(mcp_resource)
-
-                        # Add MCP resources to tool_resources
-                        if "tool_resources" not in run_options:
-                            run_options["tool_resources"] = {}
-                        run_options["tool_resources"]["mcp"] = mcp_resources
-
-                if chat_options.tool_choice == "none":
-                    run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
-                elif chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = AgentsToolChoiceOptionMode.AUTO
-                elif (
-                    isinstance(chat_options.tool_choice, ToolMode)
-                    and chat_options.tool_choice == "required"
-                    and chat_options.tool_choice.required_function_name is not None
-                ):
-                    run_options["tool_choice"] = AgentsNamedToolChoice(
-                        type=AgentsNamedToolChoiceType.FUNCTION,
-                        function=FunctionName(name=chat_options.tool_choice.required_function_name),
-                    )
-
-            if tool_definitions:
-                run_options["tools"] = tool_definitions
-
-            if chat_options.response_format is not None:
-                run_options["response_format"] = ResponseFormatJsonSchemaType(
-                    json_schema=ResponseFormatJsonSchema(
-                        name=chat_options.response_format.__name__,
-                        schema=chat_options.response_format.model_json_schema(),
-                    )
+        # response format
+        if chat_options.response_format is not None:
+            run_options["response_format"] = ResponseFormatJsonSchemaType(
+                json_schema=ResponseFormatJsonSchema(
+                    name=chat_options.response_format.__name__,
+                    schema=chat_options.response_format.model_json_schema(),
                 )
+            )
 
+        # messages
+        additional_messages, instructions, required_action_results = self._prepare_messages(messages)
+        if additional_messages:
+            run_options["additional_messages"] = additional_messages
+
+        # Add instruction from existing agent at the beginning
+        if (
+            agent_definition is not None
+            and agent_definition.instructions
+            and agent_definition.instructions not in instructions
+        ):
+            instructions.insert(0, agent_definition.instructions)
+
+        if instructions:
+            run_options["instructions"] = "\n".join(instructions)
+
+        # thread_id resolution (conversation_id takes precedence, then kwargs, then instance default)
+        run_options["thread_id"] = chat_options.conversation_id or kwargs.get("conversation_id") or self.thread_id
+
+        return run_options, required_action_results
+
+    def _prepare_tool_choice_mode(
+        self, chat_options: ChatOptions
+    ) -> AgentsToolChoiceOptionMode | AgentsNamedToolChoice | None:
+        """Prepare the tool choice mode for Azure AI Agents API."""
+        if chat_options.tool_choice is None:
+            return None
+        if chat_options.tool_choice == "none":
+            return AgentsToolChoiceOptionMode.NONE
+        if chat_options.tool_choice == "auto":
+            return AgentsToolChoiceOptionMode.AUTO
+        if (
+            isinstance(chat_options.tool_choice, ToolMode)
+            and chat_options.tool_choice == "required"
+            and chat_options.tool_choice.required_function_name is not None
+        ):
+            return AgentsNamedToolChoice(
+                type=AgentsNamedToolChoiceType.FUNCTION,
+                function=FunctionName(name=chat_options.tool_choice.required_function_name),
+            )
+        return None
+
+    async def _prepare_tool_definitions_and_resources(
+        self,
+        chat_options: ChatOptions,
+        agent_definition: Agent | None,
+        run_options: dict[str, Any],
+    ) -> list[ToolDefinition | dict[str, Any]]:
+        """Prepare tool definitions and resources for the run options."""
+        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+
+        # Add tools from existing agent (exclude function tools - passed via chat_options.tools)
+        if agent_definition is not None:
+            agent_tools = [tool for tool in agent_definition.tools if not isinstance(tool, FunctionToolDefinition)]
+            if agent_tools:
+                tool_definitions.extend(agent_tools)
+            if agent_definition.tool_resources:
+                run_options["tool_resources"] = agent_definition.tool_resources
+
+        # Add run tools if tool_choice allows
+        if chat_options.tool_choice is not None and chat_options.tool_choice != "none" and chat_options.tools:
+            tool_definitions.extend(await self._prepare_tools_for_azure_ai(chat_options.tools, run_options))
+
+            # Handle MCP tool resources
+            mcp_resources = self._prepare_mcp_resources(chat_options.tools)
+            if mcp_resources:
+                if "tool_resources" not in run_options:
+                    run_options["tool_resources"] = {}
+                run_options["tool_resources"]["mcp"] = mcp_resources
+
+        return tool_definitions
+
+    def _prepare_mcp_resources(
+        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
+    ) -> list[dict[str, Any]]:
+        """Prepare MCP tool resources for approval mode configuration."""
+        mcp_tools = [tool for tool in tools if isinstance(tool, HostedMCPTool)]
+        if not mcp_tools:
+            return []
+
+        mcp_resources: list[dict[str, Any]] = []
+        for mcp_tool in mcp_tools:
+            server_label = mcp_tool.name.replace(" ", "_")
+            mcp_resource: dict[str, Any] = {"server_label": server_label}
+
+            if mcp_tool.headers:
+                mcp_resource["headers"] = mcp_tool.headers
+
+            if mcp_tool.approval_mode is not None:
+                match mcp_tool.approval_mode:
+                    case str():
+                        # Map agent framework approval modes to Azure AI approval modes
+                        approval_mode = "always" if mcp_tool.approval_mode == "always_require" else "never"
+                        mcp_resource["require_approval"] = approval_mode
+                    case _:
+                        if "always_require_approval" in mcp_tool.approval_mode:
+                            mcp_resource["require_approval"] = {
+                                "always": mcp_tool.approval_mode["always_require_approval"]
+                            }
+                        elif "never_require_approval" in mcp_tool.approval_mode:
+                            mcp_resource["require_approval"] = {
+                                "never": mcp_tool.approval_mode["never_require_approval"]
+                            }
+
+            mcp_resources.append(mcp_resource)
+
+        return mcp_resources
+
+    def _prepare_messages(
+        self, messages: MutableSequence[ChatMessage]
+    ) -> tuple[
+        list[ThreadMessageOptions] | None,
+        list[str],
+        list[FunctionResultContent | FunctionApprovalResponseContent] | None,
+    ]:
+        """Prepare messages for Azure AI Agents API.
+
+        System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
+        All other messages are added 1:1, treating assistant messages as agent messages
+        and everything else as user messages.
+
+        Returns:
+            Tuple of (additional_messages, instructions, required_action_results)
+        """
         instructions: list[str] = []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
-
         additional_messages: list[ThreadMessageOptions] | None = None
 
-        # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
-        # All other messages are added 1:1, treating assistant messages as agent messages
-        # and everything else as user messages.
         for chat_message in messages:
             if chat_message.role.value in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if isinstance(content, TextContent)]:
                     instructions.append(text_content.text)
-
                 continue
 
             message_contents: list[MessageInputContentBlock] = []
@@ -942,7 +1004,7 @@ class AzureAIAgentClient(BaseChatClient):
                 elif isinstance(content.raw_representation, MessageInputContentBlock):
                     message_contents.append(content.raw_representation)
 
-            if len(message_contents) > 0:
+            if message_contents:
                 if additional_messages is None:
                     additional_messages = []
                 additional_messages.append(
@@ -952,26 +1014,12 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        if additional_messages is not None:
-            run_options["additional_messages"] = additional_messages
+        return additional_messages, instructions, required_action_results
 
-        # Add instruction from existing agent at the beginning
-        if (
-            agent_definition is not None
-            and agent_definition.instructions
-            and agent_definition.instructions not in instructions
-        ):
-            instructions.insert(0, agent_definition.instructions)
-
-        if len(instructions) > 0:
-            run_options["instructions"] = "".join(instructions)
-
-        return run_options, required_action_results
-
-    async def _prep_tools(
+    async def _prepare_tools_for_azure_ai(
         self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
-        """Prepare tool definitions for the run options."""
+        """Prepare tool definitions for the Azure AI Agents API."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
         for tool in tools:
             match tool:
@@ -1044,10 +1092,11 @@ class AzureAIAgentClient(BaseChatClient):
                     raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
         return tool_definitions
 
-    def _convert_required_action_to_tool_output(
+    def _prepare_tool_outputs_for_azure_ai(
         self,
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
     ) -> tuple[str | None, list[ToolOutput] | None, list[ToolApproval] | None]:
+        """Prepare function results and approvals for submission to the Azure AI API."""
         run_id: str | None = None
         tool_outputs: list[ToolOutput] | None = None
         tool_approvals: list[ToolApproval] | None = None

@@ -34,7 +34,7 @@ from ._types import (
     ToolMode,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
-from .observability import use_agent_observability
+from .observability import use_agent_instrumentation
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -516,8 +516,8 @@ class BaseAgent(SerializationMixin):
 
 
 @use_agent_middleware
-@use_agent_observability
-class ChatAgent(BaseAgent):
+@use_agent_instrumentation(capture_usage=False)  # type: ignore[arg-type,misc]
+class ChatAgent(BaseAgent):  # type: ignore[misc]
     """A Chat Client Agent.
 
     This is the primary agent implementation that uses a chat client to interact
@@ -583,7 +583,7 @@ class ChatAgent(BaseAgent):
                 print(update.text, end="")
     """
 
-    AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
+    AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
 
     def __init__(
         self,
@@ -878,6 +878,9 @@ class ChatAgent(BaseAgent):
             user=user,
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
+
+        # Ensure thread is forwarded in kwargs for tool invocation
+        kwargs["thread"] = thread
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response = await self.chat_client.get_response(
@@ -895,7 +898,12 @@ class ChatAgent(BaseAgent):
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
+        await self._notify_thread_of_new_messages(
+            thread,
+            input_messages,
+            response.messages,
+            **{k: v for k, v in kwargs.items() if k != "thread"},
+        )
         return AgentRunResponse(
             messages=response.messages,
             response_id=response.response_id,
@@ -1017,6 +1025,8 @@ class ChatAgent(BaseAgent):
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
 
+        # Ensure thread is forwarded in kwargs for tool invocation
+        kwargs["thread"] = thread
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response_updates: list[ChatResponseUpdate] = []
@@ -1043,7 +1053,13 @@ class ChatAgent(BaseAgent):
 
         response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages, **kwargs)
+
+        await self._notify_thread_of_new_messages(
+            thread,
+            input_messages,
+            response.messages,
+            **{k: v for k, v in kwargs.items() if k != "thread"},
+        )
 
     @override
     def get_new_thread(

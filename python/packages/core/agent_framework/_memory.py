@@ -6,10 +6,12 @@ from abc import ABC, abstractmethod
 from collections.abc import MutableSequence, Sequence
 from contextlib import AsyncExitStack
 from types import TracebackType
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
-from ._tools import ToolProtocol
 from ._types import ChatMessage
+
+if TYPE_CHECKING:
+    from ._tools import ToolProtocol
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -54,7 +56,7 @@ class Context:
         self,
         instructions: str | None = None,
         messages: Sequence[ChatMessage] | None = None,
-        tools: Sequence[ToolProtocol] | None = None,
+        tools: Sequence["ToolProtocol"] | None = None,
     ):
         """Create a new Context object.
 
@@ -65,7 +67,7 @@ class Context:
         """
         self.instructions = instructions
         self.messages: Sequence[ChatMessage] = messages or []
-        self.tools: Sequence[ToolProtocol] = tools or []
+        self.tools: Sequence["ToolProtocol"] = tools or []
 
 
 # region ContextProvider
@@ -247,7 +249,7 @@ class AggregateContextProvider(ContextProvider):
         contexts = await asyncio.gather(*[provider.invoking(messages, **kwargs) for provider in self.providers])
         instructions: str = ""
         return_messages: list[ChatMessage] = []
-        tools: list[ToolProtocol] = []
+        tools: list["ToolProtocol"] = []
         for ctx in contexts:
             if ctx.instructions:
                 instructions += ctx.instructions

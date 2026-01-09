@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 class SimpleTraceCollector(SpanExporter):
     """Simple trace collector that captures spans for direct yielding."""
 
-    def __init__(self, session_id: str | None = None, entity_id: str | None = None) -> None:
+    def __init__(self, response_id: str | None = None, entity_id: str | None = None) -> None:
         """Initialize trace collector.
 
         Args:
-            session_id: Session identifier for context
+            response_id: Response identifier for grouping traces by turn
             entity_id: Entity identifier for context
         """
-        self.session_id = session_id
+        self.response_id = response_id
         self.entity_id = entity_id
         self.collected_events: list[ResponseTraceEvent] = []
 
@@ -93,7 +93,7 @@ class SimpleTraceCollector(SpanExporter):
                 "duration_ms": duration_ms,
                 "attributes": dict(span.attributes) if span.attributes else {},
                 "status": str(span.status.status_code) if hasattr(span, "status") else "OK",
-                "session_id": self.session_id,
+                "response_id": self.response_id,
                 "entity_id": self.entity_id,
             }
 
@@ -121,18 +121,18 @@ class SimpleTraceCollector(SpanExporter):
 
 @contextmanager
 def capture_traces(
-    session_id: str | None = None, entity_id: str | None = None
+    response_id: str | None = None, entity_id: str | None = None
 ) -> Generator[SimpleTraceCollector, None, None]:
     """Context manager to capture traces during execution.
 
     Args:
-        session_id: Session identifier for context
+        response_id: Response identifier for grouping traces by turn
         entity_id: Entity identifier for context
 
     Yields:
         SimpleTraceCollector instance to get trace events from
     """
-    collector = SimpleTraceCollector(session_id, entity_id)
+    collector = SimpleTraceCollector(response_id, entity_id)
 
     try:
         from opentelemetry import trace
@@ -146,7 +146,7 @@ def capture_traces(
         # Check if this is a real TracerProvider (not the default NoOpTracerProvider)
         if isinstance(provider, TracerProvider):
             provider.add_span_processor(processor)
-            logger.debug(f"Added trace collector to TracerProvider for session: {session_id}, entity: {entity_id}")
+            logger.debug(f"Added trace collector to TracerProvider for response: {response_id}, entity: {entity_id}")
 
             try:
                 yield collector

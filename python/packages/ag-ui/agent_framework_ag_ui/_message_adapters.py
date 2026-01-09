@@ -2,6 +2,8 @@
 
 """Message format conversion between AG-UI and Agent Framework."""
 
+import json
+import logging
 from typing import Any, cast
 
 from agent_framework import (
@@ -11,20 +13,229 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
+    prepare_function_call_results,
 )
 
-# Role mapping constants
-_AGUI_TO_FRAMEWORK_ROLE = {
-    "user": Role.USER,
-    "assistant": Role.ASSISTANT,
-    "system": Role.SYSTEM,
-}
+from ._utils import (
+    AGUI_TO_FRAMEWORK_ROLE,
+    FRAMEWORK_TO_AGUI_ROLE,
+    get_role_value,
+    normalize_agui_role,
+    safe_json_parse,
+)
 
-_FRAMEWORK_TO_AGUI_ROLE = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "system",
-}
+logger = logging.getLogger(__name__)
+
+
+def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
+    sanitized: list[ChatMessage] = []
+    pending_tool_call_ids: set[str] | None = None
+    pending_confirm_changes_id: str | None = None
+
+    for msg in messages:
+        role_value = get_role_value(msg)
+
+        if role_value == "assistant":
+            tool_ids = {
+                str(content.call_id)
+                for content in msg.contents or []
+                if isinstance(content, FunctionCallContent) and content.call_id
+            }
+            confirm_changes_call = None
+            for content in msg.contents or []:
+                if isinstance(content, FunctionCallContent) and content.name == "confirm_changes":
+                    confirm_changes_call = content
+                    break
+
+            sanitized.append(msg)
+            pending_tool_call_ids = tool_ids if tool_ids else None
+            pending_confirm_changes_id = (
+                str(confirm_changes_call.call_id) if confirm_changes_call and confirm_changes_call.call_id else None
+            )
+            continue
+
+        if role_value == "user":
+            approval_call_ids: set[str] = set()
+            approval_accepted: bool | None = None
+            for content in msg.contents or []:
+                if type(content) is FunctionApprovalResponseContent:
+                    if content.function_call and content.function_call.call_id:
+                        approval_call_ids.add(str(content.function_call.call_id))
+                    if approval_accepted is None:
+                        approval_accepted = bool(content.approved)
+                    else:
+                        approval_accepted = approval_accepted and bool(content.approved)
+
+            if approval_call_ids and pending_tool_call_ids:
+                pending_tool_call_ids -= approval_call_ids
+                logger.info(
+                    f"FunctionApprovalResponseContent found for call_ids={sorted(approval_call_ids)} - "
+                    "framework will handle execution"
+                )
+
+            if pending_confirm_changes_id and approval_accepted is not None:
+                logger.info(f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}")
+                synthetic_result = ChatMessage(
+                    role="tool",
+                    contents=[
+                        FunctionResultContent(
+                            call_id=pending_confirm_changes_id,
+                            result="Confirmed" if approval_accepted else "Rejected",
+                        )
+                    ],
+                )
+                sanitized.append(synthetic_result)
+                if pending_tool_call_ids:
+                    pending_tool_call_ids.discard(pending_confirm_changes_id)
+                pending_confirm_changes_id = None
+
+            if pending_confirm_changes_id:
+                user_text = ""
+                for content in msg.contents or []:
+                    if isinstance(content, TextContent):
+                        user_text = content.text
+                        break
+
+                try:
+                    parsed = json.loads(user_text)
+                    if "accepted" in parsed:
+                        logger.info(
+                            f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
+                        )
+                        synthetic_result = ChatMessage(
+                            role="tool",
+                            contents=[
+                                FunctionResultContent(
+                                    call_id=pending_confirm_changes_id,
+                                    result="Confirmed" if parsed.get("accepted") else "Rejected",
+                                )
+                            ],
+                        )
+                        sanitized.append(synthetic_result)
+                        if pending_tool_call_ids:
+                            pending_tool_call_ids.discard(pending_confirm_changes_id)
+                        pending_confirm_changes_id = None
+                        continue
+                except (json.JSONDecodeError, KeyError) as exc:
+                    logger.debug(f"Could not parse user message as confirm_changes response: {type(exc).__name__}")
+
+            if pending_tool_call_ids:
+                logger.info(
+                    f"User message arrived with {len(pending_tool_call_ids)} pending tool calls - "
+                    "injecting synthetic results"
+                )
+                for pending_call_id in pending_tool_call_ids:
+                    logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
+                    synthetic_result = ChatMessage(
+                        role="tool",
+                        contents=[
+                            FunctionResultContent(
+                                call_id=pending_call_id,
+                                result="Tool execution skipped - user provided follow-up message",
+                            )
+                        ],
+                    )
+                    sanitized.append(synthetic_result)
+                pending_tool_call_ids = None
+                pending_confirm_changes_id = None
+
+            sanitized.append(msg)
+            pending_confirm_changes_id = None
+            continue
+
+        if role_value == "tool":
+            if not pending_tool_call_ids:
+                continue
+            keep = False
+            for content in msg.contents or []:
+                if isinstance(content, FunctionResultContent):
+                    call_id = str(content.call_id)
+                    if call_id in pending_tool_call_ids:
+                        keep = True
+                        if call_id == pending_confirm_changes_id:
+                            pending_confirm_changes_id = None
+                        break
+            if keep:
+                sanitized.append(msg)
+            continue
+
+        sanitized.append(msg)
+        pending_tool_call_ids = None
+        pending_confirm_changes_id = None
+
+    return sanitized
+
+
+def _deduplicate_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """Remove duplicate messages while preserving order."""
+    seen_keys: dict[Any, int] = {}
+    unique_messages: list[ChatMessage] = []
+
+    for idx, msg in enumerate(messages):
+        role_value = get_role_value(msg)
+
+        if role_value == "tool" and msg.contents and isinstance(msg.contents[0], FunctionResultContent):
+            call_id = str(msg.contents[0].call_id)
+            key: Any = (role_value, call_id)
+
+            if key in seen_keys:
+                existing_idx = seen_keys[key]
+                existing_msg = unique_messages[existing_idx]
+
+                existing_result = None
+                if existing_msg.contents and isinstance(existing_msg.contents[0], FunctionResultContent):
+                    existing_result = existing_msg.contents[0].result
+                new_result = msg.contents[0].result
+
+                if (not existing_result or existing_result == "") and new_result:
+                    logger.info(f"Replacing empty tool result at index {existing_idx} with data from index {idx}")
+                    unique_messages[existing_idx] = msg
+                else:
+                    logger.info(f"Skipping duplicate tool result at index {idx}: call_id={call_id}")
+                continue
+
+            seen_keys[key] = len(unique_messages)
+            unique_messages.append(msg)
+
+        elif (
+            role_value == "assistant" and msg.contents and any(isinstance(c, FunctionCallContent) for c in msg.contents)
+        ):
+            tool_call_ids = tuple(
+                sorted(str(c.call_id) for c in msg.contents if isinstance(c, FunctionCallContent) and c.call_id)
+            )
+            key = (role_value, tool_call_ids)
+
+            if key in seen_keys:
+                logger.info(f"Skipping duplicate assistant tool call at index {idx}")
+                continue
+
+            seen_keys[key] = len(unique_messages)
+            unique_messages.append(msg)
+
+        else:
+            content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
+            key = (role_value, hash(content_str))
+
+            if key in seen_keys:
+                logger.info(f"Skipping duplicate message at index {idx}: role={role_value}")
+                continue
+
+            seen_keys[key] = len(unique_messages)
+            unique_messages.append(msg)
+
+    return unique_messages
+
+
+def normalize_agui_input_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[list[ChatMessage], list[dict[str, Any]]]:
+    """Normalize raw AG-UI messages into provider and snapshot formats."""
+    provider_messages = agui_messages_to_agent_framework(messages)
+    provider_messages = _sanitize_tool_history(provider_messages)
+    provider_messages = _deduplicate_messages(provider_messages)
+    snapshot_messages = agui_messages_to_snapshot_format(messages)
+    return provider_messages, snapshot_messages
 
 
 def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[ChatMessage]:
@@ -36,11 +247,108 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
     Returns:
         List of Agent Framework ChatMessage objects
     """
+
+    def _update_tool_call_arguments(
+        raw_messages: list[dict[str, Any]],
+        tool_call_id: str,
+        modified_args: dict[str, Any],
+    ) -> None:
+        for raw_msg in raw_messages:
+            tool_calls = raw_msg.get("tool_calls") or raw_msg.get("toolCalls")
+            if not isinstance(tool_calls, list):
+                continue
+            tool_calls_list = cast(list[Any], tool_calls)
+            for tool_call in tool_calls_list:
+                if not isinstance(tool_call, dict):
+                    continue
+                tool_call_dict = cast(dict[str, Any], tool_call)
+                if str(tool_call_dict.get("id", "")) != tool_call_id:
+                    continue
+                function_payload = tool_call_dict.get("function")
+                if not isinstance(function_payload, dict):
+                    return
+                function_payload_dict = cast(dict[str, Any], function_payload)
+                existing_args = function_payload_dict.get("arguments")
+                if isinstance(existing_args, str):
+                    function_payload_dict["arguments"] = json.dumps(modified_args)
+                else:
+                    function_payload_dict["arguments"] = modified_args
+                return
+
+    def _find_matching_func_call(call_id: str) -> FunctionCallContent | None:
+        for prev_msg in result:
+            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            if role_val != "assistant":
+                continue
+            for content in prev_msg.contents or []:
+                if isinstance(content, FunctionCallContent):
+                    if content.call_id == call_id and content.name != "confirm_changes":
+                        return content
+        return None
+
+    def _parse_arguments(arguments: Any) -> dict[str, Any] | None:
+        return safe_json_parse(arguments)
+
+    def _resolve_approval_call_id(tool_call_id: str, parsed_payload: dict[str, Any] | None) -> str | None:
+        if parsed_payload:
+            explicit_call_id = parsed_payload.get("function_call_id")
+            if explicit_call_id:
+                return str(explicit_call_id)
+
+        for prev_msg in result:
+            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            if role_val != "assistant":
+                continue
+            direct_call = None
+            confirm_call = None
+            sibling_calls: list[FunctionCallContent] = []
+            for content in prev_msg.contents or []:
+                if not isinstance(content, FunctionCallContent):
+                    continue
+                if content.call_id == tool_call_id:
+                    direct_call = content
+                if content.name == "confirm_changes" and content.call_id == tool_call_id:
+                    confirm_call = content
+                elif content.name != "confirm_changes":
+                    sibling_calls.append(content)
+
+            if direct_call:
+                direct_args = direct_call.parse_arguments() or {}
+                if isinstance(direct_args, dict):
+                    explicit_call_id = direct_args.get("function_call_id")
+                    if explicit_call_id:
+                        return str(explicit_call_id)
+
+            if not confirm_call:
+                continue
+
+            confirm_args = confirm_call.parse_arguments() or {}
+            if isinstance(confirm_args, dict):
+                explicit_call_id = confirm_args.get("function_call_id")
+                if explicit_call_id:
+                    return str(explicit_call_id)
+
+            if len(sibling_calls) == 1 and sibling_calls[0].call_id:
+                return str(sibling_calls[0].call_id)
+
+        return None
+
+    def _filter_modified_args(
+        modified_args: dict[str, Any],
+        original_args: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not modified_args:
+            return {}
+        if not isinstance(original_args, dict) or not original_args:
+            return {}
+        allowed_keys = set(original_args.keys())
+        return {key: value for key, value in modified_args.items() if key in allowed_keys}
+
     result: list[ChatMessage] = []
     for msg in messages:
         # Handle standard tool result messages early (role="tool") to preserve provider invariants
         # This path maps AG‑UI tool messages to FunctionResultContent with the correct tool_call_id
-        role_str = msg.get("role", "user")
+        role_str = normalize_agui_role(msg.get("role", "user"))
         if role_str == "tool":
             # Prefer explicit tool_call_id fields; fall back to backend fields only if necessary
             tool_call_id = msg.get("tool_call_id") or msg.get("toolCallId")
@@ -57,31 +365,153 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 result_content = msg.get("result", "")
 
             # Distinguish approval payloads from actual tool results
-            is_approval = False
+            parsed: dict[str, Any] | None = None
             if isinstance(result_content, str) and result_content:
-                import json as _json
-
                 try:
-                    parsed = _json.loads(result_content)
-                    is_approval = isinstance(parsed, dict) and "accepted" in parsed
+                    parsed_candidate = json.loads(result_content)
                 except Exception:
-                    is_approval = False
+                    parsed_candidate = None
+                if isinstance(parsed_candidate, dict):
+                    parsed = cast(dict[str, Any], parsed_candidate)
+            elif isinstance(result_content, dict):
+                parsed = cast(dict[str, Any], result_content)
+
+            is_approval = parsed is not None and "accepted" in parsed
 
             if is_approval:
-                # Approval responses should be treated as user messages to trigger human-in-the-loop flow
-                chat_msg = ChatMessage(
-                    role=Role.USER,
-                    contents=[TextContent(text=str(result_content))],
-                    additional_properties={"is_tool_result": True, "tool_call_id": str(tool_call_id or "")},
-                )
+                # Look for the matching function call in previous messages to create
+                # a proper FunctionApprovalResponseContent. This enables the agent framework
+                # to execute the approved tool (fix for GitHub issue #3034).
+                accepted = parsed.get("accepted", False) if parsed is not None else False
+                approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
+
+                # Log the full approval payload to debug modified arguments
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(f"Approval payload received: {parsed}")
+
+                approval_call_id = tool_call_id
+                resolved_call_id = _resolve_approval_call_id(tool_call_id, parsed)
+                if resolved_call_id:
+                    approval_call_id = resolved_call_id
+                matching_func_call = _find_matching_func_call(approval_call_id)
+
+                if matching_func_call:
+                    # Remove any existing tool result for this call_id since the framework
+                    # will re-execute the tool after approval. Keeping old results causes
+                    # OpenAI API errors ("tool message must follow assistant with tool_calls").
+                    result = [
+                        m
+                        for m in result
+                        if not (
+                            (m.role.value if hasattr(m.role, "value") else str(m.role)) == "tool"
+                            and any(
+                                isinstance(c, FunctionResultContent) and c.call_id == approval_call_id
+                                for c in (m.contents or [])
+                            )
+                        )
+                    ]
+
+                    # Check if the approval payload contains modified arguments
+                    # The UI sends back the modified state (e.g., deselected steps) in the approval payload
+                    modified_args = {k: v for k, v in parsed.items() if k != "accepted"} if parsed else {}
+                    original_args = matching_func_call.parse_arguments()
+                    filtered_args = _filter_modified_args(modified_args, original_args)
+                    state_args: dict[str, Any] | None = None
+                    if filtered_args:
+                        original_args = original_args or {}
+                        merged_args: dict[str, Any]
+                        if isinstance(original_args, dict) and original_args:
+                            merged_args = {**original_args, **filtered_args}
+                        else:
+                            merged_args = dict(filtered_args)
+
+                        if isinstance(filtered_args.get("steps"), list):
+                            original_steps = original_args.get("steps") if isinstance(original_args, dict) else None
+                            if isinstance(original_steps, list):
+                                approved_steps_list = list(filtered_args.get("steps") or [])
+                                approved_by_description: dict[str, dict[str, Any]] = {}
+                                for step_item in approved_steps_list:
+                                    if isinstance(step_item, dict):
+                                        step_item_dict = cast(dict[str, Any], step_item)
+                                        desc = step_item_dict.get("description")
+                                        if desc:
+                                            approved_by_description[str(desc)] = step_item_dict
+                                merged_steps: list[Any] = []
+                                original_steps_list = cast(list[Any], original_steps)
+                                for orig_step in original_steps_list:
+                                    if not isinstance(orig_step, dict):
+                                        merged_steps.append(orig_step)
+                                        continue
+                                    orig_step_dict = cast(dict[str, Any], orig_step)
+                                    description = str(orig_step_dict.get("description", ""))
+                                    approved_step = approved_by_description.get(description)
+                                    status: str = (
+                                        str(approved_step.get("status"))
+                                        if approved_step is not None and approved_step.get("status")
+                                        else "disabled"
+                                    )
+                                    updated_step: dict[str, Any] = orig_step_dict.copy()
+                                    updated_step["status"] = status
+                                    merged_steps.append(updated_step)
+                                merged_args["steps"] = merged_steps
+                        state_args = merged_args
+
+                        # Keep the original tool call and AG-UI snapshot in sync with approved args.
+                        updated_args = (
+                            json.dumps(merged_args) if isinstance(matching_func_call.arguments, str) else merged_args
+                        )
+                        matching_func_call.arguments = updated_args
+                        _update_tool_call_arguments(messages, str(approval_call_id), merged_args)
+                        # Create a new FunctionCallContent with the modified arguments
+                        func_call_for_approval = FunctionCallContent(
+                            call_id=matching_func_call.call_id,
+                            name=matching_func_call.name,
+                            arguments=json.dumps(filtered_args),
+                        )
+                        logger.info(f"Using modified arguments from approval: {filtered_args}")
+                    else:
+                        # No modified arguments - use the original function call
+                        func_call_for_approval = matching_func_call
+
+                    # Create FunctionApprovalResponseContent for the agent framework
+                    approval_response = FunctionApprovalResponseContent(
+                        approved=accepted,
+                        id=str(approval_call_id),
+                        function_call=func_call_for_approval,
+                        additional_properties={"ag_ui_state_args": state_args} if state_args else None,
+                    )
+                    chat_msg = ChatMessage(
+                        role=Role.USER,
+                        contents=[approval_response],
+                    )
+                else:
+                    # No matching function call found - this is likely a confirm_changes approval
+                    # Keep the old behavior for backwards compatibility
+                    chat_msg = ChatMessage(
+                        role=Role.USER,
+                        contents=[TextContent(text=approval_payload_text)],
+                        additional_properties={"is_tool_result": True, "tool_call_id": str(tool_call_id or "")},
+                    )
                 if "id" in msg:
                     chat_msg.message_id = msg["id"]
                 result.append(chat_msg)
                 continue
 
+            # Cast result_content to acceptable type for FunctionResultContent
+            func_result: str | dict[str, Any] | list[Any]
+            if isinstance(result_content, str):
+                func_result = result_content
+            elif isinstance(result_content, dict):
+                func_result = cast(dict[str, Any], result_content)
+            elif isinstance(result_content, list):
+                func_result = cast(list[Any], result_content)
+            else:
+                func_result = str(result_content)
             chat_msg = ChatMessage(
                 role=Role.TOOL,
-                contents=[FunctionResultContent(call_id=str(tool_call_id), result=result_content)],
+                contents=[FunctionResultContent(call_id=str(tool_call_id), result=func_result)],
             )
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
@@ -142,7 +572,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
         # No special handling required for assistant/plain messages here
 
-        role = _AGUI_TO_FRAMEWORK_ROLE.get(role_str, Role.USER)
+        role = AGUI_TO_FRAMEWORK_ROLE.get(role_str, Role.USER)
 
         # Check if this message contains function approvals
         if "function_approvals" in msg and msg["function_approvals"]:
@@ -198,6 +628,7 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
         if isinstance(msg, dict):
             # Always work on a copy to avoid mutating input
             normalized_msg = msg.copy()
+            normalized_msg["role"] = normalize_agui_role(normalized_msg.get("role"))
             # Ensure ID exists
             if "id" not in normalized_msg:
                 normalized_msg["id"] = generate_event_id()
@@ -214,7 +645,7 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             continue
 
         # Convert ChatMessage to AG-UI format
-        role = _FRAMEWORK_TO_AGUI_ROLE.get(msg.role, "user")
+        role = FRAMEWORK_TO_AGUI_ROLE.get(msg.role, "user")
 
         content_text = ""
         tool_calls: list[dict[str, Any]] = []
@@ -237,13 +668,8 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             elif isinstance(content, FunctionResultContent):
                 # Tool result content - extract call_id and result
                 tool_result_call_id = content.call_id
-                # Serialize result to string
-                if isinstance(content.result, dict):
-                    import json
-
-                    content_text = json.dumps(content.result)  # type: ignore
-                elif content.result is not None:
-                    content_text = str(content.result)
+                # Serialize result to string using core utility
+                content_text = prepare_function_call_results(content.result)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id
@@ -308,22 +734,44 @@ def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dic
         content = normalized_msg.get("content")
         if isinstance(content, list):
             # Convert content array format to simple string
-            text_parts = []
-            for item in content:
+            text_parts: list[str] = []
+            content_list = cast(list[Any], content)
+            for item in content_list:
                 if isinstance(item, dict):
+                    item_dict = cast(dict[str, Any], item)
                     # Convert 'input_text' to 'text' type
-                    if item.get("type") == "input_text":
-                        text_parts.append(item.get("text", ""))
-                    elif item.get("type") == "text":
-                        text_parts.append(item.get("text", ""))
+                    if item_dict.get("type") == "input_text":
+                        text_parts.append(str(item_dict.get("text", "")))
+                    elif item_dict.get("type") == "text":
+                        text_parts.append(str(item_dict.get("text", "")))
                     else:
                         # Other types - just extract text field if present
-                        text_parts.append(item.get("text", ""))
+                        text_parts.append(str(item_dict.get("text", "")))
             normalized_msg["content"] = "".join(text_parts)
         elif content is None:
             normalized_msg["content"] = ""
 
+        tool_calls = normalized_msg.get("tool_calls") or normalized_msg.get("toolCalls")
+        if isinstance(tool_calls, list):
+            tool_calls_list = cast(list[Any], tool_calls)
+            for tool_call in tool_calls_list:
+                if not isinstance(tool_call, dict):
+                    continue
+                tool_call_dict = cast(dict[str, Any], tool_call)
+                function_payload = tool_call_dict.get("function")
+                if not isinstance(function_payload, dict):
+                    continue
+                function_payload_dict = cast(dict[str, Any], function_payload)
+                if "arguments" not in function_payload_dict:
+                    continue
+                arguments = function_payload_dict.get("arguments")
+                if arguments is None:
+                    function_payload_dict["arguments"] = ""
+                elif not isinstance(arguments, str):
+                    function_payload_dict["arguments"] = json.dumps(arguments)
+
         # Normalize tool_call_id to toolCallId for tool messages
+        normalized_msg["role"] = normalize_agui_role(normalized_msg.get("role"))
         if normalized_msg.get("role") == "tool":
             if "tool_call_id" in normalized_msg:
                 normalized_msg["toolCallId"] = normalized_msg["tool_call_id"]

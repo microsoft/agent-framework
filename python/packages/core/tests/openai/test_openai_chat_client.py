@@ -182,12 +182,12 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     unsupported_tool.__class__.__name__ = "UnsupportedAITool"
 
     # This should ignore the unsupported ToolProtocol and return empty list
-    result = client._chat_to_tool_spec([unsupported_tool])  # type: ignore
+    result = client._prepare_tools_for_openai([unsupported_tool])  # type: ignore
     assert result == []
 
     # Also test with a non-ToolProtocol that should be converted to dict
     dict_tool = {"type": "function", "name": "test"}
-    result = client._chat_to_tool_spec([dict_tool])  # type: ignore
+    result = client._prepare_tools_for_openai([dict_tool])  # type: ignore
     assert result == [dict_tool]
 
 
@@ -230,6 +230,36 @@ async def test_openai_chat_completion_response() -> None:
 
     # Test that the client can be used to get a response
     response = await openai_chat_client.get_response(messages=messages)
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "scientists" in response.text
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_completion_response_params() -> None:
+    """Test OpenAI chat completion responses."""
+    openai_chat_client = OpenAIChatClient()
+
+    assert isinstance(openai_chat_client, ChatClientProtocol)
+
+    messages: list[ChatMessage] = []
+    messages.append(
+        ChatMessage(
+            role="user",
+            text="Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
+            "Bonded by their love for the natural world and shared curiosity, they uncovered a "
+            "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
+            "of climate change.",
+        )
+    )
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+
+    # Test that the client can be used to get a response
+    response = await openai_chat_client.get_response(
+        messages=messages, chat_options=ChatOptions(max_tokens=150, temperature=0.7, top_p=0.9)
+    )
 
     assert response is not None
     assert isinstance(response, ChatResponse)
@@ -637,7 +667,7 @@ def test_chat_response_content_order_text_before_tool_calls(openai_unit_test_env
     )
 
     client = OpenAIChatClient()
-    response = client._create_chat_response(mock_response, ChatOptions())
+    response = client._parse_response_from_openai(mock_response, ChatOptions())
 
     # Verify we have both text and tool call content
     assert len(response.messages) == 1
@@ -658,7 +688,7 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     # Test with empty list (falsy but not None)
     message_with_empty_list = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-123", result=[])])
 
-    openai_messages = client._openai_chat_message_parser(message_with_empty_list)
+    openai_messages = client._prepare_message_for_openai(message_with_empty_list)
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == "[]"  # Empty list should be JSON serialized
 
@@ -667,14 +697,14 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
         role="tool", contents=[FunctionResultContent(call_id="call-456", result="")]
     )
 
-    openai_messages = client._openai_chat_message_parser(message_with_empty_string)
+    openai_messages = client._prepare_message_for_openai(message_with_empty_string)
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == ""  # Empty string should be preserved
 
     # Test with False (falsy but not None)
     message_with_false = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-789", result=False)])
 
-    openai_messages = client._openai_chat_message_parser(message_with_false)
+    openai_messages = client._prepare_message_for_openai(message_with_false)
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == "false"  # False should be JSON serialized
 
@@ -695,7 +725,7 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
         ],
     )
 
-    openai_messages = client._openai_chat_message_parser(message_with_exception)
+    openai_messages = client._prepare_message_for_openai(message_with_exception)
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == "Error: Function failed."
     assert openai_messages[0]["tool_call_id"] == "call-123"
@@ -708,8 +738,8 @@ def test_prepare_function_call_results_string_passthrough():
     assert isinstance(result, str)
 
 
-def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str, str]) -> None:
-    """Test _openai_content_parser converts DataContent with image media type to OpenAI format."""
+def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _prepare_content_for_openai converts DataContent with image media type to OpenAI format."""
     client = OpenAIChatClient()
 
     # Test DataContent with image media type
@@ -718,7 +748,7 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
         media_type="image/png",
     )
 
-    result = client._openai_content_parser(image_data_content)  # type: ignore
+    result = client._prepare_content_for_openai(image_data_content)  # type: ignore
 
     # Should convert to OpenAI image_url format
     assert result["type"] == "image_url"
@@ -727,7 +757,7 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     # Test DataContent with non-image media type should use default model_dump
     text_data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
 
-    result = client._openai_content_parser(text_data_content)  # type: ignore
+    result = client._prepare_content_for_openai(text_data_content)  # type: ignore
 
     # Should use default model_dump format
     assert result["type"] == "data"
@@ -740,7 +770,7 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
         media_type="audio/wav",
     )
 
-    result = client._openai_content_parser(audio_data_content)  # type: ignore
+    result = client._prepare_content_for_openai(audio_data_content)  # type: ignore
 
     # Should convert to OpenAI input_audio format
     assert result["type"] == "input_audio"
@@ -751,7 +781,7 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     # Test DataContent with MP3 audio
     mp3_data_content = DataContent(uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3")
 
-    result = client._openai_content_parser(mp3_data_content)  # type: ignore
+    result = client._prepare_content_for_openai(mp3_data_content)  # type: ignore
 
     # Should convert to OpenAI input_audio format with mp3
     assert result["type"] == "input_audio"
@@ -760,8 +790,8 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     assert result["input_audio"]["format"] == "mp3"
 
 
-def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[str, str]) -> None:
-    """Test _openai_content_parser converts document files (PDF, DOCX, etc.) to OpenAI file format."""
+def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _prepare_content_for_openai converts document files (PDF, DOCX, etc.) to OpenAI file format."""
     client = OpenAIChatClient()
 
     # Test PDF without filename - should omit filename in OpenAI payload
@@ -770,7 +800,7 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
         media_type="application/pdf",
     )
 
-    result = client._openai_content_parser(pdf_data_content)  # type: ignore
+    result = client._prepare_content_for_openai(pdf_data_content)  # type: ignore
 
     # Should convert to OpenAI file format without filename
     assert result["type"] == "file"
@@ -787,7 +817,7 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
         additional_properties={"filename": "report.pdf"},
     )
 
-    result = client._openai_content_parser(pdf_with_filename)  # type: ignore
+    result = client._prepare_content_for_openai(pdf_with_filename)  # type: ignore
 
     # Should use custom filename
     assert result["type"] == "file"
@@ -820,7 +850,7 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
             media_type=case["media_type"],
         )
 
-        result = client._openai_content_parser(doc_content)  # type: ignore
+        result = client._prepare_content_for_openai(doc_content)  # type: ignore
 
         # All application/* types should now be mapped to file format
         assert result["type"] == "file"
@@ -834,7 +864,7 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
             additional_properties={"filename": case["filename"]},
         )
 
-        result = client._openai_content_parser(doc_with_filename)  # type: ignore
+        result = client._prepare_content_for_openai(doc_with_filename)  # type: ignore
 
         # Should now use file format with filename
         assert result["type"] == "file"
@@ -848,7 +878,7 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
         additional_properties={},
     )
 
-    result = client._openai_content_parser(pdf_empty_props)  # type: ignore
+    result = client._prepare_content_for_openai(pdf_empty_props)  # type: ignore
 
     assert result["type"] == "file"
     assert "filename" not in result["file"]
@@ -860,7 +890,7 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
         additional_properties={"filename": None},
     )
 
-    result = client._openai_content_parser(pdf_none_filename)  # type: ignore
+    result = client._prepare_content_for_openai(pdf_none_filename)  # type: ignore
 
     assert result["type"] == "file"
     assert "filename" not in result["file"]  # None filename should be omitted

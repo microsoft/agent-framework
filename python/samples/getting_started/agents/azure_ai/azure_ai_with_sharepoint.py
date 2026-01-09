@@ -28,7 +28,11 @@ async def main() -> None:
             tools={
                 "type": "sharepoint_grounding_preview",
                 "sharepoint_grounding_preview": {
-                    "project_connection_id": os.environ["SHAREPOINT_PROJECT_CONNECTION_ID"]
+                    "project_connections": [
+                        {
+                            "project_connection_id": os.environ["SHAREPOINT_PROJECT_CONNECTION_ID"],
+                        }
+                    ]
                 },
             },
         ) as agent,

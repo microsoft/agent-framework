@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 import inspect
 import logging
 import uuid
@@ -290,6 +291,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         # Track messages sent via send_message() for ExecutorCompletedEvent
         self._sent_messages: list[Any] = []
 
+        # Track outputs yielded via yield_output() for ExecutorCompletedEvent
+        self._yielded_outputs: list[Any] = []
+
         # Store trace contexts and source span IDs for linking (supporting multiple sources)
         self._trace_contexts = trace_contexts or []
         self._source_span_ids = source_span_ids or []
@@ -336,6 +340,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             output: The output to yield. This must conform to the workflow output type(s)
                     declared on this context.
         """
+        # Track yielded output for ExecutorCompletedEvent (deepcopy to capture state at yield time)
+        self._yielded_outputs.append(copy.deepcopy(output))
+
         with _framework_event_origin():
             event = WorkflowOutputEvent(data=output, source_executor_id=self._executor_id)
         await self._runner_context.add_event(event)
@@ -423,6 +430,14 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             A list of messages that were sent to downstream executors.
         """
         return self._sent_messages.copy()
+
+    def get_yielded_outputs(self) -> list[Any]:
+        """Get all outputs yielded via yield_output() during this handler execution.
+
+        Returns:
+            A list of outputs that were yielded as workflow outputs.
+        """
+        return self._yielded_outputs.copy()
 
     @deprecated(
         "Override `on_checkpoint_save()` methods instead. "
