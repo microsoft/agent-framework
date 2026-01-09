@@ -16,10 +16,13 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
 
+    <!-- 👇 We don't want to reference the source generator dll directly in consuming projects -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
     <!-- Place build output in analyzers folder for NuGet package -->
-    <IncludeBuildOutput>true</IncludeBuildOutput>
+    <!--<IncludeBuildOutput>true</IncludeBuildOutput>
     <BuildOutputTargetFolder>analyzers/dotnet/cs</BuildOutputTargetFolder>
-    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>-->
 
     <!-- Suppress nullable warnings for netstandard2.0 -->
     <NoWarn>$(NoWarn);nullable</NoWarn>
