@@ -15,6 +15,10 @@ public abstract class SkipAllChatClientRunStreaming(Func<AnthropicChatCompletion
     [Fact(Skip = AnthropicChatCompletionFixture.SkipReason)]
     public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
         => base.RunWithInstructionsAndNoMessageReturnsExpectedResultAsync();
+
+    [Fact(Skip = AnthropicChatCompletionFixture.SkipReason)]
+    public override Task RunWithImageContentWorksAsync()
+    => base.RunWithImageContentWorksAsync();
 }
 
 public class AnthropicBetaChatCompletionChatClientAgentReasoningRunStreamingTests() : SkipAllChatClientRunStreaming(() => new(useReasoningChatModel: true, useBeta: true));
