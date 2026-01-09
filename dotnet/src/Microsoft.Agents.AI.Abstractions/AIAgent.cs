@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 /// and process user requests. An agent instance may participate in multiple concurrent conversations, and each conversation
 /// may involve multiple agents working together.
 /// </remarks>
-[DebuggerDisplay("{DisplayName,nq}")]
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class AIAgent
 {
     /// <summary>
@@ -71,6 +71,9 @@ public abstract class AIAgent
     /// which is particularly useful in multi-agent systems.
     /// </remarks>
     public virtual string? Description { get; }
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay => string.IsNullOrWhiteSpace(this.Name) ? $"Id = {this.Id}" : $"Name = {this.Name} ({this.Id})";
 
     /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
