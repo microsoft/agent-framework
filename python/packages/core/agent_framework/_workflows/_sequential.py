@@ -47,13 +47,14 @@ from ._agent_executor import (
     AgentExecutor,
     AgentExecutorResponse,
 )
+from ._agent_utils import resolve_agent_id
 from ._checkpoint import CheckpointStorage
 from ._executor import (
     Executor,
     handler,
 )
 from ._message_utils import normalize_messages_input
-from ._orchestration_request_info import RequestInfoInterceptor
+from ._orchestration_request_info import AgentApprovalExecutor
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -77,23 +78,32 @@ class _InputToConversation(Executor):
         await ctx.send_message(normalize_messages_input(messages))
 
 
-class _ResponseToConversation(Executor):
-    """Converts AgentExecutorResponse to list[ChatMessage] conversation for chaining."""
-
-    @handler
-    async def convert(self, response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
-        # Always use full_conversation; AgentExecutor guarantees it is populated.
-        if response.full_conversation is None:  # Defensive: indicates a contract violation
-            raise RuntimeError("AgentExecutorResponse.full_conversation missing. AgentExecutor must populate it.")
-        await ctx.send_message(list(response.full_conversation))
-
-
 class _EndWithConversation(Executor):
     """Terminates the workflow by emitting the final conversation context."""
 
     @handler
-    async def end(self, conversation: list[ChatMessage], ctx: WorkflowContext[Any, list[ChatMessage]]) -> None:
+    async def end_with_messages(
+        self,
+        conversation: list[ChatMessage],
+        ctx: WorkflowContext[Any, list[ChatMessage]],
+    ) -> None:
+        """Handler for ending with a list of ChatMessage.
+
+        This is used when the last participant is a custom executor.
+        """
         await ctx.yield_output(list(conversation))
+
+    @handler
+    async def end_with_agent_executor_response(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[Any, list[ChatMessage] | None],
+    ) -> None:
+        """Handle case where last participant is an agent.
+
+        The agent is wrapped by AgentExecutor and emits AgentExecutorResponse.
+        """
+        await ctx.yield_output(response.full_conversation)
 
 
 class SequentialBuilder:
@@ -206,43 +216,64 @@ class SequentialBuilder:
     def with_request_info(
         self,
         *,
-        agents: Sequence[str | AgentProtocol | Executor] | None = None,
+        agents: Sequence[str | AgentProtocol] | None = None,
     ) -> "SequentialBuilder":
-        """Enable request info before agents run in the workflow.
+        """Enable request info after agent participant responses.
 
-        When enabled, the workflow pauses before each agent runs, emitting
-        a RequestInfoEvent that allows the caller to review the conversation and
-        optionally inject guidance before the agent responds. The caller provides
-        input via the standard response_handler/request_info pattern.
+        This enables human-in-the-loop (HIL) scenarios for the sequential orchestration.
+        When enabled, the workflow pauses after each agent participant runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and optionally
+        inject guidance for the agent participant to iterate. The caller provides input via
+        the standard response_handler/request_info pattern.
+
+        Simulated flow with HIL:
+        Input -> [Agent Participant <-> Request Info] -> [Agent Participant <-> Request Info] -> ...
+
+        Note: This is only available for agent participants. Executor participants can incorporate
+        request info handling in their own implementation if desired.
 
         Args:
-            agents: Optional filter - only pause before these specific agents/executors.
-                   Accepts agent names (str), agent instances, or executor instances.
-                   If None (default), pauses before every agent.
+            agents: Optional list of agents names or agent factories to enable request info for.
+                    If None, enables HIL for all agent participants.
 
         Returns:
-            self: The builder instance for fluent chaining.
-
-        Example:
-
-        .. code-block:: python
-
-            # Pause before all agents
-            workflow = SequentialBuilder().participants([a1, a2]).with_request_info().build()
-
-            # Pause only before specific agents
-            workflow = (
-                SequentialBuilder()
-                .participants([drafter, reviewer, finalizer])
-                .with_request_info(agents=[reviewer])  # Only pause before reviewer
-                .build()
-            )
+            Self for fluent chaining
         """
         from ._orchestration_request_info import resolve_request_info_filter
 
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
+
         return self
+
+    def _resolve_participants(self) -> list[Executor]:
+        """Resolve participant instances into Executor objects."""
+        participants: list[Executor | AgentProtocol] = []
+        if self._participant_factories:
+            # Resolve the participant factories now. This doesn't break the factory pattern
+            # since the Sequential builder still creates new instances per workflow build.
+            for factory in self._participant_factories:
+                p = factory()
+                participants.append(p)
+        else:
+            participants = self._participants
+
+        executors: list[Executor] = []
+        for p in participants:
+            if isinstance(p, Executor):
+                executors.append(p)
+            elif isinstance(p, AgentProtocol):
+                if self._request_info_enabled and (
+                    not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
+                ):
+                    # Handle request info enabled agents
+                    executors.append(AgentApprovalExecutor(p))
+                else:
+                    executors.append(AgentExecutor(p))
+            else:
+                raise TypeError(f"Participants must be AgentProtocol or Executor instances. Got {type(p).__name__}.")
+
+        return executors
 
     def build(self) -> Workflow:
         """Build and validate the sequential workflow.
@@ -272,48 +303,17 @@ class SequentialBuilder:
         input_conv = _InputToConversation(id="input-conversation")
         end = _EndWithConversation(id="end")
 
+        # Resolve participants and participant factories to executors
+        participants: list[Executor] = self._resolve_participants()
+
         builder = WorkflowBuilder()
         builder.set_start_executor(input_conv)
 
         # Start of the chain is the input normalizer
         prior: Executor | AgentProtocol = input_conv
-
-        participants: list[Executor | AgentProtocol] = []
-        if self._participant_factories:
-            # Resolve the participant factories now. This doesn't break the factory pattern
-            # since the Sequential builder still creates new instances per workflow build.
-            for factory in self._participant_factories:
-                p = factory()
-                participants.append(p)
-        else:
-            participants = self._participants
-
         for p in participants:
-            if isinstance(p, (AgentProtocol, AgentExecutor)):
-                label = p.id if isinstance(p, AgentExecutor) else p.display_name
-
-                if self._request_info_enabled:
-                    # Insert request info interceptor BEFORE the agent
-                    interceptor = RequestInfoInterceptor(
-                        executor_id=f"request_info:{label}",
-                        agent_filter=self._request_info_filter,
-                    )
-                    builder.add_edge(prior, interceptor)
-                    builder.add_edge(interceptor, p)
-                else:
-                    builder.add_edge(prior, p)
-
-                resp_to_conv = _ResponseToConversation(id=f"to-conversation:{label}")
-                builder.add_edge(p, resp_to_conv)
-                prior = resp_to_conv
-            elif isinstance(p, Executor):
-                # Custom executor operates on list[ChatMessage]
-                # If the executor doesn't handle list[ChatMessage] correctly, validation will fail
-                builder.add_edge(prior, p)
-                prior = p
-            else:
-                raise TypeError(f"Unsupported participant type: {type(p).__name__}")
-
+            builder.add_edge(prior, p)
+            prior = p
         # Terminate with the final conversation
         builder.add_edge(prior, end)
 

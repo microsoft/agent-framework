@@ -13,6 +13,7 @@ from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_val
 from ._const import INTERNAL_SOURCE_ID
 from ._events import RequestInfoEvent, WorkflowEvent
 from ._shared_state import SharedState
+from ._typing_utils import is_instance_of
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class Message:
     source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
 
     # For response messages, the original request data
-    original_request: Any = None
+    original_request_info_event: RequestInfoEvent | None = None
 
     # Backward compatibility properties
     @property
@@ -66,7 +67,7 @@ class Message:
             "type": self.type.value,
             "trace_contexts": self.trace_contexts,
             "source_span_ids": self.source_span_ids,
-            "original_request": self.original_request,
+            "original_request_info_event": encode_checkpoint_value(self.original_request_info_event),
         }
 
     @staticmethod
@@ -86,7 +87,7 @@ class Message:
             type=MessageType(data.get("type", "standard")),
             trace_contexts=data.get("trace_contexts"),
             source_span_ids=data.get("source_span_ids"),
-            original_request=data.get("original_request"),
+            original_request_info_event=decode_checkpoint_value(data.get("original_request_info_event")),
         )
 
 
@@ -493,7 +494,7 @@ class InProcRunnerContext:
             raise ValueError(f"No pending request found for request_id: {request_id}")
 
         # Validate response type if specified
-        if event.response_type and not isinstance(response, event.response_type):
+        if event.response_type and not is_instance_of(response, event.response_type):
             raise TypeError(
                 f"Response type mismatch for request_id {request_id}: "
                 f"expected {event.response_type.__name__}, got {type(response).__name__}"
@@ -505,7 +506,7 @@ class InProcRunnerContext:
             source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
             target_id=event.source_executor_id,
             type=MessageType.RESPONSE,
-            original_request=event.data,
+            original_request_info_event=event,
         )
 
         await self.send_message(response_msg)

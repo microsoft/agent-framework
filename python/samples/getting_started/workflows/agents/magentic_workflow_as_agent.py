@@ -1,19 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import logging
 
 from agent_framework import (
-    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
-    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
     ChatAgent,
     HostedCodeInterpreterTool,
     MagenticBuilder,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
@@ -60,7 +54,7 @@ async def main() -> None:
 
     workflow = (
         MagenticBuilder()
-        .participants(researcher=researcher_agent, coder=coder_agent)
+        .participants([researcher_agent, coder_agent])
         .with_standard_manager(
             agent=manager_agent,
             max_round_count=10,
@@ -87,20 +81,8 @@ async def main() -> None:
         print("\nWrapping workflow as an agent and running...")
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
         async for response in workflow_agent.run_stream(task):
-            # AgentRunResponseUpdate objects contain the streaming agent data
-            # Check metadata to understand event type
-            props = response.additional_properties
-            event_type = props.get("magentic_event_type") if props else None
-
-            if event_type == MAGENTIC_EVENT_TYPE_ORCHESTRATOR:
-                kind = props.get("orchestrator_message_kind", "") if props else ""
-                print(f"\n[ORCHESTRATOR:{kind}] {response.text}")
-            elif event_type == MAGENTIC_EVENT_TYPE_AGENT_DELTA:
-                if response.text:
-                    print(response.text, end="", flush=True)
-            elif response.text:
-                # Fallback for any other events with text
-                print(response.text, end="", flush=True)
+            # Fallback for any other events with text
+            print(response.text, end="", flush=True)
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")

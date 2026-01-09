@@ -32,8 +32,8 @@ from contextlib import asynccontextmanager
 from agent_framework import (
     AgentRunUpdateEvent,
     ChatAgent,
+    HandoffAgentUserRequest,
     HandoffBuilder,
-    HandoffUserInputRequest,
     HostedCodeInterpreterTool,
     HostedFileContent,
     RequestInfoEvent,
@@ -68,21 +68,10 @@ def _handle_events(events: list[WorkflowEvent]) -> tuple[list[RequestInfoEvent],
                 print(f"[status] {event.state.name}")
 
         elif isinstance(event, RequestInfoEvent):
-            if isinstance(event.data, HandoffUserInputRequest):
-                print("\n=== Conversation So Far ===")
-                for msg in event.data.conversation:
-                    speaker = msg.author_name or msg.role.value
-                    text = msg.text or ""
-                    txt = text[:200] + "..." if len(text) > 200 else text
-                    print(f"- {speaker}: {txt}")
-                print("===========================\n")
             requests.append(event)
 
         elif isinstance(event, AgentRunUpdateEvent):
-            update = event.data
-            if update is None:
-                continue
-            for content in update.contents:
+            for content in event.data.contents:
                 if isinstance(content, HostedFileContent):
                     file_ids.append(content.file_id)
                     print(f"[Found HostedFileContent: file_id={content.file_id}]")
@@ -137,11 +126,7 @@ async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tupl
     ):
         triage = triage_client.create_agent(
             name="TriageAgent",
-            instructions=(
-                "You are a triage agent. Your ONLY job is to route requests to the appropriate specialist. "
-                "For code or file creation requests, call handoff_to_CodeSpecialist immediately. "
-                "Do NOT try to complete tasks yourself. Just hand off."
-            ),
+            instructions="You are a triage agent. Your ONLY job is to route requests to the appropriate specialist.",
         )
 
         code_specialist = code_client.create_agent(
@@ -170,7 +155,7 @@ async def main() -> None:
             workflow = (
                 HandoffBuilder()
                 .participants([triage, code_specialist])
-                .set_coordinator(triage)
+                .with_start_agent(triage)
                 .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 2)
                 .build()
             )
@@ -195,7 +180,7 @@ async def main() -> None:
                 user_input = user_inputs[input_index]
                 print(f"\nUser: {user_input}")
 
-                responses = {request.request_id: user_input}
+                responses = {request.request_id: HandoffAgentUserRequest.create_response(user_input)}
                 events = await _drain(workflow.send_responses_streaming(responses))
                 requests, file_ids = _handle_events(events)
                 all_file_ids.extend(file_ids)
