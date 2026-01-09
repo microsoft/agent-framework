@@ -898,7 +898,6 @@ class MCPStreamableHTTPTool(MCPTool):
             mcp_tool = MCPStreamableHTTPTool(
                 name="web-api",
                 url="https://api.example.com/mcp",
-                headers={"Authorization": "Bearer token"},
                 description="Web API operations",
             )
 
