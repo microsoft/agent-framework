@@ -99,54 +99,54 @@ export interface Workflow {
  * Type guards for runtime type checking
  */
 export function isWorkflow(obj: unknown): obj is Workflow {
+  if (typeof obj !== "object" || obj === null) return false;
+  const record = obj as Record<string, unknown>;
   return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "edge_groups" in obj &&
-    "executors" in obj &&
-    "start_executor_id" in obj &&
-    "max_iterations" in obj &&
-    typeof (obj as any).id === "string" &&
-    Array.isArray((obj as any).edge_groups) &&
-    typeof (obj as any).executors === "object" &&
-    typeof (obj as any).start_executor_id === "string" &&
-    typeof (obj as any).max_iterations === "number"
+    "id" in record &&
+    "edge_groups" in record &&
+    "executors" in record &&
+    "start_executor_id" in record &&
+    "max_iterations" in record &&
+    typeof record.id === "string" &&
+    Array.isArray(record.edge_groups) &&
+    typeof record.executors === "object" &&
+    typeof record.start_executor_id === "string" &&
+    typeof record.max_iterations === "number"
   );
 }
 
 export function isExecutor(obj: unknown): obj is Executor {
+  if (typeof obj !== "object" || obj === null) return false;
+  const record = obj as Record<string, unknown>;
   return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "type" in obj &&
-    typeof (obj as any).id === "string" &&
-    typeof (obj as any).type === "string"
+    "id" in record &&
+    "type" in record &&
+    typeof record.id === "string" &&
+    typeof record.type === "string"
   );
 }
 
 export function isEdge(obj: unknown): obj is Edge {
+  if (typeof obj !== "object" || obj === null) return false;
+  const record = obj as Record<string, unknown>;
   return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "source_id" in obj &&
-    "target_id" in obj &&
-    typeof (obj as any).source_id === "string" &&
-    typeof (obj as any).target_id === "string"
+    "source_id" in record &&
+    "target_id" in record &&
+    typeof record.source_id === "string" &&
+    typeof record.target_id === "string"
   );
 }
 
 export function isEdgeGroup(obj: unknown): obj is EdgeGroup {
+  if (typeof obj !== "object" || obj === null) return false;
+  const record = obj as Record<string, unknown>;
   return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "type" in obj &&
-    "edges" in obj &&
-    typeof (obj as any).id === "string" &&
-    typeof (obj as any).type === "string" &&
-    Array.isArray((obj as any).edges)
+    "id" in record &&
+    "type" in record &&
+    "edges" in record &&
+    typeof record.id === "string" &&
+    typeof record.type === "string" &&
+    Array.isArray(record.edges)
   );
 }
 

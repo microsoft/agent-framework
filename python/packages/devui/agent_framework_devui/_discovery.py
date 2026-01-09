@@ -666,7 +666,16 @@ class EntityDiscovery:
             logger.debug(f"Successfully imported {pattern}")
             return module, None
 
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as e:
+            # Distinguish between "module pattern doesn't exist" vs "module has import errors"
+            # If the missing module is the pattern itself, it's just not found (try next pattern)
+            # If the missing module is something else (a dependency), capture the error
+            missing_module = getattr(e, "name", None)
+            if missing_module and missing_module != pattern and not pattern.endswith(f".{missing_module}"):
+                # The module exists but has an import error (missing dependency)
+                logger.warning(f"Error importing {pattern}: {e}")
+                return None, e
+            # The module pattern itself doesn't exist - this is expected, try next pattern
             logger.debug(f"Import pattern {pattern} not found")
             return None, None
         except Exception as e:

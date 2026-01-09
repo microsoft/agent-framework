@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 
 import aiofiles
-from agent_framework import DataContent
+from agent_framework import DataContent, HostedImageGenerationTool
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
@@ -29,12 +29,13 @@ async def main() -> None:
             name="ImageGenAgent",
             instructions="Generate images based on user requirements.",
             tools=[
-                {
-                    "type": "image_generation",
-                    "model": "gpt-image-1-mini",
-                    "quality": "low",
-                    "size": "1024x1024",
-                }
+                HostedImageGenerationTool(
+                    options={
+                        "model": "gpt-image-1-mini",
+                        "quality": "low",
+                        "size": "1024x1024",
+                    }
+                )
             ],
         ) as agent,
     ):
