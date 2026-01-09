@@ -32,11 +32,12 @@ public sealed class DurableAIAgent : AIAgent
     /// <summary>
     /// Creates a new agent thread for this agent using a random session ID.
     /// </summary>
-    /// <returns>A new agent thread.</returns>
-    public override AgentThread GetNewThread()
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a new agent thread.</returns>
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
     {
         AgentSessionId sessionId = this._context.NewAgentSessionId(this._agentName);
-        return new DurableAgentThread(sessionId);
+        return ValueTask.FromResult<AgentThread>(new DurableAgentThread(sessionId));
     }
 
     /// <summary>
@@ -44,12 +45,13 @@ public sealed class DurableAIAgent : AIAgent
     /// </summary>
     /// <param name="serializedThread">The serialized thread data.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
-    /// <returns>The deserialized agent thread.</returns>
-    public override AgentThread DeserializeThread(
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains the deserialized agent thread.</returns>
+    public override ValueTask<AgentThread> DeserializeThreadAsync(
         JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions);
+        return ValueTask.FromResult<AgentThread>(DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions));
     }
 
     /// <summary>
@@ -74,12 +76,12 @@ public sealed class DurableAIAgent : AIAgent
             throw new NotSupportedException("Cancellation is not supported for durable agents.");
         }
 
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not DurableAgentThread durableThread)
         {
             throw new ArgumentException(
                 "The provided thread is not valid for a durable agent. " +
-                "Create a new thread using GetNewThread or provide a thread previously created by this agent.",
+                "Create a new thread using GetNewThreadAsync or provide a thread previously created by this agent.",
                 paramName: nameof(thread));
         }
 

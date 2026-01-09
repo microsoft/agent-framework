@@ -35,7 +35,7 @@ public class DelegatingAIAgentTests
         this._innerAgentMock.Protected().SetupGet<string>("IdCore").Returns("test-agent-id");
         this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
         this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.GetNewThread()).Returns(this._testThread);
+        this._innerAgentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(this._testThread);
 
         this._innerAgentMock
             .Protected()
@@ -132,17 +132,17 @@ public class DelegatingAIAgentTests
     #region Method Delegation Tests
 
     /// <summary>
-    /// Verify that GetNewThread delegates to inner agent.
+    /// Verify that GetNewThreadAsync delegates to inner agent.
     /// </summary>
     [Fact]
-    public void GetNewThread_DelegatesToInnerAgent()
+    public async Task GetNewThreadAsync_DelegatesToInnerAgentAsync()
     {
         // Act
-        var thread = this._delegatingAgent.GetNewThread();
+        var thread = await this._delegatingAgent.GetNewThreadAsync();
 
         // Assert
         Assert.Same(this._testThread, thread);
-        this._innerAgentMock.Verify(x => x.GetNewThread(), Times.Once);
+        this._innerAgentMock.Verify(x => x.GetNewThreadAsync(), Times.Once);
     }
 
     /// <summary>

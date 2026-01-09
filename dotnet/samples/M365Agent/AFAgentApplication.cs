@@ -43,8 +43,8 @@ internal sealed class AFAgentApplication : AgentApplication
 
         // Deserialize the conversation history into an AgentThread, or create a new one if none exists.
         AgentThread agentThread = threadElementStart.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null
-            ? this._agent.DeserializeThread(threadElementStart, JsonUtilities.DefaultOptions)
-            : this._agent.GetNewThread();
+            ? await this._agent.DeserializeThreadAsync(threadElementStart, JsonUtilities.DefaultOptions, cancellationToken)
+            : await this._agent.GetNewThreadAsync(cancellationToken);
 
         ChatMessage chatMessage = HandleUserInput(turnContext);
 

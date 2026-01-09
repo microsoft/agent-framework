@@ -24,7 +24,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
@@ -36,7 +36,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
@@ -52,7 +52,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
@@ -68,7 +68,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
@@ -92,7 +92,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         const string Q1 = "What is the capital of France.";
         const string Q2 = "And Austria?";
         var agent = this.Fixture.Agent;
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act

@@ -33,7 +33,7 @@ AIAgent agent2 = await assistantClient.CreateAIAgentAsync(
     instructions: JokerInstructions);
 
 // You can invoke the agent like any other AIAgent.
-AgentThread thread = agent1.GetNewThread();
+AgentThread thread = await agent1.GetNewThreadAsync();
 Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Cleanup for sample purposes.

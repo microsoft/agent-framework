@@ -43,7 +43,7 @@ AIAgent agent = await aiProjectClient
         instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
         tools: [fileSearchTool]);
 
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 Console.WriteLine(">> Asking about returns\n");
 Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));

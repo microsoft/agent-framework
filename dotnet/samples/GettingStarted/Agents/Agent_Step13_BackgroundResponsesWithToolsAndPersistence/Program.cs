@@ -32,7 +32,7 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // Start the initial run.
 AgentRunResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
@@ -44,10 +44,10 @@ while (response.ContinuationToken is not null)
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
-    RestoreAgentState(agent, out thread, out ResponseContinuationToken? continuationToken);
+    var (restoredThread, continuationToken) = await RestoreAgentState(agent);
 
     options.ContinuationToken = continuationToken;
-    response = await agent.RunAsync(thread, options);
+    response = await agent.RunAsync(restoredThread, options);
 }
 
 Console.WriteLine(response.Text);
@@ -58,13 +58,15 @@ void PersistAgentState(AgentThread thread, ResponseContinuationToken? continuati
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 
-void RestoreAgentState(AIAgent agent, out AgentThread thread, out ResponseContinuationToken? continuationToken)
+async Task<(AgentThread Thread, ResponseContinuationToken? ContinuationToken)> RestoreAgentState(AIAgent agent)
 {
     JsonElement serializedThread = stateStore["thread"] ?? throw new InvalidOperationException("No serialized thread found in state store.");
     JsonElement? serializedToken = stateStore["continuationToken"];
 
-    thread = agent.DeserializeThread(serializedThread);
-    continuationToken = (ResponseContinuationToken?)serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
+    AgentThread thread = await agent.DeserializeThreadAsync(serializedThread);
+    ResponseContinuationToken? continuationToken = (ResponseContinuationToken?)serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
+
+    return (thread, continuationToken);
 }
 
 [Description("Researches relevant space facts and scientific information for writing a science fiction novel")]

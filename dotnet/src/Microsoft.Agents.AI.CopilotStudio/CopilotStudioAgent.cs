@@ -42,20 +42,20 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new CopilotStudioAgentThread();
+    public sealed override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentThread());
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
     /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public AgentThread GetNewThread(string conversationId)
-        => new CopilotStudioAgentThread() { ConversationId = conversationId };
+    public ValueTask<AgentThread> GetNewThreadAsync(string conversationId)
+        => new(new CopilotStudioAgentThread() { ConversationId = conversationId });
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentRunResponse> RunCoreAsync(
@@ -68,7 +68,7 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not CopilotStudioAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
@@ -106,7 +106,8 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
+
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not CopilotStudioAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");

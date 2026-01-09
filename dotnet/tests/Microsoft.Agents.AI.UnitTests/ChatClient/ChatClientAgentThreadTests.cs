@@ -93,7 +93,7 @@ public class ChatClientAgentThreadTests
     #region Deserialize Tests
 
     [Fact]
-    public async Task VerifyDeserializeConstructorWithMessagesAsync()
+    public async Task VerifyDeserializeWithMessagesAsync()
     {
         // Arrange
         var json = JsonSerializer.Deserialize("""
@@ -103,7 +103,7 @@ public class ChatClientAgentThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act.
-        var thread = new ChatClientAgentThread(json);
+        var thread = await ChatClientAgentThread.DeserializeAsync(json);
 
         // Assert
         Assert.Null(thread.ConversationId);
@@ -115,7 +115,7 @@ public class ChatClientAgentThreadTests
     }
 
     [Fact]
-    public async Task VerifyDeserializeConstructorWithIdAsync()
+    public async Task VerifyDeserializeWithIdAsync()
     {
         // Arrange
         var json = JsonSerializer.Deserialize("""
@@ -125,7 +125,7 @@ public class ChatClientAgentThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var thread = new ChatClientAgentThread(json);
+        var thread = await ChatClientAgentThread.DeserializeAsync(json);
 
         // Assert
         Assert.Equal("TestConvId", thread.ConversationId);
@@ -133,7 +133,7 @@ public class ChatClientAgentThreadTests
     }
 
     [Fact]
-    public async Task VerifyDeserializeConstructorWithAIContextProviderAsync()
+    public async Task VerifyDeserializeWithAIContextProviderAsync()
     {
         // Arrange
         var json = JsonSerializer.Deserialize("""
@@ -145,7 +145,7 @@ public class ChatClientAgentThreadTests
         Mock<AIContextProvider> mockProvider = new();
 
         // Act
-        var thread = new ChatClientAgentThread(json, aiContextProviderFactory: (_, _) => mockProvider.Object);
+        var thread = await ChatClientAgentThread.DeserializeAsync(json, aiContextProviderFactory: (_, _, _) => new(mockProvider.Object));
 
         // Assert
         Assert.Null(thread.MessageStore);
@@ -153,14 +153,14 @@ public class ChatClientAgentThreadTests
     }
 
     [Fact]
-    public async Task DeserializeContructorWithInvalidJsonThrowsAsync()
+    public async Task DeserializeWithInvalidJsonThrowsAsync()
     {
         // Arrange
         var invalidJson = JsonSerializer.Deserialize("[42]", TestJsonSerializerContext.Default.JsonElement);
         var thread = new ChatClientAgentThread();
 
         // Act & Assert
-        Assert.Throws<ArgumentException>(() => new ChatClientAgentThread(invalidJson));
+        await Assert.ThrowsAsync<ArgumentException>(() => ChatClientAgentThread.DeserializeAsync(invalidJson));
     }
 
     #endregion Deserialize Tests

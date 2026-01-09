@@ -148,7 +148,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await this._agent.RunAsync(inputMessages, thread);
@@ -168,7 +168,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -201,7 +201,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "different-context"
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -272,7 +272,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "new-stream-context"
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
@@ -296,7 +296,7 @@ public sealed class A2AAgentTests : IDisposable
 
         this._handler.StreamingResponseToReturn = new AgentMessage();
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -316,7 +316,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunStreamingAsync_WithThreadHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -440,7 +440,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var thread = (A2AAgentThread)this._agent.GetNewThread();
+        var thread = (A2AAgentThread)await this._agent.GetNewThreadAsync();
         thread.TaskId = "task-123";
 
         var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
@@ -466,7 +466,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await this._agent.RunAsync("Start a task", thread);
@@ -492,7 +492,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         var result = await this._agent.RunAsync("Start a long-running task", thread);
@@ -586,7 +586,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var thread = (A2AAgentThread)this._agent.GetNewThread();
+        var thread = (A2AAgentThread)await this._agent.GetNewThreadAsync();
         thread.TaskId = "task-123";
 
         // Act
@@ -613,7 +613,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Start a task", thread))
@@ -686,7 +686,7 @@ public sealed class A2AAgentTests : IDisposable
             ]
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();
@@ -725,7 +725,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Working }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();
@@ -768,7 +768,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         var updates = new List<AgentRunResponseUpdate>();

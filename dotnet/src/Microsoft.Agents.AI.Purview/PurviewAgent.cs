@@ -30,15 +30,15 @@ internal class PurviewAgent : AIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return this._innerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+        return this._innerAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
     {
-        return this._innerAgent.GetNewThread();
+        return this._innerAgent.GetNewThreadAsync(cancellationToken);
     }
 
     /// <inheritdoc/>

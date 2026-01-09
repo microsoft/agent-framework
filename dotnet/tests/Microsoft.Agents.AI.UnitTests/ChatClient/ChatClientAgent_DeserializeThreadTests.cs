@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -12,7 +13,7 @@ namespace Microsoft.Agents.AI.UnitTests.ChatClient;
 public class ChatClientAgent_DeserializeThreadTests
 {
     [Fact]
-    public void DeserializeThread_UsesAIContextProviderFactory_IfProvided()
+    public async Task DeserializeThread_UsesAIContextProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -21,10 +22,10 @@ public class ChatClientAgent_DeserializeThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            AIContextProviderFactory = _ =>
+            AIContextProviderFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return mockContextProvider.Object;
+                return new ValueTask<AIContextProvider>(mockContextProvider.Object);
             }
         });
 
@@ -35,7 +36,7 @@ public class ChatClientAgent_DeserializeThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var thread = agent.DeserializeThread(json);
+        var thread = await agent.DeserializeThreadAsync(json);
 
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
@@ -45,7 +46,7 @@ public class ChatClientAgent_DeserializeThreadTests
     }
 
     [Fact]
-    public void DeserializeThread_UsesChatMessageStoreFactory_IfProvided()
+    public async Task DeserializeThread_UsesChatMessageStoreFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -54,10 +55,10 @@ public class ChatClientAgent_DeserializeThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            ChatMessageStoreFactory = _ =>
+            ChatMessageStoreFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return mockMessageStore.Object;
+                return new ValueTask<ChatMessageStore>(mockMessageStore.Object);
             }
         });
 
@@ -68,7 +69,7 @@ public class ChatClientAgent_DeserializeThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var thread = agent.DeserializeThread(json);
+        var thread = await agent.DeserializeThreadAsync(json);
 
         // Assert
         Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");

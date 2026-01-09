@@ -47,7 +47,7 @@ internal sealed class Program
 
         AIAgent agent = aiProjectClient.GetAIAgent(agentVersion);
 
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
 
         ProjectConversation conversation =
             await aiProjectClient

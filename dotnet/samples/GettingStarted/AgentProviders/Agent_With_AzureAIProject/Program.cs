@@ -40,7 +40,7 @@ var latestAgentVersion = jokerAgentLatest.GetService<AgentVersion>()!;
 Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");
 
 // Once you have the AIAgent, you can invoke it like any other AIAgent.
-AgentThread thread = jokerAgentLatest.GetNewThread();
+AgentThread thread = await jokerAgentLatest.GetNewThreadAsync();
 Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate.", thread));
 
 // This will use the same thread to continue the conversation.

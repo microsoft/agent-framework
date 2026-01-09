@@ -135,11 +135,11 @@ public class AgentWorkflowBuilderTests
     {
         public override string Name => name;
 
-        public override AgentThread GetNewThread()
-            => new DoubleEchoAgentThread();
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentThread());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => new DoubleEchoAgentThread();
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentThread());
 
         protected override Task<AgentRunResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>

@@ -21,7 +21,7 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
     {
         // Arrange
         var agent = await this.Fixture.CreateChatClientAgentAsync(instructions: "ALWAYS RESPOND WITH 'Computer says no', even if there was no user input.");
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await using var agentCleanup = new AgentCleanup(agent, this.Fixture);
         await using var threadCleanup = new ThreadCleanup(thread, this.Fixture);
 
@@ -53,7 +53,7 @@ public abstract class ChatClientAgentRunTests<TAgentFixture>(Func<TAgentFixture>
                 AIFunctionFactory.Create(MenuPlugin.GetSpecials),
                 AIFunctionFactory.Create(MenuPlugin.GetItemPrice)
             ]);
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
 
         foreach (var questionAndAnswer in questionsAndAnswers)
         {

@@ -1,17 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests.ChatClient;
 
 /// <summary>
-/// Contains unit tests for the ChatClientAgent.GetNewThread methods.
+/// Contains unit tests for the ChatClientAgent.GetNewThreadAsync methods.
 /// </summary>
 public class ChatClientAgent_GetNewThreadTests
 {
     [Fact]
-    public void GetNewThread_UsesAIContextProviderFactory_IfProvided()
+    public async Task GetNewThread_UsesAIContextProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -20,15 +21,15 @@ public class ChatClientAgent_GetNewThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            AIContextProviderFactory = _ =>
+            AIContextProviderFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return mockContextProvider.Object;
+                return new ValueTask<AIContextProvider>(mockContextProvider.Object);
             }
         });
 
         // Act
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
 
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
@@ -38,7 +39,7 @@ public class ChatClientAgent_GetNewThreadTests
     }
 
     [Fact]
-    public void GetNewThread_UsesChatMessageStoreFactory_IfProvided()
+    public async Task GetNewThread_UsesChatMessageStoreFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -47,15 +48,15 @@ public class ChatClientAgent_GetNewThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            ChatMessageStoreFactory = _ =>
+            ChatMessageStoreFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return mockMessageStore.Object;
+                return new ValueTask<ChatMessageStore>(mockMessageStore.Object);
             }
         });
 
         // Act
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
 
         // Assert
         Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
@@ -65,7 +66,7 @@ public class ChatClientAgent_GetNewThreadTests
     }
 
     [Fact]
-    public void GetNewThread_UsesChatMessageStore_FromTypedOverload()
+    public async Task GetNewThread_UsesChatMessageStore_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -73,7 +74,7 @@ public class ChatClientAgent_GetNewThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var thread = agent.GetNewThread(mockMessageStore.Object);
+        var thread = await agent.GetNewThreadAsync(mockMessageStore.Object);
 
         // Assert
         Assert.IsType<ChatClientAgentThread>(thread);
@@ -82,7 +83,7 @@ public class ChatClientAgent_GetNewThreadTests
     }
 
     [Fact]
-    public void GetNewThread_UsesConversationId_FromTypedOverload()
+    public async Task GetNewThread_UsesConversationId_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -90,7 +91,7 @@ public class ChatClientAgent_GetNewThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var thread = agent.GetNewThread(TestConversationId);
+        var thread = await agent.GetNewThreadAsync(TestConversationId);
 
         // Assert
         Assert.IsType<ChatClientAgentThread>(thread);

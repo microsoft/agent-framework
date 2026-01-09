@@ -30,7 +30,7 @@ using JsonDocument createConversationResultAsJson = JsonDocument.Parse(createCon
 string conversationId = createConversationResultAsJson.RootElement.GetProperty("id"u8)!.GetString()!;
 
 // Create a thread for the conversation - this enables conversation state management for subsequent turns
-AgentThread thread = agent.GetNewThread(conversationId);
+AgentThread thread = await agent.GetNewThreadAsync(conversationId);
 
 Console.WriteLine("=== Multi-turn Conversation Demo ===\n");
 

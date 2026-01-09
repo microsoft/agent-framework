@@ -90,7 +90,7 @@ public static class Program
         {
             EnableSensitiveData = true  // enable sensitive data at the agent level such as prompts and responses
         };
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
 
         // Start an interactive loop to interact with the workflow as if it were an agent
         while (true)

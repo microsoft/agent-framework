@@ -175,7 +175,7 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewThread()).Returns(new TestAgentThread());
+        agentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(new TestAgentThread());
         agentMock
             .Protected()
             .Setup<Task<AgentRunResponse>>("RunCoreAsync",
@@ -194,7 +194,7 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewThread()).Returns(new TestAgentThread());
+        agentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(new TestAgentThread());
         agentMock
             .Protected()
             .Setup<Task<AgentRunResponse>>("RunCoreAsync",

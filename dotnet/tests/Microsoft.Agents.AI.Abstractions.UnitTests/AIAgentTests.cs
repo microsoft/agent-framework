@@ -378,10 +378,10 @@ public class AIAgentTests
 
         protected override string? IdCore { get; }
 
-        public override AgentThread GetNewThread()
+        public override async ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         protected override Task<AgentRunResponse> RunCoreAsync(

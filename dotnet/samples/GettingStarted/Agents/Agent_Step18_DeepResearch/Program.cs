@@ -39,7 +39,7 @@ Console.WriteLine();
 
 try
 {
-    AgentThread thread = agent.GetNewThread();
+    AgentThread thread = await agent.GetNewThreadAsync();
 
     await foreach (var response in agent.RunStreamingAsync(Task, thread))
     {

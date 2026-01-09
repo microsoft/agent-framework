@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -115,12 +117,11 @@ public class ChatClientAgentOptionsTests
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
 
-        static ChatMessageStore ChatMessageStoreFactory(
-            ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx) => new Mock<ChatMessageStore>().Object;
+        static ValueTask<ChatMessageStore> ChatMessageStoreFactoryAsync(
+            ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx, CancellationToken ct) => new(new Mock<ChatMessageStore>().Object);
 
-        static AIContextProvider AIContextProviderFactory(
-            ChatClientAgentOptions.AIContextProviderFactoryContext ctx) =>
-            new Mock<AIContextProvider>().Object;
+        static ValueTask<AIContextProvider> AIContextProviderFactoryAsync(
+            ChatClientAgentOptions.AIContextProviderFactoryContext ctx, CancellationToken ct) => new(new Mock<AIContextProvider>().Object);
 
         var original = new ChatClientAgentOptions()
         {
@@ -128,8 +129,8 @@ public class ChatClientAgentOptionsTests
             Description = Description,
             ChatOptions = new() { Tools = tools },
             Id = "test-id",
-            ChatMessageStoreFactory = ChatMessageStoreFactory,
-            AIContextProviderFactory = AIContextProviderFactory
+            ChatMessageStoreFactory = ChatMessageStoreFactoryAsync,
+            AIContextProviderFactory = AIContextProviderFactoryAsync
         };
 
         // Act

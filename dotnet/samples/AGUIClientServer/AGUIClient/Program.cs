@@ -88,7 +88,7 @@ public static class Program
             description: "AG-UI Client Agent",
             tools: [changeBackground, readClientClimateSensors]);
 
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync(cancellationToken);
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
         try
         {

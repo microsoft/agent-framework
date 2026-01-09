@@ -63,14 +63,15 @@ internal sealed class WorkflowHostAgent : AIAgent
         protocol.ThrowIfNotChatProtocol();
     }
 
-    public override AgentThread GetNewThread() => new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails);
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        => new(new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails));
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, jsonSerializerOptions));
 
-    private ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
 
         if (thread is not WorkflowThread workflowThread)
         {
@@ -80,7 +81,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         // For workflow threads, messages are added directly via the internal AddMessages method
         // The MessageStore methods are used for agent invocation scenarios
         workflowThread.MessageStore.AddMessages(messages);
-        return new ValueTask<WorkflowThread>(workflowThread);
+        return workflowThread;
     }
 
     protected override async

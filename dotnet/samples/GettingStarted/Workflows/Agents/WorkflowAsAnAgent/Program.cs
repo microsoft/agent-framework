@@ -37,7 +37,7 @@ public static class Program
         // Create the workflow and turn it into an agent
         var workflow = WorkflowFactory.BuildWorkflow(chatClient);
         var agent = workflow.AsAgent("workflow-agent", "Workflow Agent");
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
 
         // Start an interactive loop to interact with the workflow as if it were an agent
         while (true)

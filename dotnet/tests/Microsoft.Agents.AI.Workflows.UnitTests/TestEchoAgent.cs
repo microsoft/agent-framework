@@ -16,15 +16,13 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return serializedThread.Deserialize<EchoAgentThread>(jsonSerializerOptions) ?? this.GetNewThread();
+        return serializedThread.Deserialize<EchoAgentThread>(jsonSerializerOptions) ?? await this.GetNewThreadAsync(cancellationToken);
     }
 
-    public override AgentThread GetNewThread()
-    {
-        return new EchoAgentThread();
-    }
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
+        new(new EchoAgentThread());
 
     private static ChatMessage UpdateThread(ChatMessage message, InMemoryAgentThread? thread = null)
     {

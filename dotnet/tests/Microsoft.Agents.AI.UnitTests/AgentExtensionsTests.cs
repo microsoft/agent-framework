@@ -324,10 +324,10 @@ public class AgentExtensionsTests
             this._exceptionToThrow = exceptionToThrow;
         }
 
-        public override AgentThread GetNewThread()
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public override string? Name { get; }
