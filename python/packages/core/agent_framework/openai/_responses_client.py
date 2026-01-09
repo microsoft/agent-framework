@@ -401,10 +401,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         run_options["input"] = request_input
 
         # model id
-        if not run_options.get("model"):
-            if not self.model_id:
-                raise ValueError("model_id must be a non-empty string")
-            run_options["model"] = self.model_id
+        self._check_model_presence(run_options)
 
         # translations between ChatOptions and Responses API
         translations = {
@@ -465,6 +462,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             run_options["text_format"] = response_format
 
         return run_options
+
+    def _check_model_presence(self, run_options):
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_id must be a non-empty string")
+            run_options["model"] = self.model_id
 
     def _get_current_conversation_id(self, chat_options: ChatOptions, **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
