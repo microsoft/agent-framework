@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
@@ -26,7 +26,7 @@ ChatMessage message = new(ChatRole.User, [
 
 AgentThread thread = agent.GetNewThread();
 
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(message, thread))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(message, thread))
 {
     Console.WriteLine(update);
 }

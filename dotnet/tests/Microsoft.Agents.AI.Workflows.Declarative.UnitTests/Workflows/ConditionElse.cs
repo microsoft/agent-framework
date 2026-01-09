@@ -95,7 +95,7 @@ public static class WorkflowProvider
                     ODD
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
@@ -116,7 +116,7 @@ public static class WorkflowProvider
                     EVEN
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
@@ -137,7 +137,7 @@ public static class WorkflowProvider
                     All done!
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;

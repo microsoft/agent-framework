@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -143,8 +143,8 @@ public sealed class AIAgentBuilder
     /// </remarks>
     /// <exception cref="ArgumentNullException">Both <paramref name="runFunc"/> and <paramref name="runStreamingFunc"/> are <see langword="null"/>.</exception>
     public AIAgentBuilder Use(
-        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>>? runFunc,
-        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentRunResponseUpdate>>? runStreamingFunc)
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentResponse>>? runFunc,
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentResponseUpdate>>? runStreamingFunc)
     {
         AnonymousDelegatingAIAgent.ThrowIfBothDelegatesNull(runFunc, runStreamingFunc);
 

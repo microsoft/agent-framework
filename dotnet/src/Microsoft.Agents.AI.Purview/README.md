@@ -211,7 +211,7 @@ The policy logic is identical; the only difference is the hook point in the pipe
 
 ## Middleware Lifecycle
 1. Before sending the prompt to the agent, the middleware checks the app and user metadata against Purview's protection scopes and evaluates all the `ChatMessage`s in the prompt.
-2. If the content was blocked, the middleware returns a `ChatResponse` or `AgentRunResponse` containing the `BlockedPromptMessage` text. The blocked content does not get passed to the agent.
+2. If the content was blocked, the middleware returns a `ChatResponse` or `AgentResponse` containing the `BlockedPromptMessage` text. The blocked content does not get passed to the agent.
 3. If the evaluation did not block the content, the middleware passes the prompt data to the agent and waits for a response.
 4. After receiving a response from the agent, the middleware calls Purview again to evaluate the response content.
 5. If the content was blocked, the middleware returns a response containing the `BlockedResponseMessage`.

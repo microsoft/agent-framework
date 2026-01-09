@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -70,7 +70,7 @@ try
 
         Console.WriteLine();
 
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
 

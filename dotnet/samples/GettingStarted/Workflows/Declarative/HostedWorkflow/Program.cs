@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment this to enable JSON checkpointing to the local file system.
 //#define CHECKPOINT_JSON
@@ -65,10 +65,10 @@ internal sealed class Program
             };
         ChatClientAgentRunOptions runOptions = new(chatOptions);
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentResponseUpdates = agent.RunStreamingAsync(workflowInput, thread, runOptions);
+        IAsyncEnumerable<AgentResponseUpdate> agentResponseUpdates = agent.RunStreamingAsync(workflowInput, thread, runOptions);
 
         string? lastMessageId = null;
-        await foreach (AgentRunResponseUpdate responseUpdate in agentResponseUpdates)
+        await foreach (AgentResponseUpdate responseUpdate in agentResponseUpdates)
         {
             if (responseUpdate.MessageId != lastMessageId)
             {

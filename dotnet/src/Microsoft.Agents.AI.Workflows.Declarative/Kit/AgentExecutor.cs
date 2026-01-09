@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading;
@@ -26,7 +26,7 @@ public abstract class AgentExecutor(string id, FormulaSession session, WorkflowA
     /// <param name="inputMessages">Optional messages to add to the conversation prior to invocation.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns></returns>
-    protected ValueTask<AgentRunResponse> InvokeAgentAsync(
+    protected ValueTask<AgentResponse> InvokeAgentAsync(
         IWorkflowContext context,
         string agentName,
         string? conversationId,

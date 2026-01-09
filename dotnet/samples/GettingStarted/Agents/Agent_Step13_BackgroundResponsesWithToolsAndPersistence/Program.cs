@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use background responses with ChatClientAgent and Azure OpenAI Responses for long-running operations.
 // It shows polling for completion using continuation tokens, function calling during background operations,
@@ -35,7 +35,7 @@ AgentRunOptions options = new() { AllowBackgroundResponses = true };
 AgentThread thread = agent.GetNewThread();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
 
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)

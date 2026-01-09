@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel.Primitives;
 
@@ -55,7 +55,7 @@ internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
         // No resources to dispose.
     }
 
-    internal StreamingUpdatePipelineResponse(IAsyncEnumerable<AgentRunResponseUpdate> updates)
+    internal StreamingUpdatePipelineResponse(IAsyncEnumerable<AgentResponseUpdate> updates)
     {
     }
 

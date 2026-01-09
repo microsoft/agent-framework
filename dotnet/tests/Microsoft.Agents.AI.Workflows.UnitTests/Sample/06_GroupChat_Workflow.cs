@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -41,7 +41,7 @@ internal static class Step6EntryPoint
             }
             else if (evt is AgentRunUpdateEvent update)
             {
-                AgentRunResponse response = update.AsResponse();
+                AgentResponse response = update.AsResponse();
 
                 foreach (ChatMessage message in response.Messages)
                 {
@@ -66,17 +66,17 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new HelloAgentThread();
 
-    protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        IEnumerable<AgentRunResponseUpdate> update = [
+        IEnumerable<AgentResponseUpdate> update = [
             await this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
                       .SingleAsync(cancellationToken)
                       .ConfigureAwait(false)];
 
-        return update.ToAgentRunResponse();
+        return update.ToAgentResponse();
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         yield return new(ChatRole.Assistant, "Hello World!")
         {

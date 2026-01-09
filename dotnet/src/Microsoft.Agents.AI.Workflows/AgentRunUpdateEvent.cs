@@ -14,24 +14,24 @@ public class AgentRunUpdateEvent : ExecutorEvent
     /// Initializes a new instance of the <see cref="AgentRunUpdateEvent"/> class.
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
-    /// <param name="update">The agent run response update.</param>
-    public AgentRunUpdateEvent(string executorId, AgentRunResponseUpdate update) : base(executorId, data: update)
+    /// <param name="update">The agent response update.</param>
+    public AgentRunUpdateEvent(string executorId, AgentResponseUpdate update) : base(executorId, data: update)
     {
         this.Update = Throw.IfNull(update);
     }
 
     /// <summary>
-    /// Gets the agent run response update.
+    /// Gets the agent response update.
     /// </summary>
-    public AgentRunResponseUpdate Update { get; }
+    public AgentResponseUpdate Update { get; }
 
     /// <summary>
-    /// Converts this event to an <see cref="AgentRunResponse"/> containing just this update.
+    /// Converts this event to an <see cref="AgentResponse"/> containing just this update.
     /// </summary>
     /// <returns></returns>
-    public AgentRunResponse AsResponse()
+    public AgentResponse AsResponse()
     {
-        IEnumerable<AgentRunResponseUpdate> updates = [this.Update];
-        return updates.ToAgentRunResponse();
+        IEnumerable<AgentResponseUpdate> updates = [this.Update];
+        return updates.ToAgentResponse();
     }
 }

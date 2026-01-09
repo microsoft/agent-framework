@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Concurrent;
@@ -84,7 +84,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     }
 
     protected override async
-    Task<AgentRunResponse> RunCoreAsync(
+    Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -95,7 +95,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
         MessageMerger merger = new();
 
-        await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
+        await foreach (AgentResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {
@@ -106,7 +106,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     }
 
     protected override async
-    IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -115,7 +115,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
         WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
-        await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
+        await foreach (AgentResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {
