@@ -9,7 +9,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable, Iterable, Sequence
 
 from agent_framework._serialization import SerializationMixin
 from agent_framework.observability import get_tracer

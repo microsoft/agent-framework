@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Awaitable, Iterable, Sequence
+from typing import Any
+from collections.abc import Awaitable, Iterable, Sequence
 
 from agent_framework.observability import get_tracer
 from opentelemetry.trace import SpanKind
