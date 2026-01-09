@@ -463,7 +463,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
         return run_options
 
-    def _check_model_presence(self, run_options):
+    def _check_model_presence(self, run_options: dict[str, Any]):
         if not run_options.get("model"):
             if not self.model_id:
                 raise ValueError("model_id must be a non-empty string")
