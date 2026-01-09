@@ -11,8 +11,9 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
-using OpenAI;
+using OpenAI.Chat;
 using SampleApp;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -88,24 +89,7 @@ namespace SampleApp
 
         public string? ThreadDbKey { get; private set; }
 
-        public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
-        {
-            this.ThreadDbKey ??= Guid.NewGuid().ToString("N");
-
-            var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
-            await collection.EnsureCollectionExistsAsync(cancellationToken);
-
-            await collection.UpsertAsync(messages.Select(x => new ChatHistoryItem()
-            {
-                Key = this.ThreadDbKey + x.MessageId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ThreadId = this.ThreadDbKey,
-                SerializedMessage = JsonSerializer.Serialize(x),
-                MessageText = x.Text
-            }), cancellationToken);
-        }
-
-        public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
+        public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
@@ -121,6 +105,33 @@ namespace SampleApp
 ;
             messages.Reverse();
             return messages;
+        }
+
+        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        {
+            // Don't store messages if the request failed.
+            if (context.InvokeException is not null)
+            {
+                return;
+            }
+
+            this.ThreadDbKey ??= Guid.NewGuid().ToString("N");
+
+            var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
+            await collection.EnsureCollectionExistsAsync(cancellationToken);
+
+            // Add both request and response messages to the store
+            // Optionally messages produced by the AIContextProvider can also be persisted (not shown).
+            var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+
+            await collection.UpsertAsync(allNewMessages.Select(x => new ChatHistoryItem()
+            {
+                Key = this.ThreadDbKey + x.MessageId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ThreadId = this.ThreadDbKey,
+                SerializedMessage = JsonSerializer.Serialize(x),
+                MessageText = x.Text
+            }), cancellationToken);
         }
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>

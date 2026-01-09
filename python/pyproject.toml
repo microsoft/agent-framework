@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251120"
+version = "1.0.0b260107"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0b251120",
+    "agent-framework-core[all]==1.0.0b260107",
 ]
 
 [dependency-groups]
@@ -90,12 +90,15 @@ agent-framework-azure-ai-search = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
+agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-foundry-local = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
+agent-framework-ollama = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 
@@ -142,7 +145,8 @@ ignore = [
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
-    "B027" # allow empty non-abstract method in ABC
+    "B027", # allow empty non-abstract method in ABC
+    "RUF067", # allow version detection in __init__.py
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -262,13 +266,6 @@ pytest --import-mode=importlib
 -rs
 -n logical --dist loadfile --dist worksteal
 packages/**/tests
-"""
-
-[tool.poe.tasks.azure-ai-tests]
-cmd = """
-pytest --import-mode=importlib
--n logical --dist loadfile --dist worksteal
-packages/azure-ai/tests
 """
 
 [tool.poe.tasks.venv]

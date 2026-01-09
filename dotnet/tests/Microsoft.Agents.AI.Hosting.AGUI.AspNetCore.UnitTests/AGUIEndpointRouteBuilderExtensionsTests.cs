@@ -421,7 +421,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
     private sealed class MultiResponseAgent : AIAgent
     {
-        public override string Id => "multi-response-agent";
+        protected override string? IdCore => "multi-response-agent";
 
         public override string? Description => "Agent that produces multiple text chunks";
 
@@ -430,12 +430,12 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
             new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -510,7 +510,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override string Id => "test-agent";
+        protected override string? IdCore => "test-agent";
 
         public override string? Description => "Test agent";
 
@@ -519,12 +519,12 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
             new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,

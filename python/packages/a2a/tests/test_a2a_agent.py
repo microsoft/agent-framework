@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 from a2a.types import (
     AgentCard,
     Artifact,
@@ -196,18 +197,18 @@ async def test_run_with_unknown_response_type_raises_error(a2a_agent: A2AAgent, 
         await a2a_agent.run("Test message")
 
 
-def test_task_to_chat_messages_empty_artifacts(a2a_agent: A2AAgent) -> None:
-    """Test _task_to_chat_messages with task containing no artifacts."""
+def test_parse_messages_from_task_empty_artifacts(a2a_agent: A2AAgent) -> None:
+    """Test _parse_messages_from_task with task containing no artifacts."""
     task = MagicMock()
     task.artifacts = None
 
-    result = a2a_agent._task_to_chat_messages(task)
+    result = a2a_agent._parse_messages_from_task(task)
 
     assert len(result) == 0
 
 
-def test_task_to_chat_messages_with_artifacts(a2a_agent: A2AAgent) -> None:
-    """Test _task_to_chat_messages with task containing artifacts."""
+def test_parse_messages_from_task_with_artifacts(a2a_agent: A2AAgent) -> None:
+    """Test _parse_messages_from_task with task containing artifacts."""
     task = MagicMock()
 
     # Create mock artifacts
@@ -231,7 +232,7 @@ def test_task_to_chat_messages_with_artifacts(a2a_agent: A2AAgent) -> None:
 
     task.artifacts = [artifact1, artifact2]
 
-    result = a2a_agent._task_to_chat_messages(task)
+    result = a2a_agent._parse_messages_from_task(task)
 
     assert len(result) == 2
     assert result[0].text == "Content 1"
@@ -239,8 +240,8 @@ def test_task_to_chat_messages_with_artifacts(a2a_agent: A2AAgent) -> None:
     assert all(msg.role == Role.ASSISTANT for msg in result)
 
 
-def test_artifact_to_chat_message(a2a_agent: A2AAgent) -> None:
-    """Test _artifact_to_chat_message conversion."""
+def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
+    """Test _parse_message_from_artifact conversion."""
     artifact = MagicMock()
     artifact.artifact_id = "test-artifact"
 
@@ -252,7 +253,7 @@ def test_artifact_to_chat_message(a2a_agent: A2AAgent) -> None:
 
     artifact.parts = [text_part]
 
-    result = a2a_agent._artifact_to_chat_message(artifact)
+    result = a2a_agent._parse_message_from_artifact(artifact)
 
     assert isinstance(result, ChatMessage)
     assert result.role == Role.ASSISTANT
@@ -275,7 +276,7 @@ def test_get_uri_data_invalid_uri() -> None:
         _get_uri_data("not-a-valid-data-uri")
 
 
-def test_a2a_parts_to_contents_conversion(a2a_agent: A2AAgent) -> None:
+def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
     """Test A2A parts to contents conversion."""
 
     agent = A2AAgent(name="Test Agent", client=MockA2AClient(), _http_client=None)
@@ -284,7 +285,7 @@ def test_a2a_parts_to_contents_conversion(a2a_agent: A2AAgent) -> None:
     parts = [Part(root=TextPart(text="First part")), Part(root=TextPart(text="Second part"))]
 
     # Convert to contents
-    contents = agent._a2a_parts_to_contents(parts)
+    contents = agent._parse_contents_from_a2a(parts)
 
     # Verify conversion
     assert len(contents) == 2
@@ -294,30 +295,30 @@ def test_a2a_parts_to_contents_conversion(a2a_agent: A2AAgent) -> None:
     assert contents[1].text == "Second part"
 
 
-def test_chat_message_to_a2a_message_with_error_content(a2a_agent: A2AAgent) -> None:
-    """Test _chat_message_to_a2a_message with ErrorContent."""
+def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None:
+    """Test _prepare_message_for_a2a with ErrorContent."""
 
     # Create ChatMessage with ErrorContent
     error_content = ErrorContent(message="Test error message")
     message = ChatMessage(role=Role.USER, contents=[error_content])
 
     # Convert to A2A message
-    a2a_message = a2a_agent._chat_message_to_a2a_message(message)
+    a2a_message = a2a_agent._prepare_message_for_a2a(message)
 
     # Verify conversion
     assert len(a2a_message.parts) == 1
     assert a2a_message.parts[0].root.text == "Test error message"
 
 
-def test_chat_message_to_a2a_message_with_uri_content(a2a_agent: A2AAgent) -> None:
-    """Test _chat_message_to_a2a_message with UriContent."""
+def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
+    """Test _prepare_message_for_a2a with UriContent."""
 
     # Create ChatMessage with UriContent
     uri_content = UriContent(uri="http://example.com/file.pdf", media_type="application/pdf")
     message = ChatMessage(role=Role.USER, contents=[uri_content])
 
     # Convert to A2A message
-    a2a_message = a2a_agent._chat_message_to_a2a_message(message)
+    a2a_message = a2a_agent._prepare_message_for_a2a(message)
 
     # Verify conversion
     assert len(a2a_message.parts) == 1
@@ -325,15 +326,15 @@ def test_chat_message_to_a2a_message_with_uri_content(a2a_agent: A2AAgent) -> No
     assert a2a_message.parts[0].root.file.mime_type == "application/pdf"
 
 
-def test_chat_message_to_a2a_message_with_data_content(a2a_agent: A2AAgent) -> None:
-    """Test _chat_message_to_a2a_message with DataContent."""
+def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
+    """Test _prepare_message_for_a2a with DataContent."""
 
     # Create ChatMessage with DataContent (base64 data URI)
     data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
     message = ChatMessage(role=Role.USER, contents=[data_content])
 
     # Convert to A2A message
-    a2a_message = a2a_agent._chat_message_to_a2a_message(message)
+    a2a_message = a2a_agent._prepare_message_for_a2a(message)
 
     # Verify conversion
     assert len(a2a_message.parts) == 1
@@ -341,14 +342,14 @@ def test_chat_message_to_a2a_message_with_data_content(a2a_agent: A2AAgent) -> N
     assert a2a_message.parts[0].root.file.mime_type == "text/plain"
 
 
-def test_chat_message_to_a2a_message_empty_contents_raises_error(a2a_agent: A2AAgent) -> None:
-    """Test _chat_message_to_a2a_message with empty contents raises ValueError."""
+def test_prepare_message_for_a2a_empty_contents_raises_error(a2a_agent: A2AAgent) -> None:
+    """Test _prepare_message_for_a2a with empty contents raises ValueError."""
     # Create ChatMessage with no contents
     message = ChatMessage(role=Role.USER, contents=[])
 
     # Should raise ValueError for empty contents
     with raises(ValueError, match="ChatMessage.contents is empty"):
-        a2a_agent._chat_message_to_a2a_message(message)
+        a2a_agent._prepare_message_for_a2a(message)
 
 
 async def test_run_stream_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -404,7 +405,7 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
         pass
 
 
-def test_chat_message_to_a2a_message_with_multiple_contents() -> None:
+def test_prepare_message_for_a2a_with_multiple_contents() -> None:
     """Test conversion of ChatMessage with multiple contents."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
@@ -420,7 +421,7 @@ def test_chat_message_to_a2a_message_with_multiple_contents() -> None:
         ],
     )
 
-    result = agent._chat_message_to_a2a_message(message)
+    result = agent._prepare_message_for_a2a(message)
 
     # Should have converted all 4 contents to parts
     assert len(result.parts) == 4
@@ -432,7 +433,7 @@ def test_chat_message_to_a2a_message_with_multiple_contents() -> None:
     assert result.parts[3].root.kind == "text"  # JSON text remains as text (no parsing)
 
 
-def test_a2a_parts_to_contents_with_data_part() -> None:
+def test_parse_contents_from_a2a_with_data_part() -> None:
     """Test conversion of A2A DataPart."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
@@ -440,7 +441,7 @@ def test_a2a_parts_to_contents_with_data_part() -> None:
     # Create DataPart
     data_part = Part(root=DataPart(data={"key": "value", "number": 42}, metadata={"source": "test"}))
 
-    contents = agent._a2a_parts_to_contents([data_part])
+    contents = agent._parse_contents_from_a2a([data_part])
 
     assert len(contents) == 1
 
@@ -449,7 +450,7 @@ def test_a2a_parts_to_contents_with_data_part() -> None:
     assert contents[0].additional_properties == {"source": "test"}
 
 
-def test_a2a_parts_to_contents_unknown_part_kind() -> None:
+def test_parse_contents_from_a2a_unknown_part_kind() -> None:
     """Test error handling for unknown A2A part kind."""
     agent = A2AAgent(client=MagicMock(), _http_client=None)
 
@@ -458,10 +459,10 @@ def test_a2a_parts_to_contents_unknown_part_kind() -> None:
     mock_part.root.kind = "unknown_kind"
 
     with raises(ValueError, match="Unknown Part kind: unknown_kind"):
-        agent._a2a_parts_to_contents([mock_part])
+        agent._parse_contents_from_a2a([mock_part])
 
 
-def test_chat_message_to_a2a_message_with_hosted_file() -> None:
+def test_prepare_message_for_a2a_with_hosted_file() -> None:
     """Test conversion of ChatMessage with HostedFileContent to A2A message."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
@@ -472,7 +473,7 @@ def test_chat_message_to_a2a_message_with_hosted_file() -> None:
         contents=[HostedFileContent(file_id="hosted://storage/document.pdf")],
     )
 
-    result = agent._chat_message_to_a2a_message(message)  # noqa: SLF001
+    result = agent._prepare_message_for_a2a(message)  # noqa: SLF001
 
     # Verify the conversion
     assert len(result.parts) == 1
@@ -487,7 +488,7 @@ def test_chat_message_to_a2a_message_with_hosted_file() -> None:
     assert part.root.file.mime_type is None  # HostedFileContent doesn't specify media_type
 
 
-def test_a2a_parts_to_contents_with_hosted_file_uri() -> None:
+def test_parse_contents_from_a2a_with_hosted_file_uri() -> None:
     """Test conversion of A2A FilePart with hosted file URI back to UriContent."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
@@ -502,7 +503,7 @@ def test_a2a_parts_to_contents_with_hosted_file_uri() -> None:
         )
     )
 
-    contents = agent._a2a_parts_to_contents([file_part])  # noqa: SLF001
+    contents = agent._parse_contents_from_a2a([file_part])  # noqa: SLF001
 
     assert len(contents) == 1
 
@@ -554,3 +555,51 @@ def test_transport_negotiation_both_fail() -> None:
             name="test-agent",
             agent_card=mock_agent_card,
         )
+
+
+def test_create_timeout_config_httpx_timeout() -> None:
+    """Test _create_timeout_config with httpx.Timeout object returns it unchanged."""
+    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+
+    custom_timeout = httpx.Timeout(connect=15.0, read=180.0, write=20.0, pool=8.0)
+    timeout_config = agent._create_timeout_config(custom_timeout)
+
+    assert timeout_config is custom_timeout  # Same object reference
+    assert timeout_config.connect == 15.0
+    assert timeout_config.read == 180.0
+    assert timeout_config.write == 20.0
+    assert timeout_config.pool == 8.0
+
+
+def test_create_timeout_config_invalid_type() -> None:
+    """Test _create_timeout_config with invalid type raises TypeError."""
+    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+
+    with raises(TypeError, match="Invalid timeout type: <class 'str'>. Expected float, httpx.Timeout, or None."):
+        agent._create_timeout_config("invalid")
+
+
+def test_a2a_agent_initialization_with_timeout_parameter() -> None:
+    """Test A2AAgent initialization with timeout parameter."""
+    # Test with URL to trigger httpx client creation
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        # Mock the factory and client creation
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        # Create agent with custom timeout
+        A2AAgent(name="Test Agent", url="https://test-agent.example.com", timeout=120.0)
+
+        # Verify httpx.AsyncClient was called with the configured timeout
+        mock_async_client.assert_called_once()
+        call_args = mock_async_client.call_args
+
+        # Check that timeout parameter was passed
+        assert "timeout" in call_args.kwargs
+        timeout_arg = call_args.kwargs["timeout"]
+
+        # Verify it's an httpx.Timeout object with our custom timeout applied to all components
+        assert isinstance(timeout_arg, httpx.Timeout)

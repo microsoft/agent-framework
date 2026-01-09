@@ -84,22 +84,18 @@ internal sealed class ConversationReferenceJsonConverter : JsonConverter<Convers
             return;
         }
 
-        // If only ID is present and no metadata, serialize as a simple string
-        if (value.Metadata is null || value.Metadata.Count == 0)
+        // Ideally if only ID is present and no metadata, we would serialize as a simple string.
+        // However, while a request's "conversation" property can be either a string or an object
+        // containing a string, a response's "conversation" property is always an object. Since
+        // here we don't know which scenario we're in, we always serialize as an object, which works
+        // in any scenario.
+        writer.WriteStartObject();
+        writer.WriteString("id", value.Id);
+        if (value.Metadata is not null)
         {
-            writer.WriteStringValue(value.Id);
+            writer.WritePropertyName("metadata");
+            JsonSerializer.Serialize(writer, value.Metadata, OpenAIHostingJsonContext.Default.DictionaryStringString);
         }
-        else
-        {
-            // Otherwise, serialize as an object
-            writer.WriteStartObject();
-            writer.WriteString("id", value.Id);
-            if (value.Metadata is not null)
-            {
-                writer.WritePropertyName("metadata");
-                JsonSerializer.Serialize(writer, value.Metadata, OpenAIHostingJsonContext.Default.DictionaryStringString);
-            }
-            writer.WriteEndObject();
-        }
+        writer.WriteEndObject();
     }
 }

@@ -3,12 +3,14 @@
 import pytest
 
 from agent_framework import (
+    ChatMessage,
     Executor,
     ExecutorCompletedEvent,
     ExecutorInvokedEvent,
     Message,
     WorkflowBuilder,
     WorkflowContext,
+    executor,
     handler,
 )
 
@@ -182,8 +184,8 @@ async def test_executor_completed_event_contains_sent_messages():
         assert collector_completed.data is None
 
 
-async def test_executor_completed_event_none_when_no_messages_sent():
-    """Test that ExecutorCompletedEvent.data is None when no messages are sent."""
+async def test_executor_completed_event_includes_yielded_outputs():
+    """Test that ExecutorCompletedEvent.data includes yielded outputs."""
     from typing_extensions import Never
 
     from agent_framework import WorkflowOutputEvent
@@ -201,9 +203,10 @@ async def test_executor_completed_event_none_when_no_messages_sent():
 
     assert len(completed_events) == 1
     assert completed_events[0].executor_id == "yielder"
-    assert completed_events[0].data is None
+    # Yielded outputs are now included in ExecutorCompletedEvent.data
+    assert completed_events[0].data == ["TEST"]
 
-    # Verify the output was still yielded correctly
+    # Verify the output was also yielded as WorkflowOutputEvent
     output_events = [e for e in events if isinstance(e, WorkflowOutputEvent)]
     assert len(output_events) == 1
     assert output_events[0].data == "TEST"
@@ -261,3 +264,35 @@ async def test_executor_events_with_complex_message_types():
     collector_invoked = next(e for e in invoked_events if e.executor_id == "collector")
     assert isinstance(collector_invoked.data, Response)
     assert collector_invoked.data.results == ["HELLO", "HELLO", "HELLO"]
+
+
+async def test_executor_invoked_event_data_not_mutated_by_handler():
+    """Test that ExecutorInvokedEvent.data captures original input, not mutated input."""
+
+    @executor(id="Mutator")
+    async def mutator(messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        # The handler mutates the input list by appending new messages
+        original_len = len(messages)
+        messages.append(ChatMessage(role="assistant", text="Added by executor"))
+        await ctx.send_message(messages)
+        # Verify mutation happened
+        assert len(messages) == original_len + 1
+
+    workflow = WorkflowBuilder().set_start_executor(mutator).build()
+
+    # Run with a single user message
+    input_messages = [ChatMessage(role="user", text="hello")]
+    events = await workflow.run(input_messages)
+
+    # Find the invoked event for the Mutator executor
+    invoked_events = [e for e in events if isinstance(e, ExecutorInvokedEvent)]
+    assert len(invoked_events) == 1
+    mutator_invoked = invoked_events[0]
+
+    # The event data should contain ONLY the original input (1 user message)
+    assert mutator_invoked.executor_id == "Mutator"
+    assert len(mutator_invoked.data) == 1, (
+        f"Expected 1 message (original input), got {len(mutator_invoked.data)}: "
+        f"{[m.text for m in mutator_invoked.data]}"
+    )
+    assert mutator_invoked.data[0].text == "hello"

@@ -32,7 +32,7 @@ async def main() -> None:
     # For Mem0 authentication, set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
@@ -53,6 +53,13 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
+
+        # Mem0 processes and indexes memories asynchronously.
+        # Wait for memories to be indexed before querying in a new thread.
+        # In production, consider implementing retry logic or using Mem0's
+        # eventual consistency handling instead of a fixed delay.
+        print("Waiting for memories to be processed...")
+        await asyncio.sleep(12)  # Empirically determined delay for Mem0 indexing
 
         print("\nRequest within a new thread:")
         # Create a new thread for the agent.

@@ -1,5 +1,25 @@
 # Release History
 
-## v1.0.0-preview.* (Unreleased)
+## [Unreleased]
 
-- Initial public release.
+### Changed
+
+- Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
+- Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
+- Removed AgentThreadMetadata and used AgentSessionId directly instead ([#3067](https://github.com/microsoft/agent-framework/pull/3067));
+
+## v1.0.0-preview.251204.1
+
+- Added orchestration ID to durable agent entity state ([#2137](https://github.com/microsoft/agent-framework/pull/2137))
+
+## v1.0.0-preview.251125.1
+
+- Added support for .NET 10 ([#2128](https://github.com/microsoft/agent-framework/pull/2128))
+
+## v1.0.0-preview.251114.1
+
+- Added friendly error message when running durable agent that isn't registered ([#2214](https://github.com/microsoft/agent-framework/pull/2214))
+
+## v1.0.0-preview.251112.1
+
+- Initial public release ([#1916](https://github.com/microsoft/agent-framework/pull/1916))

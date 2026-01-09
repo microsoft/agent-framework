@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// Derived classes can override specific methods to add custom behavior while maintaining compatibility with the agent interface.
 /// </para>
 /// </remarks>
-public class DelegatingAIAgent : AIAgent
+public abstract class DelegatingAIAgent : AIAgent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAIAgent"/> class with the specified inner agent.
@@ -54,7 +54,7 @@ public class DelegatingAIAgent : AIAgent
     protected AIAgent InnerAgent { get; }
 
     /// <inheritdoc />
-    public override string Id => this.InnerAgent.Id;
+    protected override string? IdCore => this.InnerAgent.Id;
 
     /// <inheritdoc />
     public override string? Name => this.InnerAgent.Name;
@@ -81,7 +81,7 @@ public class DelegatingAIAgent : AIAgent
         => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc />
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -89,7 +89,7 @@ public class DelegatingAIAgent : AIAgent
         => this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
 
     /// <inheritdoc />
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

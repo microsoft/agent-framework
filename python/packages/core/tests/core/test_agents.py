@@ -21,9 +21,11 @@ from agent_framework import (
     ChatResponse,
     Context,
     ContextProvider,
+    FunctionCallContent,
     HostedCodeInterpreterTool,
     Role,
     TextContent,
+    ai_function,
 )
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import AgentExecutionException
@@ -595,3 +597,128 @@ async def test_chat_agent_with_local_mcp_tools(chat_client: ChatClientProtocol) 
         # Test async context manager with MCP tools
         async with agent:
             pass
+
+
+async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> None:
+    """Verify tool execution receives 'thread' inside **kwargs when function is called by client."""
+
+    captured: dict[str, Any] = {}
+
+    @ai_function(name="echo_thread_info")
+    def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
+        thread = kwargs.get("thread")
+        captured["has_thread"] = thread is not None
+        captured["has_message_store"] = thread.message_store is not None if isinstance(thread, AgentThread) else False
+        return f"echo: {text}"
+
+    # Make the base client emit a function call for our tool
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    agent = ChatAgent(
+        chat_client=chat_client_base, tools=[echo_thread_info], chat_message_store_factory=ChatMessageStore
+    )
+    thread = agent.get_new_thread()
+
+    result = await agent.run("hello", thread=thread)
+
+    assert result.text == "done"
+    assert captured.get("has_thread") is True
+    assert captured.get("has_message_store") is True
+
+
+async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
+    chat_client_base: Any, ai_function_tool: Any
+) -> None:
+    """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
+    from agent_framework import ChatOptions, ToolMode
+
+    captured_options: list[ChatOptions] = []
+
+    # Store the original inner method
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(chat_options)
+        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    # Create agent with agent-level tool_choice="auto" and a tool (tools required for tool_choice to be meaningful)
+    agent = ChatAgent(chat_client=chat_client_base, tool_choice="auto", tools=[ai_function_tool])
+
+    # Run with run-level tool_choice="required"
+    await agent.run("Hello", tool_choice="required")
+
+    # Verify the client received tool_choice="required", not "auto"
+    assert len(captured_options) >= 1
+    assert captured_options[0].tool_choice == "required"
+    assert captured_options[0].tool_choice == ToolMode.REQUIRED_ANY
+
+
+async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
+    chat_client_base: Any, ai_function_tool: Any
+) -> None:
+    """Verify that agent-level tool_choice is used when run() doesn't specify one."""
+    from agent_framework import ChatOptions, ToolMode
+
+    captured_options: list[ChatOptions] = []
+
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(chat_options)
+        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    # Create agent with agent-level tool_choice="required" and a tool
+    agent = ChatAgent(chat_client=chat_client_base, tool_choice="required", tools=[ai_function_tool])
+
+    # Run without specifying tool_choice
+    await agent.run("Hello")
+
+    # Verify the client received tool_choice="required" from agent-level
+    assert len(captured_options) >= 1
+    assert captured_options[0].tool_choice == "required"
+    assert captured_options[0].tool_choice == ToolMode.REQUIRED_ANY
+
+
+async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
+    chat_client_base: Any, ai_function_tool: Any
+) -> None:
+    """Verify that tool_choice=None at run() uses agent-level default."""
+    from agent_framework import ChatOptions
+
+    captured_options: list[ChatOptions] = []
+
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(chat_options)
+        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    # Create agent with agent-level tool_choice="auto" and a tool
+    agent = ChatAgent(chat_client=chat_client_base, tool_choice="auto", tools=[ai_function_tool])
+
+    # Run with explicitly passing None (same as not specifying)
+    await agent.run("Hello", tool_choice=None)
+
+    # Verify the client received tool_choice="auto" from agent-level
+    assert len(captured_options) >= 1
+    assert captured_options[0].tool_choice == "auto"

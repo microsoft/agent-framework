@@ -407,7 +407,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_OTEL") == "true",
+                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
@@ -537,9 +537,14 @@ class DevServer:
             except HTTPException:
                 raise
             except ValueError as e:
-                # ValueError from load_entity indicates entity not found or invalid
+                # ValueError from load_entity - could be "not found" or "failed to load"
+                error_str = str(e)
                 error_msg = self._format_error(e, "Entity loading")
-                raise HTTPException(status_code=404, detail=error_msg) from e
+                # Use 404 for "not found", 422 for load failures (entity exists but can't load)
+                if "not found" in error_str.lower() and "failed to load" not in error_str.lower():
+                    raise HTTPException(status_code=404, detail=error_msg) from e
+                # Entity exists but failed to load (e.g., missing env vars, import errors)
+                raise HTTPException(status_code=422, detail=error_msg) from e
             except Exception as e:
                 error_msg = self._format_error(e, "Entity info retrieval")
                 raise HTTPException(status_code=500, detail=error_msg) from e
@@ -742,6 +747,11 @@ class DevServer:
                     # Generate response ID for tracking
                     response_id = f"resp_{uuid.uuid4().hex[:8]}"
                     logger.info(f"[CANCELLATION] Creating response {response_id} for entity {entity_id}")
+
+                    # Inject response_id into extra_body for trace context
+                    if request.extra_body is None:
+                        request.extra_body = {}
+                    request.extra_body["response_id"] = response_id
 
                     return StreamingResponse(
                         self._stream_with_cancellation(executor, request, response_id),
@@ -995,10 +1005,16 @@ class DevServer:
                         logger.warning(f"Unexpected item type: {type(item)}, converting to dict")
                         serialized_items.append(dict(item))
 
+                # Get stored traces for context inspection (DevUI extension)
+                traces = executor.conversation_store.get_traces(conversation_id)
+
                 return {
                     "object": "list",
                     "data": serialized_items,
                     "has_more": has_more,
+                    "metadata": {
+                        "traces": traces,  # Trace events for token usage, timing, LLM context
+                    },
                 }
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1075,9 +1091,21 @@ class DevServer:
             # Collect events for final response.completed event
             events = []
 
+            # Get conversation_id for trace storage
+            conversation_id = request._get_conversation_id()
+
             # Stream all events
             async for event in executor.execute_streaming(request):
                 events.append(event)
+
+                # Store trace events for context inspection (persisted with conversation)
+                if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
+                    try:
+                        trace_data = event.data if hasattr(event, "data") else None
+                        if trace_data:
+                            executor.conversation_store.add_trace(conversation_id, trace_data)
+                    except Exception as e:
+                        logger.debug(f"Failed to store trace event: {e}")
 
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.
@@ -1121,7 +1149,7 @@ class DevServer:
             yield "data: [DONE]\n\n"
 
         except Exception as e:
-            logger.error(f"Error in streaming execution: {e}")
+            logger.error(f"Error in streaming execution: {e}", exc_info=True)
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
             yield f"data: {json.dumps(error_event)}\n\n"
 

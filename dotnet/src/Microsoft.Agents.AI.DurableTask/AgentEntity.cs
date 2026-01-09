@@ -16,29 +16,34 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
     private readonly DurableTaskClient _client = services.GetRequiredService<DurableTaskClient>();
     private readonly ILoggerFactory _loggerFactory = services.GetRequiredService<ILoggerFactory>();
     private readonly IAgentResponseHandler? _messageHandler = services.GetService<IAgentResponseHandler>();
+    private readonly DurableAgentsOptions _options = services.GetRequiredService<DurableAgentsOptions>();
     private readonly CancellationToken _cancellationToken = cancellationToken != default
         ? cancellationToken
         : services.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? CancellationToken.None;
 
-    public async Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    public Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    {
+        return this.Run(request);
+    }
+
+    // IDE1006 and VSTHRD200 disabled to allow method name to match the common cross-platform entity operation name.
+#pragma warning disable IDE1006
+#pragma warning disable VSTHRD200
+    public async Task<AgentRunResponse> Run(RunRequest request)
+#pragma warning restore VSTHRD200
+#pragma warning restore IDE1006
     {
         AgentSessionId sessionId = this.Context.Id;
-        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents =
-            this._services.GetRequiredService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>();
-        if (!agents.TryGetValue(sessionId.Name, out Func<IServiceProvider, AIAgent>? agentFactory))
-        {
-            throw new InvalidOperationException($"Agent '{sessionId.Name}' not found");
-        }
-
-        AIAgent agent = agentFactory(this._services);
+        AIAgent agent = this.GetAgent(sessionId);
         EntityAgentWrapper agentWrapper = new(agent, this.Context, request, this._services);
 
         // Logger category is Microsoft.DurableTask.Agents.{agentName}.{sessionId}
-        ILogger logger = this._loggerFactory.CreateLogger($"Microsoft.DurableTask.Agents.{agent.Name}.{sessionId.Key}");
+        ILogger logger = this.GetLogger(agent.Name!, sessionId.Key);
 
         if (request.Messages.Count == 0)
         {
             logger.LogInformation("Ignoring empty request");
+            return new AgentRunResponse();
         }
 
         this.State.Data.ConversationHistory.Add(DurableAgentStateRequest.FromRunRequest(request));
@@ -113,6 +118,36 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
                     response.Usage?.TotalTokenCount);
             }
 
+            // Update TTL expiration time. Only schedule deletion check on first interaction.
+            // Subsequent interactions just update the expiration time; CheckAndDeleteIfExpiredAsync
+            // will reschedule the deletion check when it runs.
+            TimeSpan? timeToLive = this._options.GetTimeToLive(sessionId.Name);
+            if (timeToLive.HasValue)
+            {
+                DateTime newExpirationTime = DateTime.UtcNow.Add(timeToLive.Value);
+                bool isFirstInteraction = this.State.Data.ExpirationTimeUtc is null;
+
+                this.State.Data.ExpirationTimeUtc = newExpirationTime;
+                logger.LogTTLExpirationTimeUpdated(sessionId, newExpirationTime);
+
+                // Only schedule deletion check on the first interaction when entity is created.
+                // On subsequent interactions, we just update the expiration time. The scheduled
+                // CheckAndDeleteIfExpiredAsync will reschedule itself if the entity hasn't expired.
+                if (isFirstInteraction)
+                {
+                    this.ScheduleDeletionCheck(sessionId, logger, timeToLive.Value);
+                }
+            }
+            else
+            {
+                // TTL is disabled. Clear the expiration time if it was previously set.
+                if (this.State.Data.ExpirationTimeUtc.HasValue)
+                {
+                    logger.LogTTLExpirationTimeCleared(sessionId);
+                    this.State.Data.ExpirationTimeUtc = null;
+                }
+            }
+
             return response;
         }
         finally
@@ -120,5 +155,79 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             // Clear the current agent context
             DurableAgentContext.ClearCurrent();
         }
+    }
+
+    /// <summary>
+    /// Checks if the entity has expired and deletes it if so, otherwise reschedules the deletion check.
+    /// </summary>
+    /// <remarks>
+    /// This method is called by the durable task runtime when a <c>CheckAndDeleteIfExpired</c> signal is received.
+    /// </remarks>
+    public void CheckAndDeleteIfExpired()
+    {
+        AgentSessionId sessionId = this.Context.Id;
+        AIAgent agent = this.GetAgent(sessionId);
+        ILogger logger = this.GetLogger(agent.Name!, sessionId.Key);
+
+        DateTime currentTime = DateTime.UtcNow;
+        DateTime? expirationTime = this.State.Data.ExpirationTimeUtc;
+
+        logger.LogTTLDeletionCheck(sessionId, expirationTime, currentTime);
+
+        if (expirationTime.HasValue)
+        {
+            if (currentTime >= expirationTime.Value)
+            {
+                // Entity has expired, delete it
+                logger.LogTTLEntityExpired(sessionId, expirationTime.Value);
+                this.State = null!;
+            }
+            else
+            {
+                // Entity hasn't expired yet, reschedule the deletion check
+                TimeSpan? timeToLive = this._options.GetTimeToLive(sessionId.Name);
+                if (timeToLive.HasValue)
+                {
+                    this.ScheduleDeletionCheck(sessionId, logger, timeToLive.Value);
+                }
+            }
+        }
+    }
+
+    private void ScheduleDeletionCheck(AgentSessionId sessionId, ILogger logger, TimeSpan timeToLive)
+    {
+        DateTime currentTime = DateTime.UtcNow;
+        DateTime expirationTime = this.State.Data.ExpirationTimeUtc ?? currentTime.Add(timeToLive);
+        TimeSpan minimumDelay = this._options.MinimumTimeToLiveSignalDelay;
+
+        // To avoid excessive scheduling, we schedule the deletion check for no less than the minimum delay.
+        DateTime scheduledTime = expirationTime > currentTime.Add(minimumDelay)
+            ? expirationTime
+            : currentTime.Add(minimumDelay);
+
+        logger.LogTTLDeletionScheduled(sessionId, scheduledTime);
+
+        // Schedule a signal to self to check for expiration
+        this.Context.SignalEntity(
+            this.Context.Id,
+            nameof(CheckAndDeleteIfExpired), // self-signal
+            options: new SignalEntityOptions { SignalTime = scheduledTime });
+    }
+
+    private AIAgent GetAgent(AgentSessionId sessionId)
+    {
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents =
+            this._services.GetRequiredService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>();
+        if (!agents.TryGetValue(sessionId.Name, out Func<IServiceProvider, AIAgent>? agentFactory))
+        {
+            throw new InvalidOperationException($"Agent '{sessionId.Name}' not found");
+        }
+
+        return agentFactory(this._services);
+    }
+
+    private ILogger GetLogger(string agentName, string sessionKey)
+    {
+        return this._loggerFactory.CreateLogger($"Microsoft.DurableTask.Agents.{agentName}.{sessionKey}");
     }
 }

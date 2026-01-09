@@ -39,7 +39,7 @@ async def main() -> None:
             chat_client=AzureAIAgentClient(
                 project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
                 model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-                async_credential=credential,
+                credential=credential,
                 agent_name="WeatherAgent",
                 should_cleanup_agent=True,  # Set to False if you want to disable automatic agent cleanup
             ),

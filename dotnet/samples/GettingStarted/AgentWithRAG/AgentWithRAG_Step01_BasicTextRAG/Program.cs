@@ -8,12 +8,11 @@
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Data;
 using Microsoft.Agents.AI.Samples;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
-using OpenAI;
+using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -63,7 +62,12 @@ AIAgent agent = azureOpenAIClient
     .CreateAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
-        AIContextProviderFactory = ctx => new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
+        AIContextProviderFactory = ctx => new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions),
+        // Since we are using ChatCompletion which stores chat history locally, we can also add a message removal policy
+        // that removes messages produced by the TextSearchProvider before they are added to the chat history, so that
+        // we don't bloat chat history with all the search result messages.
+        ChatMessageStoreFactory = ctx => new InMemoryChatMessageStore(ctx.SerializedState, ctx.JsonSerializerOptions)
+            .WithAIContextProviderMessageRemoval(),
     });
 
 AgentThread thread = agent.GetNewThread();

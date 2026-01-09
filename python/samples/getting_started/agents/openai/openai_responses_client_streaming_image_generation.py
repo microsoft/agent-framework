@@ -4,7 +4,7 @@ import asyncio
 import base64
 
 import anyio
-from agent_framework import DataContent
+from agent_framework import DataContent, HostedImageGenerationTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """OpenAI Responses Client Streaming Image Generation Example
@@ -45,12 +45,13 @@ async def main():
     agent = OpenAIResponsesClient().create_agent(
         instructions="You are a helpful agent that can generate images.",
         tools=[
-            {
-                "type": "image_generation",
-                "size": "1024x1024",
-                "quality": "high",
-                "partial_images": 3,
-            }
+            HostedImageGenerationTool(
+                options={
+                    "size": "1024x1024",
+                    "quality": "high",
+                    "partial_images": 3,
+                }
+            )
         ],
     )
 

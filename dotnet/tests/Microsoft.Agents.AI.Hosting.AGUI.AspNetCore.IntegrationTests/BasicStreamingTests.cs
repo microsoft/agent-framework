@@ -276,15 +276,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
 internal sealed class FakeChatClientAgent : AIAgent
 {
-    public FakeChatClientAgent()
-    {
-        this.Id = "fake-agent";
-        this.Description = "A fake agent for testing";
-    }
+    protected override string? IdCore => "fake-agent";
 
-    public override string Id { get; }
-
-    public override string? Description { get; }
+    public override string? Description => "A fake agent for testing";
 
     public override AgentThread GetNewThread()
     {
@@ -296,7 +290,7 @@ internal sealed class FakeChatClientAgent : AIAgent
         return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -311,7 +305,7 @@ internal sealed class FakeChatClientAgent : AIAgent
         return updates.ToAgentRunResponse();
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -350,15 +344,9 @@ internal sealed class FakeChatClientAgent : AIAgent
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
 internal sealed class FakeMultiMessageAgent : AIAgent
 {
-    public FakeMultiMessageAgent()
-    {
-        this.Id = "fake-multi-message-agent";
-        this.Description = "A fake agent that sends multiple messages for testing";
-    }
+    protected override string? IdCore => "fake-multi-message-agent";
 
-    public override string Id { get; }
-
-    public override string? Description { get; }
+    public override string? Description => "A fake agent that sends multiple messages for testing";
 
     public override AgentThread GetNewThread()
     {
@@ -370,7 +358,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -385,7 +373,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         return updates.ToAgentRunResponse();
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

@@ -62,7 +62,7 @@ async def test_human_in_the_loop_json_decode_error() -> None:
         agent=agent,
         config=AgentConfig(),
     )
-    context.set_messages(messages)
+    context.set_messages(messages, normalize=False)
 
     assert orchestrator.can_handle(context)
 
@@ -385,8 +385,8 @@ async def test_state_context_injection() -> None:
     assert "banana" in system_messages[0].contents[0].text
 
 
-async def test_no_state_context_injection_with_tool_calls() -> None:
-    """Test state context is NOT injected if conversation has tool calls."""
+async def test_state_context_injection_with_tool_calls_and_input_state() -> None:
+    """Test state context is injected when state is provided, even with tool calls."""
     from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent, TextContent
 
     messages = [
@@ -420,13 +420,13 @@ async def test_no_state_context_injection_with_tool_calls() -> None:
     async for event in orchestrator.run(context):
         events.append(event)
 
-    # Should NOT inject state context system message since conversation has tool calls
+    # Should inject state context system message because input state is provided
     system_messages = [
         msg
         for msg in agent.messages_received
         if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "system"
     ]
-    assert len(system_messages) == 0
+    assert len(system_messages) == 1
 
 
 async def test_structured_output_processing() -> None:
@@ -683,6 +683,54 @@ async def test_confirm_changes_with_invalid_json_fallback() -> None:
         if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "user"
     ]
     assert len(user_messages) == 1
+
+
+async def test_confirm_changes_closes_active_message_before_finish() -> None:
+    """Confirm-changes flow closes any active text message before run finishes."""
+    from ag_ui.core import TextMessageEndEvent, TextMessageStartEvent
+    from agent_framework import FunctionCallContent, FunctionResultContent
+
+    updates = [
+        AgentRunResponseUpdate(
+            contents=[
+                FunctionCallContent(
+                    name="write_document_local",
+                    call_id="call_1",
+                    arguments='{"document": "Draft"}',
+                )
+            ]
+        ),
+        AgentRunResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")]),
+    ]
+
+    orchestrator = DefaultOrchestrator()
+    input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Start"}]}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+        updates=updates,
+    )
+    context = TestExecutionContext(
+        input_data=input_data,
+        agent=agent,
+        config=AgentConfig(
+            predict_state_config={"document": {"tool": "write_document_local", "tool_argument": "document"}},
+            require_confirmation=True,
+        ),
+    )
+
+    events: list[Any] = []
+    async for event in orchestrator.run(context):
+        events.append(event)
+
+    start_events = [e for e in events if isinstance(e, TextMessageStartEvent)]
+    end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+    assert len(start_events) == 1
+    assert len(end_events) == 1
+    assert end_events[0].message_id == start_events[0].message_id
+
+    end_index = events.index(end_events[0])
+    finished_index = events.index([e for e in events if e.type == "RUN_FINISHED"][0])
+    assert end_index < finished_index
 
 
 async def test_tool_result_kept_when_call_id_matches() -> None:

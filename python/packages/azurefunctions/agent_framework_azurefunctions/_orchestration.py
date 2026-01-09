@@ -256,7 +256,7 @@ class DurableAIAgent(AgentProtocol):
             # This ensures each call gets its own conversation context
             session_key = str(self.context.new_uuid())
             session_id = AgentSessionId(name=self.agent_name, key=session_key)
-            logger.warning("[DurableAIAgent] No thread provided, created unique session_id: %s", session_id)
+            logger.debug("[DurableAIAgent] No thread provided, created unique session_id: %s", session_id)
 
         # Create entity ID from session ID
         entity_id = session_id.to_entity_id()
@@ -285,7 +285,7 @@ class DurableAIAgent(AgentProtocol):
         logger.debug("[DurableAIAgent] Calling entity %s with message: %s", entity_id, message_str[:100])
 
         # Call the entity to get the underlying task
-        entity_task = self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
+        entity_task = self.context.call_entity(entity_id, "run", run_request.to_dict())
 
         # Wrap it in an AgentTask that will convert the result to AgentRunResponse
         agent_task = AgentTask(

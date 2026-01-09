@@ -19,7 +19,7 @@ public class SpecializedExecutorSmokeTests
 {
     public class TestAIAgent(List<ChatMessage>? messages = null, string? id = null, string? name = null) : AIAgent
     {
-        public override string Id => id ?? base.Id;
+        protected override string? IdCore => id;
         public override string? Name => name;
 
         public static List<ChatMessage> ToChatMessages(params string[] messages)
@@ -62,14 +62,14 @@ public class SpecializedExecutorSmokeTests
 
         public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             Task.FromResult(new AgentRunResponse(this.Messages)
             {
                 AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N")
             });
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             string responseId = Guid.NewGuid().ToString("N");
             foreach (ChatMessage message in this.Messages)

@@ -229,8 +229,10 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     assert processing_span.attributes.get("message.payload_type") == "str"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
-async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
+async def test_trace_context_disabled_when_tracing_disabled(
+    enable_instrumentation, span_exporter: InMemorySpanExporter
+) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     executor = MockExecutor("test-executor")
@@ -433,7 +435,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
     assert workflow_span.status.status_code.name == "ERROR"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_message_trace_context_serialization(span_exporter: InMemorySpanExporter) -> None:
     """Test that message trace context is properly serialized/deserialized."""
     ctx = InProcRunnerContext(InMemoryCheckpointStorage())

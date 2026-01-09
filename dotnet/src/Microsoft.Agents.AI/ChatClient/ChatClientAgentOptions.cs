@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI;
 /// identifier, display name, operational instructions, and a descriptive summary. It can be used to store and transfer
 /// agent-related metadata within a chat application.
 /// </remarks>
-public class ChatClientAgentOptions
+public sealed class ChatClientAgentOptions
 {
     /// <summary>
     /// Gets or sets the agent id.
@@ -80,7 +80,7 @@ public class ChatClientAgentOptions
     /// <summary>
     /// Context object passed to the <see cref="AIContextProviderFactory"/> to create a new instance of <see cref="AIContextProvider"/>.
     /// </summary>
-    public class AIContextProviderFactoryContext
+    public sealed class AIContextProviderFactoryContext
     {
         /// <summary>
         /// Gets or sets the serialized state of the <see cref="AIContextProvider"/>, if any.
@@ -97,7 +97,7 @@ public class ChatClientAgentOptions
     /// <summary>
     /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="ChatMessageStore"/>.
     /// </summary>
-    public class ChatMessageStoreFactoryContext
+    public sealed class ChatMessageStoreFactoryContext
     {
         /// <summary>
         /// Gets or sets the serialized state of the chat message store, if any.

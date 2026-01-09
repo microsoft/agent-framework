@@ -86,18 +86,17 @@ async def enrich_with_references(
     await ctx.send_message(AgentExecutorRequest(messages=conversation))
 
 
-async def main() -> None:
-    """Run the workflow and stream combined updates from both agents."""
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    research_agent = chat_client.create_agent(
+def create_research_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         name="research_agent",
         instructions=(
             "Produce a short, bullet-style briefing with two actionable ideas. Label the section as 'Initial Draft'."
         ),
     )
 
-    final_editor_agent = chat_client.create_agent(
+
+def create_final_editor_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         name="final_editor_agent",
         instructions=(
             "Use all conversation context (including external notes) to produce the final answer. "
@@ -105,11 +104,17 @@ async def main() -> None:
         ),
     )
 
+
+async def main() -> None:
+    """Run the workflow and stream combined updates from both agents."""
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(research_agent)
-        .add_edge(research_agent, enrich_with_references)
-        .add_edge(enrich_with_references, final_editor_agent)
+        .register_agent(create_research_agent, name="research_agent")
+        .register_agent(create_final_editor_agent, name="final_editor_agent")
+        .register_executor(lambda: enrich_with_references, name="enrich_with_references")
+        .set_start_executor("research_agent")
+        .add_edge("research_agent", "enrich_with_references")
+        .add_edge("enrich_with_references", "final_editor_agent")
         .build()
     )
 
