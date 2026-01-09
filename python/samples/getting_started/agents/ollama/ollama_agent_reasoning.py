@@ -30,7 +30,7 @@ async def reasoning_example() -> None:
     print(f"User: {query}")
     # Enable Reasoning on per request level
     result = await agent.run(query)
-    reasoning = "".join(c.text for c in result.messages[-1].contents if isinstance(c, TextReasoningContent))
+    reasoning = "".join((c.text or "") for c in result.messages[-1].contents if isinstance(c, TextReasoningContent))
     print(f"Reasoning: {reasoning}")
     print(f"Answer: {result}\n")
 

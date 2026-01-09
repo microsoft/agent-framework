@@ -21,6 +21,8 @@ public static class WorkflowHostingExtensions
     /// <param name="executionEnvironment">Specify the execution environment to use when running the workflows. See
     /// <see cref="InProcessExecution.OffThread"/>, <see cref="InProcessExecution.Concurrent"/> and
     /// <see cref="InProcessExecution.Lockstep"/> for the in-process environments.</param>
+    /// <param name="includeExceptionDetails">If <see langword="true"/>, will include <see cref="System.Exception.Message"/>
+    /// in the <see cref="ErrorContent"/> representing the workflow error.</param>
     /// <returns></returns>
     public static AIAgent AsAgent(
         this Workflow workflow,
@@ -28,9 +30,10 @@ public static class WorkflowHostingExtensions
         string? name = null,
         string? description = null,
         CheckpointManager? checkpointManager = null,
-        IWorkflowExecutionEnvironment? executionEnvironment = null)
+        IWorkflowExecutionEnvironment? executionEnvironment = null,
+        bool includeExceptionDetails = false)
     {
-        return new WorkflowHostAgent(workflow, id, name, description, checkpointManager, executionEnvironment);
+        return new WorkflowHostAgent(workflow, id, name, description, checkpointManager, executionEnvironment, includeExceptionDetails);
     }
 
     internal static FunctionCallContent ToFunctionCall(this ExternalRequest request)

@@ -40,7 +40,7 @@ public sealed class ChatClientAgentResponse<T> : AgentResponse<T>
     /// </summary>
     /// <remarks>
     /// If the response did not contain JSON, or if deserialization fails, this property will throw.
-    /// To avoid exceptions, use <see cref="AgentResponse.TryDeserialize{T}"/> instead.
+    /// To avoid exceptions, use <see cref="AgentResponse.TryDeserialize{T}(out T)"/> instead.
     /// </remarks>
     public override T Result => this._response.Result;
 }

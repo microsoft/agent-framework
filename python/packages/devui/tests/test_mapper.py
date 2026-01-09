@@ -441,73 +441,119 @@ async def test_workflow_status_event(mapper: MessageMapper, test_request: AgentF
 
 
 # =============================================================================
-# MagenticAgentDeltaEvent Tests
+# Magentic Event Tests - Testing REAL AgentRunUpdateEvent with additional_properties
 # =============================================================================
 
 
-async def test_magentic_agent_delta_creates_message_container(
+async def test_magentic_agent_run_update_event_with_agent_delta_metadata(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
-    """Test that MagenticAgentDeltaEvent creates message containers when no executor context."""
-    from dataclasses import dataclass
+    """Test that AgentRunUpdateEvent with magentic_event_type='agent_delta' is handled correctly.
 
-    from agent_framework import WorkflowEvent
+    This tests the ACTUAL event format Magentic emits - not a fake MagenticAgentDeltaEvent class.
+    Magentic uses AgentRunUpdateEvent with additional_properties containing magentic_event_type.
+    """
+    from agent_framework._types import AgentRunResponseUpdate, Role, TextContent
+    from agent_framework._workflows._events import AgentRunUpdateEvent
 
-    @dataclass
-    class MagenticAgentDeltaEvent(WorkflowEvent):
-        agent_id: str
-        text: str | None = None
+    # Create the REAL event format that Magentic emits
+    update = AgentRunResponseUpdate(
+        contents=[TextContent(text="Hello from agent")],
+        role=Role.ASSISTANT,
+        author_name="Writer",
+        additional_properties={
+            "magentic_event_type": "agent_delta",
+            "agent_id": "writer_agent",
+        },
+    )
+    event = AgentRunUpdateEvent(executor_id="magentic_executor", data=update)
 
-    # First delta should create message container
-    first_delta = MagenticAgentDeltaEvent(agent_id="test_agent", text="Hello ")
-    events = await mapper.convert_event(first_delta, test_request)
+    events = await mapper.convert_event(event, test_request)
 
-    # Should emit 3 events: message container, content part, and text delta
-    assert len(events) == 3
-    assert events[0].type == "response.output_item.added"
-    assert events[0].item.type == "message"
-    assert events[0].item.metadata["agent_id"] == "test_agent"
-    message_id = events[0].item.id
-
-    # Second delta should NOT create new container
-    second_delta = MagenticAgentDeltaEvent(agent_id="test_agent", text="world!")
-    events = await mapper.convert_event(second_delta, test_request)
-
-    assert len(events) == 1
-    assert events[0].type == "response.output_text.delta"
-    assert events[0].item_id == message_id
+    # Should be treated as a regular AgentRunUpdateEvent with text content
+    # The mapper should emit text delta events
+    assert len(events) >= 1
+    text_events = [e for e in events if getattr(e, "type", "") == "response.output_text.delta"]
+    assert len(text_events) >= 1
+    assert text_events[0].delta == "Hello from agent"
 
 
-async def test_magentic_agent_delta_routes_to_executor_item(
+async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test that AgentRunUpdateEvent with magentic_event_type='orchestrator_message' is handled.
+
+    Magentic emits orchestrator planning/instruction messages using AgentRunUpdateEvent
+    with additional_properties containing magentic_event_type='orchestrator_message'.
+    """
+    from agent_framework._types import AgentRunResponseUpdate, Role, TextContent
+    from agent_framework._workflows._events import AgentRunUpdateEvent
+
+    # Create orchestrator message event (REAL format from Magentic)
+    update = AgentRunResponseUpdate(
+        contents=[TextContent(text="Planning: First, the writer will create content...")],
+        role=Role.ASSISTANT,
+        author_name="Orchestrator",
+        additional_properties={
+            "magentic_event_type": "orchestrator_message",
+            "orchestrator_message_kind": "task_ledger",
+            "orchestrator_id": "magentic_orchestrator",
+        },
+    )
+    event = AgentRunUpdateEvent(executor_id="magentic_orchestrator", data=update)
+
+    events = await mapper.convert_event(event, test_request)
+
+    # Currently, mapper treats this as regular AgentRunUpdateEvent (no special handling)
+    # This test documents the current behavior
+    assert len(events) >= 1
+    text_events = [e for e in events if getattr(e, "type", "") == "response.output_text.delta"]
+    assert len(text_events) >= 1
+    assert "Planning:" in text_events[0].delta
+
+
+async def test_magentic_events_use_same_event_class_as_other_workflows(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
-    """Test that MagenticAgentDeltaEvent routes to executor item when executor context is present."""
-    from dataclasses import dataclass
+    """Verify Magentic uses the same AgentRunUpdateEvent class as other workflows.
 
-    from agent_framework import WorkflowEvent
+    This test documents that Magentic does NOT define separate event classes like
+    MagenticAgentDeltaEvent - it reuses AgentRunUpdateEvent with metadata in
+    additional_properties. Any mapper code checking for 'MagenticAgentDeltaEvent'
+    class names is dead code.
+    """
+    from agent_framework._types import AgentRunResponseUpdate, Role, TextContent
+    from agent_framework._workflows._events import AgentRunUpdateEvent
 
-    @dataclass
-    class MagenticAgentDeltaEvent(WorkflowEvent):
-        agent_id: str
-        text: str | None = None
+    # Create events the way different workflows do it
+    # 1. Regular workflow (no additional_properties)
+    regular_update = AgentRunResponseUpdate(
+        contents=[TextContent(text="Regular workflow response")],
+        role=Role.ASSISTANT,
+    )
+    regular_event = AgentRunUpdateEvent(executor_id="regular_executor", data=regular_update)
 
-    # First, invoke an executor (sets current_executor_id in context)
-    executor_event = create_executor_invoked_event(executor_id="agent_writer")
-    executor_events = await mapper.convert_event(executor_event, test_request)
+    # 2. Magentic workflow (with additional_properties)
+    magentic_update = AgentRunResponseUpdate(
+        contents=[TextContent(text="Magentic workflow response")],
+        role=Role.ASSISTANT,
+        additional_properties={"magentic_event_type": "agent_delta"},
+    )
+    magentic_event = AgentRunUpdateEvent(executor_id="magentic_executor", data=magentic_update)
 
-    assert len(executor_events) == 1
-    assert executor_events[0].type == "response.output_item.added"
-    executor_item_id = executor_events[0].item.id
+    # Both should be the SAME class
+    assert type(regular_event) is type(magentic_event)
+    assert isinstance(regular_event, AgentRunUpdateEvent)
+    assert isinstance(magentic_event, AgentRunUpdateEvent)
 
-    # Now send Magentic delta - should route to executor's item
-    delta = MagenticAgentDeltaEvent(agent_id="writer", text="Hello world")
-    delta_events = await mapper.convert_event(delta, test_request)
+    # Both should be handled by the same isinstance check in mapper
+    regular_events = await mapper.convert_event(regular_event, test_request)
+    magentic_events = await mapper.convert_event(magentic_event, test_request)
 
-    # Should only emit 1 event: text delta routed to executor's item
-    assert len(delta_events) == 1
-    assert delta_events[0].type == "response.output_text.delta"
-    assert delta_events[0].item_id == executor_item_id
-    assert delta_events[0].delta == "Hello world"
+    # Both produce text delta events
+    regular_text = [e for e in regular_events if getattr(e, "type", "") == "response.output_text.delta"]
+    magentic_text = [e for e in magentic_events if getattr(e, "type", "") == "response.output_text.delta"]
+
+    assert len(regular_text) >= 1
+    assert len(magentic_text) >= 1
 
 
 # =============================================================================

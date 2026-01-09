@@ -30,10 +30,10 @@ internal sealed class TestAIAgent : AIAgent
     public override AgentThread GetNewThread() =>
         this.GetNewThreadFunc();
 
-    public override Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         this.RunAsyncFunc(messages, thread, options, cancellationToken);
 
-    public override IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         this.RunStreamingAsyncFunc(messages, thread, options, cancellationToken);
 
     public override object? GetService(Type serviceType, object? serviceKey = null) =>

@@ -2,6 +2,7 @@
 
 """Message format conversion between AG-UI and Agent Framework."""
 
+import json
 from typing import Any, cast
 
 from agent_framework import (
@@ -11,6 +12,7 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
+    prepare_function_call_results,
 )
 
 # Role mapping constants
@@ -59,10 +61,8 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             # Distinguish approval payloads from actual tool results
             is_approval = False
             if isinstance(result_content, str) and result_content:
-                import json as _json
-
                 try:
-                    parsed = _json.loads(result_content)
+                    parsed = json.loads(result_content)
                     is_approval = isinstance(parsed, dict) and "accepted" in parsed
                 except Exception:
                     is_approval = False
@@ -237,13 +237,8 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             elif isinstance(content, FunctionResultContent):
                 # Tool result content - extract call_id and result
                 tool_result_call_id = content.call_id
-                # Serialize result to string
-                if isinstance(content.result, dict):
-                    import json
-
-                    content_text = json.dumps(content.result)  # type: ignore
-                elif content.result is not None:
-                    content_text = str(content.result)
+                # Serialize result to string using core utility
+                content_text = prepare_function_call_results(content.result)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id

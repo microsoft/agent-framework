@@ -201,7 +201,8 @@ async def test_tool_result_with_none():
     assert len(events) == 2
     assert events[0].type == "TOOL_CALL_END"
     assert events[1].type == "TOOL_CALL_RESULT"
-    assert events[1].content == ""
+    # prepare_function_call_results serializes None as JSON "null"
+    assert events[1].content == "null"
 
 
 async def test_multiple_tool_results_in_sequence():
@@ -688,3 +689,97 @@ async def test_state_delta_count_logging():
 
     # State delta count should have incremented (one per unique state update)
     assert bridge.state_delta_count >= 1
+
+
+# Tests for list type tool results (MCP tool serialization)
+
+
+async def test_tool_result_with_empty_list():
+    """Test FunctionResultContent with empty list result."""
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(contents=[FunctionResultContent(call_id="call_123", result=[])])
+    events = await bridge.from_agent_run_update(update)
+
+    assert len(events) == 2
+    assert events[0].type == "TOOL_CALL_END"
+    assert events[1].type == "TOOL_CALL_RESULT"
+    # Empty list serializes as JSON empty array
+    assert events[1].content == "[]"
+
+
+async def test_tool_result_with_single_text_content():
+    """Test FunctionResultContent with single TextContent-like item (MCP tool result)."""
+    from dataclasses import dataclass
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(
+        contents=[FunctionResultContent(call_id="call_123", result=[MockTextContent("Hello from MCP tool!")])]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    assert len(events) == 2
+    assert events[0].type == "TOOL_CALL_END"
+    assert events[1].type == "TOOL_CALL_RESULT"
+    # TextContent text is extracted and serialized as JSON array
+    assert events[1].content == '["Hello from MCP tool!"]'
+
+
+async def test_tool_result_with_multiple_text_contents():
+    """Test FunctionResultContent with multiple TextContent-like items (MCP tool result)."""
+    from dataclasses import dataclass
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(
+        contents=[
+            FunctionResultContent(
+                call_id="call_123",
+                result=[MockTextContent("First result"), MockTextContent("Second result")],
+            )
+        ]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    assert len(events) == 2
+    assert events[0].type == "TOOL_CALL_END"
+    assert events[1].type == "TOOL_CALL_RESULT"
+    # Multiple TextContent items should return JSON array
+    assert events[1].content == '["First result", "Second result"]'
+
+
+async def test_tool_result_with_model_dump_objects():
+    """Test FunctionResultContent with Pydantic BaseModel objects."""
+    from pydantic import BaseModel
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    class MockModel(BaseModel):
+        value: int
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(
+        contents=[FunctionResultContent(call_id="call_123", result=[MockModel(value=1), MockModel(value=2)])]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    assert len(events) == 2
+    assert events[1].type == "TOOL_CALL_RESULT"
+    # Should be properly serialized JSON array without double escaping
+    assert events[1].content == '[{"value": 1}, {"value": 2}]'

@@ -63,7 +63,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <exception cref="AgentNotRegisteredException">Thrown when the agent has not been registered.</exception>
     /// <exception cref="ArgumentException">Thrown when the provided thread is not valid for a durable agent.</exception>
     /// <exception cref="NotSupportedException">Thrown when cancellation is requested (cancellation is not supported for durable agents).</exception>
-    public override async Task<AgentResponse> RunAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -128,7 +128,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A streaming response enumerable.</returns>
-    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

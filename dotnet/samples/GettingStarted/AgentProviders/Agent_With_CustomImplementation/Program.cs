@@ -34,7 +34,7 @@ namespace SampleApp
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
             => new CustomAgentThread(serializedThread, jsonSerializerOptions);
 
-        public override async Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -44,11 +44,19 @@ namespace SampleApp
                 throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
             }
 
+            // Get existing messages from the store
+            var invokingContext = new ChatMessageStore.InvokingContext(messages);
+            var storeMessages = await typedThread.MessageStore.InvokingAsync(invokingContext, cancellationToken);
+
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
-            await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
+            var invokedContext = new ChatMessageStore.InvokedContext(messages, storeMessages)
+            {
+                ResponseMessages = responseMessages
+            };
+            await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
 
             return new AgentResponse
             {
@@ -58,7 +66,7 @@ namespace SampleApp
             };
         }
 
-        public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -68,11 +76,19 @@ namespace SampleApp
                 throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
             }
 
+            // Get existing messages from the store
+            var invokingContext = new ChatMessageStore.InvokingContext(messages);
+            var storeMessages = await typedThread.MessageStore.InvokingAsync(invokingContext, cancellationToken);
+
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
-            await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
+            var invokedContext = new ChatMessageStore.InvokedContext(messages, storeMessages)
+            {
+                ResponseMessages = responseMessages
+            };
+            await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
 
             foreach (var message in responseMessages)
             {

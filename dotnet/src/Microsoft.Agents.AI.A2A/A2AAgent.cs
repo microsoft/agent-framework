@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI.A2A;
 /// Support for tasks will be added later as part of the long-running
 /// executions work.
 /// </remarks>
-internal sealed class A2AAgent : AIAgent
+public sealed class A2AAgent : AIAgent
 {
     private readonly A2AClient _a2aClient;
     private readonly string? _id;
@@ -68,7 +68,7 @@ internal sealed class A2AAgent : AIAgent
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
-    public override async Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -84,9 +84,13 @@ internal sealed class A2AAgent : AIAgent
         }
         else
         {
-            var a2aMessage = CreateA2AMessage(typedThread, messages);
+            MessageSendParams sendParams = new()
+            {
+                Message = CreateA2AMessage(typedThread, messages),
+                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+            };
 
-            a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+            a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
         }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
@@ -131,7 +135,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -154,9 +158,13 @@ internal sealed class A2AAgent : AIAgent
             // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
         }
 
-        var a2aMessage = CreateA2AMessage(typedThread, messages);
+        MessageSendParams sendParams = new()
+        {
+            Message = CreateA2AMessage(typedThread, messages),
+            Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+        };
 
-        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -198,10 +206,10 @@ internal sealed class A2AAgent : AIAgent
     protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name ?? base.Name;
+    public override string? Name => this._name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description ?? base.Description;
+    public override string? Description => this._description;
 
     private A2AAgentThread GetA2AThread(AgentThread? thread, AgentRunOptions? options)
     {

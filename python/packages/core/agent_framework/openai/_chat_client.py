@@ -34,6 +34,7 @@ from .._types import (
     FunctionResultContent,
     Role,
     TextContent,
+    TextReasoningContent,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -182,7 +183,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         translations = {
             "model_id": "model",
             "allow_multiple_tool_calls": "parallel_tool_calls",
-            "max_tokens": "max_output_tokens",
+            "max_tokens": "max_completion_tokens",
         }
         for old_key, new_key in translations.items():
             if old_key in run_options and old_key != new_key:
@@ -204,8 +205,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             run_options.pop("tools", None)
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
-        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+        # tool_choice: ToolMode serializes to {"type": "tool_mode", "mode": "..."}, extract mode
+        if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
             run_options["tool_choice"] = tool_choice["mode"]
 
         # response format
@@ -234,6 +235,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 contents.append(text_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
+            if reasoning_details := getattr(choice.message, "reasoning_details", None):
+                contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -271,6 +274,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
+            if reasoning_details := getattr(choice.delta, "reasoning_details", None):
+                contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -394,6 +399,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             }
             if message.author_name and message.role != Role.TOOL:
                 args["name"] = message.author_name
+            if "reasoning_details" in message.additional_properties and (
+                details := message.additional_properties["reasoning_details"]
+            ):
+                args["reasoning_details"] = details
             match content:
                 case FunctionCallContent():
                     if all_messages and "tool_calls" in all_messages[-1]:
@@ -405,6 +414,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     args["tool_call_id"] = content.call_id
                     if content.result is not None:
                         args["content"] = prepare_function_call_results(content.result)
+                case TextReasoningContent(protected_data=protected_data) if protected_data is not None:
+                    all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
                     if "content" not in args:
                         args["content"] = []
