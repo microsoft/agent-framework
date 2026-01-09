@@ -1756,4 +1756,263 @@ def test_build_pydantic_model_from_json_schema_array_of_objects_issue():
         )
 
 
+def test_one_of_discriminator_polymorphism():
+    """Test that oneOf with discriminator creates proper polymorphic union types.
+
+    Tests that oneOf + discriminator patterns are properly converted to Pydantic discriminated unions.
+    """
+    schema = {
+        "$defs": {
+            "CreateProject": {
+                "description": "Action: Create an Azure DevOps project.",
+                "properties": {
+                    "name": {
+                        "const": "create_project",
+                        "default": "create_project",
+                        "type": "string",
+                    },
+                    "params": {"$ref": "#/$defs/CreateProjectParams"},
+                },
+                "required": ["params"],
+                "type": "object",
+            },
+            "CreateProjectParams": {
+                "description": "Parameters for the create_project action.",
+                "properties": {
+                    "orgUrl": {"minLength": 1, "type": "string"},
+                    "projectName": {"minLength": 1, "type": "string"},
+                    "description": {"default": "", "type": "string"},
+                    "template": {"default": "Agile", "type": "string"},
+                    "sourceControl": {
+                        "default": "Git",
+                        "enum": ["Git", "Tfvc"],
+                        "type": "string",
+                    },
+                    "visibility": {"default": "private", "type": "string"},
+                },
+                "required": ["orgUrl", "projectName"],
+                "type": "object",
+            },
+            "DeployRequest": {
+                "description": "Request to deploy Azure DevOps resources.",
+                "properties": {
+                    "projectName": {"minLength": 1, "type": "string"},
+                    "organization": {"minLength": 1, "type": "string"},
+                    "actions": {
+                        "items": {
+                            "discriminator": {
+                                "mapping": {
+                                    "create_project": "#/$defs/CreateProject",
+                                    "hello_world": "#/$defs/HelloWorld",
+                                },
+                                "propertyName": "name",
+                            },
+                            "oneOf": [
+                                {"$ref": "#/$defs/HelloWorld"},
+                                {"$ref": "#/$defs/CreateProject"},
+                            ],
+                        },
+                        "type": "array",
+                    },
+                },
+                "required": ["projectName", "organization"],
+                "type": "object",
+            },
+            "HelloWorld": {
+                "description": "Action: Prints a greeting message.",
+                "properties": {
+                    "name": {
+                        "const": "hello_world",
+                        "default": "hello_world",
+                        "type": "string",
+                    },
+                    "params": {"$ref": "#/$defs/HelloWorldParams"},
+                },
+                "required": ["params"],
+                "type": "object",
+            },
+            "HelloWorldParams": {
+                "description": "Parameters for the hello_world action.",
+                "properties": {
+                    "name": {
+                        "description": "Name to greet",
+                        "minLength": 1,
+                        "type": "string",
+                    }
+                },
+                "required": ["name"],
+                "type": "object",
+            },
+        },
+        "properties": {"params": {"$ref": "#/$defs/DeployRequest"}},
+        "required": ["params"],
+        "type": "object",
+    }
+
+    # Build the model
+    model = _build_pydantic_model_from_json_schema("deploy_tool", schema)
+
+    # Verify the model structure
+    assert model is not None
+    assert issubclass(model, BaseModel)
+
+    # Test with HelloWorld action
+    hello_world_data = {
+        "params": {
+            "projectName": "MyProject",
+            "organization": "MyOrg",
+            "actions": [
+                {
+                    "name": "hello_world",
+                    "params": {"name": "Alice"},
+                }
+            ],
+        }
+    }
+
+    instance = model(**hello_world_data)
+    assert instance.params.projectName == "MyProject"
+    assert instance.params.organization == "MyOrg"
+    assert len(instance.params.actions) == 1
+    assert instance.params.actions[0].name == "hello_world"
+    assert instance.params.actions[0].params.name == "Alice"
+
+    # Test with CreateProject action
+    create_project_data = {
+        "params": {
+            "projectName": "MyProject",
+            "organization": "MyOrg",
+            "actions": [
+                {
+                    "name": "create_project",
+                    "params": {
+                        "orgUrl": "https://dev.azure.com/myorg",
+                        "projectName": "NewProject",
+                        "sourceControl": "Git",
+                    },
+                }
+            ],
+        }
+    }
+
+    instance2 = model(**create_project_data)
+    assert instance2.params.actions[0].name == "create_project"
+    assert instance2.params.actions[0].params.projectName == "NewProject"
+    assert instance2.params.actions[0].params.sourceControl == "Git"
+
+    # Test with mixed actions
+    mixed_data = {
+        "params": {
+            "projectName": "MyProject",
+            "organization": "MyOrg",
+            "actions": [
+                {"name": "hello_world", "params": {"name": "Bob"}},
+                {
+                    "name": "create_project",
+                    "params": {
+                        "orgUrl": "https://dev.azure.com/myorg",
+                        "projectName": "AnotherProject",
+                    },
+                },
+            ],
+        }
+    }
+
+    instance3 = model(**mixed_data)
+    assert len(instance3.params.actions) == 2
+    assert instance3.params.actions[0].name == "hello_world"
+    assert instance3.params.actions[1].name == "create_project"
+
+
+def test_const_creates_literal():
+    """Test that const in JSON Schema creates Literal type."""
+    schema = {
+        "properties": {
+            "action": {
+                "const": "create",
+                "type": "string",
+                "description": "Action type",
+            },
+            "value": {"type": "integer"},
+        },
+        "required": ["action", "value"],
+    }
+
+    model = _build_pydantic_model_from_json_schema("test_const", schema)
+
+    # Verify valid const value works
+    instance = model(action="create", value=42)
+    assert instance.action == "create"
+    assert instance.value == 42
+
+    # Verify incorrect const value fails
+    with pytest.raises(ValidationError):
+        model(action="delete", value=42)
+
+
+def test_enum_creates_literal():
+    """Test that enum in JSON Schema creates Literal type."""
+    schema = {
+        "properties": {
+            "status": {
+                "enum": ["pending", "approved", "rejected"],
+                "type": "string",
+                "description": "Status",
+            },
+            "priority": {"enum": [1, 2, 3], "type": "integer"},
+        },
+        "required": ["status"],
+    }
+
+    model = _build_pydantic_model_from_json_schema("test_enum", schema)
+
+    # Verify valid enum values work
+    instance = model(status="approved", priority=2)
+    assert instance.status == "approved"
+    assert instance.priority == 2
+
+    # Verify invalid enum value fails
+    with pytest.raises(ValidationError):
+        model(status="unknown")
+
+    with pytest.raises(ValidationError):
+        model(status="pending", priority=5)
+
+
+def test_nested_object_with_const_and_enum():
+    """Test that const and enum work in nested objects."""
+    schema = {
+        "properties": {
+            "config": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "const": "production",
+                        "default": "production",
+                        "type": "string",
+                    },
+                    "level": {"enum": ["low", "medium", "high"], "type": "string"},
+                },
+                "required": ["level"],
+            }
+        },
+        "required": ["config"],
+    }
+
+    model = _build_pydantic_model_from_json_schema("test_nested", schema)
+
+    # Valid data
+    instance = model(config={"type": "production", "level": "high"})
+    assert instance.config.type == "production"
+    assert instance.config.level == "high"
+
+    # Invalid const in nested object
+    with pytest.raises(ValidationError):
+        model(config={"type": "development", "level": "low"})
+
+    # Invalid enum in nested object
+    with pytest.raises(ValidationError):
+        model(config={"type": "production", "level": "critical"})
+
+
 # endregion
