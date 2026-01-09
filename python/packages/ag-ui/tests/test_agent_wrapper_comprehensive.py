@@ -14,7 +14,7 @@ from agent_framework._types import ChatResponseUpdate
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent))
-from .test_helpers_ag_ui import StreamingChatClientStub
+from test_helpers_ag_ui import StreamingChatClientStub
 
 
 async def test_agent_initialization_basic():
