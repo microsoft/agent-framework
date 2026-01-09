@@ -321,7 +321,15 @@ internal static class ChatResponseUpdateAGUIExtensions
     {
         if (!string.IsNullOrEmpty(toolCallResult.Content))
         {
-            return JsonSerializer.Deserialize(toolCallResult.Content, options.GetTypeInfo(typeof(JsonElement)));
+            try
+            {
+                return JsonSerializer.Deserialize(toolCallResult.Content, options.GetTypeInfo(typeof(JsonElement)));
+            }
+            catch (JsonException)
+            {
+                // If JSON deserialization fails, return the content as a plain string
+                return toolCallResult.Content;
+            }
         }
 
         return null;
