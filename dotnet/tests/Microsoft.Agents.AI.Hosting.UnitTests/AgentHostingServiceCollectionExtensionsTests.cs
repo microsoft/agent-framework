@@ -173,7 +173,7 @@ public class AgentHostingServiceCollectionExtensionsTests
     public void AddAIAgent_WithoutKey_CallsOverloadWithNullKey()
     {
         var builder = new HostApplicationBuilder();
-        var result = builder.AddAIAgent("agentName", "instructions");
+        var result = builder.Services.AddAIAgent("agentName", "instructions");
 
         // The agent should be registered (proving the method chain worked)
         var descriptor = builder.Services.FirstOrDefault(
@@ -196,7 +196,7 @@ public class AgentHostingServiceCollectionExtensionsTests
     public void AddAIAgent_ValidSpecialCharactersInName_Succeeds(string name)
     {
         var builder = new HostApplicationBuilder();
-        var result = builder.AddAIAgent(name, "instructions");
+        var result = builder.Services.AddAIAgent(name, "instructions");
 
         var descriptor = builder.Services.FirstOrDefault(
             d => (d.ServiceKey as string) == name &&
