@@ -4,7 +4,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.PowerFx;
