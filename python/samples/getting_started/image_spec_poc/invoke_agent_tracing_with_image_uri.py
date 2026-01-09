@@ -8,7 +8,7 @@ import os
 from typing import Annotated
 
 import dotenv
-from agent_framework import ChatAgent, ChatMessage, Role, TextContent
+from agent_framework import ChatAgent, ChatMessage, Role, TextContent, DataContent
 from agent_framework.observability import get_tracer, enable_instrumentation
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
@@ -22,6 +22,10 @@ from db_storing_logic import create_and_store_base64_encoded_images
 dotenv.load_dotenv()
 
 store: SQLiteImageStore | None = None
+
+def create_sample_image() -> str:
+    png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    return f"data:image/png;base64,{png_data}"
 
 async def get_image_data(
     text_id: Annotated[
@@ -96,6 +100,7 @@ async def main() -> None:
                                 "No Markdown or extra text."
                             )
                     ),
+                DataContent(uri= create_sample_image(), media_type="image/png")
                 ],
             )
 

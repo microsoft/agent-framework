@@ -20,7 +20,6 @@ async def create_and_store_base64_encoded_images() -> tuple[str, str]:
             continue
         with open(file_path, "rb") as f:
             image_data = f.read()
-            #image_base64 = base64.b64encode(image_data).decode('utf-8')
             image_uri = f"data:image/jpeg,{image_data}"
 
             text_id = f"{file_path.name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
