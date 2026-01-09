@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -179,6 +180,16 @@ public class Workflow
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
     }
 
+    private sealed class NoOpExternalRequestContext : IExternalRequestContext, IExternalRequestSink
+    {
+        public ValueTask PostAsync(ExternalRequest request) => default;
+
+        IExternalRequestSink IExternalRequestContext.RegisterPort(RequestPort port)
+        {
+            return this;
+        }
+    }
+
     /// <summary>
     /// Retrieves a <see cref="ProtocolDescriptor"/> defining how to interact with this workflow.
     /// </summary>
@@ -190,6 +201,8 @@ public class Workflow
         ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
+        startExecutor.Configure(new NoOpExternalRequestContext());
+
         return startExecutor.DescribeProtocol();
     }
 }

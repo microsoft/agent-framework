@@ -19,6 +19,29 @@ internal static class AIAgentsAbstractionsExtensions
             RawRepresentation = update.RawRepresentation ?? update,
         };
 
+    public static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName)
+        => message.ChatAssistantToUserIfNotFromNamed(agentName, out _, false);
+
+    private static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName, out bool changed, bool inplace = true)
+    {
+        changed = false;
+
+        if (message.Role == ChatRole.Assistant &&
+                message.AuthorName != agentName &&
+                message.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
+        {
+            if (!inplace)
+            {
+                message = message.Clone();
+            }
+
+            message.Role = ChatRole.User;
+            changed = true;
+        }
+
+        return message;
+    }
+
     /// <summary>
     /// Iterates through <paramref name="messages"/> looking for <see cref="ChatRole.Assistant"/> messages and swapping
     /// any that have a different <see cref="ChatMessage.AuthorName"/> from <paramref name="targetAgentName"/> to
@@ -29,11 +52,9 @@ internal static class AIAgentsAbstractionsExtensions
         List<ChatMessage>? roleChanged = null;
         foreach (var m in messages)
         {
-            if (m.Role == ChatRole.Assistant &&
-                m.AuthorName != targetAgentName &&
-                m.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
+            m.ChatAssistantToUserIfNotFromNamed(targetAgentName, out bool changed);
+            if (changed)
             {
-                m.Role = ChatRole.User;
                 (roleChanged ??= []).Add(m);
             }
         }
