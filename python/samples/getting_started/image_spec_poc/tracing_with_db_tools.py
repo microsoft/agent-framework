@@ -9,7 +9,7 @@ from typing import Annotated
 
 import dotenv
 from agent_framework import ChatAgent, ChatMessage, Role, TextContent
-from agent_framework.observability import get_tracer
+from agent_framework.observability import get_tracer, enable_instrumentation
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -53,9 +53,11 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
-        AzureAIClient(project_client=project, agent_name="ImageFetchingAgent") as client,
+        AzureAIClient(project_client=project) as client,
     ):
-        await client.setup_azure_ai_observability(enable_sensitive_data=True)
+        await client.configure_azure_monitor()
+
+        enable_instrumentation(enable_sensitive_data=True)
 
         await create_and_store_base64_encoded_images()
 
@@ -82,7 +84,7 @@ async def main() -> None:
                 contents=[
                     TextContent(
                             text=(
-                                "Get me the image with the text_id=cat.jpg-20260108T193732\n"
+                                "Get me the image with the text_id=dog.jpg-20260109T193355\n"
                                 "Return plain text, one field per line, exactly:\n"
                                 "description: <value>\n"
                                 "image_uri: <value>\n"
