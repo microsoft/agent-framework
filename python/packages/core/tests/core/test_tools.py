@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agent_framework import (
     AIFunction,
@@ -15,7 +15,11 @@ from agent_framework import (
     ToolProtocol,
     ai_function,
 )
-from agent_framework._tools import _parse_annotation, _parse_inputs
+from agent_framework._tools import (
+    _build_pydantic_model_from_json_schema,
+    _parse_annotation,
+    _parse_inputs,
+)
 from agent_framework.exceptions import ToolException
 from agent_framework.observability import OtelAttr
 
@@ -1546,6 +1550,210 @@ def test_parse_annotation_with_annotated_and_literal():
     literal_type = args[0]
     assert get_origin(literal_type) is Literal
     assert get_args(literal_type) == ("A", "B", "C")
+
+
+def test_build_pydantic_model_from_json_schema_array_of_objects_issue():
+    """Test for Tools with complex input schema (array of objects).
+
+    This test verifies that JSON schemas with array properties containing nested objects
+    are properly parsed, ensuring that the nested object schema is preserved
+    and not reduced to a bare dict.
+
+    Example from issue:
+    ```
+    const SalesOrderItemSchema = z.object({
+        customerMaterialNumber: z.string().optional(),
+        quantity: z.number(),
+        unitOfMeasure: z.string()
+    });
+
+    const CreateSalesOrderInputSchema = z.object({
+        contract: z.string(),
+        items: z.array(SalesOrderItemSchema)
+    });
+    ```
+
+    The issue was that agents only saw:
+    ```
+    {"contract": "str", "items": "list[dict]"}
+    ```
+
+    Instead of the proper nested schema with all fields.
+    """
+    # Schema matching the issue description
+    schema = {
+        "type": "object",
+        "properties": {
+            "contract": {"type": "string", "description": "Reference contract number"},
+            "items": {
+                "type": "array",
+                "description": "Sales order line items",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "customerMaterialNumber": {
+                            "type": "string",
+                            "description": "Customer's material number",
+                        },
+                        "quantity": {"type": "number", "description": "Order quantity"},
+                        "unitOfMeasure": {
+                            "type": "string",
+                            "description": "Unit of measure (e.g., 'ST', 'KG', 'TO')",
+                        },
+                    },
+                    "required": ["quantity", "unitOfMeasure"],
+                },
+            },
+        },
+        "required": ["contract", "items"],
+    }
+
+    model = _build_pydantic_model_from_json_schema("create_sales_order", schema)
+
+    # Test valid data
+    valid_data = {
+        "contract": "CONTRACT-123",
+        "items": [
+            {
+                "customerMaterialNumber": "MAT-001",
+                "quantity": 10,
+                "unitOfMeasure": "ST",
+            },
+            {"quantity": 5.5, "unitOfMeasure": "KG"},
+        ],
+    }
+
+    instance = model(**valid_data)
+
+    # Verify the data was parsed correctly
+    assert instance.contract == "CONTRACT-123"
+    assert len(instance.items) == 2
+
+    # Verify first item
+    assert instance.items[0].customerMaterialNumber == "MAT-001"
+    assert instance.items[0].quantity == 10
+    assert instance.items[0].unitOfMeasure == "ST"
+
+    # Verify second item (optional field not provided)
+    assert instance.items[1].quantity == 5.5
+    assert instance.items[1].unitOfMeasure == "KG"
+
+    # Verify that items are proper BaseModel instances, not bare dicts
+    assert isinstance(instance.items[0], BaseModel)
+    assert isinstance(instance.items[1], BaseModel)
+
+    # Verify that the nested object has the expected fields
+    assert hasattr(instance.items[0], "customerMaterialNumber")
+    assert hasattr(instance.items[0], "quantity")
+    assert hasattr(instance.items[0], "unitOfMeasure")
+
+    # CRITICAL: Validate using the same methods that actual chat clients use
+    # This is what would actually be sent to the LLM
+
+    # Create an AIFunction wrapper to access the client-facing APIs
+    def dummy_func(**kwargs):
+        return kwargs
+
+    test_func = AIFunction(
+        func=dummy_func,
+        name="create_sales_order",
+        description="Create a sales order",
+        input_model=model,
+    )
+
+    # Test 1: Anthropic client uses tool.parameters() directly
+    anthropic_schema = test_func.parameters()
+
+    # Verify contract property
+    assert "contract" in anthropic_schema["properties"]
+    assert anthropic_schema["properties"]["contract"]["type"] == "string"
+
+    # Verify items array property exists
+    assert "items" in anthropic_schema["properties"]
+    items_prop = anthropic_schema["properties"]["items"]
+    assert items_prop["type"] == "array"
+
+    # THE KEY TEST for Anthropic: array items must have proper object schema
+    assert "items" in items_prop, "Array should have 'items' schema definition"
+    array_items_schema = items_prop["items"]
+
+    # Resolve schema if using $ref
+    if "$ref" in array_items_schema:
+        ref_path = array_items_schema["$ref"]
+        assert ref_path.startswith("#/$defs/") or ref_path.startswith("#/definitions/")
+        ref_name = ref_path.split("/")[-1]
+        defs = anthropic_schema.get("$defs", anthropic_schema.get("definitions", {}))
+        assert ref_name in defs, f"Referenced schema '{ref_name}' should exist"
+        item_schema = defs[ref_name]
+    else:
+        item_schema = array_items_schema
+
+    # Verify the nested object has all properties defined
+    assert "properties" in item_schema, "Array items should have properties (not bare dict)"
+    item_properties = item_schema["properties"]
+
+    # All three fields must be present in schema sent to LLM
+    assert "customerMaterialNumber" in item_properties, "customerMaterialNumber missing from LLM schema"
+    assert "quantity" in item_properties, "quantity missing from LLM schema"
+    assert "unitOfMeasure" in item_properties, "unitOfMeasure missing from LLM schema"
+
+    # Verify types are correct
+    assert item_properties["customerMaterialNumber"]["type"] == "string"
+    assert item_properties["quantity"]["type"] in ["number", "integer"]
+    assert item_properties["unitOfMeasure"]["type"] == "string"
+
+    # Test 2: OpenAI client uses tool.to_json_schema_spec()
+    openai_spec = test_func.to_json_schema_spec()
+
+    assert openai_spec["type"] == "function"
+    assert "function" in openai_spec
+    openai_schema = openai_spec["function"]["parameters"]
+
+    # Verify the same structure is present in OpenAI format
+    assert "items" in openai_schema["properties"]
+    openai_items_prop = openai_schema["properties"]["items"]
+    assert openai_items_prop["type"] == "array"
+    assert "items" in openai_items_prop
+
+    openai_array_items = openai_items_prop["items"]
+    if "$ref" in openai_array_items:
+        ref_path = openai_array_items["$ref"]
+        ref_name = ref_path.split("/")[-1]
+        defs = openai_schema.get("$defs", openai_schema.get("definitions", {}))
+        openai_item_schema = defs[ref_name]
+    else:
+        openai_item_schema = openai_array_items
+
+    assert "properties" in openai_item_schema
+    openai_props = openai_item_schema["properties"]
+    assert "customerMaterialNumber" in openai_props
+    assert "quantity" in openai_props
+    assert "unitOfMeasure" in openai_props
+
+    # Test validation - missing required quantity
+    with pytest.raises(ValidationError):
+        model(
+            contract="CONTRACT-456",
+            items=[
+                {
+                    "customerMaterialNumber": "MAT-002",
+                    "unitOfMeasure": "TO",
+                    # Missing required 'quantity'
+                }
+            ],
+        )
+
+    # Test validation - missing required unitOfMeasure
+    with pytest.raises(ValidationError):
+        model(
+            contract="CONTRACT-789",
+            items=[
+                {
+                    "quantity": 20
+                    # Missing required 'unitOfMeasure'
+                }
+            ],
+        )
 
 
 # endregion
