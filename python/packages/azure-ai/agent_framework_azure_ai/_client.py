@@ -421,6 +421,13 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         return run_options
 
+    @override
+    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_deployment_name must be a non-empty string")
+            run_options["model"] = self.model_id
+
     def _transform_input_for_azure_ai(self, input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Transform input items to match Azure AI Projects expected schema.
 

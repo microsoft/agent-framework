@@ -820,8 +820,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             else:
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                    from ._types import prepare_function_call_results
+
                     try:
-                        json_result = json.dumps(result)
+                        json_result = prepare_function_call_results(result)
                     except (TypeError, OverflowError):
                         span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
                         logger.debug("Function result: <non-serializable result>")

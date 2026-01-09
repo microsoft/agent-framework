@@ -834,7 +834,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         """
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread, input_messages=input_messages
+            thread=thread, input_messages=input_messages, **kwargs
         )
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools is None else tools if isinstance(tools, list) else [tools]
