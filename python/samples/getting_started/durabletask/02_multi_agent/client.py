@@ -1,10 +1,11 @@
-"""Client application for interacting with a Durable Task hosted agent.
+"""Client application for interacting with multiple hosted agents.
 
-This client connects to the Durable Task Scheduler and sends requests to
-registered agents, demonstrating how to interact with agents from external processes.
+This client connects to the Durable Task Scheduler and interacts with two different
+agents (WeatherAgent and MathAgent), demonstrating how to work with multiple agents
+each with their own specialized capabilities and tools.
 
 Prerequisites: 
-- The worker must be running with the agent registered
+- The worker must be running with both agents registered
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
@@ -57,51 +58,47 @@ def get_client(
 
 
 def run_client(agent_client: DurableAIAgentClient) -> None:
-    """Run client interactions with the Joker agent.
+    """Run client interactions with both WeatherAgent and MathAgent.
     
     Args:
         agent_client: The DurableAIAgentClient instance
     """
-    # Get a reference to the Joker agent
-    logger.debug("Getting reference to Joker agent...")
-    joker = agent_client.get_agent("Joker")
+    logger.debug("Testing WeatherAgent")
     
-    # Create a new thread for the conversation
-    thread = joker.get_new_thread()
-    logger.debug(f"Thread ID: {thread.session_id}")
-    logger.info("Start chatting with the Joker agent! (Type 'exit' to quit)")
+    # Get reference to WeatherAgent
+    weather_agent = agent_client.get_agent("WeatherAgent")
+    weather_thread = weather_agent.get_new_thread()
     
-    # Interactive conversation loop
-    while True:
-        # Get user input
-        try:
-            user_message = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            logger.info("\nExiting...")
-            break
-        
-        # Check for exit command
-        if user_message.lower() == "exit":
-            logger.info("Goodbye!")
-            break
-        
-        # Skip empty messages
-        if not user_message:
-            continue
-        
-        # Send message to agent and get response
-        try:
-            response = joker.run(user_message, thread=thread)
-            logger.info(f"Joker: {response.text} \n")
-        except Exception as e:
-            logger.error(f"Error getting response: {e}")
+    logger.debug(f"Created weather conversation thread: {weather_thread.session_id}")
     
-    logger.info("Conversation completed.")
+    # Test WeatherAgent
+    weather_message = "What is the weather in Seattle?"
+    logger.info(f"User: {weather_message}")
+    
+    weather_response = weather_agent.run(weather_message, thread=weather_thread)
+    logger.info(f"WeatherAgent: {weather_response.text} \n")
+    
+    logger.debug("Testing MathAgent")
+    
+    # Get reference to MathAgent
+    math_agent = agent_client.get_agent("MathAgent")
+    math_thread = math_agent.get_new_thread()
+    
+    logger.debug(f"Created math conversation thread: {math_thread.session_id}")
+    
+    # Test MathAgent
+    math_message = "Calculate a 20% tip on a $50 bill"
+    logger.info(f"User: {math_message}")
+    
+    math_response = math_agent.run(math_message, thread=math_thread)
+    logger.info(f"MathAgent: {math_response.text} \n")
+    
+    logger.debug("Both agents completed successfully!")
 
 
 async def main() -> None:
     """Main entry point for the client application."""
-    logger.debug("Starting Durable Task Agent Client...")
+    logger.debug("Starting Durable Task Multi-Agent Client...")
     
     # Create client using helper function
     agent_client = get_client()

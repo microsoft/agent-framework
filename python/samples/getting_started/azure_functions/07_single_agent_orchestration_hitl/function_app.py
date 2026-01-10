@@ -102,7 +102,6 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
     )
 
     content = initial_raw.value
-    logger.info("Type of content after extraction: %s", type(content))  # type: ignore[misc]
 
     if content is None or not isinstance(content, GeneratedContent):
         raise ValueError("Agent returned no content after extraction.")

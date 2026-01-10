@@ -1,8 +1,8 @@
-"""Single Agent Sample - Durable Task Integration (Combined Worker + Client)
+"""Multi-Agent Sample - Durable Task Integration (Combined Worker + Client)
 
-This sample demonstrates running both the worker and client in a single process.
-The worker is started first to register the agent, then client operations are
-performed against the running worker.
+This sample demonstrates running both the worker and client in a single process
+for multiple agents with different tools. The worker registers two agents
+(WeatherAgent and MathAgent), each with their own specialized capabilities.
 
 Prerequisites: 
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
@@ -21,16 +21,16 @@ from dotenv import load_dotenv
 from client import get_client, run_client
 from worker import get_worker, setup_worker
 
-# Configure logging (must be after imports to override their basicConfig)
+# Configure logging
 logging.basicConfig(level=logging.INFO, force=True)
 logger = logging.getLogger(__name__)
 
+
 def main():
     """Main entry point - runs both worker and client in single process."""
-    logger.debug("Starting Durable Task Agent Sample (Combined Worker + Client)...")
-
-    silent_handler = logging.NullHandler()
+    logger.debug("Starting Durable Task Multi-Agent Sample (Combined Worker + Client)...")
     
+    silent_handler = logging.NullHandler()
     # Create and start the worker using helper function and context manager
     with get_worker(log_handler=silent_handler) as dts_worker:
         # Register agents using helper function

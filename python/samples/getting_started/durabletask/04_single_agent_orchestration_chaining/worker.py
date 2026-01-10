@@ -14,7 +14,6 @@ import asyncio
 from collections.abc import Generator
 import logging
 import os
-from typing import Any
 
 from agent_framework import AgentRunResponse
 from agent_framework.azure import AzureOpenAIChatClient
@@ -51,9 +50,18 @@ def create_writer_agent():
     )
 
 
+def get_orchestration():
+    """Get the orchestration function for this sample.
+    
+    Returns:
+        The orchestration function to register with the worker
+    """
+    return single_agent_chaining_orchestration
+
+
 def single_agent_chaining_orchestration(
     context: OrchestrationContext, _: str
-) -> Generator[Task[Any], Any, str]:
+) -> Generator[Task[AgentRunResponse], AgentRunResponse, str]:
     """Orchestration that runs the writer agent twice on the same thread.
     
     This demonstrates chaining behavior where the output of the first agent run
@@ -64,10 +72,13 @@ def single_agent_chaining_orchestration(
         context: The orchestration context
         _: Input parameter (unused)
         
+    Yields:
+        Task[AgentRunResponse]: Tasks that resolve to AgentRunResponse
+        
     Returns:
         str: The final refined text from the second agent run
     """
-    logger.info("[Orchestration] Starting single agent chaining...")
+    logger.debug("[Orchestration] Starting single agent chaining...")
     
     # Wrap the orchestration context to access agents
     agent_context = DurableAIAgentOrchestrationContext(context)
@@ -78,12 +89,13 @@ def single_agent_chaining_orchestration(
     # Create a new thread for the conversation - this will be shared across both runs
     writer_thread = writer.get_new_thread()
     
-    logger.info(f"[Orchestration] Created thread: {writer_thread.session_id}")
+    logger.debug(f"[Orchestration] Created thread: {writer_thread.session_id}")
     
+    prompt = "Write a concise inspirational sentence about learning."
     # First run: Generate an initial inspirational sentence
-    logger.info("[Orchestration] First agent run: Generating initial sentence...")
-    initial_response: AgentRunResponse = yield writer.run(
-        messages="Write a concise inspirational sentence about learning.",
+    logger.info("[Orchestration] First agent run: Generating initial sentence about: %s", prompt)
+    initial_response = yield writer.run(
+        messages=prompt,
         thread=writer_thread,
     )
     logger.info(f"[Orchestration] Initial response: {initial_response.text}")
@@ -94,61 +106,89 @@ def single_agent_chaining_orchestration(
         f"{initial_response.text}"
     )
     
-    logger.info("[Orchestration] Second agent run: Refining the sentence...")
-    refined_response: AgentRunResponse = yield writer.run(
+    logger.info("[Orchestration] Second agent run: Refining the sentence: %s", improved_prompt)
+    refined_response = yield writer.run(
         messages=improved_prompt,
         thread=writer_thread,
     )
     
     logger.info(f"[Orchestration] Refined response: {refined_response.text}")
     
-    logger.info("[Orchestration] Chaining complete")
+    logger.debug("[Orchestration] Chaining complete")
     return refined_response.text
 
 
-async def main():
-    """Main entry point for the worker process."""
-    logger.info("Starting Durable Task Single Agent Chaining Worker with Orchestration...")
+def get_worker(
+    taskhub: str | None = None,
+    endpoint: str | None = None,
+    log_handler: logging.Handler | None = None
+) -> DurableTaskSchedulerWorker:
+    """Create a configured DurableTaskSchedulerWorker.
     
-    # Get environment variables for taskhub and endpoint with defaults
-    taskhub_name = os.getenv("TASKHUB", "default")
-    endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
-
-    logger.info(f"Using taskhub: {taskhub_name}")
-    logger.info(f"Using endpoint: {endpoint}")
-
-    # Set credential to None for emulator, or DefaultAzureCredential for Azure
-    credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
+    Args:
+        taskhub: Task hub name (defaults to TASKHUB env var or "default")
+        endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
+        log_handler: Optional logging handler
+        
+    Returns:
+        Configured DurableTaskSchedulerWorker instance
+    """
+    taskhub_name = taskhub or os.getenv("TASKHUB", "default")
+    endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
     
-    # Create a worker using Azure Managed Durable Task
-    worker = DurableTaskSchedulerWorker(
-        host_address=endpoint,
-        secure_channel=endpoint != "http://localhost:8080",
+    logger.debug(f"Using taskhub: {taskhub_name}")
+    logger.debug(f"Using endpoint: {endpoint_url}")
+    
+    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    
+    return DurableTaskSchedulerWorker(
+        host_address=endpoint_url,
+        secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
-        token_credential=credential
+        token_credential=credential,
+        log_handler=log_handler
     )
+
+
+def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
+    """Set up the worker with agents and orchestrations registered.
     
+    Args:
+        worker: The DurableTaskSchedulerWorker instance
+        
+    Returns:
+        DurableAIAgentWorker with agents and orchestrations registered
+    """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
     
     # Create and register the Writer agent
-    logger.info("Creating and registering Writer agent...")
+    logger.debug("Creating and registering Writer agent...")
     writer_agent = create_writer_agent()
     agent_worker.add_agent(writer_agent)
     
-    logger.info(f"✓ Registered agent: {writer_agent.name}")
-    logger.info(f"  Entity name: dafx-{writer_agent.name}")
-    logger.info("")
+    logger.debug(f"✓ Registered agent: {writer_agent.name}")
     
     # Register the orchestration function
-    logger.info("Registering orchestration function...")
-    worker.add_orchestrator(single_agent_chaining_orchestration)
-    logger.info(f"✓ Registered orchestration: {single_agent_chaining_orchestration.__name__}")
-    logger.info("")
+    logger.debug("Registering orchestration function...")
+    worker.add_orchestrator(single_agent_chaining_orchestration)    # type: ignore
+    logger.debug(f"✓ Registered orchestration: {single_agent_chaining_orchestration.__name__}")
     
-    logger.info("Worker is ready and listening for requests...")
-    logger.info("Press Ctrl+C to stop.")
-    logger.info("")
+    return agent_worker
+
+
+async def main():
+    """Main entry point for the worker process."""
+    logger.debug("Starting Durable Task Single Agent Chaining Worker with Orchestration...")
+    
+    # Create a worker using the helper function
+    worker = get_worker()
+    
+    # Setup worker with agents and orchestrations
+    setup_worker(worker)
+    
+    logger.debug("Worker is ready and listening for requests...")
+    logger.debug("Press Ctrl+C to stop.")
     
     try:
         # Start the worker (this blocks until stopped)
@@ -158,9 +198,9 @@ async def main():
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Worker shutdown initiated")
+        logger.debug("Worker shutdown initiated")
     
-    logger.info("Worker stopped")
+    logger.debug("Worker stopped")
 
 
 if __name__ == "__main__":
