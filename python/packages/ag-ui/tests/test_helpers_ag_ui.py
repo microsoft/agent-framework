@@ -18,6 +18,7 @@ from agent_framework import (
 from agent_framework._clients import BaseChatClient
 from agent_framework._types import ChatResponse, ChatResponseUpdate
 
+from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
 from agent_framework_ag_ui._orchestrators import ExecutionContext
 
 StreamFn = Callable[..., AsyncIterator[ChatResponseUpdate]]
@@ -134,5 +135,9 @@ class StubAgent(AgentProtocol):
 class TestExecutionContext(ExecutionContext):
     """ExecutionContext helper that allows setting messages for tests."""
 
-    def set_messages(self, messages: list[ChatMessage]) -> None:
-        self._messages = messages
+    def set_messages(self, messages: list[ChatMessage], *, normalize: bool = True) -> None:
+        if normalize:
+            self._messages = _deduplicate_messages(_sanitize_tool_history(messages))
+        else:
+            self._messages = messages
+        self._snapshot_messages = None

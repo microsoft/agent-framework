@@ -702,6 +702,84 @@ class TestWorkflowAgent:
         assert unique_text_count == 1, f"Response should appear exactly once, but appeared {unique_text_count} times"
 
 
+class TestWorkflowAgentAuthorName:
+    """Test cases for author_name enrichment in WorkflowAgent (GitHub issue #1331)."""
+
+    async def test_agent_run_update_event_gets_executor_id_as_author_name(self):
+        """Test that AgentRunUpdateEvent gets executor_id as author_name when not already set.
+
+        This validates the fix for GitHub issue #1331: agent responses should include
+        identification of which agent produced them in multi-agent workflows.
+        """
+        # Create workflow with executor that emits AgentRunUpdateEvent without author_name
+        executor1 = SimpleExecutor(id="my_executor_id", response_text="Response", emit_streaming=False)
+        workflow = WorkflowBuilder().set_start_executor(executor1).build()
+        agent = WorkflowAgent(workflow=workflow, name="Test Agent")
+
+        # Collect streaming updates
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("Hello"):
+            updates.append(update)
+
+        # Verify at least one update was received
+        assert len(updates) >= 1
+
+        # Verify author_name is set to executor_id
+        assert updates[0].author_name == "my_executor_id"
+
+    async def test_agent_run_update_event_preserves_existing_author_name(self):
+        """Test that existing author_name is preserved and not overwritten."""
+
+        class AuthorNameExecutor(Executor):
+            """Executor that sets author_name explicitly."""
+
+            @handler
+            async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+                # Emit update with explicit author_name
+                update = AgentRunResponseUpdate(
+                    contents=[TextContent(text="Response with author")],
+                    role=Role.ASSISTANT,
+                    author_name="custom_author_name",  # Explicitly set
+                    message_id=str(uuid.uuid4()),
+                )
+                await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
+
+        executor = AuthorNameExecutor(id="executor_id")
+        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Test Agent")
+
+        # Collect streaming updates
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("Hello"):
+            updates.append(update)
+
+        # Verify author_name is preserved (not overwritten with executor_id)
+        assert len(updates) >= 1
+        assert updates[0].author_name == "custom_author_name"
+
+    async def test_multiple_executors_have_distinct_author_names(self):
+        """Test that multiple executors in a workflow have their own author_name."""
+        # Create workflow with two executors
+        executor1 = SimpleExecutor(id="first_executor", response_text="First", emit_streaming=False)
+        executor2 = SimpleExecutor(id="second_executor", response_text="Second", emit_streaming=False)
+
+        workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
+        agent = WorkflowAgent(workflow=workflow, name="Multi-Executor Agent")
+
+        # Collect streaming updates
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("Hello"):
+            updates.append(update)
+
+        # Should have updates from both executors
+        assert len(updates) >= 2
+
+        # Verify each update has the correct author_name matching its executor
+        author_names = [u.author_name for u in updates]
+        assert "first_executor" in author_names
+        assert "second_executor" in author_names
+
+
 class TestWorkflowAgentMergeUpdates:
     """Test cases specifically for the WorkflowAgent.merge_updates static method."""
 
