@@ -386,6 +386,205 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         Assert.Equal("test_run_456", runStarted.GetProperty("runId").GetString());
     }
 
+    [Fact]
+    public void MapAGUIWithFactory_MapsEndpoint_AtSpecifiedPattern()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        const string Pattern = "/agents/{agentId}";
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(
+            Pattern,
+            (context, cancellationToken) => new ValueTask<AIAgent?>(new TestAgent()));
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task MapAGUIWithFactory_FactoryReceivesHttpContext_WithRouteValuesAsync()
+    {
+        // Arrange
+        HttpContext? capturedContext = null;
+
+        Func<HttpContext, CancellationToken, ValueTask<AIAgent?>> factory = (context, cancellationToken) =>
+        {
+            capturedContext = context;
+            return new ValueTask<AIAgent?>(new TestAgent());
+        };
+
+        DefaultHttpContext httpContext = new();
+        httpContext.Request.RouteValues["agentId"] = "test-agent-123";
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegateWithFactory(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Equal("test-agent-123", capturedContext.Request.RouteValues["agentId"]);
+    }
+
+    [Fact]
+    public async Task MapAGUIWithFactory_ReturnsNotFound_WhenFactoryReturnsNullAsync()
+    {
+        // Arrange
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegateWithFactory(
+            (context, cancellationToken) => new ValueTask<AIAgent?>((AIAgent?)null));
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.Equal(StatusCodes.Status404NotFound, httpContext.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MapAGUIWithFactory_Returns500_WhenFactoryThrowsExceptionAsync()
+    {
+        // Arrange
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegateWithFactory(
+            (context, cancellationToken) => throw new InvalidOperationException("Agent not available"));
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.Equal(StatusCodes.Status500InternalServerError, httpContext.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MapAGUIWithFactory_CancellationToken_PropagatedToFactoryAsync()
+    {
+        // Arrange
+        using CancellationTokenSource cts = new();
+        CancellationToken capturedToken = default;
+
+        Func<HttpContext, CancellationToken, ValueTask<AIAgent?>> factory = (context, cancellationToken) =>
+        {
+            capturedToken = cancellationToken;
+            return new ValueTask<AIAgent?>(new TestAgent());
+        };
+
+        DefaultHttpContext httpContext = new();
+        httpContext.RequestAborted = cts.Token;
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegateWithFactory(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.Equal(cts.Token, capturedToken);
+    }
+
+    private RequestDelegate CreateRequestDelegateWithFactory(
+        Func<HttpContext, CancellationToken, ValueTask<AIAgent?>> factory)
+    {
+        return async context =>
+        {
+            CancellationToken cancellationToken = context.RequestAborted;
+
+            RunAgentInput? input;
+            try
+            {
+                input = await JsonSerializer.DeserializeAsync(
+                    context.Request.Body,
+                    AGUIJsonSerializerContext.Default.RunAgentInput,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            if (input is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            AIAgent? agent;
+            try
+            {
+                agent = await factory(context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                return;
+            }
+
+            if (agent is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
+            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
+            IAsyncEnumerable<BaseEvent> events = agent.RunStreamingAsync(
+                messages,
+                cancellationToken: cancellationToken)
+                .AsChatResponseUpdatesAsync()
+                .AsAGUIEventStreamAsync(
+                    input.ThreadId,
+                    input.RunId,
+                    AGUIJsonSerializerContext.Default.Options,
+                    cancellationToken);
+
+            ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+            await new AGUIServerSentEventsResult(events, logger).ExecuteAsync(context).ConfigureAwait(false);
+        };
+    }
+
     private static List<JsonElement> ParseSseEvents(string responseContent)
     {
         List<JsonElement> events = [];
