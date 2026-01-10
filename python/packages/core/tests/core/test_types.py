@@ -18,6 +18,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
     DataContent,
     ErrorContent,
     FinishReason,
@@ -27,6 +29,10 @@ from agent_framework import (
     FunctionResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
+    ImageGenerationToolCallContent,
+    ImageGenerationToolResultContent,
+    MCPServerToolCallContent,
+    MCPServerToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -269,6 +275,78 @@ def test_hosted_file_content_minimal():
     assert isinstance(content, BaseContent)
 
 
+def test_hosted_file_content_optional_fields():
+    """HostedFileContent should capture optional media type and name."""
+    content = HostedFileContent(file_id="file-789", media_type="image/png", name="plot.png")
+
+    assert content.media_type == "image/png"
+    assert content.name == "plot.png"
+    assert content.has_top_level_media_type("image")
+    assert content.has_top_level_media_type("application") is False
+
+
+# region: CodeInterpreter content
+
+
+def test_code_interpreter_tool_call_content_parses_inputs():
+    call = CodeInterpreterToolCallContent(
+        call_id="call-1",
+        inputs=[{"type": "text", "text": "print('hi')"}],
+    )
+
+    assert call.type == "code_interpreter_tool_call"
+    assert call.call_id == "call-1"
+    assert call.inputs and isinstance(call.inputs[0], TextContent)
+    assert call.inputs[0].text == "print('hi')"
+
+
+def test_code_interpreter_tool_result_content_outputs():
+    result = CodeInterpreterToolResultContent(
+        call_id="call-2",
+        outputs=[
+            {"type": "text", "text": "log output"},
+            {"type": "uri", "uri": "https://example.com/file.png", "media_type": "image/png"},
+        ],
+    )
+
+    assert result.type == "code_interpreter_tool_result"
+    assert result.call_id == "call-2"
+    assert result.outputs is not None
+    assert isinstance(result.outputs[0], TextContent)
+    assert isinstance(result.outputs[1], UriContent)
+
+
+# region: Image generation content
+
+
+def test_image_generation_tool_contents():
+    call = ImageGenerationToolCallContent(image_id="img-1")
+    outputs = [DataContent(data=b"1234", media_type="image/png")]
+    result = ImageGenerationToolResultContent(image_id="img-1", outputs=outputs)
+
+    assert call.type == "image_generation_tool_call"
+    assert call.image_id == "img-1"
+    assert result.type == "image_generation_tool_result"
+    assert result.image_id == "img-1"
+    assert result.outputs and isinstance(result.outputs[0], DataContent)
+
+
+# region: MCP server tool content
+
+
+def test_mcp_server_tool_call_and_result():
+    call = MCPServerToolCallContent(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
+    assert call.type == "mcp_server_tool_call"
+    assert call.arguments == {"x": 1}
+
+    result = MCPServerToolResultContent(call_id="c-1", output=[{"type": "text", "text": "done"}])
+    assert result.type == "mcp_server_tool_result"
+    assert result.output
+
+    with raises(ValueError):
+        MCPServerToolCallContent(call_id="", tool_name="tool")
+
+
 # region: HostedVectorStoreContent
 
 
@@ -467,6 +545,15 @@ def test_function_approval_serialization_roundtrip():
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Contents union will need to be handled differently when we fully migrate
+
+
+def test_function_approval_accepts_mcp_call():
+    """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
+    mcp_call = MCPServerToolCallContent(call_id="c-mcp", tool_name="tool", server_name="srv", arguments={"x": 1})
+    req = FunctionApprovalRequestContent(id="req-mcp", function_call=mcp_call)
+
+    assert isinstance(req.function_call, MCPServerToolCallContent)
+    assert req.function_call.call_id == "c-mcp"
 
 
 # region BaseContent Serialization
@@ -842,6 +929,54 @@ def test_chat_options_and(ai_function_tool, ai_tool) -> None:
     assert options3.logit_bias == {"x": 1}
     assert options3.metadata == {"a": "b"}
     assert options3.additional_properties.get("p") == 1
+
+
+def test_chat_options_and_tool_choice_override() -> None:
+    """Test that tool_choice from other takes precedence in ChatOptions merge."""
+    # Agent-level defaults to "auto"
+    agent_options = ChatOptions(model_id="gpt-4o", tool_choice="auto")
+    # Run-level specifies "required"
+    run_options = ChatOptions(tool_choice="required")
+
+    merged = agent_options & run_options
+
+    # Run-level should override agent-level
+    assert merged.tool_choice == "required"
+    assert merged.model_id == "gpt-4o"  # Other fields preserved
+
+
+def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
+    """Test that when other.tool_choice is None, self.tool_choice is used."""
+    agent_options = ChatOptions(tool_choice="auto")
+    run_options = ChatOptions(model_id="gpt-4.1")  # tool_choice is None
+
+    merged = agent_options & run_options
+
+    # Should keep agent-level tool_choice since run-level is None
+    assert merged.tool_choice == "auto"
+    assert merged.model_id == "gpt-4.1"
+
+
+def test_chat_options_and_tool_choice_with_tool_mode() -> None:
+    """Test ChatOptions merge with ToolMode objects."""
+    agent_options = ChatOptions(tool_choice=ToolMode.AUTO)
+    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED_ANY)
+
+    merged = agent_options & run_options
+
+    assert merged.tool_choice == ToolMode.REQUIRED_ANY
+    assert merged.tool_choice == "required"  # ToolMode equality with string
+
+
+def test_chat_options_and_tool_choice_required_specific_function() -> None:
+    """Test ChatOptions merge with required specific function."""
+    agent_options = ChatOptions(tool_choice="auto")
+    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED(function_name="get_weather"))
+
+    merged = agent_options & run_options
+
+    assert merged.tool_choice == "required"
+    assert merged.tool_choice.required_function_name == "get_weather"
 
 
 # region Agent Response Fixtures
@@ -2085,3 +2220,55 @@ def test_prepare_function_call_results_nested_pydantic_model():
     assert "Seattle" in json_result
     assert "rainy" in json_result
     assert "18.0" in json_result or "18" in json_result
+
+
+# region prepare_function_call_results with MCP TextContent-like objects
+
+
+def test_prepare_function_call_results_text_content_single():
+    """Test that objects with text attribute (like MCP TextContent) are properly handled."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    result = [MockTextContent("Hello from MCP tool!")]
+    json_result = prepare_function_call_results(result)
+
+    # Should extract text and serialize as JSON array of strings
+    assert isinstance(json_result, str)
+    assert json_result == '["Hello from MCP tool!"]'
+
+
+def test_prepare_function_call_results_text_content_multiple():
+    """Test that multiple TextContent-like objects are serialized correctly."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTextContent:
+        text: str
+
+    result = [MockTextContent("First result"), MockTextContent("Second result")]
+    json_result = prepare_function_call_results(result)
+
+    # Should extract text from each and serialize as JSON array
+    assert isinstance(json_result, str)
+    assert json_result == '["First result", "Second result"]'
+
+
+def test_prepare_function_call_results_text_content_with_non_string_text():
+    """Test that objects with non-string text attribute are not treated as TextContent."""
+
+    class BadTextContent:
+        def __init__(self):
+            self.text = 12345  # Not a string!
+
+    result = [BadTextContent()]
+    json_result = prepare_function_call_results(result)
+
+    # Should not extract text since it's not a string, will serialize the object
+    assert isinstance(json_result, str)
+
+
+# endregion

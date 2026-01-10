@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Final, TypeVar
 
@@ -13,7 +12,10 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
     Contents,
+    ErrorContent,
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
@@ -21,6 +23,8 @@ from agent_framework import (
     HostedFileContent,
     HostedMCPTool,
     HostedWebSearchTool,
+    MCPServerToolCallContent,
+    MCPServerToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -45,6 +49,8 @@ from anthropic.types.beta import (
     BetaTextBlock,
     BetaUsage,
 )
+from anthropic.types.beta.beta_bash_code_execution_tool_result_error import BetaBashCodeExecutionToolResultError
+from anthropic.types.beta.beta_code_execution_tool_result_error import BetaCodeExecutionToolResultError
 from pydantic import SecretStr, ValidationError
 
 logger = get_logger("agent_framework.anthropic")
@@ -505,7 +511,7 @@ class AnthropicClient(BaseChatClient):
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model_id=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
-            raw_response=message,
+            raw_representation=message,
         )
 
     def _process_stream_event(self, event: BetaRawMessageStreamEvent) -> ChatResponseUpdate | None:
@@ -530,13 +536,14 @@ class AnthropicClient(BaseChatClient):
                     finish_reason=FINISH_REASON_MAP.get(event.message.stop_reason)
                     if event.message.stop_reason
                     else None,
-                    raw_response=event,
+                    raw_representation=event,
                 )
             case "message_delta":
                 usage = self._parse_usage_from_anthropic(event.usage)
                 return ChatResponseUpdate(
                     contents=[UsageContent(details=usage, raw_representation=event.usage)] if usage else [],
-                    raw_response=event,
+                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
+                    raw_representation=event,
                 )
             case "message_stop":
                 logger.debug("Received message_stop event; no content to process.")
@@ -544,13 +551,13 @@ class AnthropicClient(BaseChatClient):
                 contents = self._parse_contents_from_anthropic([event.content_block])
                 return ChatResponseUpdate(
                     contents=contents,
-                    raw_response=event,
+                    raw_representation=event,
                 )
             case "content_block_delta":
                 contents = self._parse_contents_from_anthropic([event.delta])
                 return ChatResponseUpdate(
                     contents=contents,
-                    raw_response=event,
+                    raw_representation=event,
                 )
             case "content_block_stop":
                 logger.debug("Received content_block_stop event; no content to process.")
@@ -588,23 +595,49 @@ class AnthropicClient(BaseChatClient):
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
-                    contents.append(
-                        FunctionCallContent(
-                            call_id=content_block.id,
-                            name=content_block.name,
-                            arguments=content_block.input,
-                            raw_representation=content_block,
+                    if content_block.type == "mcp_tool_use":
+                        contents.append(
+                            MCPServerToolCallContent(
+                                call_id=content_block.id,
+                                tool_name=content_block.name,
+                                server_name=None,
+                                arguments=content_block.input,
+                                raw_representation=content_block,
+                            )
                         )
-                    )
+                    elif "code_execution" in (content_block.name or ""):
+                        contents.append(
+                            CodeInterpreterToolCallContent(
+                                call_id=content_block.id,
+                                inputs=[TextContent(text=str(content_block.input), raw_representation=content_block)],
+                                raw_representation=content_block,
+                            )
+                        )
+                    else:
+                        contents.append(
+                            FunctionCallContent(
+                                call_id=content_block.id,
+                                name=content_block.name,
+                                arguments=content_block.input,
+                                raw_representation=content_block,
+                            )
+                        )
                 case "mcp_tool_result":
                     call_id, name = self._last_call_id_name or (None, None)
+                    parsed_output: list[Contents] | None = None
+                    if content_block.content:
+                        if isinstance(content_block.content, list):
+                            parsed_output = self._parse_contents_from_anthropic(content_block.content)
+                        elif isinstance(content_block.content, (str, bytes)):
+                            parsed_output = [
+                                TextContent(text=str(content_block.content), raw_representation=content_block)
+                            ]
+                        else:
+                            parsed_output = self._parse_contents_from_anthropic([content_block.content])
                     contents.append(
-                        FunctionResultContent(
+                        MCPServerToolResultContent(
                             call_id=content_block.tool_use_id,
-                            name=name if name and call_id == content_block.tool_use_id else "mcp_tool",
-                            result=self._parse_contents_from_anthropic(content_block.content)
-                            if isinstance(content_block.content, list)
-                            else content_block.content,
+                            output=parsed_output,
                             raw_representation=content_block,
                         )
                     )
@@ -618,30 +651,183 @@ class AnthropicClient(BaseChatClient):
                             raw_representation=content_block,
                         )
                     )
-                case (
-                    "code_execution_tool_result"
-                    | "bash_code_execution_tool_result"
-                    | "text_editor_code_execution_tool_result"
-                ):
-                    call_id, name = self._last_call_id_name or (None, None)
-                    if (
-                        content_block.content
-                        and (
-                            content_block.content.type == "bash_code_execution_result"
-                            or content_block.content.type == "code_execution_result"
+                case "code_execution_tool_result":
+                    code_outputs: list[Contents] = []
+                    if content_block.content:
+                        if isinstance(content_block.content, BetaCodeExecutionToolResultError):
+                            code_outputs.append(
+                                ErrorContent(
+                                    message=content_block.content.error_code,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        else:
+                            if content_block.content.stdout:
+                                code_outputs.append(
+                                    TextContent(
+                                        text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if content_block.content.stderr:
+                                code_outputs.append(
+                                    ErrorContent(
+                                        message=content_block.content.stderr,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            for code_file_content in content_block.content.content:
+                                code_outputs.append(
+                                    HostedFileContent(
+                                        file_id=code_file_content.file_id, raw_representation=code_file_content
+                                    )
+                                )
+                    contents.append(
+                        CodeInterpreterToolResultContent(
+                            call_id=content_block.tool_use_id,
+                            raw_representation=content_block,
+                            outputs=code_outputs,
                         )
-                        and content_block.content.content
-                    ):
-                        for result_content in content_block.content.content:
-                            if hasattr(result_content, "file_id"):
+                    )
+                case "bash_code_execution_tool_result":
+                    bash_outputs: list[Contents] = []
+                    if content_block.content:
+                        if isinstance(
+                            content_block.content,
+                            BetaBashCodeExecutionToolResultError,
+                        ):
+                            bash_outputs.append(
+                                ErrorContent(
+                                    message=content_block.content.error_code,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        else:
+                            if content_block.content.stdout:
+                                bash_outputs.append(
+                                    TextContent(
+                                        text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if content_block.content.stderr:
+                                bash_outputs.append(
+                                    ErrorContent(
+                                        message=content_block.content.stderr,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            for bash_file_content in content_block.content.content:
                                 contents.append(
-                                    HostedFileContent(file_id=result_content.file_id, raw_representation=result_content)
+                                    HostedFileContent(
+                                        file_id=bash_file_content.file_id, raw_representation=bash_file_content
+                                    )
                                 )
                     contents.append(
                         FunctionResultContent(
                             call_id=content_block.tool_use_id,
-                            name=name if name and call_id == content_block.tool_use_id else "code_execution_tool",
-                            result=content_block.content,
+                            name=content_block.type,
+                            result=bash_outputs,
+                            raw_representation=content_block,
+                        )
+                    )
+                case "text_editor_code_execution_tool_result":
+                    text_editor_outputs: list[Contents] = []
+                    match content_block.content.type:
+                        case "text_editor_code_execution_tool_result_error":
+                            text_editor_outputs.append(
+                                ErrorContent(
+                                    message=content_block.content.error_code
+                                    and getattr(content_block.content, "error_message", ""),
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        case "text_editor_code_execution_view_result":
+                            annotations = (
+                                [
+                                    CitationAnnotation(
+                                        raw_representation=content_block.content,
+                                        annotated_regions=[
+                                            TextSpanRegion(
+                                                start_index=content_block.content.start_line,
+                                                end_index=content_block.content.start_line
+                                                + (content_block.content.num_lines or 0),
+                                            )
+                                        ],
+                                    )
+                                ]
+                                if content_block.content.num_lines is not None
+                                and content_block.content.start_line is not None
+                                else None
+                            )
+                            text_editor_outputs.append(
+                                TextContent(
+                                    text=content_block.content.content,
+                                    annotations=annotations,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        case "text_editor_code_execution_str_replace_result":
+                            old_annotation = (
+                                CitationAnnotation(
+                                    raw_representation=content_block.content,
+                                    annotated_regions=[
+                                        TextSpanRegion(
+                                            start_index=content_block.content.old_start or 0,
+                                            end_index=(
+                                                (content_block.content.old_start or 0)
+                                                + (content_block.content.old_lines or 0)
+                                            ),
+                                        )
+                                    ],
+                                )
+                                if content_block.content.old_lines is not None
+                                and content_block.content.old_start is not None
+                                else None
+                            )
+                            new_annotation = (
+                                CitationAnnotation(
+                                    raw_representation=content_block.content,
+                                    snippet="\n".join(content_block.content.lines)
+                                    if content_block.content.lines
+                                    else None,
+                                    annotated_regions=[
+                                        TextSpanRegion(
+                                            start_index=content_block.content.new_start or 0,
+                                            end_index=(
+                                                (content_block.content.new_start or 0)
+                                                + (content_block.content.new_lines or 0)
+                                            ),
+                                        )
+                                    ],
+                                )
+                                if content_block.content.new_lines is not None
+                                and content_block.content.new_start is not None
+                                else None
+                            )
+                            annotations = [ann for ann in [old_annotation, new_annotation] if ann is not None]
+
+                            text_editor_outputs.append(
+                                TextContent(
+                                    text=(
+                                        "\n".join(content_block.content.lines) if content_block.content.lines else ""
+                                    ),
+                                    annotations=annotations or None,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        case "text_editor_code_execution_create_result":
+                            text_editor_outputs.append(
+                                TextContent(
+                                    text=f"File update: {content_block.content.is_file_update}",
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                    contents.append(
+                        FunctionResultContent(
+                            call_id=content_block.tool_use_id,
+                            name=content_block.type,
+                            result=text_editor_outputs,
                             raw_representation=content_block,
                         )
                     )

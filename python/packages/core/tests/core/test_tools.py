@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from agent_framework import (
     AIFunction,
     HostedCodeInterpreterTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     ToolProtocol,
     ai_function,
@@ -816,6 +817,30 @@ def test_hosted_code_interpreter_tool_with_unknown_input():
     """Test HostedCodeInterpreterTool with single unknown input."""
     with pytest.raises(ValueError, match="Unsupported input type"):
         HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
+
+
+def test_hosted_image_generation_tool_defaults():
+    """HostedImageGenerationTool should default name and empty description."""
+    tool = HostedImageGenerationTool()
+
+    assert tool.name == "image_generation"
+    assert tool.description == ""
+    assert tool.options is None
+    assert str(tool) == "HostedImageGenerationTool(name=image_generation)"
+
+
+def test_hosted_image_generation_tool_with_options():
+    """HostedImageGenerationTool should store options."""
+    tool = HostedImageGenerationTool(
+        description="Generate images",
+        options={"format": "png", "size": "1024x1024"},
+        additional_properties={"quality": "high"},
+    )
+
+    assert tool.name == "image_generation"
+    assert tool.description == "Generate images"
+    assert tool.options == {"format": "png", "size": "1024x1024"}
+    assert tool.additional_properties == {"quality": "high"}
 
 
 # region HostedMCPTool tests
