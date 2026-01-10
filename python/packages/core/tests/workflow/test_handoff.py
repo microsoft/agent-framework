@@ -1670,3 +1670,101 @@ async def test_coordinator_handle_user_input_multiple_consecutive_user_messages(
     assert len(coordinator._conversation) == 2
     assert coordinator._conversation[0].text == "New user message 1"
     assert coordinator._conversation[1].text == "New user message 2"
+
+
+def test_duplicate_tool_result_detection(caplog):
+    """Test that _append_tool_acknowledgement skips duplicates and logs debug message."""
+    from agent_framework import FunctionResultContent
+    from agent_framework._workflows._handoff import (  # type: ignore[reportPrivateUsage]
+        _HandoffCoordinator,
+        _has_tool_result_for_call,
+    )
+
+    # Test _has_tool_result_for_call helper function
+    call_id_1 = "call-123"
+    call_id_2 = "call-456"
+
+    # Create a conversation with an existing tool result
+    existing_tool_result = FunctionResultContent(call_id=call_id_1, result={"handoff_to": "specialist_a"})
+    existing_tool_msg = ChatMessage(role=Role.TOOL, contents=[existing_tool_result], author_name="handoff_tool")
+
+    conversation_with_result = [
+        ChatMessage(role=Role.USER, text="Help me"),
+        ChatMessage(role=Role.ASSISTANT, text="Routing to specialist"),
+        existing_tool_msg,
+    ]
+
+    # Should find the existing tool result
+    assert _has_tool_result_for_call(conversation_with_result, call_id_1) is True, (
+        "Should detect existing tool result"
+    )
+
+    # Should not find a tool result with different call_id
+    assert _has_tool_result_for_call(conversation_with_result, call_id_2) is False, (
+        "Should not find tool result with different call_id"
+    )
+
+    # Test on conversation without tool results
+    conversation_without_result = [
+        ChatMessage(role=Role.USER, text="Help me"),
+        ChatMessage(role=Role.ASSISTANT, text="Routing to specialist"),
+    ]
+    assert _has_tool_result_for_call(conversation_without_result, call_id_1) is False, (
+        "Should not find tool result in conversation without tool messages"
+    )
+
+    # Test _append_tool_acknowledgement skips duplicates
+    coordinator = _HandoffCoordinator(
+        starting_agent_id="triage",
+        specialist_ids={"specialist_a": "specialist_a"},
+        input_gateway_id="gateway",
+        termination_condition=lambda conv: False,
+        id="test-coordinator",
+    )
+
+    # Create a function call for handoff
+    handoff_call = FunctionCallContent(call_id=call_id_1, name="handoff_to_specialist_a", arguments="{}")
+
+    # Conversation already has a tool result for this call_id (simulating _AutoHandoffMiddleware behavior)
+    conversation_with_duplicate = list(conversation_with_result)
+
+    # Try to append tool acknowledgement - should skip due to duplicate
+    # Set caplog to capture DEBUG level logs from the handoff module
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="agent_framework._workflows._handoff")
+    coordinator._append_tool_acknowledgement(  # type: ignore[reportPrivateUsage]
+        conversation_with_duplicate, handoff_call, "specialist_a"
+    )
+
+    # Verify conversation wasn't modified (no duplicate added)
+    assert len(conversation_with_duplicate) == 3, "Conversation should not have duplicate tool result added"
+
+    # Verify debug log was emitted
+    assert any(
+        "Tool result for call_id 'call-123' already exists" in record.message for record in caplog.records
+    ), "Should log debug message when skipping duplicate"
+
+    assert any(
+        "skipping duplicate for handoff to 'specialist_a'" in record.message for record in caplog.records
+    ), "Debug message should mention the target specialist"
+
+    # Test that tool acknowledgement IS added when no duplicate exists
+    conversation_no_duplicate = [
+        ChatMessage(role=Role.USER, text="Help me"),
+        ChatMessage(role=Role.ASSISTANT, text="Routing to specialist"),
+    ]
+    new_call = FunctionCallContent(call_id="call-new", name="handoff_to_specialist_a", arguments="{}")
+
+    caplog.clear()
+    coordinator._append_tool_acknowledgement(conversation_no_duplicate, new_call, "specialist_a")  # type: ignore[reportPrivateUsage]
+
+    # Should have added the tool result
+    assert len(conversation_no_duplicate) == 3, "Tool result should be added when no duplicate exists"
+    last_msg = conversation_no_duplicate[-1]
+    assert last_msg.role == Role.TOOL, "Last message should be a tool result"
+
+    # Should NOT log the debug message (no duplicate detected)
+    assert not any(
+        "already exists" in record.message for record in caplog.records
+    ), "Should not log duplicate message when adding new tool result"
