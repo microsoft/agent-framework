@@ -6,7 +6,8 @@ from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
 
-from agent_framework import AgentRunResponseUpdate, TextContent, ai_function
+from ag_ui.core import BaseEvent, RunFinishedEvent
+from agent_framework import AgentRunResponseUpdate, AgentThread, ChatResponseUpdate, TextContent, ai_function
 from agent_framework._tools import FunctionInvocationConfiguration
 
 from agent_framework_ag_ui._agent import AgentConfig
@@ -34,12 +35,21 @@ class DummyAgent:
         self,
         messages: list[Any],
         *,
-        thread: Any,
+        thread: AgentThread,
         tools: list[Any] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
         self.seen_tools = tools
-        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+        yield AgentRunResponseUpdate(
+            contents=[TextContent(text="ok")],
+            role="assistant",
+            response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+            raw_representation=ChatResponseUpdate(
+                contents=[TextContent(text="ok")],
+                conversation_id=thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+                response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+            ),
+        )
 
 
 class RecordingAgent:
@@ -137,6 +147,7 @@ async def test_default_orchestrator_with_camel_case_ids() -> None:
         events.append(event)
 
     # assert the last event has the expected run_id and thread_id
+    assert isinstance(events[-1], RunFinishedEvent)
     last_event = events[-1]
     assert last_event.run_id == "test-camelcase-runid"
     assert last_event.thread_id == "test-camelcase-threadid"
@@ -166,11 +177,12 @@ async def test_default_orchestrator_with_snake_case_ids() -> None:
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[BaseEvent] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
     # assert the last event has the expected run_id and thread_id
+    assert isinstance(events[-1], RunFinishedEvent)
     last_event = events[-1]
     assert last_event.run_id == "test-snakecase-runid"
     assert last_event.thread_id == "test-snakecase-threadid"

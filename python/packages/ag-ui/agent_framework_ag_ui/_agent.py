@@ -24,6 +24,7 @@ class AgentConfig:
         self,
         state_schema: Any | None = None,
         predict_state_config: dict[str, dict[str, str]] | None = None,
+        use_service_thread: bool = False,
         require_confirmation: bool = True,
     ):
         """Initialize agent configuration.
@@ -31,10 +32,12 @@ class AgentConfig:
         Args:
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
+            use_service_thread: Whether the agent thread is service-managed
             require_confirmation: Whether predictive updates require confirmation
         """
         self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
+        self.use_service_thread = use_service_thread
         self.require_confirmation = require_confirmation
 
     @staticmethod
@@ -86,6 +89,7 @@ class AgentFrameworkAgent:
         predict_state_config: dict[str, dict[str, str]] | None = None,
         require_confirmation: bool = True,
         orchestrators: list[Orchestrator] | None = None,
+        use_service_thread: bool = False,
         confirmation_strategy: ConfirmationStrategy | None = None,
     ):
         """Initialize the AG-UI compatible agent wrapper.
@@ -101,6 +105,7 @@ class AgentFrameworkAgent:
                 Set to False for agentic generative UI that updates automatically.
             orchestrators: Custom orchestrators (auto-configured if None).
                 Orchestrators are checked in order; first match handles the request.
+            use_service_thread: Whether the agent thread is service-managed.
             confirmation_strategy: Strategy for generating confirmation messages.
                 Defaults to DefaultConfirmationStrategy if None.
         """
@@ -111,6 +116,7 @@ class AgentFrameworkAgent:
         self.config = AgentConfig(
             state_schema=state_schema,
             predict_state_config=predict_state_config,
+            use_service_thread=use_service_thread,
             require_confirmation=require_confirmation,
         )
 
