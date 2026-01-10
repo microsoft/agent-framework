@@ -15,7 +15,7 @@ internal sealed record DiagnosticInfo(
     string FilePath,
     TextSpan Span,
     LinePositionSpan LineSpan,
-    EquatableArray<string> MessageArgs)
+    ImmutableEquatableArray<string> MessageArgs)
 {
     /// <summary>
     /// Creates a DiagnosticInfo from a location and message arguments.
@@ -28,7 +28,7 @@ internal sealed record DiagnosticInfo(
             lineSpan.Path ?? string.Empty,
             location.SourceSpan,
             lineSpan.Span,
-            new EquatableArray<string>(System.Collections.Immutable.ImmutableArray.Create(messageArgs)));
+            new ImmutableEquatableArray<string>(System.Collections.Immutable.ImmutableArray.Create(messageArgs)));
     }
 
     /// <summary>
@@ -40,8 +40,8 @@ internal sealed record DiagnosticInfo(
         if (descriptor is null)
         {
             // Fallback - should not happen
-            var fallbackArgs = new object[this.MessageArgs.Length];
-            for (int i = 0; i < this.MessageArgs.Length; i++)
+            var fallbackArgs = new object[this.MessageArgs.Count];
+            for (int i = 0; i < this.MessageArgs.Count; i++)
             {
                 fallbackArgs[i] = this.MessageArgs[i];
             }
@@ -66,8 +66,8 @@ internal sealed record DiagnosticInfo(
             location = Location.None;
         }
 
-        var args = new object[this.MessageArgs.Length];
-        for (int i = 0; i < this.MessageArgs.Length; i++)
+        var args = new object[this.MessageArgs.Count];
+        for (int i = 0; i < this.MessageArgs.Count; i++)
         {
             args[i] = this.MessageArgs[i];
         }

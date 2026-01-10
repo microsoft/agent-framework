@@ -23,8 +23,8 @@ internal sealed record MethodAnalysisResult(
     bool IsNested,
     string ContainingTypeChain,
     bool BaseHasConfigureRoutes,
-    EquatableArray<string> ClassSendTypes,
-    EquatableArray<string> ClassYieldTypes,
+    ImmutableEquatableArray<string> ClassSendTypes,
+    ImmutableEquatableArray<string> ClassYieldTypes,
 
     // Class-level facts (used for validation in CombineMethodResults)
     bool IsPartialClass,
@@ -38,4 +38,4 @@ internal sealed record MethodAnalysisResult(
     HandlerInfo? Handler,
 
     // Method-level diagnostics only (class-level diagnostics created in CombineMethodResults)
-    EquatableArray<DiagnosticInfo> Diagnostics);
+    ImmutableEquatableArray<DiagnosticInfo> Diagnostics);

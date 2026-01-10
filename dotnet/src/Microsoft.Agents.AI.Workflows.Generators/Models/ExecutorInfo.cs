@@ -22,9 +22,9 @@ internal sealed record ExecutorInfo(
     bool IsNested,
     string ContainingTypeChain,
     bool BaseHasConfigureRoutes,
-    EquatableArray<HandlerInfo> Handlers,
-    EquatableArray<string> ClassSendTypes,
-    EquatableArray<string> ClassYieldTypes)
+    ImmutableEquatableArray<HandlerInfo> Handlers,
+    ImmutableEquatableArray<string> ClassSendTypes,
+    ImmutableEquatableArray<string> ClassYieldTypes)
 {
     /// <summary>
     /// Gets whether any protocol type overrides should be generated.

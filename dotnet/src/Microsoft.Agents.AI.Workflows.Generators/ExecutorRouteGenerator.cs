@@ -14,7 +14,6 @@ namespace Microsoft.Agents.AI.Workflows.Generators;
 /// <summary>
 /// Roslyn incremental source generator that generates ConfigureRoutes implementations
 /// for executor classes with [MessageHandler] attributed methods.
-/// Uses ForAttributeWithMetadataName for optimal performance (99x+ faster than CreateSyntaxProvider).
 /// </summary>
 [Generator]
 public sealed class ExecutorRouteGenerator : IIncrementalGenerator

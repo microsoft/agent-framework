@@ -91,7 +91,7 @@ internal static class SemanticAnalyzer
             isPartialClass, derivesFromExecutor, hasManualConfigureRoutes,
             classLocation,
             handler,
-            Diagnostics: new EquatableArray<DiagnosticInfo>(methodDiagnostics.ToImmutable()));
+            Diagnostics: new ImmutableEquatableArray<DiagnosticInfo>(methodDiagnostics.ToImmutable()));
     }
 
     /// <summary>
@@ -167,7 +167,7 @@ internal static class SemanticAnalyzer
             first.IsNested,
             first.ContainingTypeChain,
             first.BaseHasConfigureRoutes,
-            new EquatableArray<HandlerInfo>(handlers),
+            new ImmutableEquatableArray<HandlerInfo>(handlers),
             first.ClassSendTypes,
             first.ClassYieldTypes);
 
@@ -183,9 +183,9 @@ internal static class SemanticAnalyzer
     {
         return new MethodAnalysisResult(
             string.Empty, null, string.Empty, null, false, string.Empty,
-            false, EquatableArray<string>.Empty, EquatableArray<string>.Empty,
+            false, ImmutableEquatableArray<string>.Empty, ImmutableEquatableArray<string>.Empty,
             false, false, false,
-            null, null, EquatableArray<DiagnosticInfo>.Empty);
+            null, null, ImmutableEquatableArray<DiagnosticInfo>.Empty);
     }
 
     private static DiagnosticLocationInfo? GetClassLocation(INamedTypeSymbol classSymbol, CancellationToken cancellationToken)
@@ -381,7 +381,7 @@ internal static class SemanticAnalyzer
         return null;
     }
 
-    private static (EquatableArray<string> YieldTypes, EquatableArray<string> SendTypes) GetAttributeTypeArrays(
+    private static (ImmutableEquatableArray<string> YieldTypes, ImmutableEquatableArray<string> SendTypes) GetAttributeTypeArrays(
         IMethodSymbol methodSymbol)
     {
         var yieldTypes = ImmutableArray<string>.Empty;
@@ -407,7 +407,7 @@ internal static class SemanticAnalyzer
             }
         }
 
-        return (new EquatableArray<string>(yieldTypes), new EquatableArray<string>(sendTypes));
+        return (new ImmutableEquatableArray<string>(yieldTypes), new ImmutableEquatableArray<string>(sendTypes));
     }
 
     private static ImmutableArray<string> ExtractTypeArray(TypedConstant typedConstant)
@@ -429,7 +429,7 @@ internal static class SemanticAnalyzer
         return builder.ToImmutable();
     }
 
-    private static EquatableArray<string> GetClassLevelTypes(INamedTypeSymbol classSymbol, string attributeName)
+    private static ImmutableEquatableArray<string> GetClassLevelTypes(INamedTypeSymbol classSymbol, string attributeName)
     {
         var builder = ImmutableArray.CreateBuilder<string>();
 
@@ -443,7 +443,7 @@ internal static class SemanticAnalyzer
             }
         }
 
-        return new EquatableArray<string>(builder.ToImmutable());
+        return new ImmutableEquatableArray<string>(builder.ToImmutable());
     }
 
     private static string GetContainingTypeChain(INamedTypeSymbol classSymbol)

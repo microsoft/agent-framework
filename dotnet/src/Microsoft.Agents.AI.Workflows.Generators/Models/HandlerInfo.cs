@@ -37,8 +37,8 @@ internal sealed record HandlerInfo(
     string? OutputTypeName,
     HandlerSignatureKind SignatureKind,
     bool HasCancellationToken,
-    EquatableArray<string> YieldTypes,
-    EquatableArray<string> SendTypes)
+    ImmutableEquatableArray<string> YieldTypes,
+    ImmutableEquatableArray<string> SendTypes)
 {
     /// <summary>
     /// Gets whether this handler returns a value (either sync or async).

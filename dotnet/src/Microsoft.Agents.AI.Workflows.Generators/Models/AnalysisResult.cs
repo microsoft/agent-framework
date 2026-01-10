@@ -6,10 +6,10 @@ using Microsoft.CodeAnalysis;
 namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 
 /// <summary>
-/// Represents the result of analyzing a class with [MessageHandler] methods.
+/// Represents the result of analyzing a class with [MessageHandler] attributed methods.
 /// Combines the executor info (if valid) with any diagnostics to report.
-/// Note: This type is used after the caching layer (in RegisterSourceOutput),
-/// so it should not cause issue to contain Diagnostic objects directly.
+/// Note: Instances of this class should not be used within the analyzers caching
+/// layer because it directly contains a collection of <see cref="Diagnostic"/> objects.
 /// </summary>
 /// <param name="executorInfo">The executor information.</param>
 /// <param name="diagnostics">Any diagnostics to report.</param>

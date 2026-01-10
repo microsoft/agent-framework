@@ -98,7 +98,7 @@ internal static class SourceBuilder
         }
 
         // Generate handler registrations
-        if (info.Handlers.Length == 1)
+        if (info.Handlers.Count == 1)
         {
             // Single handler - return directly
             var handler = info.Handlers[0];
@@ -112,10 +112,10 @@ internal static class SourceBuilder
             // Multiple handlers - chain calls
             sb.AppendLine($"{bodyIndent}return routeBuilder");
 
-            for (int i = 0; i < info.Handlers.Length; i++)
+            for (int i = 0; i < info.Handlers.Count; i++)
             {
                 var handler = info.Handlers[i];
-                var isLast = i == info.Handlers.Length - 1;
+                var isLast = i == info.Handlers.Count - 1;
 
                 sb.Append($"{bodyIndent}    .AddHandler");
                 AppendHandlerGenericArgs(sb, handler);

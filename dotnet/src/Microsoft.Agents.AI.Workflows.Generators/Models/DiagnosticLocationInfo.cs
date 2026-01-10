@@ -14,7 +14,7 @@ internal sealed record DiagnosticLocationInfo(
     LinePositionSpan LineSpan)
 {
     /// <summary>
-    /// Creates a LocationInfo from a Roslyn Location.
+    /// Creates a DiagnosticLocationInfo from a Roslyn Location.
     /// </summary>
     public static DiagnosticLocationInfo? FromLocation(Location? location)
     {
