@@ -6,13 +6,18 @@ This module provides fixtures and configuration for pytest.
 """
 
 import subprocess
+import sys
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
 
-from .testutils import (
+# Add the integration_tests directory to the path so testutils can be imported
+sys.path.insert(0, str(Path(__file__).parent))
+
+from testutils import (
     FunctionAppStartupError,
     build_base_url,
     cleanup_function_app,

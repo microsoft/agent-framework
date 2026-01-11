@@ -70,7 +70,7 @@ async def example_global_thread_scope() -> None:
             "Before answering, always check for stored context containing information"
         ),
         tools=[],
-        context_providers=provider,
+        context_provider=provider,
     )
 
     # Store a preference in the global scope
@@ -128,7 +128,7 @@ async def example_per_operation_thread_scope() -> None:
     agent = client.create_agent(
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
-        context_providers=provider,
+        context_provider=provider,
     )
 
     # Create a specific thread for this scoped provider
@@ -193,7 +193,7 @@ async def example_multiple_agents() -> None:
     personal_agent = client.create_agent(
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
-        context_providers=personal_provider,
+        context_provider=personal_provider,
     )
 
     work_provider = RedisProvider(
@@ -211,7 +211,7 @@ async def example_multiple_agents() -> None:
     work_agent = client.create_agent(
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",
-        context_providers=work_provider,
+        context_provider=work_provider,
     )
 
     # Store personal information

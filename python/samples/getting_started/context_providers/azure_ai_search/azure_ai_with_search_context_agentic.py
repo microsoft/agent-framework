@@ -120,7 +120,7 @@ async def main() -> None:
                 "Use the provided context from the knowledge base to answer complex "
                 "questions that may require synthesizing information from multiple sources."
             ),
-            context_providers=[search_provider],
+            context_provider=search_provider,
         ) as agent,
     ):
         print("=== Azure AI Agent with Search Context (Agentic Mode) ===\n")

@@ -9,13 +9,13 @@ from typing import Any
 from agent_framework import (
     ChatMessage,
     ChatOptions,
+    ChatResponse,
     ChatResponseUpdate,
     FunctionCallContent,
     Role,
     TextContent,
     ai_function,
 )
-from agent_framework._types import ChatResponse
 from pytest import MonkeyPatch
 
 from agent_framework_ag_ui._client import AGUIChatClient, ServerFunctionCallContent

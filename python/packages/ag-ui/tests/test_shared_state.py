@@ -8,14 +8,13 @@ from typing import Any
 
 import pytest
 from ag_ui.core import StateSnapshotEvent
-from agent_framework import ChatAgent, TextContent
-from agent_framework._types import ChatResponseUpdate
+from agent_framework import ChatAgent, ChatResponseUpdate, TextContent
 
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_helpers_ag_ui import StreamingChatClientStub, stream_from_updates
+from utils_test_ag_ui import StreamingChatClientStub, stream_from_updates
 
 
 @pytest.fixture

@@ -74,7 +74,7 @@ async def main() -> None:
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=get_weather,
-        middleware=thread_tracking_middleware,
+        middleware=[thread_tracking_middleware],
         # Configure agent with message store factory to persist conversation history
         chat_message_store_factory=ChatMessageStore,
     )

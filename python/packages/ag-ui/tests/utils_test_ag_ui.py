@@ -11,12 +11,13 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
+    BaseChatClient,
     ChatMessage,
     ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
     TextContent,
 )
-from agent_framework._clients import BaseChatClient
-from agent_framework._types import ChatResponse, ChatResponseUpdate
 
 from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
 from agent_framework_ag_ui._orchestrators import ExecutionContext
@@ -79,30 +80,14 @@ class StubAgent(AgentProtocol):
         chat_options: Any | None = None,
         chat_client: Any | None = None,
     ) -> None:
-        self._id = agent_id
-        self._name = agent_name
-        self._description = "stub agent"
+        self.id = agent_id
+        self.name = agent_name
+        self.description = "stub agent"
         self.updates = updates or [AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
         self.chat_options = chat_options or SimpleNamespace(tools=None, response_format=None)
         self.chat_client = chat_client or SimpleNamespace(function_invocation_configuration=None)
         self.messages_received: list[Any] = []
         self.tools_received: list[Any] | None = None
-
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        return self._name or self._id
-
-    @property
-    def description(self) -> str | None:
-        return self._description
 
     async def run(
         self,

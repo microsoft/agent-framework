@@ -70,7 +70,7 @@ async def main() -> None:
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_providers=provider,
+        context_provider=provider,
         chat_message_store_factory=chat_message_store_factory,
     )
 
