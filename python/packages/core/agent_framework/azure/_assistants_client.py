@@ -32,7 +32,7 @@ TAzureOpenAIAssistantsOptions = TypeVar(
     "TAzureOpenAIAssistantsOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIAssistantsOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 

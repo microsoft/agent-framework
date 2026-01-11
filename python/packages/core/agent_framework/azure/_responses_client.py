@@ -95,7 +95,7 @@ TAzureOpenAIResponsesOptions = TypeVar(
     "TAzureOpenAIResponsesOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureOpenAIResponsesOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 
