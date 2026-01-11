@@ -7,7 +7,16 @@ from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypedDict, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Protocol,
+    TypedDict,
+    cast,
+    runtime_checkable,
+)
 from uuid import uuid4
 
 from mcp import types
@@ -57,7 +66,12 @@ else:
 logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", covariant=True)  # type: ignore[valid-type]
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    covariant=True,
+)
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -505,7 +519,7 @@ class BaseAgent(SerializationMixin):
 
 @use_agent_middleware
 @use_agent_instrumentation(capture_usage=False)  # type: ignore[arg-type,misc]
-class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
+class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     """A Chat Client Agent.
 
     This is the primary agent implementation that uses a chat client to interact
@@ -583,7 +597,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
 
     def __init__(
         self,
-        chat_client: ChatClientProtocol[TOptions],
+        chat_client: ChatClientProtocol[TOptions_co],
         instructions: str | None = None,
         *,
         id: str | None = None,
@@ -594,7 +608,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TOptions | None = None,
+        default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
@@ -670,7 +684,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
             middleware=middleware,
             **kwargs,
         )
-        self.chat_client = chat_client
+        self.chat_client: ChatClientProtocol[TOptions_co] = chat_client
         self.chat_message_store_factory = chat_message_store_factory
 
         # Get tools from options or named parameter (named param takes precedence)
@@ -689,7 +703,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
 
         # Build chat options dict
         self.default_options: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None) or (getattr(chat_client, "model_id", None)),
+            "model_id": opts.pop("model_id", None) or (getattr(self.chat_client, "model_id", None)),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "conversation_id": conversation_id,
             "frequency_penalty": opts.pop("frequency_penalty", None),
@@ -770,7 +784,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Run the agent with the given messages and options.
@@ -898,7 +912,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream the agent with the given messages and options.

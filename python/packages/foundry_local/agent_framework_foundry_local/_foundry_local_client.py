@@ -92,7 +92,7 @@ TFoundryLocalChatOptions = TypeVar(
     "TFoundryLocalChatOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="FoundryLocalChatOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 

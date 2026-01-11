@@ -57,7 +57,6 @@ if TYPE_CHECKING:
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
 TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", covariant=True)  # type: ignore[valid-type]
 
 logger = get_logger()
 
@@ -69,9 +68,17 @@ __all__ = [
 
 # region ChatClientProtocol Protocol
 
+# Contravariant for the Protocol
+TOptions_contra = TypeVar(
+    "TOptions_contra",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    contravariant=True,
+)
+
 
 @runtime_checkable
-class ChatClientProtocol(Protocol[TOptions]):
+class ChatClientProtocol(Protocol[TOptions_contra]):  #
     """A protocol for a chat client that can generate responses.
 
     This protocol defines the interface that all chat clients must implement,
@@ -117,7 +124,7 @@ class ChatClientProtocol(Protocol[TOptions]):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        options: TOptions | None = None,
+        options: TOptions_contra | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Send input and return the response.
@@ -139,7 +146,7 @@ class ChatClientProtocol(Protocol[TOptions]):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        options: TOptions | None = None,
+        options: TOptions_contra | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Send input messages and stream the response.
@@ -160,8 +167,16 @@ class ChatClientProtocol(Protocol[TOptions]):
 
 # region ChatClientBase
 
+# Covariant for the BaseChatClient
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    covariant=True,
+)
 
-class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
+
+class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     """Base class for chat clients.
 
     This abstract base class provides core functionality for chat client implementations,
@@ -348,7 +363,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        options: TOptions | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Get a response from a chat client.
@@ -362,8 +377,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
             A chat response from the model.
         """
         opts: dict[str, Any] = dict(options) if options else {}  # type: ignore[arg-type]
-        # For backward compatibility with agents that pass chat_options as kwarg
-        self._merge_chat_options_from_kwargs(opts, kwargs)
         await self._prepare_tool_options(opts)
 
         # Extract instructions for system message
@@ -376,7 +389,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        options: TOptions | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Get a streaming response from a chat client.
@@ -390,35 +403,16 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
             ChatResponseUpdate: A stream representing the response(s) from the LLM.
         """
         opts: dict[str, Any] = dict(options) if options else {}  # type: ignore[arg-type]
-        # For backward compatibility with agents that pass chat_options as kwarg
-        self._merge_chat_options_from_kwargs(opts, kwargs)
         await self._prepare_tool_options(opts)
 
         # Extract instructions for system message
         instructions = opts.pop("instructions", None)
         async for update in self._inner_get_streaming_response(
-            messages=prepare_messages(messages, system_instructions=instructions), options=opts, **kwargs
+            messages=prepare_messages(messages, system_instructions=instructions),
+            options=opts,
+            **kwargs,
         ):
             yield update
-
-    def _merge_chat_options_from_kwargs(self, options: dict[str, Any], kwargs: dict[str, Any]) -> None:
-        """Merge chat_options dict from kwargs into options dict.
-
-        For backward compatibility with agents that pass a chat_options dict
-        via the 'chat_options' kwarg.
-
-        Args:
-            options: The options dict to update (modified in place).
-            kwargs: The kwargs dict from which to extract chat_options (modified in place).
-        """
-        from ._types import merge_chat_options
-
-        chat_options = kwargs.pop("chat_options", None)
-        if chat_options and isinstance(chat_options, dict):
-            # Merge chat_options dict into options (options takes precedence)
-            merged = merge_chat_options(chat_options, options)
-            options.clear()
-            options.update(merged)
 
     async def _prepare_tool_options(self, options: dict[str, Any]) -> None:
         """Prepare tool-related options in the options dict.
@@ -468,12 +462,12 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions]):
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TOptions | None = None,
+        default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[TOptions]":
+    ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent with this client.
 
         This is a convenience method that creates a ChatAgent instance with this
