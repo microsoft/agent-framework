@@ -199,6 +199,41 @@ cd Step05_StateManagement/Client
 dotnet run
 ```
 
+### Step06_DynamicAgentResolution
+
+Demonstrates dynamic agent resolution based on route parameters. This enables multi-tenant applications, agent selection by ID, and runtime agent configuration.
+
+#### Server (`Step06_DynamicAgentResolution/Server`)
+
+An AG-UI server that dynamically selects agents based on route parameters. Demonstrates:
+
+- Using `MapAGUI` with a factory delegate for dynamic agent resolution
+- Extracting route parameters with `HttpContext.GetRouteValue`
+- Returning `null` from the factory for 404 responses
+- Supporting multiple agent configurations on a single route pattern
+
+**Run the server:**
+
+```bash
+cd Step06_DynamicAgentResolution/Server
+dotnet run --urls http://localhost:8888
+```
+
+Available agents: `general`, `code`, `writer`
+
+#### Client (`Step06_DynamicAgentResolution/Client`)
+
+A client that demonstrates connecting to different dynamically-resolved agents.
+
+**Run the client:**
+
+```bash
+cd Step06_DynamicAgentResolution/Client
+dotnet run
+```
+
+The client allows you to switch between different agent types at runtime. Type `:back` to switch agents or `:q` to quit.
+
 ## How AG-UI Works
 
 ### Server-Side
@@ -284,6 +319,7 @@ The samples above demonstrate the AG-UI features currently available in C#:
 - ✅ **Streaming Responses**: Real-time Server-Sent Events
 - ✅ **State Management**: State schemas with predictive updates
 - ✅ **Human-in-the-Loop**: Approval workflows for sensitive operations
+- ✅ **Dynamic Agent Resolution**: Route-based agent selection for multi-tenant scenarios
 
 ### Coming Soon to C#
 
