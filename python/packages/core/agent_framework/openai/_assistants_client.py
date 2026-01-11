@@ -198,7 +198,7 @@ TOpenAIAssistantsOptions = TypeVar(
     "TOpenAIAssistantsOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIAssistantsOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 
