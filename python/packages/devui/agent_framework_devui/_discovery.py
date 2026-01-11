@@ -883,15 +883,11 @@ class EntityDiscovery:
 
         try:
             if obj_type == "agent":
-                # For agents, check chat_options.get("tools") first (dict-based ChatOptions)
-                chat_options = getattr(obj, "chat_options", None)
+                # For agents, check default_options.get("tools")
+                chat_options = getattr(obj, "default_options", None)
                 chat_options_tools = None
                 if chat_options:
-                    # Handle both dict-based ChatOptions and attribute access
-                    if isinstance(chat_options, dict):
-                        chat_options_tools = chat_options.get("tools")
-                    elif hasattr(chat_options, "tools"):
-                        chat_options_tools = chat_options.tools
+                    chat_options_tools = chat_options.get("tools")
 
                 if chat_options_tools:
                     for tool in chat_options_tools:

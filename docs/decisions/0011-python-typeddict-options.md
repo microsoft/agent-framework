@@ -108,8 +108,11 @@ response = await client.get_response(
 
 **Cons:**
 - More complex implementation
-- Requires TypeVar with default (Python 3.13+ or typing_extensions)
 - Some type: ignore comments needed for TypedDict field overrides
+- Minor: Requires TypeVar with default (Python 3.13+ or typing_extensions)
+
+> [NOTE!]
+> In .NET this is already achieved through overloads on the `GetResponseAsync` method for each provider-specific options class, e.g., `AnthropicChatOptions`, `OpenAIChatOptions`, etc. So this does not apply to .NET.
 
 ### Implementation Details
 
