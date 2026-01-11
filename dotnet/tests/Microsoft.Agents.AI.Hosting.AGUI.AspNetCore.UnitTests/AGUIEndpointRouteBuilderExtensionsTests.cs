@@ -525,6 +525,46 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         Assert.Equal(cts.Token, capturedToken);
     }
 
+    [Fact]
+    public async Task MapAGUIWithFactory_RethrowsOperationCanceledException_WhenCancellationRequestedAsync()
+    {
+        // Arrange
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+
+        Func<HttpContext, CancellationToken, ValueTask<AIAgent?>> factory = (context, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new ValueTask<AIAgent?>(new TestAgent());
+        };
+
+        DefaultHttpContext httpContext = new();
+        httpContext.RequestAborted = cts.Token;
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegateWithFactory(factory);
+
+        // Act & Assert - OperationCanceledException (or derived types like TaskCanceledException)
+        // should be re-thrown, not caught and converted to 500
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => handler(httpContext));
+    }
+
+    /// <summary>
+    /// Creates a test request delegate that mimics the behavior of MapAGUI with a factory.
+    /// </summary>
+    /// <remarks>
+    /// This helper duplicates some logic from the actual MapAGUI implementation to enable
+    /// isolated unit testing without requiring the full ASP.NET Core pipeline. The integration
+    /// tests in DynamicAgentResolutionTests exercise the actual implementation.
+    /// </remarks>
     private RequestDelegate CreateRequestDelegateWithFactory(
         Func<HttpContext, CancellationToken, ValueTask<AIAgent?>> factory)
     {
@@ -556,6 +596,10 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             try
             {
                 agent = await factory(context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception)
             {

@@ -16,8 +16,9 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 /// applications or scenarios where the agent to use depends on runtime factors.
 /// </para>
 /// <para>
-/// Implementations must be thread-safe as the same resolver instance may be invoked
-/// concurrently for multiple requests.
+/// If an implementation is registered as a singleton or otherwise shared across requests,
+/// it must be thread-safe because the same resolver instance may be invoked concurrently
+/// for multiple requests.
 /// </para>
 /// </remarks>
 public interface IAGUIAgentResolver

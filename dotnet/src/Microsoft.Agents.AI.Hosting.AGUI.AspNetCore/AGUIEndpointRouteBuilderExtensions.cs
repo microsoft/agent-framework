@@ -67,7 +67,9 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// selection based on route parameters, headers, query strings, or other request context.
     /// </para>
     /// <para>
-    /// The factory must be thread-safe as it may be invoked concurrently for multiple requests.
+    /// ASP.NET Core may invoke the factory concurrently on multiple threads for different requests.
+    /// Implementations must therefore be thread-safe and must not rely on mutable shared state
+    /// without appropriate synchronization.
     /// </para>
     /// <example>
     /// <code>

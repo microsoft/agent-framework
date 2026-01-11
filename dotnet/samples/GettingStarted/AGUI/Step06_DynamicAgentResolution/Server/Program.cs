@@ -33,7 +33,7 @@ Dictionary<string, (string Name, string Instructions)> agentConfigs = new(String
 };
 
 // Map AG-UI endpoint with dynamic agent resolution
-app.MapAGUI("/agents/{agentId}", async (context, cancellationToken) =>
+app.MapAGUI("/agents/{agentId}", async (HttpContext context, CancellationToken cancellationToken) =>
 {
     // Extract agent ID from route
     string? agentId = context.GetRouteValue("agentId")?.ToString();
@@ -50,7 +50,8 @@ app.MapAGUI("/agents/{agentId}", async (context, cancellationToken) =>
     }
 
     // Create and return agent (could also cache this)
-    return chatClient.AsIChatClient().CreateAIAgent(
+    IChatClient client = chatClient.AsIChatClient();
+    return client.CreateAIAgent(
         name: config.Name,
         instructions: config.Instructions);
 });
