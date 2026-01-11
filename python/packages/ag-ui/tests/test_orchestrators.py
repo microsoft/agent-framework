@@ -42,6 +42,29 @@ class DummyAgent:
         yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
 
 
+class RecordingAgent:
+    """Agent stub that captures messages passed to run_stream."""
+
+    def __init__(self) -> None:
+        self.chat_options = SimpleNamespace(tools=[], response_format=None)
+        self.tools: list[Any] = []
+        self.chat_client = SimpleNamespace(
+            function_invocation_configuration=FunctionInvocationConfiguration(),
+        )
+        self.seen_messages: list[Any] | None = None
+
+    async def run_stream(
+        self,
+        messages: list[Any],
+        *,
+        thread: Any,
+        tools: list[Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+        self.seen_messages = messages
+        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+
+
 async def test_default_orchestrator_merges_client_tools() -> None:
     """Client tool declarations are merged with server tools before running agent."""
 
@@ -151,3 +174,104 @@ async def test_default_orchestrator_with_snake_case_ids() -> None:
     last_event = events[-1]
     assert last_event.run_id == "test-snakecase-runid"
     assert last_event.thread_id == "test-snakecase-threadid"
+
+
+async def test_state_context_injected_when_tool_call_state_mismatch() -> None:
+    """State context should be injected when current state differs from tool call args."""
+
+    agent = RecordingAgent()
+    orchestrator = DefaultOrchestrator()
+
+    tool_recipe = {"title": "Salad", "special_preferences": []}
+    current_recipe = {"title": "Salad", "special_preferences": ["Vegetarian"]}
+
+    input_data = {
+        "state": {"recipe": current_recipe},
+        "messages": [
+            {"role": "system", "content": "Instructions"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "update_recipe", "arguments": {"recipe": tool_recipe}},
+                    }
+                ],
+            },
+            {"role": "user", "content": "What are the dietary preferences?"},
+        ],
+    }
+
+    context = ExecutionContext(
+        input_data=input_data,
+        agent=agent,
+        config=AgentConfig(
+            state_schema={"recipe": {"type": "object"}},
+            predict_state_config={"recipe": {"tool": "update_recipe", "tool_argument": "recipe"}},
+            require_confirmation=False,
+        ),
+    )
+
+    async for _event in orchestrator.run(context):
+        pass
+
+    assert agent.seen_messages is not None
+    state_messages = []
+    for msg in agent.seen_messages:
+        role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+        if role_value != "system":
+            continue
+        for content in msg.contents or []:
+            if isinstance(content, TextContent) and content.text.startswith("Current state of the application:"):
+                state_messages.append(content.text)
+    assert state_messages
+    assert "Vegetarian" in state_messages[0]
+
+
+async def test_state_context_not_injected_when_tool_call_matches_state() -> None:
+    """State context should be skipped when tool call args match current state."""
+
+    agent = RecordingAgent()
+    orchestrator = DefaultOrchestrator()
+
+    input_data = {
+        "messages": [
+            {"role": "system", "content": "Instructions"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "update_recipe", "arguments": {"recipe": {}}},
+                    }
+                ],
+            },
+            {"role": "user", "content": "What are the dietary preferences?"},
+        ],
+    }
+
+    context = ExecutionContext(
+        input_data=input_data,
+        agent=agent,
+        config=AgentConfig(
+            state_schema={"recipe": {"type": "object"}},
+            predict_state_config={"recipe": {"tool": "update_recipe", "tool_argument": "recipe"}},
+            require_confirmation=False,
+        ),
+    )
+
+    async for _event in orchestrator.run(context):
+        pass
+
+    assert agent.seen_messages is not None
+    state_messages = []
+    for msg in agent.seen_messages:
+        role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+        if role_value != "system":
+            continue
+        for content in msg.contents or []:
+            if isinstance(content, TextContent) and content.text.startswith("Current state of the application:"):
+                state_messages.append(content.text)
+    assert not state_messages
