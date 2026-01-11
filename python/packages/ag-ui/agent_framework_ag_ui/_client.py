@@ -81,7 +81,7 @@ TAGUIChatOptions = TypeVar(
     "TAGUIChatOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AGUIChatOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 

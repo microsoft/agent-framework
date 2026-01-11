@@ -265,7 +265,7 @@ OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Ollama model option parameter names."""
 
-TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="OllamaChatOptions", contravariant=True)  # type: ignore[valid-type]
+TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion

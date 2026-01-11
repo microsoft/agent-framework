@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 TInput = TypeVar("TInput", contravariant=True)
 TEmbedding = TypeVar("TEmbedding")
 TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", contravariant=True)  # type: ignore[valid-type]
+TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", covariant=True)  # type: ignore[valid-type]
 
 logger = get_logger()
 

@@ -1481,16 +1481,20 @@ class GroupChatBuilder:
             display_name = manager.id if isinstance(manager, Executor) else manager.name or "manager"
 
         # Enforce ManagerSelectionResponse for ChatAgent managers
-        if isinstance(manager, ChatAgent):
-            configured_format = manager.default_options.get("response_format")
-            if configured_format is None:
-                manager.default_options["response_format"] = ManagerSelectionResponse
-            elif configured_format is not ManagerSelectionResponse:
-                configured_format_name = getattr(configured_format, "__name__", str(configured_format))
-                raise ValueError(
-                    "Manager ChatAgent response_format must be ManagerSelectionResponse. "
-                    f"Received '{configured_format_name}' for manager '{display_name}'."
-                )
+        if (
+            isinstance(manager, ChatAgent)
+            and manager.default_options.setdefault("response_format", ManagerSelectionResponse)
+            != ManagerSelectionResponse
+        ):
+            configured_format_name = getattr(
+                manager.default_options.get("response_format"),
+                "__name__",
+                str(manager.default_options.get("response_format")),
+            )
+            raise ValueError(
+                "Manager ChatAgent response_format must be ManagerSelectionResponse. "
+                f"Received '{configured_format_name}' for manager '{display_name}'."
+            )
 
         self._manager_participant = manager
         self._manager_name = display_name

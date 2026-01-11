@@ -96,7 +96,7 @@ class BedrockChatOptions(ChatOptions, total=False):
 
     Keys:
         # Inherited from ChatOptions (mapped to Bedrock):
-        model_id: The Bedrock model identifier (e.g., 'anthropic.claude-3-sonnet-20240229-v1:0'),
+        model_id: The Bedrock model identifier,
             translates to ``modelId`` in Bedrock API.
         temperature: Sampling temperature,
             translates to ``inferenceConfig.temperature``.
@@ -177,7 +177,7 @@ BEDROCK_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Bedrock Converse API parameter names."""
 
-TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="BedrockChatOptions", contravariant=True)  # type: ignore[valid-type]
+TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion
@@ -254,7 +254,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 from agent_framework.bedrock import BedrockChatClient
 
                 # Basic usage with default credentials
-                client = BedrockChatClient(model_id="anthropic.claude-3-sonnet-20240229-v1:0")
+                client = BedrockChatClient(model_id="<model name>")
 
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
@@ -265,9 +265,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     my_custom_option: str
 
 
-                client: BedrockChatClient[MyOptions] = BedrockChatClient(
-                    model_id="anthropic.claude-3-sonnet-20240229-v1:0"
-                )
+                client = BedrockChatClient[MyOptions](model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:

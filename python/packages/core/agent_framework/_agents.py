@@ -57,7 +57,7 @@ else:
 logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", contravariant=True)  # type: ignore[valid-type]
+TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -640,7 +640,7 @@ class ChatAgent(BaseAgent, Generic[TOptions]):  # type: ignore[misc]
                 provider-specific options including temperature, max_tokens, model_id,
                 tool_choice, and provider-specific options like reasoning_effort.
                 You can also create your own TypedDict for custom chat clients.
-        >>>>>>> a9ec204c (updated all clients and ChatAgents)
+                These can be overridden at runtime via the ``options`` parameter of ``run()`` and ``run_stream()``.
             tools: The tools to use for the request.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 

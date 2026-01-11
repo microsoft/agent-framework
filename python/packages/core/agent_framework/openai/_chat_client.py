@@ -104,7 +104,7 @@ class OpenAIChatOptions(ChatOptions, total=False):
     top_logprobs: int
 
 
-TOpenAIChatOptions = TypeVar("TOpenAIChatOptions", bound=TypedDict, default="OpenAIChatOptions", contravariant=True)  # type: ignore[valid-type]
+TOpenAIChatOptions = TypeVar("TOpenAIChatOptions", bound=TypedDict, default="OpenAIChatOptions", covariant=True)  # type: ignore[valid-type]
 
 OPTION_TRANSLATIONS: dict[str, str] = {
     "model_id": "model",
@@ -594,11 +594,11 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOption
 
                 # Using environment variables
                 # Set OPENAI_API_KEY=sk-...
-                # Set OPENAI_CHAT_MODEL_ID=gpt-4
+                # Set OPENAI_CHAT_MODEL_ID=<model name>
                 client = OpenAIChatClient()
 
                 # Or passing parameters directly
-                client = OpenAIChatClient(model_id="gpt-4", api_key="sk-...")
+                client = OpenAIChatClient(model_id="<model name>", api_key="sk-...")
 
                 # Or loading from a .env file
                 client = OpenAIChatClient(env_file_path="path/to/.env")
@@ -612,7 +612,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOption
                     my_custom_option: str
 
 
-                client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="gpt-4o")
+                client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:

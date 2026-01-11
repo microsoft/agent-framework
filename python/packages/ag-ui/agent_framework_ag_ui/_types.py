@@ -132,7 +132,7 @@ class AGUIChatOptions(ChatOptions, total=False):
 AGUI_OPTION_TRANSLATIONS: dict[str, str] = {}
 """Maps ChatOptions keys to AG-UI parameter names (protocol uses standard names)."""
 
-TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", contravariant=True)  # type: ignore[valid-type]
+TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion

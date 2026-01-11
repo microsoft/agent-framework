@@ -1585,7 +1585,9 @@ def _get_span(
 
     Note: `attributes` must contain the `span_name_attribute` key.
     """
-    span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
+    operation = attributes.get(OtelAttr.OPERATION, "operation")
+    span_name = attributes.get(span_name_attribute, "unknown")
+    span = get_tracer().start_span(f"{operation} {span_name}")
     span.set_attributes(attributes)
     with trace.use_span(
         span=span,
@@ -1605,65 +1607,88 @@ def _get_instructions_from_chat_options(chat_options: Any) -> str | None:
     return None
 
 
+# Mapping configuration for extracting span attributes
+# Each entry: source_keys -> (otel_attribute_key, transform_func, check_options_first, default_value)
+# - source_keys: single key or list of keys to check (first non-None value wins)
+# - otel_attribute_key: target OTEL attribute name
+# - transform_func: optional transformation function, can return None to skip attribute
+# - check_options_first: whether to check options dict before kwargs
+# - default_value: optional default value if key is not found (use None to skip)
+OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | None, bool, Any]] = {
+    "choice_count": (OtelAttr.CHOICE_COUNT, None, False, 1),
+    "operation_name": (OtelAttr.OPERATION, None, False, None),
+    "system_name": (SpanAttributes.LLM_SYSTEM, None, False, None),
+    "provider_name": (OtelAttr.PROVIDER_NAME, None, False, None),
+    "service_url": (OtelAttr.ADDRESS, None, False, None),
+    "conversation_id": (OtelAttr.CONVERSATION_ID, None, True, None),
+    "seed": (OtelAttr.SEED, None, True, None),
+    "frequency_penalty": (OtelAttr.FREQUENCY_PENALTY, None, True, None),
+    "max_tokens": (SpanAttributes.LLM_REQUEST_MAX_TOKENS, None, True, None),
+    "stop": (OtelAttr.STOP_SEQUENCES, None, True, None),
+    "temperature": (SpanAttributes.LLM_REQUEST_TEMPERATURE, None, True, None),
+    "top_p": (SpanAttributes.LLM_REQUEST_TOP_P, None, True, None),
+    "presence_penalty": (OtelAttr.PRESENCE_PENALTY, None, True, None),
+    "top_k": (OtelAttr.TOP_K, None, True, None),
+    "encoding_formats": (
+        OtelAttr.ENCODING_FORMATS,
+        lambda v: json.dumps(v if isinstance(v, list) else [v]),
+        True,
+        None,
+    ),
+    "agent_id": (OtelAttr.AGENT_ID, None, False, None),
+    "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
+    "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
+    # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
+    ("model_id", "model"): (SpanAttributes.LLM_REQUEST_MODEL, None, True, None),
+    # Tools with validation - returns None if no valid tools
+    "tools": (
+        OtelAttr.TOOL_DEFINITIONS,
+        lambda tools: (
+            json.dumps(tools_dict)
+            if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
+            else None
+        ),
+        True,
+        None,
+    ),
+    # Error type extraction
+    "error": (OtelAttr.ERROR_TYPE, lambda e: type(e).__name__, False, None),
+    # thread_id overrides conversation_id - processed after conversation_id due to dict ordering
+    "thread_id": (OtelAttr.CONVERSATION_ID, None, False, None),
+}
+
+
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
-    from ._tools import _tools_to_dict
-
     attributes: dict[str, Any] = {}
     # Support 'options' and 'chat_options' dict from chat clients and agents
-    options: dict[str, Any] = {}
-    if (opts := kwargs.get("options") or kwargs.get("chat_options")) and isinstance(opts, dict):
-        options = opts
-    if operation_name := kwargs.get("operation_name"):
-        attributes[OtelAttr.OPERATION] = operation_name
-    if choice_count := kwargs.get("choice_count", 1):
-        attributes[OtelAttr.CHOICE_COUNT] = choice_count
-    if system_name := kwargs.get("system_name"):
-        attributes[SpanAttributes.LLM_SYSTEM] = system_name
-    if provider_name := kwargs.get("provider_name"):
-        attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    if model_id := options.get("model_id") or kwargs.get("model") or kwargs.get("model_id"):
-        attributes[SpanAttributes.LLM_REQUEST_MODEL] = model_id
-    if service_url := kwargs.get("service_url"):
-        attributes[OtelAttr.ADDRESS] = service_url
-    if conversation_id := options.get("conversation_id") or kwargs.get("conversation_id"):
-        attributes[OtelAttr.CONVERSATION_ID] = conversation_id
-    if seed := options.get("seed") or kwargs.get("seed"):
-        attributes[OtelAttr.SEED] = seed
-    if frequency_penalty := options.get("frequency_penalty") or kwargs.get("frequency_penalty"):
-        attributes[OtelAttr.FREQUENCY_PENALTY] = frequency_penalty
-    if max_tokens := options.get("max_tokens") or kwargs.get("max_tokens"):
-        attributes[SpanAttributes.LLM_REQUEST_MAX_TOKENS] = max_tokens
-    if stop := options.get("stop") or kwargs.get("stop"):
-        attributes[OtelAttr.STOP_SEQUENCES] = stop
-    if temperature := options.get("temperature") or kwargs.get("temperature"):
-        attributes[SpanAttributes.LLM_REQUEST_TEMPERATURE] = temperature
-    if top_p := options.get("top_p") or kwargs.get("top_p"):
-        attributes[SpanAttributes.LLM_REQUEST_TOP_P] = top_p
-    if presence_penalty := options.get("presence_penalty") or kwargs.get("presence_penalty"):
-        attributes[OtelAttr.PRESENCE_PENALTY] = presence_penalty
-    if top_k := options.get("top_k") or kwargs.get("top_k"):
-        attributes[OtelAttr.TOP_K] = top_k
-    if encoding_formats := options.get("encoding_formats") or kwargs.get("encoding_formats"):
-        attributes[OtelAttr.ENCODING_FORMATS] = json.dumps(
-            encoding_formats if isinstance(encoding_formats, list) else [encoding_formats]
-        )
-    if tools := options.get("tools") or kwargs.get("tools"):
-        tools_as_json_list = _tools_to_dict(tools)
-        if tools_as_json_list:
-            attributes[OtelAttr.TOOL_DEFINITIONS] = json.dumps(tools_as_json_list)
-    if error := kwargs.get("error"):
-        attributes[OtelAttr.ERROR_TYPE] = type(error).__name__
-    # agent attributes
-    if agent_id := kwargs.get("agent_id"):
-        attributes[OtelAttr.AGENT_ID] = agent_id
-    if agent_name := kwargs.get("agent_name"):
-        attributes[OtelAttr.AGENT_NAME] = agent_name
-    if agent_description := kwargs.get("agent_description"):
-        attributes[OtelAttr.AGENT_DESCRIPTION] = agent_description
-    if thread_id := kwargs.get("thread_id"):
-        # override if thread is set
-        attributes[OtelAttr.CONVERSATION_ID] = thread_id
+    options = kwargs.get("options", kwargs.get("chat_options"))
+    if options is not None and not isinstance(options, dict):
+        options = None
+
+    for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
+        # Normalize to tuple of keys
+        keys = (source_keys,) if isinstance(source_keys, str) else source_keys
+
+        value = None
+        for key in keys:
+            if check_options and options is not None:
+                value = options.get(key)
+            if value is None:
+                value = kwargs.get(key)
+            if value is not None:
+                break
+
+        # Apply default value if no value found
+        if value is None and default_value is not None:
+            value = default_value
+
+        if value is not None:
+            result = transform_func(value) if transform_func else value
+            # Allow transform_func to return None to skip attribute
+            if result is not None:
+                attributes[otel_key] = result
+
     return attributes
 
 

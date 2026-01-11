@@ -202,13 +202,15 @@ class AzureOpenAIChatClient(
 
                 # Using environment variables
                 # Set AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
-                # Set AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=<model name>
                 # Set AZURE_OPENAI_API_KEY=your-key
                 client = AzureOpenAIChatClient()
 
                 # Or passing parameters directly
                 client = AzureOpenAIChatClient(
-                    endpoint="https://your-endpoint.openai.azure.com", deployment_name="gpt-4", api_key="your-key"
+                    endpoint="https://your-endpoint.openai.azure.com",
+                    deployment_name="<model name>",
+                    api_key="your-key",
                 )
 
                 # Or loading from a .env file

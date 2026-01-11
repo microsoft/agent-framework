@@ -199,7 +199,7 @@ TAzureAIAgentOptions = TypeVar(
     "TAzureAIAgentOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureAIAgentOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 
@@ -262,14 +262,14 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
                 # Using environment variables
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=<model name>
                 credential = DefaultAzureCredential()
                 client = AzureAIAgentClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIAgentClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
-                    model_deployment_name="gpt-4",
+                    model_deployment_name="<model name>",
                     credential=credential,
                 )
 

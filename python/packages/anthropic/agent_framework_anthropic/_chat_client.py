@@ -159,7 +159,7 @@ TAnthropicOptions = TypeVar(
     "TAnthropicOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AnthropicChatOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 # Translation between framework options keys and Anthropic Messages API
