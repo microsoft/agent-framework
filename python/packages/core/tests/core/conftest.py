@@ -27,7 +27,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
+from agent_framework._clients import TOptions_co
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -113,7 +113,7 @@ class MockChatClient:
 
 
 @use_chat_middleware
-class MockBaseChatClient(BaseChatClient[TOptions], Generic[TOptions]):
+class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """Mock implementation of the BaseChatClient."""
 
     def __init__(self, **kwargs: Any):

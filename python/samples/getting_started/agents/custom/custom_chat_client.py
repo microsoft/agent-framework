@@ -16,7 +16,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._clients import TOptions
+from agent_framework._clients import TOptions_co
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -33,7 +33,7 @@ showing integration with ChatAgent and both streaming and non-streaming response
 
 @use_function_invocation
 @use_chat_middleware
-class EchoingChatClient(BaseChatClient[TOptions], Generic[TOptions]):
+class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """A custom chat client that echoes messages back with modifications.
 
     This demonstrates how to implement a custom chat client by extending BaseChatClient

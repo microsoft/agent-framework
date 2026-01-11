@@ -35,7 +35,7 @@ from agent_framework import (
     TextContent,
     use_chat_middleware,
 )
-from agent_framework._clients import TOptions
+from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 
 if sys.version_info >= (3, 12):
@@ -97,7 +97,7 @@ class MockChatClient:
 
 
 @use_chat_middleware
-class MockBaseChatClient(BaseChatClient[TOptions], Generic[TOptions]):
+class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """Full BaseChatClient mock with middleware support.
 
     Use this when testing features that require the full BaseChatClient interface.

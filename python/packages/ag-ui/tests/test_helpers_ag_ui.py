@@ -15,7 +15,7 @@ from agent_framework import (
     ChatMessage,
     TextContent,
 )
-from agent_framework._clients import BaseChatClient, TOptions
+from agent_framework._clients import BaseChatClient, TOptions_co
 from agent_framework._types import ChatResponse, ChatResponseUpdate
 
 from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
@@ -30,7 +30,7 @@ StreamFn = Callable[..., AsyncIterator[ChatResponseUpdate]]
 ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
-class StreamingChatClientStub(BaseChatClient[TOptions], Generic[TOptions]):
+class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """Typed streaming stub that satisfies ChatClientProtocol."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:

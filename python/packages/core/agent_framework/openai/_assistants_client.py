@@ -10,7 +10,7 @@ from collections.abc import (
     MutableMapping,
     MutableSequence,
 )
-from typing import Any, Generic, Literal, TypedDict, TypeVar, cast
+from typing import Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (

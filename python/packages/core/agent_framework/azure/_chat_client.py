@@ -127,7 +127,7 @@ TAzureOpenAIChatOptions = TypeVar(
     "TAzureOpenAIChatOptions",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureOpenAIChatOptions",
-    contravariant=True,
+    covariant=True,
 )
 
 

@@ -267,7 +267,7 @@ class OpenAIBaseResponsesClient(
                 async for chunk in await client.responses.create(stream=True, **run_options):
                     yield self._parse_chunk_from_openai(
                         chunk,
-                        chat_options=options,
+                        options=options,
                         function_call_ids=function_call_ids,
                     )
                 return
@@ -275,7 +275,7 @@ class OpenAIBaseResponsesClient(
                 async for chunk in response:
                     yield self._parse_chunk_from_openai(
                         chunk,
-                        chat_options=options,
+                        options=options,
                         function_call_ids=function_call_ids,
                     )
         except BadRequestError as ex:
