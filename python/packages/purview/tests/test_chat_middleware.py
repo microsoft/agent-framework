@@ -37,7 +37,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         return ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
         )
 
     async def test_initialization(self, middleware: PurviewChatPolicyMiddleware) -> None:
@@ -110,7 +110,7 @@ class TestPurviewChatPolicyMiddleware:
         streaming_context = ChatContext(
             chat_client=chat_client,
             messages=[ChatMessage(role=Role.USER, text="Hello")],
-            chat_options=chat_options,
+            options=chat_options,
             is_streaming=True,
         )
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
@@ -189,7 +189,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
         )
 
         async def mock_process_messages(*args, **kwargs):
@@ -215,7 +215,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
         )
 
         async def mock_process_messages(*args, **kwargs):
@@ -257,7 +257,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
         )
 
         async def mock_process_messages(*args, **kwargs):

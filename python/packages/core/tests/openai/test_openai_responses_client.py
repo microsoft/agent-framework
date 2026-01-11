@@ -10,10 +10,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 from openai import BadRequestError
 from openai.types.responses.response_reasoning_item import Summary
-from openai.types.responses.response_reasoning_summary_text_delta_event import ResponseReasoningSummaryTextDeltaEvent
-from openai.types.responses.response_reasoning_summary_text_done_event import ResponseReasoningSummaryTextDoneEvent
-from openai.types.responses.response_reasoning_text_delta_event import ResponseReasoningTextDeltaEvent
-from openai.types.responses.response_reasoning_text_done_event import ResponseReasoningTextDoneEvent
+from openai.types.responses.response_reasoning_summary_text_delta_event import (
+    ResponseReasoningSummaryTextDeltaEvent,
+)
+from openai.types.responses.response_reasoning_summary_text_done_event import (
+    ResponseReasoningSummaryTextDoneEvent,
+)
+from openai.types.responses.response_reasoning_text_delta_event import (
+    ResponseReasoningTextDeltaEvent,
+)
+from openai.types.responses.response_reasoning_text_done_event import (
+    ResponseReasoningTextDoneEvent,
+)
 from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
 from pydantic import BaseModel
 
@@ -50,7 +58,11 @@ from agent_framework import (
     ai_function,
 )
 from agent_framework._types import ChatOptions
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.exceptions import (
+    ServiceInitializationError,
+    ServiceInvalidRequestError,
+    ServiceResponseException,
+)
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
@@ -70,10 +82,13 @@ class OutputStruct(BaseModel):
     weather: str | None = None
 
 
-async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
+async def create_vector_store(
+    client: OpenAIResponsesClient,
+) -> tuple[str, HostedVectorStoreContent]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
-        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="user_data"
+        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."),
+        purpose="user_data",
     )
     vector_store = await client.client.vector_stores.create(
         name="knowledge_base",
@@ -217,25 +232,27 @@ def test_get_response_with_all_parameters() -> None:
         asyncio.run(
             client.get_response(
                 messages=[ChatMessage(role="user", text="Test message")],
-                include=["message.output_text.logprobs"],
-                instructions="You are a helpful assistant",
-                max_tokens=100,
-                parallel_tool_calls=True,
-                model_id="gpt-4",
-                previous_response_id="prev-123",
-                reasoning={"chain_of_thought": "enabled"},
-                service_tier="auto",
-                response_format=OutputStruct,
-                seed=42,
-                store=True,
-                temperature=0.7,
-                tool_choice="auto",
-                tools=[get_weather],
-                top_p=0.9,
-                user="test-user",
-                truncation="auto",
-                timeout=30.0,
-                additional_properties={"custom": "value"},
+                options={
+                    "include": ["message.output_text.logprobs"],
+                    "instructions": "You are a helpful assistant",
+                    "max_tokens": 100,
+                    "parallel_tool_calls": True,
+                    "model_id": "gpt-4",
+                    "previous_response_id": "prev-123",
+                    "reasoning": {"chain_of_thought": "enabled"},
+                    "service_tier": "auto",
+                    "response_format": OutputStruct,
+                    "seed": 42,
+                    "store": True,
+                    "temperature": 0.7,
+                    "tool_choice": "auto",
+                    "tools": [get_weather],
+                    "top_p": 0.9,
+                    "user": "test-user",
+                    "truncation": "auto",
+                    "timeout": 30.0,
+                    "additional_properties": {"custom": "value"},
+                },
             )
         )
 
@@ -247,7 +264,12 @@ def test_web_search_tool_with_location() -> None:
     # Test web search tool with location
     web_search_tool = HostedWebSearchTool(
         additional_properties={
-            "user_location": {"country": "US", "city": "Seattle", "region": "WA", "timezone": "America/Los_Angeles"}
+            "user_location": {
+                "country": "US",
+                "city": "Seattle",
+                "region": "WA",
+                "timezone": "America/Los_Angeles",
+            }
         }
     )
 
@@ -256,8 +278,7 @@ def test_web_search_tool_with_location() -> None:
         asyncio.run(
             client.get_response(
                 messages=[ChatMessage(role="user", text="What's the weather?")],
-                tools=[web_search_tool],
-                tool_choice="auto",
+                options={"tools": [web_search_tool], "tool_choice": "auto"},
             )
         )
 
@@ -272,7 +293,10 @@ def test_file_search_tool_with_invalid_inputs() -> None:
     # Should raise an error due to invalid inputs
     with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
         asyncio.run(
-            client.get_response(messages=[ChatMessage(role="user", text="Search files")], tools=[file_search_tool])
+            client.get_response(
+                messages=[ChatMessage(role="user", text="Search files")],
+                options={"tools": [file_search_tool]},
+            )
         )
 
 
@@ -285,7 +309,10 @@ def test_code_interpreter_tool_variations() -> None:
 
     with pytest.raises(ServiceResponseException):
         asyncio.run(
-            client.get_response(messages=[ChatMessage(role="user", text="Run some code")], tools=[code_tool_empty])
+            client.get_response(
+                messages=[ChatMessage(role="user", text="Run some code")],
+                options={"tools": [code_tool_empty]},
+            )
         )
 
     # Test code interpreter with files
@@ -296,7 +323,8 @@ def test_code_interpreter_tool_variations() -> None:
     with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="Process these files")], tools=[code_tool_with_files]
+                messages=[ChatMessage(role="user", text="Process these files")],
+                options={"tools": [code_tool_with_files]},
             )
         )
 
@@ -330,7 +358,10 @@ def test_hosted_file_search_tool_validation() -> None:
 
     with pytest.raises((ValueError, ServiceInvalidRequestError)):
         asyncio.run(
-            client.get_response(messages=[ChatMessage(role="user", text="Test")], tools=[empty_file_search_tool])
+            client.get_response(
+                messages=[ChatMessage(role="user", text="Test")],
+                options={"tools": [empty_file_search_tool]},
+            )
         )
 
 
@@ -377,7 +408,8 @@ async def test_response_format_parse_path() -> None:
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
+            messages=[ChatMessage(role="user", text="Test message")],
+            options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
         assert response.conversation_id == "parsed_response_123"
@@ -403,7 +435,8 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
+            messages=[ChatMessage(role="user", text="Test message")],
+            options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
         assert response.conversation_id == "conversation_456"
@@ -425,7 +458,8 @@ async def test_bad_request_error_non_content_filter() -> None:
     with patch.object(client.client.responses, "parse", side_effect=mock_error):
         with pytest.raises(ServiceResponseException) as exc_info:
             await client.get_response(
-                messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct
+                messages=[ChatMessage(role="user", text="Test message")],
+                options={"response_format": OutputStruct},
             )
 
         assert "failed to complete the prompt" in str(exc_info.value)
@@ -460,25 +494,27 @@ async def test_get_streaming_response_with_all_parameters() -> None:
     with pytest.raises(ServiceResponseException):
         response = client.get_streaming_response(
             messages=[ChatMessage(role="user", text="Test streaming")],
-            include=["file_search_call.results"],
-            instructions="Stream response test",
-            max_tokens=50,
-            parallel_tool_calls=False,
-            model_id="gpt-4",
-            previous_response_id="stream-prev-123",
-            reasoning={"mode": "stream"},
-            service_tier="default",
-            response_format=OutputStruct,
-            seed=123,
-            store=False,
-            temperature=0.5,
-            tool_choice="none",
-            tools=[],
-            top_p=0.8,
-            user="stream-user",
-            truncation="last_messages",
-            timeout=15.0,
-            additional_properties={"stream_custom": "stream_value"},
+            options={
+                "include": ["file_search_call.results"],
+                "instructions": "Stream response test",
+                "max_tokens": 50,
+                "parallel_tool_calls": False,
+                "model_id": "gpt-4",
+                "previous_response_id": "stream-prev-123",
+                "reasoning": {"mode": "stream"},
+                "service_tier": "default",
+                "response_format": OutputStruct,
+                "seed": 123,
+                "store": False,
+                "temperature": 0.5,
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": 0.8,
+                "user": "stream-user",
+                "truncation": "last_messages",
+                "timeout": 15.0,
+                "stream_custom": "stream_value",
+            },
         )
         # Just iterate once to trigger the logic
         async for _ in response:
@@ -517,7 +553,7 @@ def test_response_content_creation_with_annotations() -> None:
     mock_response.output = [mock_message_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
         assert len(response.messages[0].contents) >= 1
         assert isinstance(response.messages[0].contents[0], TextContent)
@@ -548,7 +584,7 @@ def test_response_content_creation_with_refusal() -> None:
 
     mock_response.output = [mock_message_item]
 
-    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 1
     assert isinstance(response.messages[0].contents[0], TextContent)
@@ -578,7 +614,7 @@ def test_response_content_creation_with_reasoning() -> None:
 
     mock_response.output = [mock_reasoning_item]
 
-    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 2
     assert isinstance(response.messages[0].contents[0], TextReasoningContent)
@@ -614,7 +650,7 @@ def test_response_content_creation_with_code_interpreter() -> None:
 
     mock_response.output = [mock_code_interpreter_item]
 
-    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 2
     call_content, result_content = response.messages[0].contents
@@ -649,7 +685,7 @@ def test_response_content_creation_with_function_call() -> None:
 
     mock_response.output = [mock_function_call_item]
 
-    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 1
     assert isinstance(response.messages[0].contents[0], FunctionCallContent)
@@ -710,7 +746,7 @@ def test_parse_response_from_openai_with_mcp_approval_request() -> None:
 
     mock_response.output = [mock_item]
 
-    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
     req = response.messages[0].contents[0]
@@ -720,7 +756,9 @@ def test_parse_response_from_openai_with_mcp_approval_request() -> None:
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
 
 
-def test_responses_client_created_at_uses_utc(openai_unit_test_env: dict[str, str]) -> None:
+def test_responses_client_created_at_uses_utc(
+    openai_unit_test_env: dict[str, str],
+) -> None:
     """Test that ChatResponse from responses client uses UTC timestamp.
 
     This is a regression test for the issue where created_at was using local time
@@ -751,7 +789,7 @@ def test_responses_client_created_at_uses_utc(openai_unit_test_env: dict[str, st
     mock_response.output = [mock_message_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     # Verify that created_at is correctly formatted as UTC
     assert response.created_at is not None
@@ -1203,7 +1241,7 @@ def test_service_response_exception_includes_original_error_details() -> None:
         patch.object(client.client.responses, "parse", side_effect=mock_error),
         pytest.raises(ServiceResponseException) as exc_info,
     ):
-        asyncio.run(client.get_response(messages=messages, response_format=OutputStruct))
+        asyncio.run(client.get_response(messages=messages, options={"response_format": OutputStruct}))
 
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
@@ -1219,7 +1257,7 @@ def test_get_streaming_response_with_response_format() -> None:
     with pytest.raises(ServiceResponseException):
 
         async def run_streaming():
-            async for _ in client.get_streaming_response(messages=messages, response_format=OutputStruct):
+            async for _ in client.get_streaming_response(messages=messages, options={"response_format": OutputStruct}):
                 pass
 
         asyncio.run(run_streaming())
@@ -1518,7 +1556,7 @@ def test_parse_response_from_openai_image_generation_raw_base64():
     mock_response.output = [mock_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     # Verify the response contains call + result with DataContent output
     assert len(response.messages[0].contents) == 2
@@ -1555,7 +1593,7 @@ def test_parse_response_from_openai_image_generation_existing_data_uri():
     mock_response.output = [mock_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     # Verify the response contains call + result with DataContent output
     assert len(response.messages[0].contents) == 2
@@ -1591,7 +1629,7 @@ def test_parse_response_from_openai_image_generation_format_detection():
     mock_response_jpeg.output = [mock_item_jpeg]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response_jpeg = client._parse_response_from_openai(mock_response_jpeg, chat_options=ChatOptions())  # type: ignore
+        response_jpeg = client._parse_response_from_openai(mock_response_jpeg, options={})  # type: ignore
     result_contents = response_jpeg.messages[0].contents
     assert isinstance(result_contents[1], ImageGenerationToolResultContent)
     outputs = result_contents[1].outputs
@@ -1617,7 +1655,7 @@ def test_parse_response_from_openai_image_generation_format_detection():
     mock_response_webp.output = [mock_item_webp]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response_webp = client._parse_response_from_openai(mock_response_webp, chat_options=ChatOptions())  # type: ignore
+        response_webp = client._parse_response_from_openai(mock_response_webp, options={})  # type: ignore
     outputs_webp = response_webp.messages[0].contents[1].outputs
     assert outputs_webp and isinstance(outputs_webp, DataContent)
     assert outputs_webp.media_type == "image/webp"
@@ -1647,7 +1685,7 @@ def test_parse_response_from_openai_image_generation_fallback():
     mock_response.output = [mock_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     # Verify it falls back to PNG format for unrecognized binary data
     assert len(response.messages[0].contents) == 2
@@ -1911,7 +1949,12 @@ async def test_openai_responses_client_web_search() -> None:
         }
     }
     response = await openai_responses_client.get_response(
-        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the current weather? Do not ask for my current location.",
+            )
+        ],
         tools=[HostedWebSearchTool(additional_properties=additional_properties)],
         tool_choice="auto",
     )
@@ -1957,7 +2000,12 @@ async def test_openai_responses_client_web_search_streaming() -> None:
         }
     }
     response = openai_responses_client.get_streaming_response(
-        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the current weather? Do not ask for my current location.",
+            )
+        ],
         tools=[HostedWebSearchTool(additional_properties=additional_properties)],
         tool_choice="auto",
     )
@@ -2117,7 +2165,7 @@ async def test_openai_responses_client_agent_thread_storage_with_store_true():
         response = await agent.run(
             "Hello! Please remember that my name is Alex.",
             thread=thread,
-            store=True,
+            options={"store": True},
         )
 
         # Validate response
@@ -2252,7 +2300,9 @@ async def test_openai_responses_client_run_level_tool_isolation():
     call_count = 0
 
     @ai_function
-    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+    async def get_weather_with_counter(
+        location: Annotated[str, "The location as a city name"],
+    ) -> str:
         """Get the current weather in a given location."""
         nonlocal call_count
         call_count += 1

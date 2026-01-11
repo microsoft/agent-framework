@@ -504,8 +504,8 @@ async def test_clone_chat_agent_preserves_mcp_tools() -> None:
     assert hasattr(cloned_agent, "_local_mcp_tools")
     assert len(cloned_agent._local_mcp_tools) == 1  # type: ignore[reportPrivateUsage]
     assert cloned_agent._local_mcp_tools[0] == mock_mcp_tool  # type: ignore[reportPrivateUsage]
-    assert cloned_agent.chat_options.tools is not None
-    assert len(cloned_agent.chat_options.tools) == 1
+    assert cloned_agent.default_options.get("tools") is not None
+    assert len(cloned_agent.default_options.get("tools")) == 1
 
 
 async def test_return_to_previous_routing():
@@ -664,9 +664,10 @@ async def test_tool_choice_preserved_from_agent_config():
     recorded_tool_choices: list[Any] = []
 
     async def mock_get_response(messages: Any, **kwargs: Any) -> ChatResponse:
-        chat_options = kwargs.get("chat_options")
-        if chat_options:
-            recorded_tool_choices.append(chat_options.tool_choice)
+        # Options are passed as 'options' key (not 'chat_options')
+        options = kwargs.get("options")
+        if options:
+            recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, text="Response")],
             response_id="test_response",
@@ -675,11 +676,11 @@ async def test_tool_choice_preserved_from_agent_config():
     mock_client = MagicMock()
     mock_client.get_response = AsyncMock(side_effect=mock_get_response)
 
-    # Create agent with specific tool_choice configuration
+    # Create agent with specific tool_choice configuration via default_options
     agent = ChatAgent(
         chat_client=mock_client,
         name="test_agent",
-        tool_choice=ToolMode(mode="required"),  # type: ignore[arg-type]
+        default_options={"tool_choice": ToolMode(mode="required")},
     )
 
     # Run the agent

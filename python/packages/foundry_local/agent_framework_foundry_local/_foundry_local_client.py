@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, ClassVar
+import sys
+from typing import Any, ClassVar, Generic, TypedDict
 
-from agent_framework import use_chat_middleware, use_function_invocation
+from agent_framework import ChatOptions, use_chat_middleware, use_function_invocation
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
@@ -11,9 +12,91 @@ from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
+
 __all__ = [
+    "FoundryLocalChatOptions",
     "FoundryLocalClient",
+    "FoundryLocalSettings",
 ]
+
+
+# region Foundry Local Chat Options TypedDict
+
+
+class FoundryLocalChatOptions(ChatOptions, total=False):
+    """Azure Foundry Local (local model deployment) chat options dict.
+
+    Extends base ChatOptions for local model inference via Foundry Local.
+    Foundry Local provides an OpenAI-compatible API, so most standard
+    OpenAI chat completion options are supported.
+
+    See: https://github.com/Azure/azure-ai-foundry-model-inference
+
+    Keys:
+        # Inherited from ChatOptions (supported via OpenAI-compatible API):
+        model_id: The model identifier or alias (e.g., 'phi-4-mini').
+        temperature: Sampling temperature (0-2).
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum tokens to generate.
+        stop: Stop sequences.
+        tools: List of tools available to the model.
+        tool_choice: How the model should use tools.
+        frequency_penalty: Frequency penalty (-2.0 to 2.0).
+        presence_penalty: Presence penalty (-2.0 to 2.0).
+        seed: Random seed for reproducibility.
+
+        # Options with limited support (depends on the model):
+        response_format: Response format specification.
+            Not all local models support JSON mode.
+        logit_bias: Token bias dictionary.
+            May not be supported by all models.
+
+        # Options not supported in Foundry Local:
+        user: Not used locally.
+        store: Not applicable for local inference.
+        metadata: Not applicable for local inference.
+
+        # Foundry Local-specific options:
+        extra_body: Additional request body parameters to pass to the model.
+            Can be used for model-specific options not covered by standard API.
+
+    Note:
+        The actual options supported depend on the specific model being used.
+        Some models (like Phi-4) may not support all OpenAI API features.
+        Options not supported by the model will typically be ignored.
+    """
+
+    # Foundry Local-specific options
+    extra_body: dict[str, Any]
+    """Additional request body parameters for model-specific options."""
+
+    # ChatOptions fields not applicable for local inference
+    user: None  # type: ignore[misc]
+    """Not used for local model inference."""
+
+    store: None  # type: ignore[misc]
+    """Not applicable for local inference."""
+
+
+FOUNDRY_LOCAL_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+}
+"""Maps ChatOptions keys to OpenAI API parameter names (for compatibility)."""
+
+TFoundryLocalChatOptions = TypeVar(
+    "TFoundryLocalChatOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="FoundryLocalChatOptions",
+    covariant=True,
+)
+
+
+# endregion
 
 
 class FoundryLocalSettings(AFBaseSettings):
@@ -40,7 +123,7 @@ class FoundryLocalSettings(AFBaseSettings):
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class FoundryLocalClient(OpenAIBaseChatClient):
+class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic[TFoundryLocalChatOptions]):
     """Foundry Local Chat completion class."""
 
     def __init__(
@@ -124,6 +207,16 @@ class FoundryLocalClient(OpenAIBaseChatClient):
 
                 # You can also use the CLI:
                 `foundry model load phi-4-mini --device Auto`
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework_foundry_local import FoundryLocalChatOptions
+
+                class MyOptions(FoundryLocalChatOptions, total=False):
+                    my_custom_option: str
+
+                client: FoundryLocalClient[MyOptions] = FoundryLocalClient(model_id="phi-4-mini")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         Raises:
             ServiceInitializationError: If the specified model ID or alias is not found.

@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
+
+import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, TypeVar
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -49,14 +51,127 @@ from anthropic.types.beta import (
     BetaTextBlock,
     BetaUsage,
 )
-from anthropic.types.beta.beta_bash_code_execution_tool_result_error import BetaBashCodeExecutionToolResultError
-from anthropic.types.beta.beta_code_execution_tool_result_error import BetaCodeExecutionToolResultError
+from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
+    BetaBashCodeExecutionToolResultError,
+)
+from anthropic.types.beta.beta_code_execution_tool_result_error import (
+    BetaCodeExecutionToolResultError,
+)
 from pydantic import SecretStr, ValidationError
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+__all__ = [
+    "AnthropicChatOptions",
+    "AnthropicClient",
+    "AnthropicThinkingConfig",
+]
 
 logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+
+
+# region Anthropic Chat Options TypedDict
+
+
+class AnthropicThinkingConfig(TypedDict, total=False):
+    """Configuration for enabling Claude's extended thinking.
+
+    When enabled, responses include ``thinking`` content blocks showing Claude's
+    thinking process before the final answer. Requires a minimum budget of 1,024
+    tokens and counts towards your ``max_tokens`` limit.
+
+    See https://docs.claude.com/en/docs/build-with-claude/extended-thinking for details.
+
+    Keys:
+        type: "enabled" to enable extended thinking, "disabled" to disable.
+        budget_tokens: The token budget for thinking (minimum 1024, required when type="enabled").
+    """
+
+    type: Literal["enabled", "disabled"]
+    budget_tokens: int
+
+
+class AnthropicChatOptions(ChatOptions, total=False):
+    """Anthropic-specific chat options.
+
+    Extends ChatOptions with options specific to Anthropic's Messages API.
+    Options that Anthropic doesn't support are typed as None to indicate they're unavailable.
+
+    Note:
+        Anthropic REQUIRES max_tokens to be specified. If not provided,
+        a default of 1024 will be used.
+
+    Keys:
+        model_id: The model to use for the request,
+            translates to ``model`` in Anthropic API.
+        temperature: Sampling temperature between 0 and 1.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate (REQUIRED).
+        stop: Stop sequences,
+            translates to ``stop_sequences`` in Anthropic API.
+        tools: List of tools (functions) available to the model.
+        tool_choice: How the model should use tools.
+        response_format: Structured output schema.
+        metadata: Request metadata with user_id for tracking.
+        user: User identifier, translates to ``metadata.user_id`` in Anthropic API.
+        instructions: System instructions for the model,
+            translates to ``system`` in Anthropic API.
+        top_k: Number of top tokens to consider for sampling.
+        service_tier: Service tier ("auto" or "standard_only").
+        thinking: Extended thinking configuration for Claude models.
+        container: Container configuration for skills.
+        additional_beta_flags: Additional beta flags to enable on the request.
+    """
+
+    # Anthropic-specific generation parameters (supported by all models)
+    top_k: int
+    service_tier: Literal["auto", "standard_only"]
+
+    # Extended thinking (Claude models)
+    thinking: AnthropicThinkingConfig
+
+    # Skills
+    container: dict[str, Any]
+
+    # Beta features
+    additional_beta_flags: list[str]
+
+    # Unsupported base options (override with None to indicate not supported)
+    logit_bias: None  # type: ignore[misc]
+    seed: None  # type: ignore[misc]
+    frequency_penalty: None  # type: ignore[misc]
+    presence_penalty: None  # type: ignore[misc]
+    store: None  # type: ignore[misc]
+
+
+TAnthropicOptions = TypeVar(
+    "TAnthropicOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AnthropicChatOptions",
+    covariant=True,
+)
+
+# Translation between framework options keys and Anthropic Messages API
+OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "stop": "stop_sequences",
+    "instructions": "system",
+}
+
+
+# region Role and Finish Reason Maps
+
 
 ROLE_MAP: dict[Role, str] = {
     Role.USER: "user",
@@ -111,13 +226,10 @@ class AnthropicSettings(AFBaseSettings):
     chat_model_id: str | None = None
 
 
-TAnthropicClient = TypeVar("TAnthropicClient", bound="AnthropicClient")
-
-
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AnthropicClient(BaseChatClient):
+class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptions]):
     """Anthropic Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -177,6 +289,18 @@ class AnthropicClient(BaseChatClient):
                     anthropic_client=anthropic_client,
                 )
 
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.anthropic import AnthropicChatOptions
+
+
+                class MyOptions(AnthropicChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AnthropicClient[MyOptions] = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
+
         """
         try:
             anthropic_settings = AnthropicSettings(
@@ -212,29 +336,31 @@ class AnthropicClient(BaseChatClient):
 
     # region Get response methods
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         # prepare
-        run_options = self._prepare_options(messages, chat_options, **kwargs)
+        run_options = self._prepare_options(messages, options, **kwargs)
         # execute
         message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
         # process
         return self._process_message(message)
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # prepare
-        run_options = self._prepare_options(messages, chat_options, **kwargs)
+        run_options = self._prepare_options(messages, options, **kwargs)
         # execute and process
         async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
             parsed_chunk = self._process_stream_event(chunk)
@@ -246,35 +372,24 @@ class AnthropicClient(BaseChatClient):
     def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Create run options for the Anthropic client based on messages and chat options.
+        """Create run options for the Anthropic client based on messages and options.
 
         Args:
             messages: The list of chat messages.
-            chat_options: The chat options.
+            options: The options dict.
             kwargs: Additional keyword arguments.
 
         Returns:
             A dictionary of run options for the Anthropic client.
         """
-        run_options: dict[str, Any] = chat_options.to_dict(
-            exclude={
-                "type",
-                "instructions",  # handled via system message
-                "tool_choice",  # handled separately
-                "allow_multiple_tool_calls",  # handled via tool_choice
-                "additional_properties",  # handled separately
-            }
-        )
+        # Start with a copy of options
+        run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None}
 
-        # translations between ChatOptions and Anthropic API
-        translations = {
-            "model_id": "model",
-            "stop": "stop_sequences",
-        }
-        for old_key, new_key in translations.items():
+        # Translation between options keys and Anthropic Messages API
+        for old_key, new_key in OPTION_TRANSLATIONS.items():
             if old_key in run_options and old_key != new_key:
                 run_options[new_key] = run_options.pop(old_key)
 
@@ -296,31 +411,30 @@ class AnthropicClient(BaseChatClient):
             run_options["system"] = messages[0].text
 
         # betas
-        run_options["betas"] = self._prepare_betas(chat_options)
+        run_options["betas"] = self._prepare_betas(options)
 
         # extra headers
         run_options["extra_headers"] = {"User-Agent": AGENT_FRAMEWORK_USER_AGENT}
 
+        # Handle user option -> metadata.user_id (Anthropic uses metadata.user_id instead of user)
+        if user := run_options.pop("user", None):
+            metadata = run_options.get("metadata", {})
+            if "user_id" not in metadata:
+                metadata["user_id"] = user
+            run_options["metadata"] = metadata
+
         # tools, mcp servers and tool choice
-        if tools_config := self._prepare_tools_for_anthropic(chat_options):
+        if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
-        # additional properties
-        additional_options = {
-            key: value
-            for key, value in chat_options.additional_properties.items()
-            if value is not None and key != "additional_beta_flags"
-        }
-        if additional_options:
-            run_options.update(additional_options)
         run_options.update(kwargs)
         return run_options
 
-    def _prepare_betas(self, chat_options: ChatOptions) -> set[str]:
+    def _prepare_betas(self, options: dict[str, Any]) -> set[str]:
         """Prepare the beta flags for the Anthropic API request.
 
         Args:
-            chat_options: The chat options that may contain additional beta flags.
+            options: The options dict that may contain additional beta flags.
 
         Returns:
             A set of beta flag strings to include in the request.
@@ -328,7 +442,7 @@ class AnthropicClient(BaseChatClient):
         return {
             *BETA_FLAGS,
             *self.additional_beta_flags,
-            *chat_options.additional_properties.get("additional_beta_flags", []),
+            *options.get("additional_beta_flags", []),
         }
 
     def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -370,7 +484,10 @@ class AnthropicClient(BaseChatClient):
                         logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "uri":
                     if content.has_top_level_media_type("image"):
-                        a_content.append({"type": "image", "source": {"type": "url", "url": content.uri}})
+                        a_content.append({
+                            "type": "image",
+                            "source": {"type": "url", "url": content.uri},
+                        })
                     else:
                         logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
@@ -397,22 +514,23 @@ class AnthropicClient(BaseChatClient):
             "content": a_content,
         }
 
-    def _prepare_tools_for_anthropic(self, chat_options: ChatOptions) -> dict[str, Any] | None:
+    def _prepare_tools_for_anthropic(self, options: dict[str, Any]) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
         Args:
-            chat_options: The chat options containing tools and tool choice settings.
+            options: The options dict containing tools and tool choice settings.
 
         Returns:
             A dictionary with tools, mcp_servers, and tool_choice configuration, or None if empty.
         """
         result: dict[str, Any] = {}
+        tools = options.get("tools")
 
         # Process tools
-        if chat_options.tools:
+        if tools:
             tool_list: list[MutableMapping[str, Any]] = []
             mcp_server_list: list[MutableMapping[str, Any]] = []
-            for tool in chat_options.tools:
+            for tool in tools:
                 match tool:
                     case MutableMapping():
                         tool_list.append(tool)
@@ -457,29 +575,36 @@ class AnthropicClient(BaseChatClient):
                 result["mcp_servers"] = mcp_server_list
 
         # Process tool choice
-        if chat_options.tool_choice is not None:
-            tool_choice_mode = (
-                chat_options.tool_choice if isinstance(chat_options.tool_choice, str) else chat_options.tool_choice.mode
-            )
+        tool_choice_value = options.get("tool_choice")
+        allow_multiple = options.get("allow_multiple_tool_calls")
+        if tool_choice_value is not None:
+            # Handle tool_choice as string, dict, or object with .mode attribute
+            if isinstance(tool_choice_value, str):
+                tool_choice_mode = tool_choice_value
+                required_function_name = None
+            elif isinstance(tool_choice_value, dict):
+                tool_choice_mode = tool_choice_value.get("mode", "auto")
+                required_function_name = tool_choice_value.get("required_function_name")
+            else:
+                tool_choice_mode = tool_choice_value.mode
+                required_function_name = getattr(tool_choice_value, "required_function_name", None)
+
             match tool_choice_mode:
                 case "auto":
                     tool_choice: dict[str, Any] = {"type": "auto"}
-                    if chat_options.allow_multiple_tool_calls is not None:
-                        tool_choice["disable_parallel_tool_use"] = not chat_options.allow_multiple_tool_calls
+                    if allow_multiple is not None:
+                        tool_choice["disable_parallel_tool_use"] = not allow_multiple
                     result["tool_choice"] = tool_choice
                 case "required":
-                    if (
-                        not isinstance(chat_options.tool_choice, str)
-                        and chat_options.tool_choice.required_function_name
-                    ):
+                    if required_function_name:
                         tool_choice = {
                             "type": "tool",
-                            "name": chat_options.tool_choice.required_function_name,
+                            "name": required_function_name,
                         }
                     else:
                         tool_choice = {"type": "any"}
-                    if chat_options.allow_multiple_tool_calls is not None:
-                        tool_choice["disable_parallel_tool_use"] = not chat_options.allow_multiple_tool_calls
+                    if allow_multiple is not None:
+                        tool_choice["disable_parallel_tool_use"] = not allow_multiple
                     result["tool_choice"] = tool_choice
                 case "none":
                     result["tool_choice"] = {"type": "none"}
@@ -531,7 +656,10 @@ class AnthropicClient(BaseChatClient):
 
                 return ChatResponseUpdate(
                     response_id=event.message.id,
-                    contents=[*self._parse_contents_from_anthropic(event.message.content), *usage_details],
+                    contents=[
+                        *self._parse_contents_from_anthropic(event.message.content),
+                        *usage_details,
+                    ],
                     model_id=event.message.model,
                     finish_reason=FINISH_REASON_MAP.get(event.message.stop_reason)
                     if event.message.stop_reason
@@ -579,7 +707,8 @@ class AnthropicClient(BaseChatClient):
         return usage_details
 
     def _parse_contents_from_anthropic(
-        self, content: Sequence[BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock]
+        self,
+        content: Sequence[BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock],
     ) -> list[Contents]:
         """Parse contents from the Anthropic message."""
         contents: list[Contents] = []
@@ -609,7 +738,12 @@ class AnthropicClient(BaseChatClient):
                         contents.append(
                             CodeInterpreterToolCallContent(
                                 call_id=content_block.id,
-                                inputs=[TextContent(text=str(content_block.input), raw_representation=content_block)],
+                                inputs=[
+                                    TextContent(
+                                        text=str(content_block.input),
+                                        raw_representation=content_block,
+                                    )
+                                ],
                                 raw_representation=content_block,
                             )
                         )
@@ -630,7 +764,10 @@ class AnthropicClient(BaseChatClient):
                             parsed_output = self._parse_contents_from_anthropic(content_block.content)
                         elif isinstance(content_block.content, (str, bytes)):
                             parsed_output = [
-                                TextContent(text=str(content_block.content), raw_representation=content_block)
+                                TextContent(
+                                    text=str(content_block.content),
+                                    raw_representation=content_block,
+                                )
                             ]
                         else:
                             parsed_output = self._parse_contents_from_anthropic([content_block.content])
@@ -679,7 +816,8 @@ class AnthropicClient(BaseChatClient):
                             for code_file_content in content_block.content.content:
                                 code_outputs.append(
                                     HostedFileContent(
-                                        file_id=code_file_content.file_id, raw_representation=code_file_content
+                                        file_id=code_file_content.file_id,
+                                        raw_representation=code_file_content,
                                     )
                                 )
                     contents.append(
@@ -720,7 +858,8 @@ class AnthropicClient(BaseChatClient):
                             for bash_file_content in content_block.content.content:
                                 contents.append(
                                     HostedFileContent(
-                                        file_id=bash_file_content.file_id, raw_representation=bash_file_content
+                                        file_id=bash_file_content.file_id,
+                                        raw_representation=bash_file_content,
                                     )
                                 )
                     contents.append(
@@ -842,7 +981,12 @@ class AnthropicClient(BaseChatClient):
                         )
                     )
                 case "thinking" | "thinking_delta":
-                    contents.append(TextReasoningContent(text=content_block.thinking, raw_representation=content_block))
+                    contents.append(
+                        TextReasoningContent(
+                            text=content_block.thinking,
+                            raw_representation=content_block,
+                        )
+                    )
                 case _:
                     logger.debug(f"Ignoring unsupported content type: {content_block.type} for now")
         return contents
@@ -865,7 +1009,10 @@ class AnthropicClient(BaseChatClient):
                     if not cit.annotated_regions:
                         cit.annotated_regions = []
                     cit.annotated_regions.append(
-                        TextSpanRegion(start_index=citation.start_char_index, end_index=citation.end_char_index)
+                        TextSpanRegion(
+                            start_index=citation.start_char_index,
+                            end_index=citation.end_char_index,
+                        )
                     )
                 case "page_location":
                     cit.title = citation.document_title
@@ -888,7 +1035,10 @@ class AnthropicClient(BaseChatClient):
                     if not cit.annotated_regions:
                         cit.annotated_regions = []
                     cit.annotated_regions.append(
-                        TextSpanRegion(start_index=citation.start_block_index, end_index=citation.end_block_index)
+                        TextSpanRegion(
+                            start_index=citation.start_block_index,
+                            end_index=citation.end_block_index,
+                        )
                     )
                 case "web_search_result_location":
                     cit.title = citation.title
@@ -901,7 +1051,10 @@ class AnthropicClient(BaseChatClient):
                     if not cit.annotated_regions:
                         cit.annotated_regions = []
                     cit.annotated_regions.append(
-                        TextSpanRegion(start_index=citation.start_block_index, end_index=citation.end_block_index)
+                        TextSpanRegion(
+                            start_index=citation.start_block_index,
+                            end_index=citation.end_block_index,
+                        )
                     )
                 case _:
                     logger.debug(f"Unknown citation type encountered: {citation.type}")

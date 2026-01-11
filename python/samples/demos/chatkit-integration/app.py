@@ -289,8 +289,10 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             # Use the chat client directly for a quick, lightweight call
             response = await self.weather_agent.chat_client.get_response(
                 messages=title_prompt,
-                temperature=0.3,
-                max_tokens=20,
+                options={
+                    "temperature": 0.3,
+                    "max_tokens": 20,
+                },
             )
 
             if response.messages and response.messages[-1].text:

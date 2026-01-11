@@ -37,17 +37,27 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
     }
 
     # Try to get instructions
-    if hasattr(entity_object, "chat_options") and hasattr(entity_object.chat_options, "instructions"):
-        metadata["instructions"] = entity_object.chat_options.instructions
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        if isinstance(chat_opts, dict):
+            if "instructions" in chat_opts:
+                metadata["instructions"] = chat_opts.get("instructions")
+        elif hasattr(chat_opts, "instructions"):
+            metadata["instructions"] = chat_opts.instructions
 
-    # Try to get model - check both chat_options and chat_client
+    # Try to get model - check both default_options and chat_client
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        if isinstance(chat_opts, dict):
+            if chat_opts.get("model_id"):
+                metadata["model"] = chat_opts.get("model_id")
+        elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
+            metadata["model"] = chat_opts.model_id
     if (
-        hasattr(entity_object, "chat_options")
-        and hasattr(entity_object.chat_options, "model_id")
-        and entity_object.chat_options.model_id
+        metadata["model"] is None
+        and hasattr(entity_object, "chat_client")
+        and hasattr(entity_object.chat_client, "model_id")
     ):
-        metadata["model"] = entity_object.chat_options.model_id
-    elif hasattr(entity_object, "chat_client") and hasattr(entity_object.chat_client, "model_id"):
         metadata["model"] = entity_object.chat_client.model_id
 
     # Try to get chat client type

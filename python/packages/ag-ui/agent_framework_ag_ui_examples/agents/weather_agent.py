@@ -57,7 +57,7 @@ def get_forecast(location: str, days: int = 3) -> str:
     return f"{days}-day forecast for {location}:\n" + "\n".join(forecast)
 
 
-def weather_agent(chat_client: ChatClientProtocol) -> ChatAgent:
+def weather_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
     """Create a weather agent with get_weather and get_forecast tools.
 
     Args:
@@ -66,7 +66,7 @@ def weather_agent(chat_client: ChatClientProtocol) -> ChatAgent:
     Returns:
         A configured ChatAgent instance with weather tools
     """
-    return ChatAgent(
+    return ChatAgent[Any](
         name="weather_agent",
         instructions=(
             "You are a helpful weather assistant. "

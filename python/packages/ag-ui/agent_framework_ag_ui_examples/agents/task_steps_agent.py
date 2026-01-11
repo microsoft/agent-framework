@@ -52,7 +52,7 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return "Steps generated."
 
 
-def _create_task_steps_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
     """Create the task steps agent using tool-based approach for streaming.
 
     Args:
@@ -61,7 +61,7 @@ def _create_task_steps_agent(chat_client: ChatClientProtocol) -> AgentFrameworkA
     Returns:
         A configured AgentFrameworkAgent instance
     """
-    agent = ChatAgent(
+    agent = ChatAgent[Any](
         name="task_steps_agent",
         instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
 
@@ -331,7 +331,7 @@ class TaskStepsAgentWithExecution:
             yield run_finished_event
 
 
-def task_steps_agent_wrapped(chat_client: ChatClientProtocol) -> TaskStepsAgentWithExecution:
+def task_steps_agent_wrapped(chat_client: ChatClientProtocol[Any]) -> TaskStepsAgentWithExecution:
     """Create a task steps agent with execution simulation.
 
     Args:

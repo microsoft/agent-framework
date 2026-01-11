@@ -115,7 +115,6 @@ async def test_cmc_no_fcc_in_response(
     openai_chat_completion = OpenAIChatClient()
     await openai_chat_completion.get_response(
         messages=chat_history,
-        arguments={},
     )
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
@@ -199,7 +198,7 @@ async def test_cmc_additional_properties(
     chat_history.append(ChatMessage(role="user", text="hello world"))
 
     openai_chat_completion = OpenAIChatClient()
-    await openai_chat_completion.get_response(messages=chat_history, additional_properties={"reasoning_effort": "low"})
+    await openai_chat_completion.get_response(messages=chat_history, options={"reasoning_effort": "low"})
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
@@ -382,8 +381,6 @@ def test_chat_response_created_at_uses_utc(openai_unit_test_env: dict[str, str])
     This is a regression test for the issue where created_at was using local time
     but labeling it as UTC (with 'Z' suffix).
     """
-    from agent_framework import ChatOptions
-
     # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
     # This ensures we test that the timestamp is actually converted to UTC
     utc_timestamp = 1733011890
@@ -399,7 +396,7 @@ def test_chat_response_created_at_uses_utc(openai_unit_test_env: dict[str, str])
     )
 
     client = OpenAIChatClient()
-    response = client._parse_response_from_openai(mock_response, ChatOptions())
+    response = client._parse_response_from_openai(mock_response, {})
 
     # Verify that created_at is correctly formatted as UTC
     assert response.created_at is not None

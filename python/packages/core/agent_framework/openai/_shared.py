@@ -24,7 +24,6 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._types import ChatOptions
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -43,7 +42,7 @@ RESPONSE_TYPE = Union[
     _legacy_response.HttpxBinaryResponseContent,
 ]
 
-OPTION_TYPE = Union[ChatOptions, dict[str, Any]]
+OPTION_TYPE = dict[str, Any]
 
 
 __all__ = ["OpenAISettings"]
