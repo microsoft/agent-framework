@@ -310,9 +310,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 env_file_encoding=env_file_encoding,
             )
         except ValidationError as ex:
-            raise ServiceInitializationError(
-                "Failed to create Anthropic settings.", ex
-            ) from ex
+            raise ServiceInitializationError("Failed to create Anthropic settings.", ex) from ex
 
         if anthropic_client is None:
             if not anthropic_settings.api_key:
@@ -349,9 +347,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
         # execute
-        message = await self.anthropic_client.beta.messages.create(
-            **run_options, stream=False
-        )
+        message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
         # process
         return self._process_message(message)
 
@@ -366,9 +362,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
         # execute and process
-        async for chunk in await self.anthropic_client.beta.messages.create(
-            **run_options, stream=True
-        ):
+        async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
             parsed_chunk = self._process_stream_event(chunk)
             if parsed_chunk:
                 yield parsed_chunk
@@ -392,9 +386,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             A dictionary of run options for the Anthropic client.
         """
         # Start with a copy of options
-        run_options: dict[str, Any] = {
-            k: v for k, v in options.items() if v is not None
-        }
+        run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None}
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -415,11 +407,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if (
-            messages
-            and isinstance(messages[0], ChatMessage)
-            and messages[0].role == Role.SYSTEM
-        ):
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
             run_options["system"] = messages[0].text
 
         # betas
@@ -457,20 +445,14 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             *options.get("additional_beta_flags", []),
         }
 
-    def _prepare_messages_for_anthropic(
-        self, messages: MutableSequence[ChatMessage]
-    ) -> list[dict[str, Any]]:
+    def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare a list of ChatMessages for the Anthropic client.
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if (
-            messages
-            and isinstance(messages[0], ChatMessage)
-            and messages[0].role == Role.SYSTEM
-        ):
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
@@ -490,65 +472,49 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     a_content.append({"type": "text", "text": content.text})
                 case "data":
                     if content.has_top_level_media_type("image"):
-                        a_content.append(
-                            {
-                                "type": "image",
-                                "source": {
-                                    "data": content.get_data_bytes_as_str(),
-                                    "media_type": content.media_type,
-                                    "type": "base64",
-                                },
-                            }
-                        )
+                        a_content.append({
+                            "type": "image",
+                            "source": {
+                                "data": content.get_data_bytes_as_str(),
+                                "media_type": content.media_type,
+                                "type": "base64",
+                            },
+                        })
                     else:
-                        logger.debug(
-                            f"Ignoring unsupported data content media type: {content.media_type} for now"
-                        )
+                        logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "uri":
                     if content.has_top_level_media_type("image"):
-                        a_content.append(
-                            {
-                                "type": "image",
-                                "source": {"type": "url", "url": content.uri},
-                            }
-                        )
+                        a_content.append({
+                            "type": "image",
+                            "source": {"type": "url", "url": content.uri},
+                        })
                     else:
-                        logger.debug(
-                            f"Ignoring unsupported data content media type: {content.media_type} for now"
-                        )
+                        logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
-                    a_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": content.call_id,
-                            "name": content.name,
-                            "input": content.parse_arguments(),
-                        }
-                    )
+                    a_content.append({
+                        "type": "tool_use",
+                        "id": content.call_id,
+                        "name": content.name,
+                        "input": content.parse_arguments(),
+                    })
                 case "function_result":
-                    a_content.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": content.call_id,
-                            "content": prepare_function_call_results(content.result),
-                            "is_error": content.exception is not None,
-                        }
-                    )
+                    a_content.append({
+                        "type": "tool_result",
+                        "tool_use_id": content.call_id,
+                        "content": prepare_function_call_results(content.result),
+                        "is_error": content.exception is not None,
+                    })
                 case "text_reasoning":
                     a_content.append({"type": "thinking", "thinking": content.text})
                 case _:
-                    logger.debug(
-                        f"Ignoring unsupported content type: {content.type} for now"
-                    )
+                    logger.debug(f"Ignoring unsupported content type: {content.type} for now")
 
         return {
             "role": ROLE_MAP.get(message.role, "user"),
             "content": a_content,
         }
 
-    def _prepare_tools_for_anthropic(
-        self, options: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    def _prepare_tools_for_anthropic(self, options: dict[str, Any]) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
         Args:
@@ -569,14 +535,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     case MutableMapping():
                         tool_list.append(tool)
                     case AIFunction():
-                        tool_list.append(
-                            {
-                                "type": "custom",
-                                "name": tool.name,
-                                "description": tool.description,
-                                "input_schema": tool.parameters(),
-                            }
-                        )
+                        tool_list.append({
+                            "type": "custom",
+                            "name": tool.name,
+                            "description": tool.description,
+                            "input_schema": tool.parameters(),
+                        })
                     case HostedWebSearchTool():
                         search_tool: dict[str, Any] = {
                             "type": "web_search_20250305",
@@ -598,16 +562,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             "url": str(tool.url),
                         }
                         if tool.allowed_tools:
-                            server_def["tool_configuration"] = {
-                                "allowed_tools": list(tool.allowed_tools)
-                            }
+                            server_def["tool_configuration"] = {"allowed_tools": list(tool.allowed_tools)}
                         if tool.headers and (auth := tool.headers.get("authorization")):
                             server_def["authorization_token"] = auth
                         mcp_server_list.append(server_def)
                     case _:
-                        logger.debug(
-                            f"Ignoring unsupported tool type: {type(tool)} for now"
-                        )
+                        logger.debug(f"Ignoring unsupported tool type: {type(tool)} for now")
 
             if tool_list:
                 result["tools"] = tool_list
@@ -627,9 +587,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 required_function_name = tool_choice_value.get("required_function_name")
             else:
                 tool_choice_mode = tool_choice_value.mode
-                required_function_name = getattr(
-                    tool_choice_value, "required_function_name", None
-                )
+                required_function_name = getattr(tool_choice_value, "required_function_name", None)
 
             match tool_choice_mode:
                 case "auto":
@@ -651,9 +609,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 case "none":
                     result["tool_choice"] = {"type": "none"}
                 case _:
-                    logger.debug(
-                        f"Ignoring unsupported tool choice mode: {tool_choice_mode} for now"
-                    )
+                    logger.debug(f"Ignoring unsupported tool choice mode: {tool_choice_mode} for now")
 
         return result or None
 
@@ -679,15 +635,11 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             ],
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model_id=message.model,
-            finish_reason=FINISH_REASON_MAP.get(message.stop_reason)
-            if message.stop_reason
-            else None,
+            finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
             raw_representation=message,
         )
 
-    def _process_stream_event(
-        self, event: BetaRawMessageStreamEvent
-    ) -> ChatResponseUpdate | None:
+    def _process_stream_event(self, event: BetaRawMessageStreamEvent) -> ChatResponseUpdate | None:
         """Process a streaming event from the Anthropic client.
 
         Args:
@@ -699,9 +651,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         match event.type:
             case "message_start":
                 usage_details: list[UsageContent] = []
-                if event.message.usage and (
-                    details := self._parse_usage_from_anthropic(event.message.usage)
-                ):
+                if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
                     usage_details.append(UsageContent(details=details))
 
                 return ChatResponseUpdate(
@@ -719,14 +669,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             case "message_delta":
                 usage = self._parse_usage_from_anthropic(event.usage)
                 return ChatResponseUpdate(
-                    contents=[
-                        UsageContent(details=usage, raw_representation=event.usage)
-                    ]
-                    if usage
-                    else [],
-                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason)
-                    if event.delta.stop_reason
-                    else None,
+                    contents=[UsageContent(details=usage, raw_representation=event.usage)] if usage else [],
+                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
                     raw_representation=event,
                 )
             case "message_stop":
@@ -744,16 +688,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     raw_representation=event,
                 )
             case "content_block_stop":
-                logger.debug(
-                    "Received content_block_stop event; no content to process."
-                )
+                logger.debug("Received content_block_stop event; no content to process.")
             case _:
                 logger.debug(f"Ignoring unsupported event type: {event.type}")
         return None
 
-    def _parse_usage_from_anthropic(
-        self, usage: BetaUsage | BetaMessageDeltaUsage | None
-    ) -> UsageDetails | None:
+    def _parse_usage_from_anthropic(self, usage: BetaUsage | BetaMessageDeltaUsage | None) -> UsageDetails | None:
         """Parse usage details from the Anthropic message usage."""
         if not usage:
             return None
@@ -761,13 +701,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         if usage.input_tokens is not None:
             usage_details.input_token_count = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details.additional_counts["anthropic.cache_creation_input_tokens"] = (
-                usage.cache_creation_input_tokens
-            )
+            usage_details.additional_counts["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
         if usage.cache_read_input_tokens is not None:
-            usage_details.additional_counts["anthropic.cache_read_input_tokens"] = (
-                usage.cache_read_input_tokens
-            )
+            usage_details.additional_counts["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
         return usage_details
 
     def _parse_contents_from_anthropic(
@@ -783,9 +719,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         TextContent(
                             text=content_block.text,
                             raw_representation=content_block,
-                            annotations=self._parse_citations_from_anthropic(
-                                content_block
-                            ),
+                            annotations=self._parse_citations_from_anthropic(content_block),
                         )
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
@@ -827,9 +761,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     parsed_output: list[Contents] | None = None
                     if content_block.content:
                         if isinstance(content_block.content, list):
-                            parsed_output = self._parse_contents_from_anthropic(
-                                content_block.content
-                            )
+                            parsed_output = self._parse_contents_from_anthropic(content_block.content)
                         elif isinstance(content_block.content, (str, bytes)):
                             parsed_output = [
                                 TextContent(
@@ -838,9 +770,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                 )
                             ]
                         else:
-                            parsed_output = self._parse_contents_from_anthropic(
-                                [content_block.content]
-                            )
+                            parsed_output = self._parse_contents_from_anthropic([content_block.content])
                     contents.append(
                         MCPServerToolResultContent(
                             call_id=content_block.tool_use_id,
@@ -853,9 +783,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     contents.append(
                         FunctionResultContent(
                             call_id=content_block.tool_use_id,
-                            name=name
-                            if name and call_id == content_block.tool_use_id
-                            else "web_tool",
+                            name=name if name and call_id == content_block.tool_use_id else "web_tool",
                             result=content_block.content,
                             raw_representation=content_block,
                         )
@@ -863,9 +791,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 case "code_execution_tool_result":
                     code_outputs: list[Contents] = []
                     if content_block.content:
-                        if isinstance(
-                            content_block.content, BetaCodeExecutionToolResultError
-                        ):
+                        if isinstance(content_block.content, BetaCodeExecutionToolResultError):
                             code_outputs.append(
                                 ErrorContent(
                                     message=content_block.content.error_code,
@@ -951,9 +877,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             text_editor_outputs.append(
                                 ErrorContent(
                                     message=content_block.content.error_code
-                                    and getattr(
-                                        content_block.content, "error_message", ""
-                                    ),
+                                    and getattr(content_block.content, "error_message", ""),
                                     raw_representation=content_block.content,
                                 )
                             )
@@ -966,9 +890,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                             TextSpanRegion(
                                                 start_index=content_block.content.start_line,
                                                 end_index=content_block.content.start_line
-                                                + (
-                                                    content_block.content.num_lines or 0
-                                                ),
+                                                + (content_block.content.num_lines or 0),
                                             )
                                         ],
                                     )
@@ -990,8 +912,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                     raw_representation=content_block.content,
                                     annotated_regions=[
                                         TextSpanRegion(
-                                            start_index=content_block.content.old_start
-                                            or 0,
+                                            start_index=content_block.content.old_start or 0,
                                             end_index=(
                                                 (content_block.content.old_start or 0)
                                                 + (content_block.content.old_lines or 0)
@@ -1011,8 +932,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                     else None,
                                     annotated_regions=[
                                         TextSpanRegion(
-                                            start_index=content_block.content.new_start
-                                            or 0,
+                                            start_index=content_block.content.new_start or 0,
                                             end_index=(
                                                 (content_block.content.new_start or 0)
                                                 + (content_block.content.new_lines or 0)
@@ -1024,18 +944,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                 and content_block.content.new_start is not None
                                 else None
                             )
-                            annotations = [
-                                ann
-                                for ann in [old_annotation, new_annotation]
-                                if ann is not None
-                            ]
+                            annotations = [ann for ann in [old_annotation, new_annotation] if ann is not None]
 
                             text_editor_outputs.append(
                                 TextContent(
                                     text=(
-                                        "\n".join(content_block.content.lines)
-                                        if content_block.content.lines
-                                        else ""
+                                        "\n".join(content_block.content.lines) if content_block.content.lines else ""
                                     ),
                                     annotations=annotations or None,
                                     raw_representation=content_block.content,
@@ -1057,9 +971,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         )
                     )
                 case "input_json_delta":
-                    call_id, name = (
-                        self._last_call_id_name if self._last_call_id_name else ("", "")
-                    )
+                    call_id, name = self._last_call_id_name if self._last_call_id_name else ("", "")
                     contents.append(
                         FunctionCallContent(
                             call_id=call_id,
@@ -1076,9 +988,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         )
                     )
                 case _:
-                    logger.debug(
-                        f"Ignoring unsupported content type: {content_block.type} for now"
-                    )
+                    logger.debug(f"Ignoring unsupported content type: {content_block.type} for now")
         return contents
 
     def _parse_citations_from_anthropic(

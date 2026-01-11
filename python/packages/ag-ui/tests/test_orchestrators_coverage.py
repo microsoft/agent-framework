@@ -706,7 +706,7 @@ async def test_confirm_changes_closes_active_message_before_finish() -> None:
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Start"}]}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        chat_options=DEFAULT_OPTIONS,
         updates=updates,
     )
     context = TestExecutionContext(

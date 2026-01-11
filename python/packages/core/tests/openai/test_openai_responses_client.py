@@ -8,6 +8,23 @@ from typing import Annotated
 from unittest.mock import MagicMock, patch
 
 import pytest
+from openai import BadRequestError
+from openai.types.responses.response_reasoning_item import Summary
+from openai.types.responses.response_reasoning_summary_text_delta_event import (
+    ResponseReasoningSummaryTextDeltaEvent,
+)
+from openai.types.responses.response_reasoning_summary_text_done_event import (
+    ResponseReasoningSummaryTextDoneEvent,
+)
+from openai.types.responses.response_reasoning_text_delta_event import (
+    ResponseReasoningTextDeltaEvent,
+)
+from openai.types.responses.response_reasoning_text_done_event import (
+    ResponseReasoningTextDoneEvent,
+)
+from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
+from pydantic import BaseModel
+
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
@@ -48,22 +65,6 @@ from agent_framework.exceptions import (
 )
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
-from openai import BadRequestError
-from openai.types.responses.response_reasoning_item import Summary
-from openai.types.responses.response_reasoning_summary_text_delta_event import (
-    ResponseReasoningSummaryTextDeltaEvent,
-)
-from openai.types.responses.response_reasoning_summary_text_done_event import (
-    ResponseReasoningSummaryTextDoneEvent,
-)
-from openai.types.responses.response_reasoning_text_delta_event import (
-    ResponseReasoningTextDeltaEvent,
-)
-from openai.types.responses.response_reasoning_text_done_event import (
-    ResponseReasoningTextDoneEvent,
-)
-from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
-from pydantic import BaseModel
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -99,16 +100,12 @@ async def create_vector_store(
         poll_interval_ms=1000,
     )
     if result.last_error is not None:
-        raise Exception(
-            f"Vector store file processing failed with status: {result.last_error.message}"
-        )
+        raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
     return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
 
 
-async def delete_vector_store(
-    client: OpenAIResponsesClient, file_id: str, vector_store_id: str
-) -> None:
+async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
     """Delete the vector store after tests."""
 
     await client.client.vector_stores.delete(vector_store_id=vector_store_id)
@@ -126,10 +123,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     openai_responses_client = OpenAIResponsesClient()
 
-    assert (
-        openai_responses_client.model_id
-        == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    )
+    assert openai_responses_client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
@@ -156,10 +150,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
         default_headers=default_headers,
     )
 
-    assert (
-        openai_responses_client.model_id
-        == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    )
+    assert openai_responses_client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
@@ -198,9 +189,7 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
 
     openai_responses_client = OpenAIResponsesClient.from_dict(settings)
     dumped_settings = openai_responses_client.to_dict()
-    assert (
-        dumped_settings["model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    )
+    assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
         assert key in dumped_settings["default_headers"]
@@ -218,9 +207,7 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
 
     openai_responses_client = OpenAIResponsesClient.from_dict(settings)
     dumped_settings = openai_responses_client.to_dict()
-    assert (
-        dumped_settings["model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    )
+    assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
     assert "User-Agent" not in dumped_settings.get("default_headers", {})
@@ -301,14 +288,10 @@ def test_file_search_tool_with_invalid_inputs() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with invalid inputs type (should trigger ValueError)
-    file_search_tool = HostedFileSearchTool(
-        inputs=[HostedFileContent(file_id="invalid")]
-    )
+    file_search_tool = HostedFileSearchTool(inputs=[HostedFileContent(file_id="invalid")])
 
     # Should raise an error due to invalid inputs
-    with pytest.raises(
-        ValueError, match="HostedFileSearchTool requires inputs to be of type"
-    ):
+    with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
         asyncio.run(
             client.get_response(
                 messages=[ChatMessage(role="user", text="Search files")],
@@ -360,11 +343,7 @@ def test_content_filter_exception() -> None:
 
     with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
-            asyncio.run(
-                client.get_response(
-                    messages=[ChatMessage(role="user", text="Test message")]
-                )
-            )
+            asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Test message")]))
 
         assert "content error" in str(exc_info.value)
 
@@ -398,9 +377,7 @@ def test_chat_message_parsing_with_function_calls() -> None:
         additional_properties={"fc_id": "test-fc-id"},
     )
 
-    function_result = FunctionResultContent(
-        call_id="test-call-id", result="Function executed successfully"
-    )
+    function_result = FunctionResultContent(call_id="test-call-id", result="Function executed successfully")
 
     messages = [
         ChatMessage(role="user", text="Call a function"),
@@ -429,9 +406,7 @@ async def test_response_format_parse_path() -> None:
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = None  # No conversation object
 
-    with patch.object(
-        client.client.responses, "parse", return_value=mock_parsed_response
-    ):
+    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
             messages=[ChatMessage(role="user", text="Test message")],
             options={"response_format": OutputStruct, "store": True},
@@ -458,9 +433,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     mock_parsed_response.conversation = MagicMock()
     mock_parsed_response.conversation.id = "conversation_456"
 
-    with patch.object(
-        client.client.responses, "parse", return_value=mock_parsed_response
-    ):
+    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
             messages=[ChatMessage(role="user", text="Test message")],
             options={"response_format": OutputStruct, "store": True},
@@ -505,12 +478,8 @@ async def test_streaming_content_filter_exception_handling() -> None:
         )
         mock_create.side_effect.code = "content_filter"
 
-        with pytest.raises(
-            OpenAIContentFilterException, match="service encountered a content error"
-        ):
-            response_stream = client.get_streaming_response(
-                messages=[ChatMessage(role="user", text="Test")]
-            )
+        with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
+            response_stream = client.get_streaming_response(messages=[ChatMessage(role="user", text="Test")])
             async for _ in response_stream:
                 break
 
@@ -860,9 +829,7 @@ def test_prepare_tools_for_openai_with_raw_image_generation() -> None:
     assert image_tool["output_quality"] == 75
 
 
-def test_prepare_tools_for_openai_with_raw_image_generation_openai_responses_params() -> (
-    None
-):
+def test_prepare_tools_for_openai_with_raw_image_generation_openai_responses_params() -> None:
     """Test raw image_generation tool with OpenAI-specific parameters."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -946,13 +913,9 @@ def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
     mock_item.server_label = "My_MCP"
     mock_event.item = mock_item
 
-    update = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
     assert any(isinstance(c, FunctionApprovalRequestContent) for c in update.contents)
-    fa = next(
-        c for c in update.contents if isinstance(c, FunctionApprovalRequestContent)
-    )
+    fa = next(c for c in update.contents if isinstance(c, FunctionApprovalRequestContent))
     assert fa.id == "approval-stream-1"
     assert fa.function_call.name == "do_stream_action"
 
@@ -999,23 +962,15 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     mock_response2.output = [mock_text_item]
 
     # Patch the create call to return the two mocked responses in sequence
-    with patch.object(
-        client.client.responses, "create", side_effect=[mock_response1, mock_response2]
-    ) as mock_create:
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
         # First call: get the approval request
-        response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Trigger approval")]
-        )
-        assert isinstance(
-            response.messages[0].contents[0], FunctionApprovalRequestContent
-        )
+        response = await client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")])
+        assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
         req = response.messages[0].contents[0]
         assert req.id == "approval-1"
 
         # Build a user approval and send it (include required function_call)
-        approval = FunctionApprovalResponseContent(
-            approved=True, id=req.id, function_call=req.function_call
-        )
+        approval = FunctionApprovalResponseContent(approved=True, id=req.id, function_call=req.function_call)
         approval_message = ChatMessage(role="user", contents=[approval])
         _ = await client.get_response(messages=[approval_message])
 
@@ -1116,9 +1071,7 @@ def test_streaming_response_basic_structure() -> None:
     # Test with a basic mock event to ensure the method returns proper structure
     mock_event = MagicMock()
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )  # type: ignore
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)  # type: ignore
 
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
@@ -1141,9 +1094,7 @@ def test_streaming_response_created_type() -> None:
     mock_event.response.conversation = MagicMock()
     mock_event.response.conversation.id = "conv_5678"
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert response.response_id == "resp_1234"
     assert response.conversation_id == "conv_5678"
@@ -1162,9 +1113,7 @@ def test_streaming_response_in_progress_type() -> None:
     mock_event.response.conversation = MagicMock()
     mock_event.response.conversation.id = "conv_5678"
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert response.response_id == "resp_1234"
     assert response.conversation_id == "conv_5678"
@@ -1185,9 +1134,7 @@ def test_streaming_annotation_added_with_file_path() -> None:
         "index": 42,
     }
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert len(response.contents) == 1
     content = response.contents[0]
@@ -1214,9 +1161,7 @@ def test_streaming_annotation_added_with_file_citation() -> None:
         "index": 15,
     }
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert len(response.contents) == 1
     content = response.contents[0]
@@ -1245,9 +1190,7 @@ def test_streaming_annotation_added_with_container_file_citation() -> None:
         "end_index": 50,
     }
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert len(response.contents) == 1
     content = response.contents[0]
@@ -1274,9 +1217,7 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
         "url": "https://example.com",
     }
 
-    response = client._parse_chunk_from_openai(
-        mock_event, chat_options, function_call_ids
-    )
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     # url_citation should not produce HostedFileContent
     assert len(response.contents) == 0
@@ -1300,11 +1241,7 @@ def test_service_response_exception_includes_original_error_details() -> None:
         patch.object(client.client.responses, "parse", side_effect=mock_error),
         pytest.raises(ServiceResponseException) as exc_info,
     ):
-        asyncio.run(
-            client.get_response(
-                messages=messages, options={"response_format": OutputStruct}
-            )
-        )
+        asyncio.run(client.get_response(messages=messages, options={"response_format": OutputStruct}))
 
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
@@ -1320,9 +1257,7 @@ def test_get_streaming_response_with_response_format() -> None:
     with pytest.raises(ServiceResponseException):
 
         async def run_streaming():
-            async for _ in client.get_streaming_response(
-                messages=messages, options={"response_format": OutputStruct}
-            ):
+            async for _ in client.get_streaming_response(messages=messages, options={"response_format": OutputStruct}):
                 pass
 
         asyncio.run(run_streaming())
@@ -1338,18 +1273,14 @@ def test_prepare_content_for_openai_image_content() -> None:
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
     )
-    result = client._prepare_content_for_openai(
-        Role.USER, image_content_with_detail, {}
-    )  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, image_content_with_detail, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["image_url"] == "https://example.com/image.jpg"
     assert result["detail"] == "high"
     assert result["file_id"] == "file_123"
 
     # Test image content without additional properties (defaults)
-    image_content_basic = UriContent(
-        uri="https://example.com/basic.png", media_type="image/png"
-    )
+    image_content_basic = UriContent(uri="https://example.com/basic.png", media_type="image/png")
     result = client._prepare_content_for_openai(Role.USER, image_content_basic, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
@@ -1379,16 +1310,12 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test unsupported audio format
-    unsupported_audio = UriContent(
-        uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg"
-    )
+    unsupported_audio = UriContent(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
     result = client._prepare_content_for_openai(Role.USER, unsupported_audio, {})  # type: ignore
     assert result == {}
 
     # Test non-media content
-    text_uri_content = UriContent(
-        uri="https://example.com/document.txt", media_type="text/plain"
-    )
+    text_uri_content = UriContent(uri="https://example.com/document.txt", media_type="text/plain")
     result = client._prepare_content_for_openai(Role.USER, text_uri_content, {})  # type: ignore
     assert result == {}
 
@@ -1410,15 +1337,12 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
     mock_item_image.code = None
     mock_event_image.item = mock_item_image
 
-    result = client._parse_chunk_from_openai(
-        mock_event_image, chat_options, function_call_ids
-    )  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
     assert isinstance(result.contents[0], CodeInterpreterToolResultContent)
     assert result.contents[0].outputs
     assert any(
-        isinstance(out, UriContent) and out.uri == "https://example.com/plot.png"
-        for out in result.contents[0].outputs
+        isinstance(out, UriContent) and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs
     )
 
 
@@ -1438,17 +1362,12 @@ def test_parse_chunk_from_openai_reasoning() -> None:
     mock_item_reasoning.summary = ["Problem analysis summary"]
     mock_event_reasoning.item = mock_item_reasoning
 
-    result = client._parse_chunk_from_openai(
-        mock_event_reasoning, chat_options, function_call_ids
-    )  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
     assert isinstance(result.contents[0], TextReasoningContent)
     assert result.contents[0].text == "Analyzing the problem step by step..."
     if result.contents[0].additional_properties:
-        assert (
-            result.contents[0].additional_properties["summary"]
-            == "Problem analysis summary"
-        )
+        assert result.contents[0].additional_properties["summary"] == "Problem analysis summary"
 
 
 def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
@@ -1464,9 +1383,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
             "encrypted_content": "secure_data_456",
         },
     )
-    result = client._prepare_content_for_openai(
-        Role.ASSISTANT, comprehensive_reasoning, {}
-    )  # type: ignore
+    result = client._prepare_content_for_openai(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
     assert result["summary"]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
@@ -1490,12 +1407,8 @@ def test_streaming_reasoning_text_delta_event() -> None:
         delta="reasoning delta",
     )
 
-    with patch.object(
-        client, "_get_metadata_from_response", return_value={}
-    ) as mock_metadata:
-        response = client._parse_chunk_from_openai(
-            event, chat_options, function_call_ids
-        )  # type: ignore
+    with patch.object(client, "_get_metadata_from_response", return_value={}) as mock_metadata:
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1519,12 +1432,8 @@ def test_streaming_reasoning_text_done_event() -> None:
         text="complete reasoning",
     )
 
-    with patch.object(
-        client, "_get_metadata_from_response", return_value={"test": "data"}
-    ) as mock_metadata:
-        response = client._parse_chunk_from_openai(
-            event, chat_options, function_call_ids
-        )  # type: ignore
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1549,12 +1458,8 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
         delta="summary delta",
     )
 
-    with patch.object(
-        client, "_get_metadata_from_response", return_value={}
-    ) as mock_metadata:
-        response = client._parse_chunk_from_openai(
-            event, chat_options, function_call_ids
-        )  # type: ignore
+    with patch.object(client, "_get_metadata_from_response", return_value={}) as mock_metadata:
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1578,12 +1483,8 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
         text="complete summary",
     )
 
-    with patch.object(
-        client, "_get_metadata_from_response", return_value={"custom": "meta"}
-    ) as mock_metadata:
-        response = client._parse_chunk_from_openai(
-            event, chat_options, function_call_ids
-        )  # type: ignore
+    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1618,15 +1519,9 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
         delta="reasoning",
     )
 
-    with patch.object(
-        client, "_get_metadata_from_response", return_value={"test": "metadata"}
-    ):
-        text_response = client._parse_chunk_from_openai(
-            text_event, chat_options, function_call_ids
-        )  # type: ignore
-        reasoning_response = client._parse_chunk_from_openai(
-            reasoning_event, chat_options, function_call_ids
-        )  # type: ignore
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "metadata"}):
+        text_response = client._parse_chunk_from_openai(text_event, chat_options, function_call_ids)  # type: ignore
+        reasoning_response = client._parse_chunk_from_openai(reasoning_event, chat_options, function_call_ids)  # type: ignore
 
         # Both should preserve metadata
         assert text_response.additional_properties == {"test": "metadata"}
@@ -1734,9 +1629,7 @@ def test_parse_response_from_openai_image_generation_format_detection():
     mock_response_jpeg.output = [mock_item_jpeg]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response_jpeg = client._parse_response_from_openai(
-            mock_response_jpeg, options={}
-        )  # type: ignore
+        response_jpeg = client._parse_response_from_openai(mock_response_jpeg, options={})  # type: ignore
     result_contents = response_jpeg.messages[0].contents
     assert isinstance(result_contents[1], ImageGenerationToolResultContent)
     outputs = result_contents[1].outputs
@@ -1762,9 +1655,7 @@ def test_parse_response_from_openai_image_generation_format_detection():
     mock_response_webp.output = [mock_item_webp]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response_webp = client._parse_response_from_openai(
-            mock_response_webp, options={}
-        )  # type: ignore
+        response_webp = client._parse_response_from_openai(mock_response_webp, options={})  # type: ignore
     outputs_webp = response_webp.messages[0].contents[1].outputs
     assert outputs_webp and isinstance(outputs_webp, DataContent)
     assert outputs_webp.media_type == "image/webp"
@@ -1970,9 +1861,7 @@ async def test_openai_responses_client_streaming() -> None:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
         chunks.append(chunk)
-    full_message = ChatResponse.from_chat_response_updates(
-        chunks, output_format_type=OutputStruct
-    )
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
     output = full_message.value
     assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
@@ -1987,9 +1876,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
 
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
-    messages: list[ChatMessage] = [
-        ChatMessage(role="user", text="What is the weather in Seattle?")
-    ]
+    messages: list[ChatMessage] = [ChatMessage(role="user", text="What is the weather in Seattle?")]
 
     # Test that the client can be used to get a response
     response = openai_responses_client.get_streaming_response(
@@ -2022,9 +1909,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
         assert isinstance(chunk, ChatResponseUpdate)
         chunks.append(chunk)
 
-    full_message = ChatResponse.from_chat_response_updates(
-        chunks, output_format_type=OutputStruct
-    )
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
     output = full_message.value
     assert output is not None, "Response value is None"
     assert "seattle" in output.location.lower()
@@ -2159,9 +2044,7 @@ async def test_openai_responses_client_file_search() -> None:
         tool_choice="auto",
     )
 
-    await delete_vector_store(
-        openai_responses_client, file_id, vector_store.vector_store_id
-    )
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
     assert "sunny" in response.text.lower()
     assert "75" in response.text
 
@@ -2199,9 +2082,7 @@ async def test_openai_responses_client_streaming_file_search() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
 
-    await delete_vector_store(
-        openai_responses_client, file_id, vector_store.vector_store_id
-    )
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
@@ -2233,9 +2114,7 @@ async def test_openai_responses_client_agent_basic_run_streaming():
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run_stream(
-            "Please respond with exactly: 'This is a streaming response test.'"
-        ):
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert isinstance(chunk, AgentRunResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
@@ -2256,17 +2135,13 @@ async def test_openai_responses_client_agent_thread_persistence():
         thread = agent.get_new_thread()
 
         # First interaction
-        first_response = await agent.run(
-            "My favorite programming language is Python. Remember this.", thread=thread
-        )
+        first_response = await agent.run("My favorite programming language is Python. Remember this.", thread=thread)
 
         assert isinstance(first_response, AgentRunResponse)
         assert first_response.text is not None
 
         # Second interaction - test memory
-        second_response = await agent.run(
-            "What is my favorite programming language?", thread=thread
-        )
+        second_response = await agent.run("What is my favorite programming language?", thread=thread)
 
         assert isinstance(second_response, AgentRunResponse)
         assert second_response.text is not None
@@ -2317,9 +2192,7 @@ async def test_openai_responses_client_agent_existing_thread():
     ) as first_agent:
         # Start a conversation and capture the thread
         thread = first_agent.get_new_thread()
-        first_response = await first_agent.run(
-            "My hobby is photography. Remember this.", thread=thread
-        )
+        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread)
 
         assert isinstance(first_response, AgentRunResponse)
         assert first_response.text is not None
@@ -2334,9 +2207,7 @@ async def test_openai_responses_client_agent_existing_thread():
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread
-            second_response = await second_agent.run(
-                "What is my hobby?", thread=preserved_thread
-            )
+            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
 
             assert isinstance(second_response, AgentRunResponse)
             assert second_response.text is not None
@@ -2353,17 +2224,14 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
         tools=[HostedCodeInterpreterTool()],
     ) as agent:
         # Test code interpreter functionality
-        response = await agent.run(
-            "Calculate the sum of numbers from 1 to 10 using Python code."
-        )
+        response = await agent.run("Calculate the sum of numbers from 1 to 10 using Python code.")
 
         assert isinstance(response, AgentRunResponse)
         assert response.text is not None
         assert len(response.text) > 0
         # Should contain calculation result (sum of 1-10 = 55) or code execution content
         contains_relevant_content = any(
-            term in response.text.lower()
-            for term in ["55", "sum", "code", "python", "calculate", "10"]
+            term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
         )
         assert contains_relevant_content or len(response.text.strip()) > 10
 
@@ -2375,14 +2243,10 @@ async def test_openai_responses_client_agent_image_generation_tool():
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can generate images.",
-        tools=HostedImageGenerationTool(
-            options={"image_size": "1024x1024", "media_type": "png"}
-        ),
+        tools=HostedImageGenerationTool(options={"image_size": "1024x1024", "media_type": "png"}),
     ) as agent:
         # Test image generation functionality
-        response = await agent.run(
-            "Generate an image of a cute red panda sitting on a tree branch in a forest."
-        )
+        response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
 
         assert isinstance(response, AgentRunResponse)
         assert response.messages
@@ -2417,9 +2281,7 @@ async def test_openai_responses_client_agent_level_tool_persistence():
         assert isinstance(first_response, AgentRunResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
-        assert any(
-            term in first_response.text.lower() for term in ["chicago", "sunny", "72"]
-        )
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
 
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
@@ -2427,9 +2289,7 @@ async def test_openai_responses_client_agent_level_tool_persistence():
         assert isinstance(second_response, AgentRunResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
-        assert any(
-            term in second_response.text.lower() for term in ["miami", "sunny", "72"]
-        )
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
 
 
 @pytest.mark.flaky
@@ -2462,9 +2322,7 @@ async def test_openai_responses_client_run_level_tool_isolation():
         assert first_response.text is not None
         # Should use the run-level weather tool (call count should be 1)
         assert call_count == 1
-        assert any(
-            term in first_response.text.lower() for term in ["chicago", "sunny", "72"]
-        )
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
 
         # Second run - run-level tool should NOT persist (key isolation test)
         second_response = await agent.run("What's the weather like in Miami?")
@@ -2546,10 +2404,7 @@ async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
         assert isinstance(response, AgentRunResponse)
         assert response.text
         # Should contain Azure-related content since it's asking about Azure CLI
-        assert any(
-            term in response.text.lower()
-            for term in ["azure", "storage", "account", "cli"]
-        )
+        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 
 
 @pytest.mark.flaky
@@ -2576,10 +2431,7 @@ async def test_openai_responses_client_agent_local_mcp_tool() -> None:
         assert response.text is not None
         assert len(response.text) > 0
         # Should contain Azure-related content since it's asking about Azure CLI
-        assert any(
-            term in response.text.lower()
-            for term in ["azure", "storage", "account", "cli"]
-        )
+        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 
 
 class ReleaseBrief(BaseModel):
