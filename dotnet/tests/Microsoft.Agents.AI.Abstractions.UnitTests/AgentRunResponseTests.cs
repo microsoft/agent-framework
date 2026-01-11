@@ -57,7 +57,7 @@ public class AgentRunResponseTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Usage = new UsageDetails(),
-            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })
         };
 
         AgentRunResponse response = new(chatResponse);

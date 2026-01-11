@@ -50,7 +50,7 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
 IChatClient client = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-    .GetOpenAIResponseClient(deploymentName)
+    .GetResponsesClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("My Sample App"))
@@ -198,7 +198,7 @@ Use the chat middleware when you attach directly to a chat client (e.g. minimal 
 IChatClient client = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-    .GetOpenAIResponseClient(deploymentName)
+    .GetResponsesClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))

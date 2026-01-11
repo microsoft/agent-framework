@@ -75,8 +75,10 @@ def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
     9. "Calibrate systems"
     10. "Final testing"
 
-    After calling the function, provide a brief acknowledgment like:
-    "I've created a plan with 10 steps. You can customize which steps to enable before I proceed."
+    IMPORTANT: When you call generate_task_steps, the user will be shown the steps and asked to approve.
+    Do NOT output any text along with the function call - just call the function.
+    After the user approves and the function executes, THEN provide a brief acknowledgment like:
+    "The plan has been created with X steps selected."
     """,
         chat_client=chat_client,
         tools=[generate_task_steps],
