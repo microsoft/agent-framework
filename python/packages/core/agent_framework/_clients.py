@@ -3,8 +3,22 @@
 import asyncio
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypedDict, runtime_checkable
+from collections.abc import (
+    AsyncIterable,
+    Callable,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+)
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 from ._logging import get_logger
 from ._memory import ContextProvider
@@ -17,7 +31,11 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
-from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionInvocationConfiguration, ToolProtocol
+from ._tools import (
+    FUNCTION_INVOKING_CHAT_CLIENT_MARKER,
+    FunctionInvocationConfiguration,
+    ToolProtocol,
+)
 from ._types import (
     ChatMessage,
     ChatResponse,

@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypedDict
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -27,10 +27,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 13):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore[import] # pragma: no cover
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 __all__ = ["AzureOpenAIResponsesClient"]
 

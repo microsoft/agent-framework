@@ -59,7 +59,7 @@ if TYPE_CHECKING:
         FunctionCallContent,
     )
 
-from typing import TypedDict, overload
+from typing import overload
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover

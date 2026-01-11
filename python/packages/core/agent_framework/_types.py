@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypedDict, TypeVar, overload
+from typing import Any, ClassVar, Literal, TypedDict, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
