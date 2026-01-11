@@ -2,7 +2,7 @@
 status: Proposed
 contact: eavanvalkenburg
 date: 2026-01-06
-deciders: markwallace-microsoft, dmytrostruk, taochenosu, alliscode, moonbox3
+deciders: markwallace-microsoft, dmytrostruk, taochenosu, alliscode, moonbox3, sphenry
 consulted: sergeymenshykh, rbarreto, dmytrostruk, westey-m
 informed:
 ---
@@ -112,7 +112,7 @@ The consolidation makes sense architecturally, but consider:
 
 ## Option 1: Status Quo
 - Good: Clear separation of streaming vs non-streaming logic
-- Good: Aligned with .NET design
+- Good: Aligned with .NET design, although it is already `run` for Python and `RunAsync` for .NET
 - Bad: Code duplication in decorators and middleware
 - Bad: More complex client implementations
 
@@ -122,16 +122,26 @@ The consolidation makes sense architecturally, but consider:
 - Good: Smaller API footprint for users to get familiar with
 - Good: People using OpenAI directly already expect this pattern
 - Bad: Increased complexity in decorators and middleware
-- Bad: Less alignment with .NET design
+- Bad: Less alignment with .NET design (`get_response(stream=True)` vs `GetStreamingResponseAsync`)
 
-## Option 3: Consolidate + Merge Agent Methods
-- Good: Further simplifies agent implementation
+## Option 3: Consolidate + Merge Agent and Workflow Methods
+- Good: Further simplifies agent and workflow implementation
 - Good: Single method for all chat interactions
 - Good: Smaller API footprint for users to get familiar with
 - Good: People using OpenAI directly already expect this pattern
+- Good: Workflows internally already use a single method (_run_workflow_with_tracing), so would eliminate public API duplication as well, with hardly any code changes
 - Bad: More breaking changes for agent users
 - Bad: Increased complexity in agent implementation
-- Bad: More extensive misalignment with .NET design
+- Bad: More extensive misalignment with .NET design (`run(stream=True)` vs `RunStreamingAsync` in addition to `get_response` change)
+
+## Misc
+
+Smaller questions to consider:
+- Should default be `stream=False` or `stream=True`? (Current is False)
+    - Default to `False` makes it simpler for new users, as non-streaming is easier to handle.
+    - Default to `False` aligns with existing behavior.
+    - Streaming tends to be faster, so defaulting to `True` could improve performance for common use cases.
+    - Should this differ between ChatClient, Agent and Workflows? (e.g., Agent and Workflow defaults to streaming, ChatClient to non-streaming)
 
 ## Decision Outcome
 TBD
