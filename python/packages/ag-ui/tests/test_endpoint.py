@@ -176,11 +176,8 @@ async def test_endpoint_error_handling():
     # Send invalid JSON to trigger parsing error before streaming
     response = client.post("/failing", data=b"invalid json", headers={"content-type": "application/json"})  # type: ignore
 
-    # The exception handler catches it and returns JSON error
-    assert response.status_code == 200
-    content = json.loads(response.content)
-    assert "error" in content
-    assert content["error"] == "An internal error has occurred."
+    # Pydantic validation now returns 422 for invalid request body
+    assert response.status_code == 422
 
 
 async def test_endpoint_multiple_paths():
@@ -266,3 +263,121 @@ async def test_endpoint_complex_input():
     )
 
     assert response.status_code == 200
+
+
+async def test_endpoint_openapi_schema():
+    """Test that endpoint generates proper OpenAPI schema with request model."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/schema-test")
+
+    client = TestClient(app)
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi_spec = response.json()
+
+    # Verify the endpoint exists in the schema
+    assert "/schema-test" in openapi_spec["paths"]
+    endpoint_spec = openapi_spec["paths"]["/schema-test"]["post"]
+
+    # Verify request body schema is defined
+    assert "requestBody" in endpoint_spec
+    request_body = endpoint_spec["requestBody"]
+    assert "content" in request_body
+    assert "application/json" in request_body["content"]
+
+    # Verify schema references AGUIRequest model
+    schema_ref = request_body["content"]["application/json"]["schema"]
+    assert "$ref" in schema_ref
+    assert "AGUIRequest" in schema_ref["$ref"]
+
+    # Verify AGUIRequest model is in components
+    assert "components" in openapi_spec
+    assert "schemas" in openapi_spec["components"]
+    assert "AGUIRequest" in openapi_spec["components"]["schemas"]
+
+    # Verify AGUIRequest has required fields
+    agui_request_schema = openapi_spec["components"]["schemas"]["AGUIRequest"]
+    assert "properties" in agui_request_schema
+    assert "messages" in agui_request_schema["properties"]
+    assert "run_id" in agui_request_schema["properties"]
+    assert "thread_id" in agui_request_schema["properties"]
+    assert "state" in agui_request_schema["properties"]
+    assert "required" in agui_request_schema
+    assert "messages" in agui_request_schema["required"]
+
+
+async def test_endpoint_default_tags():
+    """Test that endpoint uses default 'AG-UI' tag."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/default-tags")
+
+    client = TestClient(app)
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi_spec = response.json()
+
+    endpoint_spec = openapi_spec["paths"]["/default-tags"]["post"]
+    assert "tags" in endpoint_spec
+    assert endpoint_spec["tags"] == ["AG-UI"]
+
+
+async def test_endpoint_custom_tags():
+    """Test that endpoint accepts custom tags."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/custom-tags", tags=["Custom", "Agent"])
+
+    client = TestClient(app)
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi_spec = response.json()
+
+    endpoint_spec = openapi_spec["paths"]["/custom-tags"]["post"]
+    assert "tags" in endpoint_spec
+    assert endpoint_spec["tags"] == ["Custom", "Agent"]
+
+
+async def test_endpoint_missing_required_field():
+    """Test that endpoint validates required fields with Pydantic."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/validation")
+
+    client = TestClient(app)
+
+    # Missing required 'messages' field should trigger validation error
+    response = client.post("/validation", json={"run_id": "test-123"})
+
+    assert response.status_code == 422
+    error_detail = response.json()
+    assert "detail" in error_detail
+
+
+async def test_endpoint_internal_error_handling():
+    """Test endpoint error handling when an exception occurs before streaming starts."""
+    from unittest.mock import patch
+
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+
+    # Use default_state to trigger the code path that can raise an exception
+    add_agent_framework_fastapi_endpoint(app, agent, path="/error-test", default_state={"key": "value"})
+
+    client = TestClient(app)
+
+    # Mock copy.deepcopy to raise an exception during default_state processing
+    with patch("agent_framework_ag_ui._endpoint.copy.deepcopy") as mock_deepcopy:
+        mock_deepcopy.side_effect = Exception("Simulated internal error")
+        response = client.post("/error-test", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.json() == {"error": "An internal error has occurred."}

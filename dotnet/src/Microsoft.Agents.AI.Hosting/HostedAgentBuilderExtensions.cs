@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
-using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
@@ -70,18 +68,7 @@ public static class HostedAgentBuilderExtensions
         Throw.IfNull(builder);
         Throw.IfNull(tool);
 
-        var agentName = builder.Name;
-        var services = builder.ServiceCollection;
-
-        // Get or create the agent tool registry
-        var descriptor = services.FirstOrDefault(sd => !sd.IsKeyedService && sd.ServiceType.Equals(typeof(LocalAgentToolRegistry)));
-        if (descriptor?.ImplementationInstance is not LocalAgentToolRegistry toolRegistry)
-        {
-            toolRegistry = new();
-            services.Add(ServiceDescriptor.Singleton(toolRegistry));
-        }
-
-        toolRegistry.AddTool(agentName, tool);
+        builder.ServiceCollection.AddKeyedSingleton(builder.Name, tool);
 
         return builder;
     }
@@ -102,6 +89,21 @@ public static class HostedAgentBuilderExtensions
         {
             builder.WithAITool(tool);
         }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds AI tool to an agent being configured with the service collection.
+    /// </summary>
+    /// <param name="builder">The hosted agent builder.</param>
+    /// <param name="factory">A factory function that creates a AI tool using the provided service provider.</param>
+    public static IHostedAgentBuilder WithAITool(this IHostedAgentBuilder builder, Func<IServiceProvider, AITool> factory)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(factory);
+
+        builder.ServiceCollection.AddKeyedSingleton(builder.Name, (sp, name) => factory(sp));
 
         return builder;
     }
