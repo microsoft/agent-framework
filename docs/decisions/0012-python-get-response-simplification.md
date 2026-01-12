@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 contact: eavanvalkenburg
 date: 2026-01-06
 deciders: markwallace-microsoft, dmytrostruk, taochenosu, alliscode, moonbox3, sphenry
@@ -144,7 +144,10 @@ Smaller questions to consider:
     - Should this differ between ChatClient, Agent and Workflows? (e.g., Agent and Workflow defaults to streaming, ChatClient to non-streaming)
 
 ## Decision Outcome
-TBD
+
+Chosen Option: **Option 3: Consolidate + Merge Agent and Workflow Methods**
+
+Since this is the most pythonic option and it reduces the API surface and code duplication the most, we will go with this option.
 
 
 # Appendix
