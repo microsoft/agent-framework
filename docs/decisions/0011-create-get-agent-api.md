@@ -251,7 +251,7 @@ Implement `create_agent`/`get_agent`/`as_agent` API via **Option 2: Provider obj
 
 | Aspect | Option 1 (Functions) | Option 2 (Provider) |
 |--------|----------------------|---------------------|
-| Multiple implementations | One package may contain V1, V2, and other agent types. Function names like `create_agent` become ambiguous - which agent type does it create? | Each provider class is explicit: `AzureAIAgentProvider` vs `AzureAIAgentResponsesProvider` |
+| Multiple implementations | One package may contain V1, V2, and other agent types. Function names like `create_agent` become ambiguous - which agent type does it create? | Each provider class is explicit: `AzureAIAgentsProvider` vs `AzureAIProjectAgentProvider` |
 | Discoverability | Users must know to import specific functions from the package | IDE autocomplete on provider instance shows all available methods |
 | Client reuse | SDK client must be passed to every function call: `create_agent(client, ...)`, `get_agent(client, ...)` | SDK client passed once at construction: `provider = Provider(client)` |
 
@@ -264,8 +264,8 @@ agent2 = await create_agent(client, name="Agent2", ...)  # Repetitive client pas
 
 **Option 2 example:**
 ```python
-from agent_framework.azure import AzureAIAgentProvider
-provider = AzureAIAgentProvider(client)  # Clear which service, client passed once
+from agent_framework.azure import AzureAIProjectAgentProvider
+provider = AzureAIProjectAgentProvider(client)  # Clear which service, client passed once
 agent1 = await provider.create_agent(name="Agent1", ...)
 agent2 = await provider.create_agent(name="Agent2", ...)
 ```
@@ -279,16 +279,16 @@ agent2 = await provider.create_agent(name="Agent2", ...)
 | Wrap SDK object | `as_agent(reference)` | `AsAIAgent(agentInstance)` | No |
 
 The method names (`create_agent`, `get_agent`) do not explicitly mention "service" or "remote" because:
-- In Python, the provider class name explicitly identifies the service (`AzureAIAgentProvider`, `OpenAIAssistantProvider`), making additional qualifiers in method names redundant.
+- In Python, the provider class name explicitly identifies the service (`AzureAIAgentsProvider`, `OpenAIAssistantProvider`), making additional qualifiers in method names redundant.
 - In .NET, these are extension methods on `AIProjectClient` or `AssistantClient`, which already imply service operations.
 
 ### Provider Class Naming
 
-| Package | Provider Class | Service |
-|---------|---------------|---------|
-| `agent_framework.azure` | `AzureAIAgentResponsesProvider` | Azure AI Agent Service, based on Responses API (V2) |
-| `agent_framework.azure` | `AzureAIAgentProvider` | Azure AI Agent Service (V1) |
-| `agent_framework.openai` | `OpenAIAssistantProvider` | OpenAI Assistants API |
+| Package | Provider Class | SDK Client | Service |
+|---------|---------------|------------|---------|
+| `agent_framework.azure` | `AzureAIProjectAgentProvider` | `AIProjectClient` | Azure AI Agent Service, based on Responses API (V2) |
+| `agent_framework.azure` | `AzureAIAgentsProvider` | `AgentsClient` | Azure AI Agent Service (V1) |
+| `agent_framework.openai` | `OpenAIAssistantProvider` | `AsyncOpenAI` | OpenAI Assistants API |
 
 > **Note:** Azure AI naming is temporary. Final naming will be updated according to Azure AI / Microsoft Foundry renaming decisions.
 
@@ -297,11 +297,11 @@ The method names (`create_agent`, `get_agent`) do not explicitly mention "servic
 #### Azure AI Agent Service V2 (based on Responses API)
 
 ```python
-from agent_framework.azure import AzureAIAgentResponsesProvider
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects import AIProjectClient
 
 client = AIProjectClient(endpoint, credential)
-provider = AzureAIAgentResponsesProvider(client)
+provider = AzureAIProjectAgentProvider(client)
 
 # Create new agent on service
 agent = await provider.create_agent(name="MyAgent", model="gpt-4", instructions="...")
@@ -317,11 +317,11 @@ agent = provider.as_agent(agent_ref)
 #### Azure AI Persistent Agents V1
 
 ```python
-from agent_framework.azure import AzureAIAgentProvider
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents import AgentsClient
 
 client = AgentsClient(endpoint, credential)
-provider = AzureAIAgentProvider(client)
+provider = AzureAIAgentsProvider(client)
 
 agent = await provider.create_agent(name="MyAgent", model="gpt-4", instructions="...")
 agent = await provider.get_agent(agent_id="persistent-agent-456")
