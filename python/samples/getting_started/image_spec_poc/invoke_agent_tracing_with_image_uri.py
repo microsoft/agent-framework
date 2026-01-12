@@ -67,10 +67,8 @@ async def main() -> None:
 
         enable_instrumentation(enable_sensitive_data=True)
 
-        await create_and_store_base64_encoded_images()
-
         with get_tracer().start_as_current_span(
-            name="Get Image Data using text_id", kind=SpanKind.CLIENT
+            name="Get Image Data using text_id and image_uri", kind=SpanKind.CLIENT
         ) as current_span:
             print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
