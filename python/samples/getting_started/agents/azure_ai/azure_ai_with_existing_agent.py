@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import ChatAgent
-from agent_framework.azure import get_agent
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
 from azure.identity.aio import AzureCliCredential
@@ -12,20 +12,20 @@ from azure.identity.aio import AzureCliCredential
 """
 Azure AI Agent with Existing Agent Example
 
-This sample demonstrates working with pre-existing Azure AI Agents by using get_agent method,
+This sample demonstrates working with pre-existing Azure AI Agents by using provider.get_agent() method,
 showing agent reuse patterns for production scenarios.
 """
 
 
-async def using_get_agent_method() -> None:
-    print("=== Get existing Azure AI agent with get_agent method ===")
+async def using_provider_get_agent() -> None:
+    print("=== Get existing Azure AI agent with provider.get_agent() ===")
 
     # Create the client
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
     ):
-        # Create remote agent
+        # Create remote agent using SDK directly
         azure_ai_agent = await project_client.agents.create_version(
             agent_name="MyNewTestAgent",
             description="Agent for testing purposes.",
@@ -37,8 +37,9 @@ async def using_get_agent_method() -> None:
         )
 
         try:
-            # Get newly created agent as ChatAgent by using get_agent method
-            agent: ChatAgent = await get_agent(project_client=project_client, agent_name=azure_ai_agent.name)
+            # Get newly created agent as ChatAgent by using provider.get_agent()
+            provider = AzureAIProjectAgentProvider(project_client=project_client)
+            agent: ChatAgent = await provider.get_agent(name=azure_ai_agent.name)
 
             # Verify agent properties
             print(f"Agent ID: {agent.id}")
@@ -60,7 +61,7 @@ async def using_get_agent_method() -> None:
 
 
 async def main() -> None:
-    await using_get_agent_method()
+    await using_provider_get_agent()
 
 
 if __name__ == "__main__":

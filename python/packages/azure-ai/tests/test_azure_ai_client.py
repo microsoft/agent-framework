@@ -26,15 +26,11 @@ from agent_framework import (
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    AgentReference,
-    AgentVersionObject,
     ApproximateLocation,
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     FileSearchTool,
-    FunctionTool,
     MCPTool,
-    PromptAgentDefinition,
     ResponseTextFormatConfigurationJsonSchema,
     WebSearchPreviewTool,
 )
@@ -44,7 +40,7 @@ from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
-from agent_framework_azure_ai._client import _from_azure_ai_tools, get_agent  # type: ignore
+from agent_framework_azure_ai._shared import from_azure_ai_tools
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -1036,78 +1032,11 @@ async def test_azure_ai_chat_client_agent_with_tools() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25"])
 
 
-async def test_get_agent_parameter_handling(mock_project_client: MagicMock) -> None:
-    """Test get_agent parameter handling."""
-    mock_project_client.agents = AsyncMock()
-
-    # Test with agent_reference
-    agent_reference = AgentReference(name="test-agent", version="1.0")
-    mock_agent_version = MagicMock(spec=AgentVersionObject)
-    mock_agent_version.name = "test-agent"
-    mock_agent_version.version = "1.0"
-    mock_agent_version.description = "Test Agent"
-    mock_agent_version.definition = PromptAgentDefinition(model="test-model")
-    mock_agent_version.definition.model = "gpt-4"
-    mock_agent_version.definition.instructions = "Test instructions"
-    mock_agent_version.definition.tools = []
-
-    mock_project_client.agents.get_version.return_value = mock_agent_version
-
-    agent = await get_agent(project_client=mock_project_client, agent_reference=agent_reference)
-
-    assert agent.name == "test-agent"
-    mock_project_client.agents.get_version.assert_called_with(agent_name="test-agent", agent_version="1.0")
-
-    # Test with agent_name
-    mock_agent_object = MagicMock()
-    mock_agent_object.versions = MagicMock()
-    mock_agent_object.versions.latest = mock_agent_version
-    mock_project_client.agents.get.return_value = mock_agent_object
-
-    agent = await get_agent(project_client=mock_project_client, name="test-agent")
-
-    assert agent.name == "test-agent"
-    mock_project_client.agents.get.assert_called_with(agent_name="test-agent")
-
-    # Test with agent_object
-    agent = await get_agent(project_client=mock_project_client, agent_object=mock_agent_object)
-
-    assert agent.name == "test-agent"
-
-
-async def test_get_agent_missing_parameters(mock_project_client: MagicMock) -> None:
-    """Test get_agent missing parameters."""
-
-    with pytest.raises(ValueError, match="Either name or agent_reference or agent_object must be provided"):
-        await get_agent(project_client=mock_project_client)
-
-
-async def test_get_agent_missing_tools(mock_project_client: MagicMock) -> None:
-    """Test get_agent missing tools."""
-    mock_project_client.agents = AsyncMock()
-
-    mock_agent_version = MagicMock(spec=AgentVersionObject)
-    mock_agent_version.name = "test-agent"
-    mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
-    mock_agent_version.definition.tools = [
-        FunctionTool(name="test_tool", parameters=[], strict=True, description="Test tool")
-    ]
-
-    mock_agent_object = MagicMock()
-    mock_agent_object.versions = MagicMock()
-    mock_agent_object.versions.latest = mock_agent_version
-
-    with pytest.raises(
-        ValueError, match="The following prompt agent definition required tools were not provided: test_tool"
-    ):
-        await get_agent(project_client=mock_project_client, agent_object=mock_agent_object)
-
-
 def test_parse_tools() -> None:
     """Test _parse_tools."""
     # Test MCP tool
     mcp_tool = MCPTool(server_label="test_server", server_url="http://localhost:8080")
-    parsed_tools = _from_azure_ai_tools([mcp_tool])
+    parsed_tools = from_azure_ai_tools([mcp_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedMCPTool)
     assert parsed_tools[0].name == "test server"
@@ -1115,7 +1044,7 @@ def test_parse_tools() -> None:
 
     # Test Code Interpreter tool
     ci_tool = CodeInterpreterTool(container=CodeInterpreterToolAuto(file_ids=["file-1"]))
-    parsed_tools = _from_azure_ai_tools([ci_tool])
+    parsed_tools = from_azure_ai_tools([ci_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedCodeInterpreterTool)
     assert parsed_tools[0].inputs is not None
@@ -1127,7 +1056,7 @@ def test_parse_tools() -> None:
 
     # Test File Search tool
     fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
-    parsed_tools = _from_azure_ai_tools([fs_tool])
+    parsed_tools = from_azure_ai_tools([fs_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedFileSearchTool)
     assert parsed_tools[0].inputs is not None
@@ -1142,7 +1071,7 @@ def test_parse_tools() -> None:
     ws_tool = WebSearchPreviewTool(
         user_location=ApproximateLocation(city="Seattle", country="US", region="WA", timezone="PST")
     )
-    parsed_tools = _from_azure_ai_tools([ws_tool])
+    parsed_tools = from_azure_ai_tools([ws_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedWebSearchTool)
     assert parsed_tools[0].additional_properties
@@ -1153,35 +1082,6 @@ def test_parse_tools() -> None:
     assert user_location["country"] == "US"
     assert user_location["region"] == "WA"
     assert user_location["timezone"] == "PST"
-
-
-async def test_get_agent_success(mock_project_client: MagicMock) -> None:
-    """Test get_agent success path."""
-    mock_project_client.agents = AsyncMock()
-
-    mock_agent_version = MagicMock(spec=AgentVersionObject)
-    mock_agent_version.id = "agent-id"
-    mock_agent_version.name = "test-agent"
-    mock_agent_version.description = "Test Agent"
-    mock_agent_version.version = "1.0"
-    mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
-    mock_agent_version.definition.model = "gpt-4"
-    mock_agent_version.definition.instructions = "Test instructions"
-    mock_agent_version.definition.temperature = 0.7
-    mock_agent_version.definition.top_p = 0.9
-
-    mock_project_client.agents.get_version.return_value = mock_agent_version
-
-    agent_reference = AgentReference(name="test-agent", version="1.0")
-    agent = await get_agent(project_client=mock_project_client, agent_reference=agent_reference)
-
-    assert agent.id == "agent-id"
-    assert agent.name == "test-agent"
-    assert agent.description == "Test Agent"
-    assert agent.chat_options.instructions == "Test instructions"
-    assert agent.chat_options.model_id == "gpt-4"
-    assert agent.chat_options.temperature == 0.7
-    assert agent.chat_options.top_p == 0.9
 
 
 class ReleaseBrief(BaseModel):

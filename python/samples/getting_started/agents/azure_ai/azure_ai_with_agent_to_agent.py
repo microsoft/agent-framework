@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Agent-to-Agent (A2A) Example
 
-This sample demonstrates usage of AzureAIClient with Agent-to-Agent (A2A) capabilities
+This sample demonstrates usage of AzureAIProjectAgentProvider with Agent-to-Agent (A2A) capabilities
 to enable communication with other agents using the A2A protocol.
 
 Prerequisites:
@@ -21,7 +21,9 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyA2AAgent",
             instructions="""You are a helpful assistant that can communicate with other agents.
             Use the A2A tool when you need to interact with other agents to complete tasks
@@ -30,8 +32,8 @@ async def main() -> None:
                 "type": "a2a_preview",
                 "project_connection_id": os.environ["A2A_PROJECT_CONNECTION_ID"],
             },
-        ) as agent,
-    ):
+        )
+
         query = "What can the secondary agent do?"
         print(f"User: {query}")
         result = await agent.run(query)

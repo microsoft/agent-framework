@@ -2,13 +2,13 @@
 
 import asyncio
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent Response Format Example with Runtime JSON Schema
 
-This sample demonstrates basic usage of AzureAIClient with response format,
+This sample demonstrates basic usage of AzureAIProjectAgentProvider with response format,
 also known as structured outputs.
 """
 
@@ -31,17 +31,18 @@ runtime_schema = {
 async def main() -> None:
     """Example of using response_format property."""
 
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
-            name="ProductMarketerAgent",
-            instructions="Return launch briefs as structured JSON.",
-        ) as agent,
+        AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
-        query = "Draft a launch brief for the Contoso Note app."
+        agent = await provider.create_agent(
+            name="ProductMarketerAgent",
+            instructions="Return sample weather digest as structured JSON.",
+        )
+
+        query = "Draft a sample weather digest."
         print(f"User: {query}")
         result = await agent.run(
             query,

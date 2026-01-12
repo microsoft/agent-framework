@@ -3,19 +3,19 @@
 import asyncio
 
 from agent_framework import (
+    AgentRunResponseUpdate,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
 )
-from agent_framework._agents import AgentRunResponseUpdate
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI V2 Code Interpreter File Generation Sample
 
-This sample demonstrates how the V2 AzureAIClient handles file annotations
+This sample demonstrates how the AzureAIProjectAgentProvider handles file annotations
 when code interpreter generates text files. It shows both non-streaming
 and streaming approaches to verify file ID extraction.
 """
@@ -32,12 +32,14 @@ async def test_non_streaming() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
 
         result = await agent.run(QUERY)
@@ -66,12 +68,14 @@ async def test_streaming() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
         annotations_found: list[str] = []
         text_chunks: list[str] = []
@@ -102,7 +106,7 @@ async def test_streaming() -> None:
 
 
 async def main() -> None:
-    print("AzureAIClient Code Interpreter File Generation Test\n")
+    print("AzureAIProjectAgentProvider Code Interpreter File Generation Test\n")
     await test_non_streaming()
     await test_streaming()
 
