@@ -49,6 +49,12 @@ from ._events import (
     WorkflowStartedEvent,
     WorkflowStatusEvent,
 )
+from ._exceptions import (
+    WorkflowCheckpointException,
+    WorkflowConvergenceException,
+    WorkflowException,
+    WorkflowRunnerException,
+)
 from ._executor import (
     Executor,
     handler,
@@ -85,7 +91,11 @@ from ._magentic import (
     MagenticStallInterventionRequest,
     StandardMagenticManager,
 )
-from ._orchestration_request_info import AgentInputRequest, AgentResponseReviewRequest, RequestInfoInterceptor
+from ._orchestration_request_info import (
+    AgentInputRequest,
+    AgentResponseReviewRequest,
+    RequestInfoInterceptor,
+)
 from ._orchestration_state import OrchestrationState
 from ._request_info_mixin import response_handler
 from ._runner import Runner
@@ -108,7 +118,11 @@ from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
-from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
+from ._workflow_executor import (
+    SubWorkflowRequestMessage,
+    SubWorkflowResponseMessage,
+    WorkflowExecutor,
+)
 
 __all__ = [
     "DEFAULT_MANAGER_INSTRUCTIONS",
@@ -187,17 +201,21 @@ __all__ = [
     "WorkflowAgent",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
+    "WorkflowCheckpointException",
     "WorkflowCheckpointSummary",
     "WorkflowContext",
+    "WorkflowConvergenceException",
     "WorkflowErrorDetails",
     "WorkflowEvent",
     "WorkflowEventSource",
+    "WorkflowException",
     "WorkflowExecutor",
     "WorkflowFailedEvent",
     "WorkflowLifecycleEvent",
     "WorkflowOutputEvent",
     "WorkflowRunResult",
     "WorkflowRunState",
+    "WorkflowRunnerException",
     "WorkflowStartedEvent",
     "WorkflowStatusEvent",
     "WorkflowValidationError",
