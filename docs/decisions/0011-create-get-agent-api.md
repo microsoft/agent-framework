@@ -286,8 +286,8 @@ The method names (`create_agent`, `get_agent`) do not explicitly mention "servic
 
 | Package | Provider Class | Service |
 |---------|---------------|---------|
-| `agent_framework.azure` | `AzureAIAgentResponsesProvider` | Azure AI Agent Service (V2) |
-| `agent_framework.azure` | `AzureAIAgentProvider` | Azure AI Persistent Agents (V1) |
+| `agent_framework.azure` | `AzureAIAgentResponsesProvider` | Azure AI Agent Service, based on Responses API (V2) |
+| `agent_framework.azure` | `AzureAIAgentProvider` | Azure AI Agent Service (V1) |
 | `agent_framework.openai` | `OpenAIAssistantProvider` | OpenAI Assistants API |
 
 > **Note:** Azure AI naming is temporary. Final naming will be updated according to Azure AI / Microsoft Foundry renaming decisions.
@@ -306,11 +306,11 @@ provider = AzureAIAgentResponsesProvider(client)
 # Create new agent on service
 agent = await provider.create_agent(name="MyAgent", model="gpt-4", instructions="...")
 
-# Get existing agent by ID
-agent = await provider.get_agent(agent_id="agent-123")
+# Get existing agent by name
+agent = await provider.get_agent(agent_name="MyAgent")
 
 # Wrap already-fetched SDK object (no HTTP calls)
-agent_ref = await client.agents.get_agent("agent-123")
+agent_ref = await client.agents.get("MyAgent")
 agent = provider.as_agent(agent_ref)
 ```
 
