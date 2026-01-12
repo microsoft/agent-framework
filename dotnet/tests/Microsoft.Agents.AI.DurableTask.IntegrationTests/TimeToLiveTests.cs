@@ -55,7 +55,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
             });
 
         AIAgent agentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
-        AgentThread thread = agentProxy.GetNewThread();
+        AgentThread thread = await agentProxy.GetNewThreadAsync(this.TestTimeoutToken);
         DurableTaskClient client = testHelper.GetClient();
         AgentSessionId sessionId = thread.GetService<AgentSessionId>();
 
@@ -120,7 +120,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
             });
 
         AIAgent agentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
-        AgentThread thread = agentProxy.GetNewThread();
+        AgentThread thread = await agentProxy.GetNewThreadAsync(this.TestTimeoutToken);
         DurableTaskClient client = testHelper.GetClient();
         AgentSessionId sessionId = thread.GetService<AgentSessionId>();
 

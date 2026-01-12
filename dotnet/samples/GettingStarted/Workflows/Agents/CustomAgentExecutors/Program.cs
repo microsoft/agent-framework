@@ -109,7 +109,7 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 internal sealed class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
-    private readonly AgentThread _thread;
+    private AgentThread? _thread;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SloganWriterExecutor"/> class.
@@ -128,7 +128,6 @@ internal sealed class SloganWriterExecutor : Executor
         };
 
         this._agent = new ChatClientAgent(chatClient, agentOptions);
-        this._thread = this._agent.GetNewThread();
     }
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
@@ -137,6 +136,8 @@ internal sealed class SloganWriterExecutor : Executor
 
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        this._thread ??= await this._agent.GetNewThreadAsync(cancellationToken);
+
         var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken);
 
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
@@ -179,7 +180,7 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 internal sealed class FeedbackExecutor : Executor<SloganResult>
 {
     private readonly AIAgent _agent;
-    private readonly AgentThread _thread;
+    private AgentThread? _thread;
 
     public int MinimumRating { get; init; } = 8;
 
@@ -204,11 +205,12 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
         };
 
         this._agent = new ChatClientAgent(chatClient, agentOptions);
-        this._thread = this._agent.GetNewThread();
     }
 
     public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        this._thread ??= await this._agent.GetNewThreadAsync(cancellationToken);
+
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':
             Slogan: {message.Slogan}

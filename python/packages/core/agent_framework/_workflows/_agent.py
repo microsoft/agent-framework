@@ -309,6 +309,9 @@ class WorkflowAgent(BaseAgent):
                 if isinstance(executor, AgentExecutor) and not executor.output_response:
                     return None
                 if update:
+                    # Enrich with executor identity if author_name is not already set
+                    if not update.author_name:
+                        update.author_name = executor_id
                     return update
                 return None
 

@@ -51,11 +51,11 @@ public class SpecializedExecutorSmokeTests
             return result;
         }
 
-        public override AgentThread GetNewThread()
-            => new TestAgentThread();
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+            => new(new TestAgentThread());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => new TestAgentThread();
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new TestAgentThread());
 
         public static TestAIAgent FromStrings(params string[] messages) =>
             new(ToChatMessages(messages));
