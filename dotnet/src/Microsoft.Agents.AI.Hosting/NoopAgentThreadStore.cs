@@ -20,6 +20,6 @@ public sealed class NoopAgentThreadStore : AgentThreadStore
     /// <inheritdoc/>
     public override ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
-        return new ValueTask<AgentThread>(agent.GetNewThread());
+        return agent.GetNewThreadAsync(cancellationToken);
     }
 }

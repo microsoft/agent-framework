@@ -51,7 +51,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
         // Act: send a prompt to the agent and wait for a response
-        AgentThread thread = simpleAgentProxy.GetNewThread();
+        AgentThread thread = await simpleAgentProxy.GetNewThreadAsync(this.TestTimeoutToken);
         await simpleAgentProxy.RunAsync(
             message: "Hello!",
             thread,
@@ -156,7 +156,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         {
             // 1. Get agent and create a session
             DurableAIAgent agent = context.GetAgent("SimpleAgent");
-            AgentThread thread = agent.GetNewThread();
+            AgentThread thread = await agent.GetNewThreadAsync(this.TestTimeoutToken);
 
             // 2. Call an agent and tell it my name
             await agent.RunAsync($"My name is {name}.", thread);
@@ -194,7 +194,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent workflowManagerAgentProxy = testHelper.Services.GetDurableAgentProxy("WorkflowAgent");
 
         // Act: send a prompt to the agent
-        AgentThread thread = workflowManagerAgentProxy.GetNewThread();
+        AgentThread thread = await workflowManagerAgentProxy.GetNewThreadAsync(this.TestTimeoutToken);
         await workflowManagerAgentProxy.RunAsync(
             message: "Start a greeting workflow for \"John Doe\".",
             thread,
