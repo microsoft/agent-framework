@@ -20,12 +20,12 @@ internal static class AgentResponseExtensions
     /// <summary>
     /// Converts an AgentResponse to a Response model.
     /// </summary>
-    /// <param name="AgentResponse">The agent run response to convert.</param>
+    /// <param name="agentResponse">The agent run response to convert.</param>
     /// <param name="request">The original create response request.</param>
     /// <param name="context">The agent invocation context.</param>
     /// <returns>A Response model.</returns>
     public static Response ToResponse(
-        this AgentResponse AgentResponse,
+        this AgentResponse agentResponse,
         CreateResponse request,
         AgentInvocationContext context)
     {
@@ -41,7 +41,7 @@ internal static class AgentResponseExtensions
             });
         }
 
-        output.AddRange(AgentResponse.Messages
+        output.AddRange(agentResponse.Messages
             .SelectMany(msg => msg.ToItemResource(context.IdGenerator, context.JsonSerializerOptions)));
 
         return new Response
@@ -49,7 +49,7 @@ internal static class AgentResponseExtensions
             Agent = request.Agent?.ToAgentId(),
             Background = request.Background,
             Conversation = request.Conversation ?? (context.ConversationId != null ? new ConversationReference { Id = context.ConversationId } : null),
-            CreatedAt = (AgentResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+            CreatedAt = (agentResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
             Error = null,
             Id = context.ResponseId,
             Instructions = request.Instructions,
@@ -74,7 +74,7 @@ internal static class AgentResponseExtensions
             TopLogprobs = request.TopLogprobs,
             TopP = request.TopP ?? 1.0,
             Truncation = request.Truncation,
-            Usage = AgentResponse.Usage.ToResponseUsage(),
+            Usage = agentResponse.Usage.ToResponseUsage(),
 #pragma warning disable CS0618 // Type or member is obsolete
             User = request.User,
 #pragma warning restore CS0618 // Type or member is obsolete
