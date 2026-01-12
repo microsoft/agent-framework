@@ -26,11 +26,11 @@ AIAgent agent = new AnthropicClient { APIKey = apiKey }
     .CreateAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", thread));
 
 // Streaming agent interaction with function tools.
-thread = agent.GetNewThread();
+thread = await agent.GetNewThreadAsync();
 await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
 {
     Console.WriteLine(update);

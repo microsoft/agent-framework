@@ -11,11 +11,11 @@ internal sealed class TestAgent(string name, string description) : AIAgent
 
     public override string? Description => description;
 
-    public override AgentThread GetNewThread() => new DummyAgentThread();
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) => new(new DummyAgentThread());
 
-    public override AgentThread DeserializeThread(
+    public override ValueTask<AgentThread> DeserializeThreadAsync(
         JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null) => new DummyAgentThread();
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new DummyAgentThread());
 
     protected override Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,

@@ -552,26 +552,24 @@ async def test_azure_responses_client_agent_chat_options_agent_level() -> None:
 async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
 
-    mcp_tool = HostedMCPTool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp",
-        description="A Microsoft Learn MCP server for documentation questions",
-        approval_mode="never_require",
-    )
-
     async with ChatAgent(
         chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=[mcp_tool],
+        tools=HostedMCPTool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+            description="A Microsoft Learn MCP server for documentation questions",
+            approval_mode="never_require",
+        ),
     ) as agent:
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
-            max_tokens=200,
+            # this needs to be high enough to handle the full MCP tool response.
+            max_tokens=5000,
         )
 
         assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
+        assert response.text
         # Should contain Azure-related content since it's asking about Azure CLI
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 

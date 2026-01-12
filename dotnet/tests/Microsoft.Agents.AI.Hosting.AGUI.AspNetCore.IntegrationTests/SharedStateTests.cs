@@ -34,7 +34,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -77,7 +77,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -119,7 +119,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(complexState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -159,7 +159,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -210,7 +210,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -243,7 +243,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(emptyState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -280,7 +280,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -417,12 +417,11 @@ internal sealed class FakeStateAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override AgentThread GetNewThread() => new FakeInMemoryAgentThread();
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentThread());
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
-    }
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions));
 
     private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
     {

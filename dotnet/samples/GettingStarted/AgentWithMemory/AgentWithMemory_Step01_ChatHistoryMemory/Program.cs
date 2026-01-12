@@ -34,7 +34,7 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        AIContextProviderFactory = (ctx) => new ChatHistoryMemoryProvider(
+        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new ChatHistoryMemoryProvider(
             vectorStore,
             collectionName: "chathistory",
             vectorDimensions: 3072,
@@ -43,18 +43,18 @@ AIAgent agent = new AzureOpenAIClient(
             storageScope: new() { UserId = "UID1", ThreadId = new Guid().ToString() },
             // Configure the scope which would be used to search for relevant prior messages.
             // In this case, we are searching for any messages for the user across all threads.
-            searchScope: new() { UserId = "UID1" })
+            searchScope: new() { UserId = "UID1" }))
     });
 
 // Start a new thread for the agent conversation.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // Run the agent with the thread that stores conversation history in the vector store.
 Console.WriteLine(await agent.RunAsync("I like jokes about Pirates. Tell me a joke about a pirate.", thread));
 
 // Start a second thread. Since we configured the search scope to be across all threads for the user,
 // the agent should remember that the user likes pirate jokes.
-AgentThread thread2 = agent.GetNewThread();
+AgentThread thread2 = await agent.GetNewThreadAsync();
 
 // Run the agent with the second thread.
 Console.WriteLine(await agent.RunAsync("Tell me a joke that I might like.", thread2));

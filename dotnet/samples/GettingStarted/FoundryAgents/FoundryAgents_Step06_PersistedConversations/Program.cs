@@ -19,7 +19,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
 // Start a new thread for the agent conversation.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // Run the agent with a new thread.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
@@ -35,7 +35,7 @@ await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedTh
 JsonElement reloadedSerializedThread = JsonElement.Parse(await File.ReadAllTextAsync(tempFilePath))!;
 
 // Deserialize the thread state after loading from storage.
-AgentThread resumedThread = agent.DeserializeThread(reloadedSerializedThread);
+AgentThread resumedThread = await agent.DeserializeThreadAsync(reloadedSerializedThread);
 
 // Run the agent again with the resumed thread.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));

@@ -31,16 +31,16 @@ AIAgent agent = new AzureOpenAIClient(
     .CreateAIAgent(new ChatClientAgentOptions()
     {
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
-        AIContextProviderFactory = ctx => ctx.SerializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
+        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
             // If each thread should have its own Mem0 scope, you can create a new id per thread here:
             // ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ThreadId = Guid.NewGuid().ToString() })
             // In this case we are storing memories scoped by application and user instead so that memories are retained across threads.
             ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ApplicationId = "getting-started-agents", UserId = "sample-user" })
             // For cases where we are restoring from serialized state:
-            : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions)
+            : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
 Mem0Provider mem0Provider = thread.GetService<Mem0Provider>()!;
@@ -56,9 +56,9 @@ Console.WriteLine(await agent.RunAsync("What do you already know about my upcomi
 
 Console.WriteLine("\n>> Serialize and deserialize the thread to demonstrate persisted state\n");
 JsonElement serializedThread = thread.Serialize();
-AgentThread restoredThread = agent.DeserializeThread(serializedThread);
+AgentThread restoredThread = await agent.DeserializeThreadAsync(serializedThread);
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredThread));
 
 Console.WriteLine("\n>> Start a new thread that shares the same Mem0 scope\n");
-AgentThread newThread = agent.GetNewThread();
+AgentThread newThread = await agent.GetNewThreadAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newThread));

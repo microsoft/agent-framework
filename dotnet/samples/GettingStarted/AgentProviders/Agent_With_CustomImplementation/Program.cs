@@ -28,16 +28,16 @@ namespace SampleApp
     {
         public override string? Name => "UpperCaseParrotAgent";
 
-        public override AgentThread GetNewThread()
-            => new CustomAgentThread();
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+            => new(new CustomAgentThread());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => new CustomAgentThread(serializedThread, jsonSerializerOptions);
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CustomAgentThread(serializedThread, jsonSerializerOptions));
 
         protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
-            thread ??= this.GetNewThread();
+            thread ??= await this.GetNewThreadAsync(cancellationToken);
 
             if (thread is not CustomAgentThread typedThread)
             {
@@ -69,7 +69,7 @@ namespace SampleApp
         protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
-            thread ??= this.GetNewThread();
+            thread ??= await this.GetNewThreadAsync(cancellationToken);
 
             if (thread is not CustomAgentThread typedThread)
             {
