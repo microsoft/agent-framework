@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
-using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
@@ -70,18 +68,7 @@ public static class HostedAgentBuilderExtensions
         Throw.IfNull(builder);
         Throw.IfNull(tool);
 
-        var agentName = builder.Name;
-        var services = builder.ServiceCollection;
-
-        // Get or create the agent tool registry
-        var descriptor = services.FirstOrDefault(sd => !sd.IsKeyedService && sd.ServiceType.Equals(typeof(LocalAgentToolRegistry)));
-        if (descriptor?.ImplementationInstance is not LocalAgentToolRegistry toolRegistry)
-        {
-            toolRegistry = new();
-            services.Add(ServiceDescriptor.Singleton(toolRegistry));
-        }
-
-        toolRegistry.AddTool(agentName, tool);
+        builder.ServiceCollection.AddKeyedSingleton(builder.Name, tool);
 
         return builder;
     }

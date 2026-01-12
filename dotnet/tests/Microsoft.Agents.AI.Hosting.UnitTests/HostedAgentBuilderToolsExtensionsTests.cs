@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -73,9 +74,13 @@ public sealed class HostedAgentBuilderToolsExtensionsTests
 
         var serviceProvider = services.BuildServiceProvider();
 
-        var agent1Tools = ResolveAgentTools(serviceProvider, "test-agent");
+        var agent1Tools = ResolveToolsFromAgent(serviceProvider, "test-agent");
         Assert.Contains(tool1, agent1Tools);
         Assert.Contains(tool2, agent1Tools);
+
+        var agent1ToolsDI = ResolveToolsFromDI(serviceProvider, "test-agent");
+        Assert.Contains(tool1, agent1ToolsDI);
+        Assert.Contains(tool2, agent1ToolsDI);
     }
 
     [Fact]
@@ -100,19 +105,33 @@ public sealed class HostedAgentBuilderToolsExtensionsTests
 
         var serviceProvider = services.BuildServiceProvider();
 
-        var agent1Tools = ResolveAgentTools(serviceProvider, "agent1");
-        var agent2Tools = ResolveAgentTools(serviceProvider, "agent2");
+        var agent1Tools = ResolveToolsFromAgent(serviceProvider, "agent1");
+        var agent2Tools = ResolveToolsFromAgent(serviceProvider, "agent2");
+
+        var agent1ToolsDI = ResolveToolsFromDI(serviceProvider, "agent1");
+        var agent2ToolsDI = ResolveToolsFromDI(serviceProvider, "agent2");
 
         Assert.Contains(tool1, agent1Tools);
         Assert.Contains(tool2, agent1Tools);
+        Assert.Contains(tool1, agent1ToolsDI);
+        Assert.Contains(tool2, agent1ToolsDI);
+
         Assert.Contains(tool3, agent2Tools);
+        Assert.Contains(tool3, agent2ToolsDI);
     }
 
-    private static IList<AITool> ResolveAgentTools(IServiceProvider serviceProvider, string name)
+    private static IList<AITool> ResolveToolsFromAgent(IServiceProvider serviceProvider, string name)
     {
         var agent = serviceProvider.GetRequiredKeyedService<AIAgent>(name) as ChatClientAgent;
         Assert.NotNull(agent?.ChatOptions?.Tools);
         return agent.ChatOptions.Tools;
+    }
+
+    private static List<AITool> ResolveToolsFromDI(IServiceProvider serviceProvider, string name)
+    {
+        var tools = serviceProvider.GetKeyedServices<AITool>(name);
+        Assert.NotNull(tools);
+        return tools.ToList();
     }
 
     /// <summary>
