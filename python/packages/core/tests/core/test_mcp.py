@@ -1278,13 +1278,25 @@ async def test_mcp_connection_reset_integration():
         # Store the original session and exit stack for comparison
         original_session = tool.session
         original_exit_stack = tool._exit_stack
+        original_call_tool = tool.session.call_tool
 
-        async def failing_send_ping():
-            raise Exception("Connection lost")
+        # Simulate connection failure by making call_tool raise ClosedResourceError once
+        call_count = 0
 
-        tool.session.send_ping = failing_send_ping
+        async def call_tool_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call fails with connection error
+                from anyio.streams.memory import ClosedResourceError
 
-        # Invoke the function again - this should trigger automatic reconnection via _ensure_connected
+                raise ClosedResourceError
+            # After reconnection, delegate to the original method
+            return await original_call_tool(*args, **kwargs)
+
+        tool.session.call_tool = call_tool_with_error
+
+        # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
         second_result = await func.invoke(query="What is Agent Framework?")
         assert second_result is not None
         assert len(second_result) > 0
@@ -2157,13 +2169,14 @@ async def test_load_prompts_empty_pagination():
 
 
 async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_error():
-    """Test that verifies proactive connection validation for issue #2884.
+    """Test that verifies reconnection on ClosedResourceError for issue #2884.
 
-    This test verifies the fix for issue #2884: the tool proactively checks
-    connection validity before operations. If the connection is invalid,
-    it reconnects automatically and properly cleans up the exit stack.
+    This test verifies the fix for issue #2884: the tool tries operations optimistically
+    and only reconnects when ClosedResourceError is encountered, avoiding extra latency.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio.streams.memory import ClosedResourceError
 
     from agent_framework._mcp import MCPStdioTool
     from agent_framework.exceptions import ToolExecutionException
@@ -2180,7 +2193,6 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
     mock_session = MagicMock()
     mock_session._request_id = 1
     mock_session.call_tool = AsyncMock()
-    mock_session.send_ping = AsyncMock()
 
     # Mock _exit_stack.aclose to track cleanup calls
     original_exit_stack = tool._exit_stack
@@ -2208,12 +2220,20 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         result = await tool.call_tool("test_tool", arg1="value1")
         assert result is not None
 
-        # Test Case 1: Proactive validation detects invalid connection and reconnects
-        # Simulate connection failure by making send_ping raise an exception
-        mock_session.send_ping.side_effect = Exception("Connection lost")
+        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
+        # Simulate ClosedResourceError on first call, then succeed
+        call_count = 0
 
-        # This call should trigger reconnection via _ensure_connected() before the call
-        mock_session.call_tool.return_value = MagicMock(content=[])
+        async def call_tool_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClosedResourceError
+            return MagicMock(content=[])
+
+        mock_session.call_tool = call_tool_with_error
+
+        # This call should trigger reconnection after ClosedResourceError
         result = await tool.call_tool("test_tool", arg1="value2")
         assert result is not None
         # Verify reconnect was attempted with reset=True
@@ -2222,30 +2242,40 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()
 
-        # Test Case 2: Reconnection failure during proactive validation
-        # Simulate another connection failure
-        mock_session.send_ping.side_effect = Exception("Connection lost again")
+        # Test Case 2: Reconnection failure
+        # Reset counters
+        call_count = 0
+        mock_connect.reset_mock()
+        original_exit_stack.aclose.reset_mock()
+
+        # Make call_tool always raise ClosedResourceError
+        async def always_fail(*args, **kwargs):
+            raise ClosedResourceError
+
+        mock_session.call_tool = always_fail
 
         # Change mock_connect to simulate failed reconnection
         mock_connect.side_effect = Exception("Failed to reconnect")
 
-        # This should raise ToolExecutionException when _ensure_connected fails
+        # This should raise ToolExecutionException when reconnection fails
         with pytest.raises(ToolExecutionException) as exc_info:
             await tool.call_tool("test_tool", arg1="value3")
 
         # Verify reconnection was attempted
-        assert mock_connect.call_count >= 2
-        # Verify error message indicates connection failure
-        assert "failed to establish" in str(exc_info.value).lower()
+        assert mock_connect.call_count >= 1
+        # Verify error message indicates reconnection failure
+        assert "failed to reconnect" in str(exc_info.value).lower()
 
 
 async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
-    """Test that get_prompt also uses proactive connection validation.
+    """Test that get_prompt also reconnects on ClosedResourceError.
 
     This verifies that the fix for issue #2884 applies to get_prompt as well,
     and that _exit_stack.aclose() is properly called during reconnection.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio.streams.memory import ClosedResourceError
 
     from agent_framework._mcp import MCPStdioTool
     from agent_framework.exceptions import ToolExecutionException
@@ -2262,7 +2292,6 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
     mock_session = MagicMock()
     mock_session._request_id = 1
     mock_session.get_prompt = AsyncMock()
-    mock_session.send_ping = AsyncMock()
 
     # Mock _exit_stack.aclose to track cleanup calls
     original_exit_stack = tool._exit_stack
@@ -2290,12 +2319,20 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         result = await tool.get_prompt("test_prompt", arg1="value1")
         assert result is not None
 
-        # Test Case 1: Proactive validation detects invalid connection and reconnects
-        # Simulate connection failure by making send_ping raise an exception
-        mock_session.send_ping.side_effect = Exception("Connection lost")
+        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
+        # Simulate ClosedResourceError on first call, then succeed
+        call_count = 0
 
-        # This call should trigger reconnection via _ensure_connected() before the call
-        mock_session.get_prompt.return_value = MagicMock(messages=[])
+        async def get_prompt_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClosedResourceError
+            return MagicMock(messages=[])
+
+        mock_session.get_prompt = get_prompt_with_error
+
+        # This call should trigger reconnection after ClosedResourceError
         result = await tool.get_prompt("test_prompt", arg1="value2")
         assert result is not None
         # Verify reconnect was attempted with reset=True
@@ -2304,17 +2341,26 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()
 
-        # Test Case 2: Reconnection failure during proactive validation
-        # Simulate another connection failure
-        mock_session.send_ping.side_effect = Exception("Connection lost again")
+        # Test Case 2: Reconnection failure
+        # Reset counters
+        call_count = 0
+        mock_connect.reset_mock()
+        original_exit_stack.aclose.reset_mock()
+
+        # Make get_prompt always raise ClosedResourceError
+        async def always_fail(*args, **kwargs):
+            raise ClosedResourceError
+
+        mock_session.get_prompt = always_fail
 
         # Change mock_connect to simulate failed reconnection
         mock_connect.side_effect = Exception("Failed to reconnect")
 
+        # This should raise ToolExecutionException when reconnection fails
         with pytest.raises(ToolExecutionException) as exc_info:
             await tool.get_prompt("test_prompt", arg1="value3")
 
         # Verify reconnection was attempted
-        assert mock_connect.call_count >= 2
-        # Verify error message indicates connection failure
-        assert "failed to establish" in str(exc_info.value).lower()
+        assert mock_connect.call_count >= 1
+        # Verify error message indicates reconnection failure
+        assert "failed to reconnect" in str(exc_info.value).lower()

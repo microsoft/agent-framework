@@ -720,9 +720,6 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
                 or the tool call fails.
         """
-        # Ensure we have a valid connection, reconnecting if necessary
-        await self._ensure_connected()
-
         if not self.load_tools_flag:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
@@ -734,23 +731,41 @@ class MCPTool:
             k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
         }
 
-        try:
-            result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
-            if self.parse_tool_results is None:
+        # Try the operation, reconnecting once if the connection is closed
+        for attempt in range(2):
+            try:
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
+                if self.parse_tool_results is None:
+                    return result
+                if self.parse_tool_results is True:
+                    return _parse_contents_from_mcp_tool_result(result)
+                if callable(self.parse_tool_results):
+                    return self.parse_tool_results(result)
                 return result
-            if self.parse_tool_results is True:
-                return _parse_contents_from_mcp_tool_result(result)
-            if callable(self.parse_tool_results):
-                return self.parse_tool_results(result)
-            return result
-        except ClosedResourceError as cl_ex:
-            # Connection was closed unexpectedly (e.g., async generator cleanup in FastAPI)
-            logger.error(f"MCP connection closed unexpectedly: {cl_ex}")
-            raise cl_ex
-        except McpError as mcp_exc:
-            raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
-        except Exception as ex:
-            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+            except ClosedResourceError as cl_ex:
+                if attempt == 0:
+                    # First attempt failed, try reconnecting
+                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                    try:
+                        await self.connect(reset=True)
+                        continue  # Retry the operation
+                    except Exception as reconn_ex:
+                        raise ToolExecutionException(
+                            "Failed to reconnect to MCP server.",
+                            inner_exception=reconn_ex,
+                        ) from reconn_ex
+                else:
+                    # Second attempt also failed, give up
+                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                    raise ToolExecutionException(
+                        f"Failed to call tool '{tool_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
+            except McpError as mcp_exc:
+                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
+            except Exception as ex:
+                raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+        raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
 
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage] | Any | types.GetPromptResult:
         """Call a prompt with the given arguments.
@@ -768,31 +783,46 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
                 or the prompt call fails.
         """
-        # Ensure we have a valid connection, reconnecting if necessary
-        await self._ensure_connected()
-
         if not self.load_prompts_flag:
             raise ToolExecutionException(
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
 
-        try:
-            prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
-            if self.parse_prompt_results is None:
+        # Try the operation, reconnecting once if the connection is closed
+        for attempt in range(2):
+            try:
+                prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                if self.parse_prompt_results is None:
+                    return prompt_result
+                if self.parse_prompt_results is True:
+                    return [_parse_message_from_mcp(message) for message in prompt_result.messages]
+                if callable(self.parse_prompt_results):
+                    return self.parse_prompt_results(prompt_result)
                 return prompt_result
-            if self.parse_prompt_results is True:
-                return [_parse_message_from_mcp(message) for message in prompt_result.messages]
-            if callable(self.parse_prompt_results):
-                return self.parse_prompt_results(prompt_result)
-            return prompt_result
-        except ClosedResourceError as cl_ex:
-            # Connection was closed unexpectedly (e.g., async generator cleanup in FastAPI)
-            logger.error(f"MCP connection closed unexpectedly: {cl_ex}")
-            raise cl_ex
-        except McpError as mcp_exc:
-            raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
-        except Exception as ex:
-            raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+            except ClosedResourceError as cl_ex:
+                if attempt == 0:
+                    # First attempt failed, try reconnecting
+                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                    try:
+                        await self.connect(reset=True)
+                        continue  # Retry the operation
+                    except Exception as reconn_ex:
+                        raise ToolExecutionException(
+                            "Failed to reconnect to MCP server.",
+                            inner_exception=reconn_ex,
+                        ) from reconn_ex
+                else:
+                    # Second attempt also failed, give up
+                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                    raise ToolExecutionException(
+                        f"Failed to call prompt '{prompt_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
+            except McpError as mcp_exc:
+                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
+            except Exception as ex:
+                raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+        raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
