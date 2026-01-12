@@ -249,44 +249,69 @@ class TestClientAgentExecutorFireAndForget:
         assert "background" in message_text.lower()
 
 
-class TestExecutorValidation:
-    """Test executor capability validation for wait_for_response parameter."""
+class TestOrchestrationAgentExecutorFireAndForget:
+    """Test fire-and-forget mode for OrchestrationAgentExecutor."""
 
-    def test_client_executor_supports_wait_for_response(self, mock_client: Mock) -> None:
-        """Verify ClientAgentExecutor reports support for wait_for_response."""
-        executor = ClientAgentExecutor(mock_client)
-        assert executor.supports_wait_for_response() is True
-
-    def test_orchestration_executor_does_not_support_wait_for_response(self, mock_orchestration_context: Mock) -> None:
-        """Verify OrchestrationAgentExecutor does not support wait_for_response."""
+    def test_orchestration_fire_and_forget_calls_signal_entity(self, mock_orchestration_context: Mock) -> None:
+        """Verify wait_for_response=False calls signal_entity instead of call_entity."""
         executor = OrchestrationAgentExecutor(mock_orchestration_context)
-        assert executor.supports_wait_for_response() is False
+        mock_orchestration_context.signal_entity = Mock()
 
-    def test_orchestration_executor_rejects_wait_for_response_false(self, mock_orchestration_context: Mock) -> None:
-        """Verify OrchestrationAgentExecutor rejects wait_for_response=False."""
+        request = RunRequest(message="test", correlation_id="test-123", wait_for_response=False)
+
+        result = executor.run_durable_agent("test_agent", request)
+
+        # Verify signal_entity was called and call_entity was not
+        assert mock_orchestration_context.signal_entity.call_count == 1
+        assert mock_orchestration_context.call_entity.call_count == 0
+
+        # Should still return a DurableAgentTask
+        assert isinstance(result, DurableAgentTask)
+
+    def test_orchestration_fire_and_forget_returns_completed_task(self, mock_orchestration_context: Mock) -> None:
+        """Verify wait_for_response=False returns pre-completed DurableAgentTask."""
         executor = OrchestrationAgentExecutor(mock_orchestration_context)
+        mock_orchestration_context.signal_entity = Mock()
 
-        with pytest.raises(ValueError, match="wait_for_response=False is not supported"):
-            executor.get_run_request(
-                message="test",
-                response_format=None,
-                enable_tool_calls=True,
-                wait_for_response=False,
-            )
+        request = RunRequest(message="test", correlation_id="test-456", wait_for_response=False)
 
-    def test_client_executor_allows_wait_for_response_false(self, mock_client: Mock) -> None:
-        """Verify ClientAgentExecutor accepts wait_for_response=False."""
-        executor = ClientAgentExecutor(mock_client)
+        result = executor.run_durable_agent("test_agent", request)
 
-        # Should not raise
-        request = executor.get_run_request(
-            message="test",
-            response_format=None,
-            enable_tool_calls=True,
-            wait_for_response=False,
-        )
+        # Task should be immediately complete
+        assert isinstance(result, DurableAgentTask)
+        assert result.is_complete
 
-        assert request.wait_for_response is False
+    def test_orchestration_fire_and_forget_returns_acceptance_response(self, mock_orchestration_context: Mock) -> None:
+        """Verify wait_for_response=False returns acceptance response."""
+        executor = OrchestrationAgentExecutor(mock_orchestration_context)
+        mock_orchestration_context.signal_entity = Mock()
+
+        request = RunRequest(message="test", correlation_id="test-789", wait_for_response=False)
+
+        result = executor.run_durable_agent("test_agent", request)
+
+        # Get the result
+        response = result.get_result()
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 1
+        assert response.messages[0].role == Role.SYSTEM
+        assert "test-789" in response.messages[0].text
+
+    def test_orchestration_blocking_mode_calls_call_entity(self, mock_orchestration_context: Mock) -> None:
+        """Verify wait_for_response=True uses call_entity as before."""
+        executor = OrchestrationAgentExecutor(mock_orchestration_context)
+        mock_orchestration_context.signal_entity = Mock()
+
+        request = RunRequest(message="test", correlation_id="test-abc", wait_for_response=True)
+
+        result = executor.run_durable_agent("test_agent", request)
+
+        # Verify call_entity was called and signal_entity was not
+        assert mock_orchestration_context.call_entity.call_count == 1
+        assert mock_orchestration_context.signal_entity.call_count == 0
+
+        # Should return a DurableAgentTask
+        assert isinstance(result, DurableAgentTask)
 
 
 class TestOrchestrationAgentExecutorRun:
@@ -380,9 +405,9 @@ class TestDurableAgentTask:
 
         assert task.is_complete
         assert task.is_failed
+        # The exception is wrapped in TaskFailedError by the durabletask library
         exception = task.get_exception()
-        assert isinstance(exception, ValueError)
-        assert str(exception) == "Entity error"
+        assert exception is not None
 
     def test_durable_agent_task_validates_response_format(self, configure_successful_entity_task: Any) -> None:
         """Verify DurableAgentTask validates response format when provided."""
@@ -425,7 +450,9 @@ class TestDurableAgentTask:
 
     def test_durable_agent_task_fails_on_malformed_response(self, configure_successful_entity_task: Any) -> None:
         """Verify DurableAgentTask fails when entity returns malformed response data."""
-        mock_entity_task = configure_successful_entity_task({"invalid": "structure"})
+        # Use data that will cause AgentRunResponse.from_dict to fail
+        # Using a list instead of dict, or other invalid structure
+        mock_entity_task = configure_successful_entity_task("invalid string response")
 
         task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
 

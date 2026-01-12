@@ -34,7 +34,10 @@ def mock_executor() -> Mock:
 
     # Mock get_run_request to create actual RunRequest objects
     def create_run_request(
-        message: str, response_format: type[BaseModel] | None = None, enable_tool_calls: bool = True
+        message: str,
+        response_format: type[BaseModel] | None = None,
+        enable_tool_calls: bool = True,
+        wait_for_response: bool = True,
     ) -> RunRequest:
         import uuid
 
@@ -43,6 +46,7 @@ def mock_executor() -> Mock:
             correlation_id=str(uuid.uuid4()),
             response_format=response_format,
             enable_tool_calls=enable_tool_calls,
+            wait_for_response=wait_for_response,
         )
 
     mock.get_run_request = Mock(side_effect=create_run_request)

@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage
+from agent_framework import AgentRunResponse, ChatMessage, Role
 from agent_framework_durabletask import DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
@@ -204,6 +204,81 @@ class TestAgentFunctionAppGetAgent:
 
         with pytest.raises(ValueError, match=r"Agent 'MissingAgent' is not registered with this app\."):
             app.get_agent(Mock(), "MissingAgent")
+
+
+class TestAzureFunctionsFireAndForget:
+    """Test fire-and-forget mode for AzureFunctionsAgentExecutor."""
+
+    def test_fire_and_forget_calls_signal_entity(self, executor_with_uuid: tuple[Any, Mock, str]) -> None:
+        """Verify wait_for_response=False calls signal_entity instead of call_entity."""
+        executor, context, _ = executor_with_uuid
+        context.signal_entity = Mock()
+        context.call_entity = Mock(return_value=_create_entity_task())
+
+        agent = DurableAIAgent(executor, "TestAgent")
+        thread = agent.get_new_thread()
+
+        # Run with wait_for_response=False
+        result = agent.run("Test message", thread=thread, wait_for_response=False)
+
+        # Verify signal_entity was called and call_entity was not
+        assert context.signal_entity.call_count == 1
+        assert context.call_entity.call_count == 0
+
+        # Should still return an AgentTask
+        assert isinstance(result, AgentTask)
+
+    def test_fire_and_forget_returns_completed_task(self, executor_with_uuid: tuple[Any, Mock, str]) -> None:
+        """Verify wait_for_response=False returns pre-completed AgentTask."""
+        executor, context, _ = executor_with_uuid
+        context.signal_entity = Mock()
+
+        agent = DurableAIAgent(executor, "TestAgent")
+        thread = agent.get_new_thread()
+
+        result = agent.run("Test message", thread=thread, wait_for_response=False)
+
+        # Task should be immediately complete
+        assert isinstance(result, AgentTask)
+        assert result.is_completed
+
+    def test_fire_and_forget_returns_acceptance_response(self, executor_with_uuid: tuple[Any, Mock, str]) -> None:
+        """Verify wait_for_response=False returns acceptance response."""
+        executor, context, _ = executor_with_uuid
+        context.signal_entity = Mock()
+
+        agent = DurableAIAgent(executor, "TestAgent")
+        thread = agent.get_new_thread()
+
+        result = agent.run("Test message", thread=thread, wait_for_response=False)
+
+        # Get the result
+        response = result.result
+        assert isinstance(response, AgentRunResponse)
+        assert len(response.messages) == 1
+        assert response.messages[0].role == Role.SYSTEM
+        # Check message contains key information
+        message_text = response.messages[0].text
+        assert "accepted" in message_text.lower()
+        assert "background" in message_text.lower()
+
+    def test_blocking_mode_still_works(self, executor_with_uuid: tuple[Any, Mock, str]) -> None:
+        """Verify wait_for_response=True uses call_entity as before."""
+        executor, context, _ = executor_with_uuid
+        context.signal_entity = Mock()
+        context.call_entity = Mock(return_value=_create_entity_task())
+
+        agent = DurableAIAgent(executor, "TestAgent")
+        thread = agent.get_new_thread()
+
+        result = agent.run("Test message", thread=thread, wait_for_response=True)
+
+        # Verify call_entity was called and signal_entity was not
+        assert context.call_entity.call_count == 1
+        assert context.signal_entity.call_count == 0
+
+        # Should return an AgentTask
+        assert isinstance(result, AgentTask)
 
 
 class TestOrchestrationIntegration:

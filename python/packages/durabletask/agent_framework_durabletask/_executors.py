@@ -72,7 +72,7 @@ class DurableAgentTask(CompositeTask[AgentRunResponse], CompletableTask[AgentRun
             return
 
         if task.is_failed:
-            # Propagate the failure
+            # Propagate the failure - pass the original exception directly
             self.fail("call_entity Task failed", task.get_exception())
             return
 
@@ -108,15 +108,6 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
     Type Parameters:
         TaskT: The task type returned by this executor
     """
-
-    def supports_wait_for_response(self) -> bool:
-        """Whether this executor supports fire-and-forget mode (wait_for_response=False).
-
-        Returns:
-            bool: True if the executor supports non-blocking execution, False otherwise.
-                  Only ClientAgentExecutor returns True by default.
-        """
-        return False
 
     @abstractmethod
     def run_durable_agent(
@@ -160,15 +151,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         enable_tool_calls: bool,
         wait_for_response: bool = True,
     ) -> RunRequest:
-        """Create a RunRequest for the given parameters.
-
-        Raises:
-            ValueError: If wait_for_response=False is used with an executor that doesn't support it
-        """
-        # Validate that wait_for_response=False is only used with supporting executors
-        if not wait_for_response and not self.supports_wait_for_response():
-            raise ValueError(f"wait_for_response=False is not supported by {type(self).__name__}. ")
-
+        """Create a RunRequest for the given parameters."""
         correlation_id = self.generate_unique_id()
         return RunRequest(
             message=message,
@@ -176,6 +159,30 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
             enable_tool_calls=enable_tool_calls,
             wait_for_response=wait_for_response,
             correlation_id=correlation_id,
+        )
+
+    def _create_acceptance_response(self, correlation_id: str) -> AgentRunResponse:
+        """Create an acceptance response for fire-and-forget mode.
+
+        Args:
+            correlation_id: Correlation ID for tracking the request
+
+        Returns:
+            AgentRunResponse: Acceptance response with correlation ID
+        """
+        acceptance_message = ChatMessage(
+            role=Role.SYSTEM,
+            contents=[
+                TextContent(
+                    f"Request accepted for processing (correlation_id: {correlation_id}). "
+                    f"Agent is executing in the background. "
+                    f"Retrieve response via your configured streaming or callback mechanism."
+                )
+            ],
+        )
+        return AgentRunResponse(
+            messages=[acceptance_message],
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -196,10 +203,6 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
         self._client = client
         self.max_poll_retries = max_poll_retries
         self.poll_interval_seconds = poll_interval_seconds
-
-    def supports_wait_for_response(self) -> bool:
-        """Client executor supports fire-and-forget mode."""
-        return True
 
     def run_durable_agent(
         self,
@@ -234,21 +237,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
                 "[ClientAgentExecutor] Fire-and-forget mode: request signaled (correlation: %s)",
                 run_request.correlation_id,
             )
-            # Return acceptance response with correlation ID for tracking
-            acceptance_message = ChatMessage(
-                role=Role.SYSTEM,
-                contents=[
-                    TextContent(
-                        f"Request accepted for processing (correlation_id: {run_request.correlation_id}). "
-                        f"Agent is executing in the background. "
-                        f"Retrieve response via your configured streaming or callback mechanism."
-                    )
-                ],
-            )
-            return AgentRunResponse(
-                messages=[acceptance_message],
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
+            return self._create_acceptance_response(run_request.correlation_id)
 
         # Poll for the response
         agent_response = self._poll_for_agent_response(entity_id, run_request.correlation_id)
@@ -495,8 +484,22 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
             session_id,
         )
 
-        # Call the entity and get the underlying task
-        entity_task: CompletableTask[Any] = self._context.call_entity(entity_id, "run", run_request.to_dict())  # type: ignore
+        # Branch based on wait_for_response
+        if not run_request.wait_for_response:
+            # Fire-and-forget mode: signal entity and return pre-completed task
+            logger.info(
+                "[OrchestrationAgentExecutor] Fire-and-forget mode: signaling entity (correlation: %s)",
+                run_request.correlation_id,
+            )
+            self._context.signal_entity(entity_id, "run", run_request.to_dict())
+
+            # Create a pre-completed task with acceptance response
+            acceptance_response = self._create_acceptance_response(run_request.correlation_id)
+            entity_task: CompletableTask[AgentRunResponse] = CompletableTask()
+            entity_task.complete(acceptance_response)
+        else:
+            # Blocking mode: call entity and wait for response
+            entity_task = self._context.call_entity(entity_id, "run", run_request.to_dict())  # type: ignore
 
         # Wrap in DurableAgentTask for response transformation
         return DurableAgentTask(

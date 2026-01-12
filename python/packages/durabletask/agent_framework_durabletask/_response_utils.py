@@ -51,9 +51,19 @@ def ensure_response_format(
         response_format: Optional Pydantic model class to parse the response value into
         correlation_id: Correlation ID for logging purposes
         response: The AgentRunResponse object to validate and parse
+
+    Raises:
+        ValueError: If response_format is specified but response.value cannot be parsed
     """
     if response_format is not None and not isinstance(response.value, response_format):
         response.try_parse_value(response_format)
+
+        # Validate that parsing succeeded
+        if not isinstance(response.value, response_format):
+            raise ValueError(
+                f"Response value could not be parsed into required format {response_format.__name__} "
+                f"for correlation_id {correlation_id}"
+            )
 
         logger.debug(
             "[ensure_response_format] Loaded AgentRunResponse.value for correlation_id %s with type: %s",
