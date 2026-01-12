@@ -1470,19 +1470,21 @@ def test_chat_message_from_dict_with_mixed_content():
     assert len(message_dict["contents"]) == 3
 
 
-def test_chat_options_edge_cases():
+async def test_chat_options_edge_cases():
     """Test ChatOptions edge cases for better coverage."""
     from agent_framework import validate_tool_mode, validate_tools
 
-    # Test with tools conversion
+    # Test with tools conversion - validate_tools converts callables to AIFunction
     def sample_tool():
         return "test"
 
     options: ChatOptions = {"tools": [sample_tool], "tool_choice": "auto"}
+
+    # validate_tool_mode handles tool_choice validation
     assert validate_tool_mode(options.get("tool_choice")) == ToolMode.AUTO
 
-    # Validate tools is a list
-    validated_tools = validate_tools(options.get("tools"))
+    # validate_tools handles tools validation and normalization (async)
+    validated_tools = await validate_tools(options.get("tools"))
     assert validated_tools is not None
     assert len(validated_tools) == 1
 

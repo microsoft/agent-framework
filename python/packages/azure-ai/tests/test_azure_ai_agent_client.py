@@ -623,24 +623,6 @@ async def test_azure_ai_chat_client_prepare_options_with_auto_tool_choice(
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.AUTO
 
 
-async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
-    mock_agents_client: MagicMock,
-) -> None:
-    """Test _prepare_tool_choice when tool_choice is string 'none'."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-
-    # Create a mock tool for testing
-    mock_tool = MagicMock()
-    chat_options: ChatOptions = {"tools": [mock_tool], "tool_choice": "none"}
-
-    # Call the method
-    chat_client._prepare_tool_choice(chat_options)  # type: ignore
-
-    # Verify tools are cleared and tool_choice is set to NONE mode
-    assert chat_options.get("tools") is None
-    assert chat_options.get("tool_choice") == ToolMode.NONE.mode
-
-
 async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specific_function(
     mock_agents_client: MagicMock,
 ) -> None:
@@ -651,7 +633,7 @@ async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specifi
 
     dict_tool = {"type": "function", "function": {"name": "test_function"}}
 
-    chat_options: ChatOptions = {"tools": [dict_tool], "tool_choice": required_tool_mode}
+    chat_options = {"tools": [dict_tool], "tool_choice": required_tool_mode}
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore

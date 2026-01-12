@@ -2497,7 +2497,7 @@ def prepare_messages(
 def prepend_instructions_to_messages(
     messages: list[ChatMessage],
     instructions: str | Sequence[str] | None,
-    role: Role | Literal["system", "user", "assistant", "developer"] = "system",
+    role: Role | Literal["system", "user", "assistant"] = "system",
 ) -> list[ChatMessage]:
     """Prepend instructions to a list of messages with a specified role.
 
