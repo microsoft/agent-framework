@@ -41,14 +41,14 @@ public class WorkflowHostSmokeTests
             { }
         }
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            return new Thread(serializedThread, jsonSerializerOptions);
+            return new(new Thread(serializedThread, jsonSerializerOptions));
         }
 
-        public override AgentThread GetNewThread()
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
         {
-            return new Thread();
+            return new(new Thread());
         }
 
         protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

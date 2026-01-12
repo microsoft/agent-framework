@@ -33,7 +33,7 @@ The `AgentThread` works with `ChatClientAgentRunOptions` to link the agent to a 
 ChatClientAgentRunOptions agentRunOptions = new() { ChatOptions = new ChatOptions() { ConversationId = conversationId } };
 
 // Create a thread for the conversation
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // First call links the thread to the conversation
 ChatCompletion firstResponse = await agent.RunAsync([firstMessage], thread, agentRunOptions);
@@ -59,7 +59,7 @@ foreach (ClientResult result in getConversationItemsResults.GetRawPages())
 1. **Create an OpenAI Client**: Initialize an `OpenAIClient` with your API key
 2. **Create a Conversation**: Use `ConversationClient` to create a server-side conversation
 3. **Create an Agent**: Initialize an `OpenAIResponseClientAgent` with the desired model and instructions
-4. **Create a Thread**: Call `agent.GetNewThread()` to create a new conversation thread
+4. **Create a Thread**: Call `agent.GetNewThreadAsync()` to create a new conversation thread
 5. **Link Thread to Conversation**: Pass `ChatClientAgentRunOptions` with the `ConversationId` on the first call
 6. **Send Messages**: Subsequent calls to `agent.RunAsync()` only need the thread - context is maintained
 7. **Cleanup**: Delete the conversation when done using `conversationClient.DeleteConversation()`
