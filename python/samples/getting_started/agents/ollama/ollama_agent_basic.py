@@ -12,7 +12,7 @@ This sample demonstrates implementing a Ollama agent with basic tool usage.
 
 Ensure to install Ollama and have a model running locally before running the sample
 Not all Models support function calling, to test function calling try llama3.2 or qwen3:4b
-Set the model to use via the OLLAMA_CHAT_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
 https://ollama.com/
 
 """
