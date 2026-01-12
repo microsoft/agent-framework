@@ -29,7 +29,7 @@ runtime_schema = {
 
 
 async def main() -> None:
-    """Example of using response_format property."""
+    """Example of using response_format property with a runtime JSON schema."""
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
@@ -37,27 +37,23 @@ async def main() -> None:
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Pass response_format at agent creation time using dict schema format
         agent = await provider.create_agent(
-            name="ProductMarketerAgent",
+            name="WeatherDigestAgent",
             instructions="Return sample weather digest as structured JSON.",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": runtime_schema["title"],
+                    "strict": True,
+                    "schema": runtime_schema,
+                },
+            },
         )
 
         query = "Draft a sample weather digest."
         print(f"User: {query}")
-        result = await agent.run(
-            query,
-            # Specify type to use as response
-            additional_chat_options={
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": runtime_schema["title"],
-                        "strict": True,
-                        "schema": runtime_schema,
-                    },
-                },
-            },
-        )
+        result = await agent.run(query)
 
         print(result.text)
 

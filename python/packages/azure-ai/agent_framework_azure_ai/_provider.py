@@ -145,7 +145,7 @@ class AzureAIProjectAgentProvider:
         description: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: type[BaseModel] | MutableMapping[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -162,7 +162,8 @@ class AzureAIProjectAgentProvider:
             description: A description of the agent.
             temperature: The sampling temperature to use.
             top_p: The nucleus sampling probability to use.
-            response_format: The format of the response (Pydantic model for structured output).
+            response_format: The format of the response. Can be a Pydantic model for structured
+                output, or a dict with JSON schema configuration.
             tools: Tools to make available to the agent.
 
         Returns:
@@ -201,7 +202,16 @@ class AzureAIProjectAgentProvider:
 
         # Pass the user-provided tools for function invocation
         normalized_tools = ChatOptions(tools=tools).tools if tools else None
-        return self._create_chat_agent_from_details(created_agent, normalized_tools)
+
+        # Only pass Pydantic models to ChatAgent for response parsing
+        # Dict schemas are used by Azure AI for formatting, but can't be used for local parsing
+        pydantic_response_format = (
+            response_format if isinstance(response_format, type) and issubclass(response_format, BaseModel) else None
+        )
+
+        return self._create_chat_agent_from_details(
+            created_agent, normalized_tools, response_format=pydantic_response_format
+        )
 
     async def get_agent(
         self,
@@ -295,6 +305,7 @@ class AzureAIProjectAgentProvider:
         self,
         details: AgentVersionDetails,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
+        response_format: type[BaseModel] | None = None,
     ) -> ChatAgent:
         """Create a ChatAgent from an AgentVersionDetails.
 
@@ -302,6 +313,7 @@ class AzureAIProjectAgentProvider:
             details: The AgentVersionDetails containing the agent definition.
             provided_tools: User-provided tools (including function implementations).
                 These are merged with hosted tools from the definition.
+            response_format: The Pydantic model type for structured output parsing.
         """
         if not isinstance(details.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
@@ -328,6 +340,7 @@ class AzureAIProjectAgentProvider:
             temperature=details.definition.temperature,
             top_p=details.definition.top_p,
             tools=merged_tools,
+            response_format=response_format,
         )
 
     def _merge_tools(
