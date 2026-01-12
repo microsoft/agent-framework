@@ -72,7 +72,7 @@ else:
 __all__ = [
     "AnthropicChatOptions",
     "AnthropicClient",
-    "AnthropicThinkingConfig",
+    "ThinkingConfig",
 ]
 
 logger = get_logger("agent_framework.anthropic")
@@ -84,7 +84,7 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08
 # region Anthropic Chat Options TypedDict
 
 
-class AnthropicThinkingConfig(TypedDict, total=False):
+class ThinkingConfig(TypedDict, total=False):
     """Configuration for enabling Claude's extended thinking.
 
     When enabled, responses include ``thinking`` content blocks showing Claude's
@@ -130,6 +130,10 @@ class AnthropicChatOptions(ChatOptions, total=False):
         top_k: Number of top tokens to consider for sampling.
         service_tier: Service tier ("auto" or "standard_only").
         thinking: Extended thinking configuration for Claude models.
+            When enabled, responses include ``thinking`` content blocks showing Claude's
+            thinking process before the final answer. Requires a minimum budget of 1,024
+            tokens and counts towards your ``max_tokens`` limit.
+            See https://docs.claude.com/en/docs/build-with-claude/extended-thinking for details.
         container: Container configuration for skills.
         additional_beta_flags: Additional beta flags to enable on the request.
     """
@@ -139,7 +143,7 @@ class AnthropicChatOptions(ChatOptions, total=False):
     service_tier: Literal["auto", "standard_only"]
 
     # Extended thinking (Claude models)
-    thinking: AnthropicThinkingConfig
+    thinking: ThinkingConfig
 
     # Skills
     container: dict[str, Any]
