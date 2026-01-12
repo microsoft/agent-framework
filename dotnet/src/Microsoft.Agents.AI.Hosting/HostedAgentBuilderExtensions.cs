@@ -92,4 +92,19 @@ public static class HostedAgentBuilderExtensions
 
         return builder;
     }
+
+    /// <summary>
+    /// Adds AI tool to an agent being configured with the service collection.
+    /// </summary>
+    /// <param name="builder">The hosted agent builder.</param>
+    /// <param name="factory">A factory function that creates a AI tool using the provided service provider.</param>
+    public static IHostedAgentBuilder WithAITool(this IHostedAgentBuilder builder, Func<IServiceProvider, AITool> factory)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(factory);
+
+        builder.ServiceCollection.AddKeyedSingleton(builder.Name, (sp, name) => factory(sp));
+
+        return builder;
+    }
 }
