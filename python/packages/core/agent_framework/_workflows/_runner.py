@@ -226,7 +226,10 @@ class Runner:
                 runner context itself is not configured with checkpointing.
 
         Returns:
-            None, indicating success. In case of failure, raises WorkflowCheckpointException
+            None on success.
+
+        Raises:
+            WorkflowCheckpointException on failure.
         """
         try:
             # Load the checkpoint
@@ -344,7 +347,7 @@ class Runner:
 
         for executor_id, state in executor_states.items():  # pyright: ignore[reportUnknownVariableType]
             if not isinstance(executor_id, str):
-                raise ValueError("Executor ID in executor states is not a string. Unable to restore.")
+                raise WorkflowCheckpointException("Executor ID in executor states is not a string. Unable to restore.")
             if not isinstance(state, dict) or not all(isinstance(k, str) for k in state):  # pyright: ignore[reportUnknownVariableType]
                 raise WorkflowCheckpointException(
                     f"Executor state for {executor_id} is not a dict[str, Any]. Unable to restore."
