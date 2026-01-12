@@ -5,6 +5,7 @@ using Microsoft.Azure.Functions.Worker.Context.Features;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.Functions.Worker.Invocation;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
@@ -25,6 +26,20 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         IFunctionInputBindingFeature? functionInputBindingFeature = context.Features.Get<IFunctionInputBindingFeature>() ??
             throw new InvalidOperationException("Function input binding feature is not available on the current context.");
 
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint)
+        {
+            var triggerBinding = context.FunctionDefinition.InputBindings.Values.FirstOrDefault(b => b.Type == "orchestrationTrigger");
+            var taskOrechstrationContextBinding = context.BindInputAsync<TaskOrchestrationContext>(triggerBinding!);
+
+            if (taskOrechstrationContextBinding.IsCompletedSuccessfully)
+            {
+                var t = taskOrechstrationContextBinding.Result.Value;
+                context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync(t!);
+            }
+
+            return;
+        }
+
         FunctionInputBindingResult? inputBindingResults = await functionInputBindingFeature.BindFunctionInputAsync(context);
         if (inputBindingResults is not { Values: { } values })
         {
@@ -35,6 +50,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         string? encodedEntityRequest = null;
         DurableTaskClient? durableTaskClient = null;
         ToolInvocationContext? mcpToolInvocationContext = null;
+        //string? encodedTaskOrchestrationContext = null;
 
         foreach (var binding in values)
         {
@@ -52,10 +68,13 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 case ToolInvocationContext toolContext:
                     mcpToolInvocationContext = toolContext;
                     break;
+                    //case string orchestrationContext:
+                    //    encodedTaskOrchestrationContext = orchestrationContext;
+                    //    break;
             }
         }
 
-        if (durableTaskClient is null)
+        if (durableTaskClient is null && context.FunctionDefinition.EntryPoint != BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint)
         {
             // This is not expected to happen since all built-in functions are
             // expected to have a Durable Task client binding.
@@ -71,7 +90,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
 
             context.GetInvocationResult().Value = await BuiltInFunctions.RunAgentHttpAsync(
                    httpRequestData,
-                   durableTaskClient,
+                   durableTaskClient!,
                    context);
             return;
         }
@@ -84,7 +103,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             }
 
             context.GetInvocationResult().Value = await BuiltInFunctions.InvokeAgentAsync(
-                durableTaskClient,
+                durableTaskClient!,
                 encodedEntityRequest,
                 context);
             return;
@@ -98,7 +117,40 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             }
 
             context.GetInvocationResult().Value =
-                await BuiltInFunctions.RunMcpToolAsync(mcpToolInvocationContext, durableTaskClient, context);
+                await BuiltInFunctions.RunMcpToolAsync(mcpToolInvocationContext, durableTaskClient!, context);
+            return;
+        }
+
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint)
+        {
+            //if (httpRequestData == null)
+            //{
+            //    throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
+            //}
+
+            if (httpRequestData == null)
+            {
+                throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrechstrtationHttpTriggerAsync(
+                   httpRequestData,
+                   durableTaskClient!,
+                   context);
+            return;
+        }
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint)
+        {
+            var triggerBinding = context.FunctionDefinition.InputBindings.Values.FirstOrDefault(b => b.Type == "orchestrationTrigger");
+            var taskOrechstrationContextBinding = context.BindInputAsync<TaskOrchestrationContext>(triggerBinding!);
+
+            if (taskOrechstrationContextBinding.IsCompletedSuccessfully)
+            {
+                var t = taskOrechstrationContextBinding.Result.Value;
+                context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync(t!);
+            }
+
+            //context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync(null);
             return;
         }
 

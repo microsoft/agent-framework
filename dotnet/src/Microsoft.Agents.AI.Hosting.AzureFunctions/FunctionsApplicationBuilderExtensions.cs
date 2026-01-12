@@ -15,6 +15,22 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 public static class FunctionsApplicationBuilderExtensions
 {
     /// <summary>
+    /// Adds support for durable workflows to the specified Functions application builder.
+    /// </summary>
+    /// <param name="builder">The Functions application builder to configure with durable workflow capabilities.</param>
+    /// <param name="configure"></param>
+    /// <returns>The same instance of <see cref="FunctionsApplicationBuilder"/> to allow for method chaining.</returns>
+    public static FunctionsApplicationBuilder AddDurableWorkflows(this FunctionsApplicationBuilder builder, Action<DurableWorkflowOptions> configure)
+    {
+        var options = new DurableWorkflowOptions();
+        configure(options);
+        builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
+
+        return builder;
+    }
+
+    /// <summary>
     /// Configures the application to use durable agents with a builder pattern.
     /// </summary>
     /// <param name="builder">The functions application builder.</param>
@@ -38,6 +54,8 @@ public static class FunctionsApplicationBuilderExtensions
         builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal));
         builder.Services.AddSingleton<BuiltInFunctionExecutor>();
 
