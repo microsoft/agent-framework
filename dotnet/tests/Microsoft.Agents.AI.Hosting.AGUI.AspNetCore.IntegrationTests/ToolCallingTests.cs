@@ -45,7 +45,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync(serverTools: [serverTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the server function");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -93,7 +93,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync(serverTools: [getWeatherTool, getTimeTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "What's the weather and time?");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -134,7 +134,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the client function");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -182,7 +182,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [calculateTool, formatTool]);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Calculate 5 + 3 and format 'hello'");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -233,7 +233,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync(serverTools: [serverTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get both server and client data");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -298,7 +298,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync(serverTools: [testTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the test function");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -342,7 +342,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync(serverTools: [func1, func2], triggerParallelCalls: true);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call both functions in parallel");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -428,7 +428,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync(serverTools: [serverTool], jsonSerializerOptions: ServerJsonContext.Default.Options);
         var chatClient = new AGUIChatClient(this._client!, "", null, ServerJsonContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get server forecast for Seattle for 5 days");
 
         List<AgentRunResponseUpdate> updates = [];
@@ -474,7 +474,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null, ClientJsonContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get client forecast for Portland with hourly data");
 
         List<AgentRunResponseUpdate> updates = [];

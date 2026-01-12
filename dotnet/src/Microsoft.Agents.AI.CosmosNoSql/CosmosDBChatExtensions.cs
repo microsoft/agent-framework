@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 
@@ -35,7 +36,7 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(connectionString, databaseId, containerId);
+        options.ChatMessageStoreFactory = (context, ct) => new ValueTask<ChatMessageStore>(new CosmosChatMessageStore(connectionString, databaseId, containerId));
         return options;
     }
 
@@ -62,7 +63,7 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
+        options.ChatMessageStoreFactory = (context, ct) => new ValueTask<ChatMessageStore>(new CosmosChatMessageStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId));
         return options;
     }
 
@@ -89,7 +90,7 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(cosmosClient, databaseId, containerId);
+        options.ChatMessageStoreFactory = (context, ct) => new ValueTask<ChatMessageStore>(new CosmosChatMessageStore(cosmosClient, databaseId, containerId));
         return options;
     }
 }

@@ -49,7 +49,7 @@ AIAgent middlewareEnabledAgent = originalAgent
     .Use(GuardrailMiddleware, null)
     .Build();
 
-AgentThread thread = middlewareEnabledAgent.GetNewThread();
+AgentThread thread = await middlewareEnabledAgent.GetNewThreadAsync();
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
 AgentRunResponse guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");

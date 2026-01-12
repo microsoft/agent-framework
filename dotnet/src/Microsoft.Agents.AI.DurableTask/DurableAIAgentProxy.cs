@@ -11,16 +11,16 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    public override AgentThread DeserializeThread(
+    public override ValueTask<AgentThread> DeserializeThreadAsync(
         JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions);
+        return ValueTask.FromResult<AgentThread>(DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions));
     }
 
-    public override AgentThread GetNewThread()
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
     {
-        return new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!));
+        return ValueTask.FromResult<AgentThread>(new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!)));
     }
 
     protected override async Task<AgentRunResponse> RunCoreAsync(
@@ -29,7 +29,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not DurableAgentThread durableThread)
         {
             throw new ArgumentException(

@@ -33,11 +33,11 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
     ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
-    AIContextProviderFactory = ctx => new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions)
+    AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions))
 });
 
 // Create a new thread for the conversation.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 Console.WriteLine(">> Use thread with blank memory\n");
 
@@ -52,7 +52,7 @@ var threadElement = thread.Serialize();
 Console.WriteLine("\n>> Use deserialized thread with previously created memories\n");
 
 // Later we can deserialize the thread and continue the conversation with the previous memory component state.
-var deserializedThread = agent.DeserializeThread(threadElement);
+var deserializedThread = await agent.DeserializeThreadAsync(threadElement);
 Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedThread));
 
 Console.WriteLine("\n>> Read memories from memory component\n");
@@ -68,7 +68,7 @@ Console.WriteLine("\n>> Use new thread with previously created memories\n");
 
 // It is also possible to set the memories in a memory component on an individual thread.
 // This is useful if we want to start a new thread, but have it share the same memories as a previous thread.
-var newThread = agent.GetNewThread();
+var newThread = await agent.GetNewThreadAsync();
 if (userInfo is not null && newThread.GetService<UserInfoMemory>() is UserInfoMemory newThreadMemory)
 {
     newThreadMemory.UserInfo = userInfo;
