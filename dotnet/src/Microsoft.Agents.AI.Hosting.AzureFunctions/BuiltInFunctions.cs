@@ -6,6 +6,7 @@ using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
@@ -20,7 +21,46 @@ internal static class BuiltInFunctions
 
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
+    internal static readonly string RunWorkflowOrechstrtationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrechstrtationHttpTriggerAsync)}";
+    internal static readonly string RunWorkflowOrechstrtationFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestratorAsync)}";
+    internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
+
+#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
+    internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
+#pragma warning restore IL3000
+
+    // Exposed as an activity trigger for workflow executors
+    public static Task<string> InvokeWorkflowActivityAsync(
+        [ActivityTrigger] string input,
+        FunctionContext functionContext)
+    {
+        return Task.FromResult($"Hello from activity with input: {input}");
+    }
+
+    //[Function("my-Orchestration")]
+    //public static async Task<List<string>> RunOrchestrator1Async(
+    //[OrchestrationTrigger] TaskOrchestrationContext context)
+    //{
+    //    ILogger logger = context.CreateReplaySafeLogger(nameof(Function));
+    //    logger.LogInformation("Saying hello.");
+
+    //    // returns ["Hello Tokyo!", "Hello Seattle!", "Hello London!"]
+    //    return new List<string>();
+    //}
+
+    //[Function("dafx-Orchestration")]
+    public static async Task<List<string>> RunWorkflowOrchestratorAsync(TaskOrchestrationContext taskOrchestrationContext)
+    {
+        //ILogger logger = context.CreateReplaySafeLogger(nameof(Function));
+        //logger.LogInformation("Invoking RunWorkflowOrchestrator");
+        var outputs = new List<string>();
+
+        await Task.Delay(1);
+        outputs.Add("to do - call get executor result");
+
+        return outputs;
+    }
 
     // Exposed as an entity trigger via AgentFunctionsProvider
     public static Task<string> InvokeAgentAsync(
@@ -41,6 +81,25 @@ internal static class BuiltInFunctions
         // It will be invoked by the Azure Functions runtime when the entity is called.
         AgentEntity entity = new(combinedServiceProvider, functionContext.CancellationToken);
         return GrpcEntityRunner.LoadAndRunAsync(encodedEntityRequest, entity, combinedServiceProvider);
+    }
+
+    /// <summary>
+    /// Invokes a workflow orchestration in response to an HTTP request.
+    /// </summary>
+    public static async Task<HttpResponseData> RunWorkflowOrechstrtationHttpTriggerAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        // to do: Retrieve the workflow and execute it.
+        var workflowName = context.FunctionDefinition.Name.Replace("http", "dafx");
+
+        //string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("dafx-MyTestWorkflow");
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("OrchFunction"); // dafx-MyTestWorkflow");
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
+        await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}.{instanceId}");
+        return response;
     }
 
     public static async Task<HttpResponseData> RunAgentHttpAsync(
