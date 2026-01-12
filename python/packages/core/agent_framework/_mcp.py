@@ -10,10 +10,11 @@ from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
+import httpx
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
@@ -897,7 +898,6 @@ class MCPStreamableHTTPTool(MCPTool):
             mcp_tool = MCPStreamableHTTPTool(
                 name="web-api",
                 url="https://api.example.com/mcp",
-                headers={"Authorization": "Bearer token"},
                 description="Web API operations",
             )
 
@@ -919,21 +919,19 @@ class MCPStreamableHTTPTool(MCPTool):
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | None = None,
-        sse_read_timeout: float | None = None,
         terminate_on_close: bool | None = None,
         chat_client: "ChatClientProtocol | None" = None,
         additional_properties: dict[str, Any] | None = None,
+        http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
 
         Note:
-            The arguments are used to create a streamable HTTP client.
-            See ``mcp.client.streamable_http.streamablehttp_client`` for more details.
-            Any extra arguments passed to the constructor will be passed to the
-            streamable HTTP client constructor.
+            The arguments are used to create a streamable HTTP client using the
+            new ``mcp.client.streamable_http.streamable_http_client`` API.
+            If an httpx.AsyncClient is provided via ``http_client``, it will be used directly.
+            Otherwise, the ``streamable_http_client`` API will create and manage a default client.
 
         Args:
             name: The name of the tool.
@@ -953,12 +951,13 @@ class MCPStreamableHTTPTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
-            headers: The headers to send with the request.
-            timeout: The timeout for the request.
-            sse_read_timeout: The timeout for reading from the SSE stream.
             terminate_on_close: Close the transport when the MCP client is terminated.
             chat_client: The chat client to use for sampling.
-            kwargs: Any extra arguments to pass to the SSE client.
+            http_client: Optional httpx.AsyncClient to use. If not provided, the
+                ``streamable_http_client`` API will create and manage a default client.
+                To configure headers, timeouts, or other HTTP client settings, create
+                and pass your own ``httpx.AsyncClient`` instance.
+            kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
             name=name,
@@ -973,11 +972,8 @@ class MCPStreamableHTTPTool(MCPTool):
             request_timeout=request_timeout,
         )
         self.url = url
-        self.headers = headers or {}
-        self.timeout = timeout
-        self.sse_read_timeout = sse_read_timeout
         self.terminate_on_close = terminate_on_close
-        self._client_kwargs = kwargs
+        self._httpx_client: httpx.AsyncClient | None = http_client
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -985,20 +981,12 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        args: dict[str, Any] = {
-            "url": self.url,
-        }
-        if self.headers:
-            args["headers"] = self.headers
-        if self.timeout is not None:
-            args["timeout"] = self.timeout
-        if self.sse_read_timeout is not None:
-            args["sse_read_timeout"] = self.sse_read_timeout
-        if self.terminate_on_close is not None:
-            args["terminate_on_close"] = self.terminate_on_close
-        if self._client_kwargs:
-            args.update(self._client_kwargs)
-        return streamablehttp_client(**args)
+        # Pass the http_client (which may be None) to streamable_http_client
+        return streamable_http_client(
+            url=self.url,
+            http_client=self._httpx_client,
+            terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
+        )
 
 
 class MCPWebsocketTool(MCPTool):
