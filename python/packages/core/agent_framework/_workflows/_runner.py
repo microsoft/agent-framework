@@ -236,12 +236,13 @@ class Runner:
             elif checkpoint_storage is not None:
                 checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
             else:
-                logger.warning("Context does not support checkpointing and no external storage was provided")
-                return False
+                raise WorkflowCheckpointException(
+                    "Cannot load checkpoint: no checkpointing configured in context or external storage provided."
+                )
 
             if not checkpoint:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
-                return False
+                raise WorkflowCheckpointException(f"Checkpoint {checkpoint_id} not found")
 
             # Validate the loaded checkpoint against the workflow
             graph_hash = getattr(self, "graph_signature_hash", None)
