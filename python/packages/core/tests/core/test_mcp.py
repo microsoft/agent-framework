@@ -1512,24 +1512,18 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com",
-        headers={"Auth": "token"},
-        timeout=30.0,
-        sse_read_timeout=10.0,
         terminate_on_close=True,
-        custom_param="test",
     )
 
-    with patch("agent_framework._mcp.streamablehttp_client") as mock_http_client:
+    with patch("agent_framework._mcp.streamable_http_client") as mock_http_client:
         tool.get_mcp_client()
 
-        # Verify all parameters were passed
+        # Verify streamable_http_client was called with None for http_client
+        # (since we didn't provide one, the API will create its own)
         mock_http_client.assert_called_once_with(
             url="http://example.com",
-            headers={"Auth": "token"},
-            timeout=30.0,
-            sse_read_timeout=10.0,
+            http_client=None,
             terminate_on_close=True,
-            custom_param="test",
         )
 
 
@@ -1692,3 +1686,61 @@ async def test_load_prompts_prevents_multiple_calls():
         tool._prompts_loaded = True
 
     assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented
+
+
+@pytest.mark.asyncio
+async def test_mcp_streamable_http_tool_httpx_client_cleanup():
+    """Test that MCPStreamableHTTPTool properly passes through httpx clients."""
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from agent_framework import MCPStreamableHTTPTool
+
+    # Mock the streamable_http_client to avoid actual connections
+    with (
+        patch("agent_framework._mcp.streamable_http_client") as mock_client,
+        patch("agent_framework._mcp.ClientSession") as mock_session_class,
+    ):
+        # Setup mock context manager for streamable_http_client
+        mock_transport = (Mock(), Mock())
+        mock_context_manager = Mock()
+        mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+        mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+        mock_client.return_value = mock_context_manager
+
+        # Setup mock session
+        mock_session = Mock()
+        mock_session.initialize = AsyncMock()
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        # Test 1: Tool without provided client (passes None to streamable_http_client)
+        tool1 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+        )
+        await tool1.connect()
+        # When no client is provided, _httpx_client should be None
+        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+
+        # Test 2: Tool with user-provided client
+        user_client = Mock()
+        tool2 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+            http_client=user_client,
+        )
+        await tool2.connect()
+
+        # Verify the user-provided client was stored
+        assert tool2._httpx_client is user_client, "User-provided client should be stored"
+
+        # Verify streamable_http_client was called with the user's client
+        # Get the last call (should be from tool2.connect())
+        call_args = mock_client.call_args
+        assert call_args.kwargs["http_client"] is user_client, "User's client should be passed through"
