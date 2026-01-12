@@ -376,15 +376,23 @@ class MCPTool:
             return self._functions
         return [func for func in self._functions if func.name in self.allowed_tools]
 
-    async def connect(self) -> None:
+    async def connect(self, *, reset: bool = False) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
         and loads tools and prompts if configured to do so.
 
+        Keyword Args:
+            reset: If True, forces a reconnection even if already connected.
+
         Raises:
             ToolException: If connection or session initialization fails.
         """
+        if reset:
+            await self._exit_stack.aclose()
+            self.session = None
+            self.is_connected = False
+            self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
@@ -579,15 +587,15 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
-        if not self.session:
-            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
-
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            prompt_list = await self.session.list_prompts(params=params)
+            # Ensure connection is still valid before each page request
+            await self._ensure_connected()
+
+            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
 
             for prompt in prompt_list.prompts:
                 local_name = _normalize_mcp_name(prompt.name)
@@ -622,15 +630,15 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
-        if not self.session:
-            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
-
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            tool_list = await self.session.list_tools(params=params)
+            # Ensure connection is still valid before each page request
+            await self._ensure_connected()
+
+            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
 
             for tool in tool_list.tools:
                 local_name = _normalize_mcp_name(tool.name)
@@ -675,42 +683,6 @@ class MCPTool:
         """
         pass
 
-    def _is_connection_valid(self) -> bool:
-        """Check if the MCP connection is valid and usable.
-
-        This performs a comprehensive check beyond just verifying the session exists.
-        It also checks if the underlying streams are still open and usable.
-
-        Returns:
-            True if the connection is valid and can be used, False otherwise.
-        """
-        if not self.session or not self.is_connected:
-            return False
-
-        # Check if the underlying write stream is still open
-        # The write stream gets closed during async generator cleanup (e.g., FastAPI StreamingResponse)
-        try:
-            write_stream = getattr(self.session, "_write_stream", None)
-            if write_stream is None:
-                # No write stream attribute, assume connection is valid
-                # (session might be a mock or doesn't expose internals)
-                return True
-
-            # Check if the stream is closed
-            if getattr(write_stream, "_closed", False):
-                return False
-            # For anyio MemoryObjectSendStream, check the closed state
-            if hasattr(write_stream, "_state"):
-                state = getattr(write_stream, "_state", None)
-                if state is not None and hasattr(state, "open_send_channels") and state.open_send_channels == 0:
-                    return False
-        except (AttributeError, TypeError):
-            # If we can't check the stream state, assume it's valid
-            # This ensures we don't break if the internal structure changes
-            pass
-
-        return True
-
     async def _ensure_connected(self) -> None:
         """Ensure the connection is valid, reconnecting if necessary.
 
@@ -720,13 +692,12 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
-        if not self._is_connection_valid():
+        try:
+            await self.session.send_ping()  # type: ignore[union-attr]
+        except Exception:
             logger.info("MCP connection invalid or closed. Reconnecting...")
-            self.session = None
-            self.is_connected = False
-            self._exit_stack = AsyncExitStack()
             try:
-                await self.connect()
+                await self.connect(reset=True)
             except Exception as ex:
                 raise ToolExecutionException(
                     "Failed to establish MCP connection.",

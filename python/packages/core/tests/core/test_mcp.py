@@ -1248,6 +1248,63 @@ async def test_streamable_http_integration():
         assert result[0].text is not None
 
 
+@pytest.mark.flaky
+@skip_if_mcp_integration_tests_disabled
+async def test_mcp_connection_reset_integration():
+    """Test that connection reset works correctly with a real MCP server.
+
+    This integration test verifies:
+    1. Initial connection and tool execution works
+    2. Simulating connection failure triggers automatic reconnection
+    3. Tool execution works after reconnection
+    4. Exit stack cleanup happens properly during reconnection
+    """
+    url = os.environ.get("LOCAL_MCP_URL")
+
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+
+    async with tool:
+        # Verify initial connection
+        assert tool.session is not None
+        assert tool.is_connected is True
+        assert len(tool.functions) > 0, "The MCP server should have at least one function."
+
+        # Get the first function and invoke it
+        func = tool.functions[0]
+        first_result = await func.invoke(query="What is Agent Framework?")
+        assert first_result is not None
+        assert len(first_result) > 0
+
+        # Store the original session and exit stack for comparison
+        original_session = tool.session
+        original_exit_stack = tool._exit_stack
+
+        async def failing_send_ping():
+            raise Exception("Connection lost")
+
+        tool.session.send_ping = failing_send_ping
+
+        # Invoke the function again - this should trigger automatic reconnection via _ensure_connected
+        second_result = await func.invoke(query="What is Agent Framework?")
+        assert second_result is not None
+        assert len(second_result) > 0
+
+        # Verify we have a new session and exit stack after reconnection
+        assert tool.session is not None
+        assert tool.session is not original_session, "Session should be replaced after reconnection"
+        assert tool._exit_stack is not original_exit_stack, "Exit stack should be replaced after reconnection"
+        assert tool.is_connected is True
+
+        # Verify tools are still available after reconnection
+        assert len(tool.functions) > 0
+
+        # Both results should be valid (we don't compare content as it may vary)
+        if hasattr(first_result[0], "text"):
+            assert first_result[0].text is not None
+        if hasattr(second_result[0], "text"):
+            assert second_result[0].text is not None
+
+
 async def test_mcp_tool_message_handler_notification():
     """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
     notifications."""
@@ -2104,8 +2161,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 
     This test verifies the fix for issue #2884: the tool proactively checks
     connection validity before operations. If the connection is invalid,
-    it reconnects automatically. If ClosedResourceError still occurs during
-    the operation, it's logged and re-raised.
+    it reconnects automatically and properly cleans up the exit stack.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2124,11 +2180,18 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
     mock_session = MagicMock()
     mock_session._request_id = 1
     mock_session.call_tool = AsyncMock()
+    mock_session.send_ping = AsyncMock()
+
+    # Mock _exit_stack.aclose to track cleanup calls
+    original_exit_stack = tool._exit_stack
+    tool._exit_stack.aclose = AsyncMock()
 
     # Mock connect() to avoid trying to start actual process
     with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session():
+        async def restore_session(*, reset=False):
+            if reset:
+                await original_exit_stack.aclose()
             tool.session = mock_session
             tool.is_connected = True
             tool._tools_loaded = True
@@ -2146,21 +2209,22 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         assert result is not None
 
         # Test Case 1: Proactive validation detects invalid connection and reconnects
-        # Invalidate the connection
-        tool.session = None
-        tool.is_connected = False
+        # Simulate connection failure by making send_ping raise an exception
+        mock_session.send_ping.side_effect = Exception("Connection lost")
 
         # This call should trigger reconnection via _ensure_connected() before the call
         mock_session.call_tool.return_value = MagicMock(content=[])
         result = await tool.call_tool("test_tool", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted
+        # Verify reconnect was attempted with reset=True
         assert mock_connect.call_count >= 1
+        mock_connect.assert_called_with(reset=True)
+        # Verify _exit_stack.aclose was called during reconnection
+        original_exit_stack.aclose.assert_called()
 
         # Test Case 2: Reconnection failure during proactive validation
-        # Invalidate connection again
-        tool.session = None
-        tool.is_connected = False
+        # Simulate another connection failure
+        mock_session.send_ping.side_effect = Exception("Connection lost again")
 
         # Change mock_connect to simulate failed reconnection
         mock_connect.side_effect = Exception("Failed to reconnect")
@@ -2178,7 +2242,8 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
     """Test that get_prompt also uses proactive connection validation.
 
-    This verifies that the fix for issue #2884 applies to get_prompt as well.
+    This verifies that the fix for issue #2884 applies to get_prompt as well,
+    and that _exit_stack.aclose() is properly called during reconnection.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2197,11 +2262,18 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
     mock_session = MagicMock()
     mock_session._request_id = 1
     mock_session.get_prompt = AsyncMock()
+    mock_session.send_ping = AsyncMock()
+
+    # Mock _exit_stack.aclose to track cleanup calls
+    original_exit_stack = tool._exit_stack
+    tool._exit_stack.aclose = AsyncMock()
 
     # Mock connect() to avoid trying to start actual process
     with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session():
+        async def restore_session(*, reset=False):
+            if reset:
+                await original_exit_stack.aclose()
             tool.session = mock_session
             tool.is_connected = True
             tool._prompts_loaded = True
@@ -2219,21 +2291,22 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         assert result is not None
 
         # Test Case 1: Proactive validation detects invalid connection and reconnects
-        # Invalidate the connection
-        tool.session = None
-        tool.is_connected = False
+        # Simulate connection failure by making send_ping raise an exception
+        mock_session.send_ping.side_effect = Exception("Connection lost")
 
         # This call should trigger reconnection via _ensure_connected() before the call
         mock_session.get_prompt.return_value = MagicMock(messages=[])
         result = await tool.get_prompt("test_prompt", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted
+        # Verify reconnect was attempted with reset=True
         assert mock_connect.call_count >= 1
+        mock_connect.assert_called_with(reset=True)
+        # Verify _exit_stack.aclose was called during reconnection
+        original_exit_stack.aclose.assert_called()
 
         # Test Case 2: Reconnection failure during proactive validation
-        # Invalidate connection again
-        tool.session = None
-        tool.is_connected = False
+        # Simulate another connection failure
+        mock_session.send_ping.side_effect = Exception("Connection lost again")
 
         # Change mock_connect to simulate failed reconnection
         mock_connect.side_effect = Exception("Failed to reconnect")
