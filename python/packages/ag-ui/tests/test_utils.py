@@ -5,7 +5,11 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from agent_framework_ag_ui._utils import generate_event_id, make_json_safe, merge_state
+from agent_framework_ag_ui._utils import (
+    generate_event_id,
+    make_json_safe,
+    merge_state,
+)
 
 
 def test_generate_event_id():

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -45,14 +46,21 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
 
     internal void AddMessages(params IEnumerable<ChatMessage> messages) => this._chatMessages.AddRange(messages);
 
-    public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
+    public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        => new(this._chatMessages.AsReadOnly());
+
+    public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        this._chatMessages.AddRange(messages);
+        if (context.InvokeException is not null)
+        {
+            return default;
+        }
 
-        return Task.CompletedTask;
+        var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+        this._chatMessages.AddRange(allNewMessages);
+
+        return default;
     }
-
-    public override Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IEnumerable<ChatMessage>>(this._chatMessages.AsReadOnly());
 
     public IEnumerable<ChatMessage> GetFromBookmark()
     {

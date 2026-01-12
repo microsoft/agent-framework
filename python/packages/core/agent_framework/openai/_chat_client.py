@@ -183,7 +183,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         translations = {
             "model_id": "model",
             "allow_multiple_tool_calls": "parallel_tool_calls",
-            "max_tokens": "max_output_tokens",
+            "max_tokens": "max_completion_tokens",
         }
         for old_key, new_key in translations.items():
             if old_key in run_options and old_key != new_key:
@@ -205,8 +205,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             run_options.pop("tools", None)
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
-        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+        # tool_choice: ToolMode serializes to {"type": "tool_mode", "mode": "..."}, extract mode
+        if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
             run_options["tool_choice"] = tool_choice["mode"]
 
         # response format
