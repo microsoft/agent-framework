@@ -1193,7 +1193,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             agent_level_middlewares: Agent-level middleware (executed first)
             run_level_middlewares: Run-level middleware (executed after agent middleware)
         """
-        middleware = categorize_middleware(agent_level_middlewares, run_level_middlewares)
+        middleware = categorize_middleware(*(agent_level_middlewares or ()), *(run_level_middlewares or ()))
 
         return (
             AgentMiddlewarePipeline(middleware["agent"]),  # type: ignore[arg-type]
@@ -1255,7 +1255,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Middleware-enabled run_stream method."""
@@ -1516,7 +1516,7 @@ def categorize_middleware(
 
 
 def create_function_middleware_pipeline(
-    *middleware_sources: Sequence[Middleware],
+    *middleware_sources: Middleware,
 ) -> FunctionMiddlewarePipeline | None:
     """Create a function middleware pipeline from multiple middleware sources.
 
@@ -1528,23 +1528,6 @@ def create_function_middleware_pipeline(
     """
     function_middlewares = categorize_middleware(*middleware_sources)["function"]
     return FunctionMiddlewarePipeline(function_middlewares) if function_middlewares else None  # type: ignore[arg-type]
-
-
-def _merge_and_filter_chat_middleware(
-    instance_middleware: Any | list[Any] | None,
-    call_middleware: Any | list[Any] | None,
-) -> list[ChatMiddleware | ChatMiddlewareCallable]:
-    """Merge instance-level and call-level middleware, filtering for chat middleware only.
-
-    Args:
-        instance_middleware: Middleware defined at the instance level.
-        call_middleware: Middleware provided at the call level.
-
-    Returns:
-        A merged list of chat middleware only.
-    """
-    middleware = categorize_middleware(instance_middleware, call_middleware)
-    return middleware["chat"]  # type: ignore[return-value]
 
 
 def extract_and_merge_function_middleware(
@@ -1563,7 +1546,7 @@ def extract_and_merge_function_middleware(
     existing_pipeline: FunctionMiddlewarePipeline | None = kwargs.get("_function_middleware_pipeline")
 
     # Get middleware sources
-    client_middleware = getattr(chat_client, "middleware", None) if hasattr(chat_client, "middleware") else None
+    client_middleware = getattr(chat_client, "middleware", None)
     run_level_middleware = kwargs.get("middleware")
 
     # If we have an existing pipeline but no additional middleware sources, return it directly
@@ -1576,7 +1559,7 @@ def extract_and_merge_function_middleware(
 
     # Create combined pipeline from all sources using existing helper
     combined_pipeline = create_function_middleware_pipeline(
-        *client_middleware, *run_level_middleware, *existing_middleware
+        *(client_middleware or ()), *(run_level_middleware or ()), *(existing_middleware or ())
     )
 
     # If we have an existing pipeline but combined is None (no new middleware), return existing
