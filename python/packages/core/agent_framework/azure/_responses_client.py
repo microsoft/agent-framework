@@ -157,13 +157,9 @@ class AzureOpenAIResponsesClient(
                 and azure_openai_settings.endpoint.host
                 and azure_openai_settings.endpoint.host.endswith(".openai.azure.com")
             ):
-                azure_openai_settings.base_url = urljoin(
-                    str(azure_openai_settings.endpoint), "/openai/v1/"
-                )  # type: ignore
+                azure_openai_settings.base_url = urljoin(str(azure_openai_settings.endpoint), "/openai/v1/")  # type: ignore
         except ValidationError as exc:
-            raise ServiceInitializationError(
-                f"Failed to validate settings: {exc}"
-            ) from exc
+            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
 
         if not azure_openai_settings.responses_deployment_name:
             raise ServiceInitializationError(
@@ -176,9 +172,7 @@ class AzureOpenAIResponsesClient(
             endpoint=azure_openai_settings.endpoint,
             base_url=azure_openai_settings.base_url,
             api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value()
-            if azure_openai_settings.api_key
-            else None,
+            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings.token_endpoint,
