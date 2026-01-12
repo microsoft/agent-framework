@@ -630,3 +630,179 @@ async def test_suppressed_summary_with_document_state():
     # Should contain some reference to the document
     full_text = "".join(e.delta for e in text_events)
     assert "written" in full_text.lower() or "document" in full_text.lower()
+
+
+async def test_function_approval_mode_executes_tool():
+    """Test that function approval with approval_mode='always_require' sends the correct messages."""
+    from agent_framework import FunctionResultContent, ai_function
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    messages_received: list[Any] = []
+
+    @ai_function(
+        name="get_datetime",
+        description="Get the current date and time",
+        approval_mode="always_require",
+    )
+    def get_datetime() -> str:
+        return "2025/12/01 12:00:00"
+
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        # Capture the messages received by the chat client
+        messages_received.clear()
+        messages_received.extend(messages)
+        yield ChatResponseUpdate(contents=[TextContent(text="Processing completed")])
+
+    agent = ChatAgent(
+        name="test_agent",
+        instructions="Test",
+        chat_client=StreamingChatClientStub(stream_fn),
+        tools=[get_datetime],
+    )
+    wrapper = AgentFrameworkAgent(agent=agent)
+
+    # Simulate the conversation history with:
+    # 1. User message asking for time
+    # 2. Assistant message with the function call that needs approval
+    # 3. Tool approval message from user
+    tool_result: dict[str, Any] = {"accepted": True}
+    input_data: dict[str, Any] = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "What time is it?",
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_get_datetime_123",
+                        "type": "function",
+                        "function": {
+                            "name": "get_datetime",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "content": json.dumps(tool_result),
+                "toolCallId": "call_get_datetime_123",
+            },
+        ],
+    }
+
+    events: list[Any] = []
+    async for event in wrapper.run_agent(input_data):
+        events.append(event)
+
+    # Verify the run completed successfully
+    run_started = [e for e in events if e.type == "RUN_STARTED"]
+    run_finished = [e for e in events if e.type == "RUN_FINISHED"]
+    assert len(run_started) == 1
+    assert len(run_finished) == 1
+
+    # Verify that a FunctionResultContent was created and sent to the agent
+    # Approved tool calls are resolved before the model run.
+    tool_result_found = False
+    for msg in messages_received:
+        for content in msg.contents:
+            if isinstance(content, FunctionResultContent):
+                tool_result_found = True
+                assert content.call_id == "call_get_datetime_123"
+                assert content.result == "2025/12/01 12:00:00"
+                break
+
+    assert tool_result_found, (
+        "FunctionResultContent should be included in messages sent to agent. "
+        "This is required for the model to see the approved tool execution result."
+    )
+
+
+async def test_function_approval_mode_rejection():
+    """Test that function approval rejection creates a rejection response."""
+    from agent_framework import FunctionResultContent, ai_function
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    messages_received: list[Any] = []
+
+    @ai_function(
+        name="delete_all_data",
+        description="Delete all user data",
+        approval_mode="always_require",
+    )
+    def delete_all_data() -> str:
+        return "All data deleted"
+
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        # Capture the messages received by the chat client
+        messages_received.clear()
+        messages_received.extend(messages)
+        yield ChatResponseUpdate(contents=[TextContent(text="Operation cancelled")])
+
+    agent = ChatAgent(
+        name="test_agent",
+        instructions="Test",
+        chat_client=StreamingChatClientStub(stream_fn),
+        tools=[delete_all_data],
+    )
+    wrapper = AgentFrameworkAgent(agent=agent)
+
+    # Simulate rejection
+    tool_result: dict[str, Any] = {"accepted": False}
+    input_data: dict[str, Any] = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Delete all my data",
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_delete_123",
+                        "type": "function",
+                        "function": {
+                            "name": "delete_all_data",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "content": json.dumps(tool_result),
+                "toolCallId": "call_delete_123",
+            },
+        ],
+    }
+
+    events: list[Any] = []
+    async for event in wrapper.run_agent(input_data):
+        events.append(event)
+
+    # Verify the run completed
+    run_finished = [e for e in events if e.type == "RUN_FINISHED"]
+    assert len(run_finished) == 1
+
+    # Verify that a FunctionResultContent with rejection payload was created
+    rejection_found = False
+    for msg in messages_received:
+        for content in msg.contents:
+            if isinstance(content, FunctionResultContent):
+                rejection_found = True
+                assert content.call_id == "call_delete_123"
+                assert content.result == "Error: Tool call invocation was rejected by user."
+                break
+
+    assert rejection_found, (
+        "FunctionResultContent with rejection details should be included in messages sent to agent. "
+        "This tells the model that the tool was rejected."
+    )

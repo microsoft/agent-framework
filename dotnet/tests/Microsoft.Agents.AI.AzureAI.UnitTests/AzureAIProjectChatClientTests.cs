@@ -53,7 +53,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await agent.RunAsync("Hello", thread);
 
         Assert.True(requestTriggered);
@@ -102,7 +102,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await agent.RunAsync("Hello", thread, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
 
         Assert.True(requestTriggered);
@@ -151,7 +151,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await agent.RunAsync("Hello", thread, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
 
         Assert.True(requestTriggered);
@@ -200,7 +200,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var thread = agent.GetNewThread();
+        var thread = await agent.GetNewThreadAsync();
         await agent.RunAsync("Hello", thread, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "resp_0888a" } });
 
         Assert.True(requestTriggered);

@@ -407,7 +407,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_INSTRUMENTATION") == "true",
+                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
@@ -748,6 +748,11 @@ class DevServer:
                     response_id = f"resp_{uuid.uuid4().hex[:8]}"
                     logger.info(f"[CANCELLATION] Creating response {response_id} for entity {entity_id}")
 
+                    # Inject response_id into extra_body for trace context
+                    if request.extra_body is None:
+                        request.extra_body = {}
+                    request.extra_body["response_id"] = response_id
+
                     return StreamingResponse(
                         self._stream_with_cancellation(executor, request, response_id),
                         media_type="text/event-stream",
@@ -1000,10 +1005,16 @@ class DevServer:
                         logger.warning(f"Unexpected item type: {type(item)}, converting to dict")
                         serialized_items.append(dict(item))
 
+                # Get stored traces for context inspection (DevUI extension)
+                traces = executor.conversation_store.get_traces(conversation_id)
+
                 return {
                     "object": "list",
                     "data": serialized_items,
                     "has_more": has_more,
+                    "metadata": {
+                        "traces": traces,  # Trace events for token usage, timing, LLM context
+                    },
                 }
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1080,9 +1091,21 @@ class DevServer:
             # Collect events for final response.completed event
             events = []
 
+            # Get conversation_id for trace storage
+            conversation_id = request._get_conversation_id()
+
             # Stream all events
             async for event in executor.execute_streaming(request):
                 events.append(event)
+
+                # Store trace events for context inspection (persisted with conversation)
+                if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
+                    try:
+                        trace_data = event.data if hasattr(event, "data") else None
+                        if trace_data:
+                            executor.conversation_store.add_trace(conversation_id, trace_data)
+                    except Exception as e:
+                        logger.debug(f"Failed to store trace event: {e}")
 
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.

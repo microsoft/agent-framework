@@ -234,7 +234,7 @@ async def test_list_items_converts_function_calls():
                 {
                     "type": "function_result",
                     "call_id": "call_test123",
-                    "output": '{"temperature": 65, "condition": "sunny"}',
+                    "result": '{"temperature": 65, "condition": "sunny"}',
                 }
             ],
         ),

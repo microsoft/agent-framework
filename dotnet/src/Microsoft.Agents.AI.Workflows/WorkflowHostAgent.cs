@@ -18,11 +18,12 @@ internal sealed class WorkflowHostAgent : AIAgent
     private readonly string? _id;
     private readonly CheckpointManager? _checkpointManager;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+    private readonly bool _includeExceptionDetails;
     private readonly Task<ProtocolDescriptor> _describeTask;
 
     private readonly ConcurrentDictionary<string, string> _assignedRunIds = [];
 
-    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, CheckpointManager? checkpointManager = null, IWorkflowExecutionEnvironment? executionEnvironment = null)
+    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, CheckpointManager? checkpointManager = null, IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false)
     {
         this._workflow = Throw.IfNull(workflow);
 
@@ -30,6 +31,7 @@ internal sealed class WorkflowHostAgent : AIAgent
                                                               ? InProcessExecution.Concurrent
                                                               : InProcessExecution.OffThread);
         this._checkpointManager = checkpointManager;
+        this._includeExceptionDetails = includeExceptionDetails;
 
         this._id = id;
         this.Name = name;
@@ -61,14 +63,15 @@ internal sealed class WorkflowHostAgent : AIAgent
         protocol.ThrowIfNotChatProtocol();
     }
 
-    public override AgentThread GetNewThread() => new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager);
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        => new(new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails));
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, jsonSerializerOptions));
 
-    private ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
 
         if (thread is not WorkflowThread workflowThread)
         {
@@ -78,7 +81,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         // For workflow threads, messages are added directly via the internal AddMessages method
         // The MessageStore methods are used for agent invocation scenarios
         workflowThread.MessageStore.AddMessages(messages);
-        return new ValueTask<WorkflowThread>(workflowThread);
+        return workflowThread;
     }
 
     protected override async

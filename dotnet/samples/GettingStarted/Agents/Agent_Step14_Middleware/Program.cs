@@ -45,7 +45,7 @@ var middlewareEnabledAgent = originalAgent
     .Use(GuardrailMiddleware, null)
     .Build();
 
-var thread = middlewareEnabledAgent.GetNewThread();
+var thread = await middlewareEnabledAgent.GetNewThreadAsync();
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
 var guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");

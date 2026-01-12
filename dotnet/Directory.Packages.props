@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.0.0" />
+    <PackageVersion Include="Anthropic" Version="12.0.1" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.1.0" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
@@ -26,7 +26,7 @@
     <PackageVersion Include="Azure.Identity" Version="1.17.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- Google Gemini  -->
-    <PackageVersion Include="Google.GenAI" Version="0.6.0" />
+    <PackageVersion Include="Google.GenAI" Version="0.9.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
     <!-- Microsoft.Azure.* -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
@@ -100,7 +100,7 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
     <PackageVersion Include="OpenAI" Version="2.8.0" />
