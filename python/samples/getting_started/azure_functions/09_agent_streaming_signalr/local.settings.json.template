@@ -8,6 +8,6 @@
     "AZURE_OPENAI_API_KEY": "<AZURE_OPENAI_API_KEY>",
     "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME":  "<AZURE_OPENAI_CHAT_DEPLOYMENT_NAME>",
     "AzureSignalRConnectionString": "Endpoint=https://<your-signalr>.service.signalr.net;AccessKey=<your-key>;Version=1.0;ServiceMode=Serverless;",
-    "SIGNALR_HUB_NAME": "travel",
+    "SIGNALR_HUB_NAME": "travel"
   }
 }

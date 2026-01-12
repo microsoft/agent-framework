@@ -1,5 +1,32 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Azure Functions sample: stream agent responses to clients via Azure SignalR.
+
+This sample demonstrates how to:
+- Host an agent built with the `agent_framework` in an Azure Functions app
+- Use Azure OpenAI (via `AzureOpenAIChatClient`) to power a travel planning agent
+- Stream incremental agent responses and tool calls to clients over Azure SignalR Service
+- Integrate a lightweight REST client (`SignalRServiceClient`) with the Functions runtime
+
+Components used:
+- Azure Functions (HTTP-triggered function with `AgentFunctionApp`)
+- Azure OpenAI Chat model accessed via `AzureOpenAIChatClient`
+- Azure SignalR Service accessed via a custom `SignalRServiceClient`
+- `AgentResponseCallbackProtocol` implementation (`SignalRCallback`) to forward updates
+- Tool functions imported from `tools` (e.g., `get_local_events`, `get_weather_forecast`)
+
+Prerequisites:
+- An Azure subscription with:
+  - An Azure SignalR Service instance
+  - An Azure OpenAI resource and chat model deployment
+- Azure Functions Core Tools or an Azure Functions host to run this app
+- Authentication configured for `AzureCliCredential` (e.g., `az login`)
+- Environment variables:
+  - `AzureSignalRConnectionString`: connection string for the SignalR resource
+  - `SIGNALR_HUB_NAME`: name of the SignalR hub (defaults to "travel" if not set)
+  - Any additional Azure OpenAI configuration required by `AzureOpenAIChatClient`
+"""
+
 import base64
 import hashlib
 import hmac
@@ -235,23 +262,39 @@ app = AgentFunctionApp(
     max_poll_retries=100,  # Increase for longer-running agents
 )
 
+def _get_signalr_endpoint_from_connection_string(connection_string: str) -> str:
+    """Extract the SignalR service endpoint from a connection string."""
+    for part in connection_string.split(";"):
+        if part.startswith("Endpoint="):
+            # Strip the 'Endpoint=' prefix and any trailing slash for consistency
+            return part[len("Endpoint=") :].rstrip("/")
+    raise ValueError("Endpoint not found in Azure SignalR connection string.")
+
 
 @app.function_name("negotiate")
 @app.route(route="agent/negotiate", methods=["POST", "GET"])
 def negotiate(req: func.HttpRequest) -> func.HttpResponse:
     """Provide SignalR connection info for clients (manual negotiation)."""
-    # Build client URL for the configured hub
-    # Endpoint format: https://<name>.service.signalr.net/client/?hub=<hub>
-    base_url = signalr_client._endpoint.rstrip("/")
-    client_url = f"{base_url}/client/?hub={SIGNALR_HUB_NAME}"
+    try:
+        # Build client URL for the configured hub
+        # Endpoint format: https://<name>.service.signalr.net/client/?hub=<hub>
+        base_url = signalr_client._endpoint.rstrip("/")
+        client_url = f"{base_url}/client/?hub={SIGNALR_HUB_NAME}"
 
-    # Generate token with the CLIENT URL as audience for browser clients
-    # Azure SignalR Service expects audience to match the client connection URL
-    access_token = signalr_client._generate_token(client_url)
+        # Generate token with the CLIENT URL as audience for browser clients
+        # Azure SignalR Service expects audience to match the client connection URL
+        access_token = signalr_client._generate_token(client_url)
 
-    # Return negotiation response for SignalR JS client
-    body = json.dumps({"url": client_url, "accessToken": access_token})
-    return func.HttpResponse(body=body, mimetype="application/json")
+        # Return negotiation response for SignalR JS client
+        body = json.dumps({"url": client_url, "accessToken": access_token})
+        return func.HttpResponse(body=body, mimetype="application/json")
+    except Exception as ex:
+        logging.error("Failed to negotiate SignalR connection: %s", ex)
+        return func.HttpResponse(
+            json.dumps({"error": str(ex)}),
+            status_code=500,
+            mimetype="application/json",
+        )
 
 
 @app.function_name("joinGroup")
@@ -302,5 +345,20 @@ def create_thread(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="index", methods=["GET"])
 def index(req: func.HttpRequest) -> func.HttpResponse:
     html_path = os.path.join(os.path.dirname(__file__), "content", "index.html")
-    with open(html_path) as f:
-        return func.HttpResponse(f.read(), mimetype="text/html")
+    try:
+        with open(html_path) as f:
+            return func.HttpResponse(f.read(), mimetype="text/html")
+    except FileNotFoundError:
+        logging.error("index.html not found at path: %s", html_path)
+        return func.HttpResponse(
+            json.dumps({"error": "index.html not found"}),
+            status_code=404,
+            mimetype="application/json",
+        )
+    except OSError as ex:
+        logging.error("Failed to read index.html at path %s: %s", html_path, ex)
+        return func.HttpResponse(
+            json.dumps({"error": "Failed to load index page"}),
+            status_code=500,
+            mimetype="application/json",
+        )

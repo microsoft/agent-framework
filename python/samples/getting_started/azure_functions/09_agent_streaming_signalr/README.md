@@ -31,7 +31,7 @@ Update `local.settings.json` with your configuration:
     "AZURE_OPENAI_API_KEY": "<AZURE_OPENAI_API_KEY>",
     "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME":  "<AZURE_OPENAI_CHAT_DEPLOYMENT_NAME>",
     "AzureSignalRConnectionString": "Endpoint=https://<your-signalr>.service.signalr.net;AccessKey=<your-key>;Version=1.0;ServiceMode=Serverless;",
-    "SIGNALR_HUB_NAME": "travel",
+    "SIGNALR_HUB_NAME": "travel"
   }
 }
 ```
@@ -56,7 +56,7 @@ Navigate to `http://localhost:7071/api/index` in your browser. The page will aut
 - Display the connection status (Connected/Disconnected)
 - Enable the chat interface
 
-Screenshot
+[Demo Video](./az_func_signalr_demo.gif)
 
 ### 3. Send a message to the agent
 
