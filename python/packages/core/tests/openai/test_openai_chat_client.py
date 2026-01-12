@@ -577,7 +577,7 @@ async def test_openai_chat_client_run_level_tool_isolation():
         return f"The weather in {location} is sunny and 72°F."
 
     async with ChatAgent(
-        chat_client=OpenAIChatClient(model_id="gpt-4.1"),
+        chat_client=OpenAIChatClient(),
         instructions="You are a helpful assistant.",
     ) as agent:
         # First run - use run-level tool

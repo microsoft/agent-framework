@@ -384,6 +384,13 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
             yield self._parse_streaming_response_from_ollama(part)
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+        # Handle instructions by prepending to messages as system message
+        instructions = options.get("instructions")
+        if instructions:
+            from agent_framework._types import prepend_instructions_to_messages
+
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+
         # tool choice - Currently Ollama only supports auto tool choice
         tool_choice = options.get("tool_choice")
         if tool_choice == "required":

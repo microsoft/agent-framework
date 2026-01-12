@@ -653,7 +653,7 @@ async def test_function_approval_mode_executes_tool():
         return "2025/12/01 12:00:00"
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         # Capture the messages received by the chat client
         messages_received.clear()
@@ -661,9 +661,9 @@ async def test_function_approval_mode_executes_tool():
         yield ChatResponseUpdate(contents=[TextContent(text="Processing completed")])
 
     agent = ChatAgent(
+        chat_client=StreamingChatClientStub(stream_fn),
         name="test_agent",
         instructions="Test",
-        chat_client=StreamingChatClientStub(stream_fn),
         tools=[get_datetime],
     )
     wrapper = AgentFrameworkAgent(agent=agent)
@@ -744,7 +744,7 @@ async def test_function_approval_mode_rejection():
         return "All data deleted"
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         # Capture the messages received by the chat client
         messages_received.clear()

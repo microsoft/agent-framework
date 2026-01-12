@@ -40,8 +40,8 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    ToolMode,
     prepare_messages,
+    validate_chat_options,
 )
 
 if sys.version_info >= (3, 13):
@@ -269,46 +269,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
         return result
 
-    @staticmethod
-    async def _normalize_tools(
-        tools: ToolProtocol
-        | MutableMapping[str, Any]
-        | Callable[..., Any]
-        | Sequence[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]]
-        | None = None,
-    ) -> list[ToolProtocol | dict[str, Any] | Callable[..., Any]]:
-        """Normalize tools input to a consistent list format.
-
-        Expands MCP tools to their constituent functions, connecting them if needed.
-
-        Args:
-            tools: The tools in various supported formats.
-
-        Returns:
-            A normalized list of tools.
-        """
-        from typing import cast
-
-        final_tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] = []
-        if not tools:
-            return final_tools
-        # Use cast when a sequence is passed (likely already a list)
-        tools_list = (
-            cast(list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]], tools)
-            if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes))
-            else [tools]
-        )
-        for tool in tools_list:  # type: ignore[reportUnknownType]
-            from ._mcp import MCPTool
-
-            if isinstance(tool, MCPTool):
-                if not tool.is_connected:
-                    await tool.connect()
-                final_tools.extend(tool.functions)  # type: ignore
-                continue
-            final_tools.append(tool)  # type: ignore
-        return final_tools
-
     # region Internal methods to be implemented by the derived classes
 
     @abstractmethod
@@ -370,19 +330,16 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
         Args:
             messages: The message or messages to send to the model.
-            options: Chat options as a TypedDict. If provided, this overrides individual kwargs.
+            options: Chat options as a TypedDict.
             **kwargs: Other keyword arguments, can be used to pass function specific parameters.
 
         Returns:
             A chat response from the model.
         """
-        opts: dict[str, Any] = dict(options) if options else {}  # type: ignore[arg-type]
-        await self._prepare_tool_options(opts)
-
-        # Extract instructions for system message
-        instructions = opts.pop("instructions", None)
         return await self._inner_get_response(
-            messages=prepare_messages(messages, system_instructions=instructions), options=opts, **kwargs
+            messages=prepare_messages(messages),
+            options=await validate_chat_options(dict(options) if options else {}),
+            **kwargs,
         )
 
     async def get_streaming_response(
@@ -396,48 +353,18 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
         Args:
             messages: The message or messages to send to the model.
-            options: Chat options as a TypedDict. If provided, this overrides individual kwargs.
+            options: Chat options as a TypedDict.
             **kwargs: Other keyword arguments, can be used to pass function specific parameters.
 
         Yields:
             ChatResponseUpdate: A stream representing the response(s) from the LLM.
         """
-        opts: dict[str, Any] = dict(options) if options else {}  # type: ignore[arg-type]
-        await self._prepare_tool_options(opts)
-
-        # Extract instructions for system message
-        instructions = opts.pop("instructions", None)
         async for update in self._inner_get_streaming_response(
-            messages=prepare_messages(messages, system_instructions=instructions),
-            options=opts,
+            messages=prepare_messages(messages),
+            options=await validate_chat_options(dict(options) if options else {}),
             **kwargs,
         ):
             yield update
-
-    async def _prepare_tool_options(self, options: dict[str, Any]) -> None:
-        """Prepare tool-related options in the options dict.
-
-        Normalizes tools (including MCP expansion) and handles tool_choice defaults.
-        This method can be overridden by subclasses to customize tool handling.
-
-        Args:
-            options: The options dict to prepare (modified in place).
-        """
-        options["tools"] = await self._normalize_tools(options.get("tools"))
-        options.setdefault("tool_choice", "auto")
-
-        tool_choice = options.get("tool_choice")
-        tools = options.get("tools")
-
-        if tool_choice == ToolMode.NONE or tool_choice == "none":
-            options.pop("tools", None)
-            options["tool_choice"] = ToolMode.NONE
-            return
-        if not tools:
-            options["tool_choice"] = ToolMode.NONE
-        elif tool_choice is None:
-            options["tool_choice"] = ToolMode.AUTO
-        # else: keep tool_choice as-is
 
     def service_url(self) -> str:
         """Get the URL of the service.

@@ -652,8 +652,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
 
     assert response is not None
@@ -709,8 +708,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     # Test that the client can be used to get a response
     response = azure_chat_client.get_streaming_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
     full_message: str = ""
     async for chunk in response:

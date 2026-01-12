@@ -1487,8 +1487,7 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
         # Test that the agents_client can be used to get a response
         response = await azure_ai_chat_client.get_response(
             messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
+            options={"tools": [get_weather], "tool_choice": "auto"},
         )
 
         assert response is not None
@@ -1540,8 +1539,7 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
         # Test that the agents_client can be used to get a response
         response = azure_ai_chat_client.get_streaming_response(
             messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
+            options={"tools": [get_weather], "tool_choice": "auto"},
         )
         full_message: str = ""
         async for chunk in response:
@@ -1741,7 +1739,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
     ) as agent:
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
-            max_tokens=200,
+            options={"max_tokens": 200},
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -1792,20 +1790,14 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
     ) as agent:
         response = await agent.run(
             "Provide a brief, helpful response.",
-            max_tokens=100,
-            temperature=0.7,
-            top_p=0.9,
-            seed=123,
-            user="comprehensive-test-user",
             tools=[get_weather],
-            tool_choice="auto",
-            frequency_penalty=0.1,
-            presence_penalty=0.1,
-            stop=["END"],
-            store=True,
-            logit_bias={"test": 1},
-            metadata={"test": "value"},
-            additional_properties={"custom_param": "test_value"},
+            options={
+                "max_tokens": 100,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "tool_choice": "auto",
+                "metadata": {"test": "value"},
+            },
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -1819,20 +1811,14 @@ async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
     async with ChatAgent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=0.9,
-        seed=123,
-        user="comprehensive-test-user",
         tools=[get_weather],
-        tool_choice="auto",
-        frequency_penalty=0.1,
-        presence_penalty=0.1,
-        stop=["END"],
-        store=True,
-        logit_bias={"test": 1},
-        metadata={"test": "value"},
-        request_kwargs={"custom_param": "test_value"},
+        default_options={
+            "max_tokens": 100,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "tool_choice": "auto",
+            "metadata": {"test": "value"},
+        },
     ) as agent:
         response = await agent.run(
             "Provide a brief, helpful response.",

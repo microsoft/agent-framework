@@ -508,6 +508,13 @@ class OpenAIBaseResponsesClient(
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
+        # Handle instructions by prepending to messages as system message
+        instructions = options.get("instructions")
+        if instructions:
+            from agent_framework._types import prepend_instructions_to_messages
+
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+
         # Exclude keys that are not supported or handled separately
         exclude_keys = {
             "type",

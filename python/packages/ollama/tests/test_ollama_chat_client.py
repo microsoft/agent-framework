@@ -481,7 +481,7 @@ async def test_cmc_streaming_integration_with_tool_call(
 
     ollama_client = OllamaChatClient()
     result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(
-        messages=chat_history, tools=[hello_world]
+        messages=chat_history, options={"tools": [hello_world]}
     )
 
     chunks: list[ChatResponseUpdate] = []

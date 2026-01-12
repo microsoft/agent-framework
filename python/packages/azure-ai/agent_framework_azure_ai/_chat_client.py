@@ -878,29 +878,15 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             self._agent_definition = await self.agents_client.get_agent(self.agent_id)
         return self._agent_definition
 
-    def _prepare_tool_choice(self, chat_options: ChatOptions) -> None:
-        """Prepare the tools and tool choice for the chat options.
-
-        Args:
-            chat_options: The chat options to prepare.
-        """
-        chat_tool_mode = chat_options.get("tool_choice")
-        if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
-            chat_options["tools"] = None
-            chat_options["tool_choice"] = ToolMode.NONE
-            return
-
-        chat_options["tool_choice"] = chat_tool_mode
-
     async def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: Mapping[str, Any],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent | FunctionApprovalResponseContent] | None]:
         agent_definition = await self._load_agent_definition_if_needed()
 
-        # Build run_options from chat_options dict, excluding specific keys
+        # Build run_options from options dict, excluding specific keys
         exclude_keys = {
             "type",
             "instructions",  # handled via messages
@@ -916,7 +902,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             "seed",  # not supported
             "store",  # not supported
         }
-        run_options: dict[str, Any] = {k: v for k, v in chat_options.items() if k not in exclude_keys and v is not None}
+        run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
         # Translation between ChatOptions and Azure AI Agents API
         translations = {
@@ -934,15 +920,15 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
         # tools and tool_choice
         if tool_definitions := await self._prepare_tool_definitions_and_resources(
-            chat_options, agent_definition, run_options
+            options, agent_definition, run_options
         ):
             run_options["tools"] = tool_definitions
 
-        if tool_choice := self._prepare_tool_choice_mode(chat_options):
+        if tool_choice := self._prepare_tool_choice_mode(options):
             run_options["tool_choice"] = tool_choice
 
         # response format
-        response_format = chat_options.get("response_format")
+        response_format = options.get("response_format")
         if response_format is not None:
             run_options["response_format"] = ResponseFormatJsonSchemaType(
                 json_schema=ResponseFormatJsonSchema(
@@ -968,17 +954,15 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             run_options["instructions"] = "\n".join(instructions)
 
         # thread_id resolution (conversation_id takes precedence, then kwargs, then instance default)
-        run_options["thread_id"] = (
-            chat_options.get("conversation_id") or kwargs.get("conversation_id") or self.thread_id
-        )
+        run_options["thread_id"] = options.get("conversation_id") or kwargs.get("conversation_id") or self.thread_id
 
         return run_options, required_action_results
 
     def _prepare_tool_choice_mode(
-        self, chat_options: Mapping[str, Any]
+        self, options: Mapping[str, Any]
     ) -> AgentsToolChoiceOptionMode | AgentsNamedToolChoice | None:
         """Prepare the tool choice mode for Azure AI Agents API."""
-        tool_choice = chat_options.get("tool_choice")
+        tool_choice = options.get("tool_choice")
         if tool_choice is None:
             return None
         if tool_choice == "none":
@@ -998,14 +982,14 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
     async def _prepare_tool_definitions_and_resources(
         self,
-        chat_options: Mapping[str, Any],
+        options: Mapping[str, Any],
         agent_definition: Agent | None,
         run_options: dict[str, Any],
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions and resources for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
 
-        # Add tools from existing agent (exclude function tools - passed via chat_options.get("tools"))
+        # Add tools from existing agent (exclude function tools - passed via options.get("tools"))
         if agent_definition is not None:
             agent_tools = [tool for tool in agent_definition.tools if not isinstance(tool, FunctionToolDefinition)]
             if agent_tools:
@@ -1014,8 +998,8 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 run_options["tool_resources"] = agent_definition.tool_resources
 
         # Add run tools if tool_choice allows
-        tool_choice = chat_options.get("tool_choice")
-        tools = chat_options.get("tools")
+        tool_choice = options.get("tool_choice")
+        tools = options.get("tools")
         if tool_choice is not None and tool_choice != "none" and tools:
             tool_definitions.extend(await self._prepare_tools_for_azure_ai(tools, run_options))
 

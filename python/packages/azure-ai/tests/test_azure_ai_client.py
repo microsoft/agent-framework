@@ -1043,7 +1043,9 @@ async def test_azure_ai_chat_client_agent_with_response_format() -> None:
             "- Improved error handling with detailed messages\n"
             "- Performance boost of 50% in batch processing\n"
             "- Fixed memory leak in connection pooling",
-            response_format=ReleaseBrief,
+            options={
+                "response_format": ReleaseBrief,
+            },
         )
 
         # Validate response
@@ -1081,7 +1083,7 @@ async def test_azure_ai_chat_client_agent_with_runtime_json_schema() -> None:
     ):
         response = await agent.run(
             "Give a brief weather digest for Seattle.",
-            additional_chat_options={
+            options={
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {

@@ -220,6 +220,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         return None
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+        # Prepend instructions from options if they exist
+        instructions = options.get("instructions")
+        if instructions:
+            from agent_framework._types import prepend_instructions_to_messages
+
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+
         # Start with a copy of options
         run_options = {k: v for k, v in options.items() if v is not None}
 

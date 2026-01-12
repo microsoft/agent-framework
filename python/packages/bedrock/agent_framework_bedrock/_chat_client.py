@@ -342,6 +342,13 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         options: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Prepend instructions from options if they exist
+        instructions = options.get("instructions")
+        if instructions:
+            from agent_framework._types import prepend_instructions_to_messages
+
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+
         model_id = options.get("model_id") or self.model_id
         if not model_id:
             raise ServiceInitializationError(

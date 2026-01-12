@@ -492,30 +492,7 @@ async def test_get_streaming_response_with_all_parameters() -> None:
 
     # Should fail due to invalid API key
     with pytest.raises(ServiceResponseException):
-        response = client.get_streaming_response(
-            messages=[ChatMessage(role="user", text="Test streaming")],
-            options={
-                "include": ["file_search_call.results"],
-                "instructions": "Stream response test",
-                "max_tokens": 50,
-                "parallel_tool_calls": False,
-                "model_id": "gpt-4",
-                "previous_response_id": "stream-prev-123",
-                "reasoning": {"mode": "stream"},
-                "service_tier": "default",
-                "response_format": OutputStruct,
-                "seed": 123,
-                "store": False,
-                "temperature": 0.5,
-                "tool_choice": "none",
-                "tools": [],
-                "top_p": 0.8,
-                "user": "stream-user",
-                "truncation": "last_messages",
-                "timeout": 15.0,
-                "stream_custom": "stream_value",
-            },
-        )
+        response = client.get_streaming_response(messages=[ChatMessage(role="user", text="Test streaming")])
         # Just iterate once to trigger the logic
         async for _ in response:
             break
@@ -1795,8 +1772,10 @@ async def test_openai_responses_client_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await openai_responses_client.get_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [get_weather],
+        },
     )
 
     assert response is not None
@@ -1809,9 +1788,11 @@ async def test_openai_responses_client_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await openai_responses_client.get_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-        response_format=OutputStruct,
+        options={
+            "tool_choice": "auto",
+            "tools": [get_weather],
+            "response_format": OutputStruct,
+        },
     )
 
     assert response is not None
@@ -1854,7 +1835,9 @@ async def test_openai_responses_client_streaming() -> None:
 
     response = openai_responses_client.get_streaming_response(
         messages=messages,
-        response_format=OutputStruct,
+        options={
+            "response_format": OutputStruct,
+        },
     )
     chunks = []
     async for chunk in response:
@@ -1881,8 +1864,10 @@ async def test_openai_responses_client_streaming_tools() -> None:
     # Test that the client can be used to get a response
     response = openai_responses_client.get_streaming_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [get_weather],
+        },
     )
     full_message: str = ""
     async for chunk in response:
@@ -1899,9 +1884,11 @@ async def test_openai_responses_client_streaming_tools() -> None:
 
     response = openai_responses_client.get_streaming_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-        response_format=OutputStruct,
+        options={
+            "tool_choice": "auto",
+            "tools": [get_weather],
+            "response_format": OutputStruct,
+        },
     )
     chunks = []
     async for chunk in response:
@@ -1931,8 +1918,10 @@ async def test_openai_responses_client_web_search() -> None:
                 text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             )
         ],
-        tools=[HostedWebSearchTool()],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [HostedWebSearchTool()],
+        },
     )
 
     assert response is not None
@@ -1955,8 +1944,10 @@ async def test_openai_responses_client_web_search() -> None:
                 text="What is the current weather? Do not ask for my current location.",
             )
         ],
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+        },
     )
     assert response.text is not None
 
@@ -1976,8 +1967,10 @@ async def test_openai_responses_client_web_search_streaming() -> None:
                 text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             )
         ],
-        tools=[HostedWebSearchTool()],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [HostedWebSearchTool()],
+        },
     )
 
     assert response is not None
@@ -2006,8 +1999,10 @@ async def test_openai_responses_client_web_search_streaming() -> None:
                 text="What is the current weather? Do not ask for my current location.",
             )
         ],
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+        },
     )
     assert response is not None
     full_message: str = ""
@@ -2040,8 +2035,10 @@ async def test_openai_responses_client_file_search() -> None:
                 text="What is the weather today? Do a file search to find the answer.",
             )
         ],
-        tools=[HostedFileSearchTool(inputs=vector_store)],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [HostedFileSearchTool(inputs=vector_store)],
+        },
     )
 
     await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
@@ -2069,8 +2066,10 @@ async def test_openai_responses_client_streaming_file_search() -> None:
                 text="What is the weather today? Do a file search to find the answer.",
             )
         ],
-        tools=[HostedFileSearchTool(inputs=vector_store)],
-        tool_choice="auto",
+        options={
+            "tool_choice": "auto",
+            "tools": [HostedFileSearchTool(inputs=vector_store)],
+        },
     )
 
     assert response is not None
@@ -2344,11 +2343,13 @@ async def test_openai_responses_client_agent_chat_options_run_level() -> None:
     ) as agent:
         response = await agent.run(
             "Provide a brief, helpful response about why the sky blue is.",
-            max_tokens=600,
-            model_id="gpt-4o",
-            user="comprehensive-test-user",
-            tools=[get_weather],
-            tool_choice="auto",
+            options={
+                "max_tokens": 600,
+                "model_id": "gpt-4o",
+                "user": "comprehensive-test-user",
+                "tools": [get_weather],
+                "tool_choice": "auto",
+            },
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -2363,13 +2364,15 @@ async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant.",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=0.9,
-        seed=123,
-        user="comprehensive-test-user",
         tools=[get_weather],
-        tool_choice="auto",
+        default_options={
+            "max_tokens": 100,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "seed": 123,
+            "user": "comprehensive-test-user",
+            "tool_choice": "auto",
+        },
     ) as agent:
         response = await agent.run(
             "Provide a brief, helpful response.",
@@ -2398,7 +2401,7 @@ async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
             # this needs to be high enough to handle the full MCP tool response.
-            max_tokens=5000,
+            options={"max_tokens": 5000},
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -2424,7 +2427,7 @@ async def test_openai_responses_client_agent_local_mcp_tool() -> None:
     ) as agent:
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
-            max_tokens=200,
+            options={"max_tokens": 200},
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -2458,7 +2461,9 @@ async def test_openai_responses_client_agent_with_response_format_pydantic() -> 
             "- Improved error handling with detailed messages\n"
             "- Performance boost of 50% in batch processing\n"
             "- Fixed memory leak in connection pooling",
-            response_format=ReleaseBrief,
+            options={
+                "response_format": ReleaseBrief,
+            },
         )
 
         # Validate response
@@ -2496,7 +2501,7 @@ async def test_openai_responses_client_agent_with_runtime_json_schema() -> None:
     ) as agent:
         response = await agent.run(
             "Give a brief weather digest for Seattle.",
-            additional_chat_options={
+            options={
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {

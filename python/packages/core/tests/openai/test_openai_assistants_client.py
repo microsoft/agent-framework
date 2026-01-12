@@ -42,6 +42,8 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     else "Integration tests are disabled.",
 )
 
+INTEGRATION_TEST_MODEL = "gpt-4.1-nano"
+
 
 def create_test_openai_assistants_client(
     mock_async_openai: MagicMock,
@@ -917,7 +919,7 @@ def get_weather(
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_get_response() -> None:
     """Test OpenAI Assistants Client response."""
-    async with OpenAIAssistantsClient() as openai_assistants_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as openai_assistants_client:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -942,7 +944,7 @@ async def test_openai_assistants_client_get_response() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_get_response_tools() -> None:
     """Test OpenAI Assistants Client response with tools."""
-    async with OpenAIAssistantsClient() as openai_assistants_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as openai_assistants_client:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -951,8 +953,7 @@ async def test_openai_assistants_client_get_response_tools() -> None:
         # Test that the client can be used to get a response
         response = await openai_assistants_client.get_response(
             messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
+            options={"tools": [get_weather], "tool_choice": "auto"},
         )
 
         assert response is not None
@@ -964,7 +965,7 @@ async def test_openai_assistants_client_get_response_tools() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_streaming() -> None:
     """Test OpenAI Assistants Client streaming response."""
-    async with OpenAIAssistantsClient() as openai_assistants_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as openai_assistants_client:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -995,7 +996,7 @@ async def test_openai_assistants_client_streaming() -> None:
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_streaming_tools() -> None:
     """Test OpenAI Assistants Client streaming response with tools."""
-    async with OpenAIAssistantsClient() as openai_assistants_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as openai_assistants_client:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1004,8 +1005,10 @@ async def test_openai_assistants_client_streaming_tools() -> None:
         # Test that the client can be used to get a response
         response = openai_assistants_client.get_streaming_response(
             messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
+            options={
+                "tools": [get_weather],
+                "tool_choice": "auto",
+            },
         )
         full_message: str = ""
         async for chunk in response:
@@ -1023,7 +1026,7 @@ async def test_openai_assistants_client_streaming_tools() -> None:
 async def test_openai_assistants_client_with_existing_assistant() -> None:
     """Test OpenAI Assistants Client with existing assistant ID."""
     # First create an assistant to use in the test
-    async with OpenAIAssistantsClient() as temp_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as temp_client:
         # Get the assistant ID by triggering assistant creation
         messages = [ChatMessage(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
@@ -1031,7 +1034,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
 
         # Now test using the existing assistant
         async with OpenAIAssistantsClient(
-            model_id="gpt-4o-mini", assistant_id=assistant_id
+            model_id=INTEGRATION_TEST_MODEL, assistant_id=assistant_id
         ) as openai_assistants_client:
             assert isinstance(openai_assistants_client, ChatClientProtocol)
             assert openai_assistants_client.assistant_id == assistant_id
@@ -1051,7 +1054,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
 @pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_assistants_client_file_search() -> None:
     """Test OpenAI Assistants Client response."""
-    async with OpenAIAssistantsClient() as openai_assistants_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as openai_assistants_client:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1060,8 +1063,10 @@ async def test_openai_assistants_client_file_search() -> None:
         file_id, vector_store = await create_vector_store(openai_assistants_client)
         response = await openai_assistants_client.get_response(
             messages=messages,
-            tools=[HostedFileSearchTool()],
-            tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
+            options={
+                "tools": [HostedFileSearchTool()],
+                "tool_resources": {"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
+            },
         )
         await delete_vector_store(openai_assistants_client, file_id, vector_store.vector_store_id)
 
@@ -1075,7 +1080,7 @@ async def test_openai_assistants_client_file_search() -> None:
 @pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_assistants_client_file_search_streaming() -> None:
     """Test OpenAI Assistants Client response."""
-    async with OpenAIAssistantsClient() as openai_assistants_client:
+    async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as openai_assistants_client:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1084,8 +1089,10 @@ async def test_openai_assistants_client_file_search_streaming() -> None:
         file_id, vector_store = await create_vector_store(openai_assistants_client)
         response = openai_assistants_client.get_streaming_response(
             messages=messages,
-            tools=[HostedFileSearchTool()],
-            tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
+            options={
+                "tools": [HostedFileSearchTool()],
+                "tool_resources": {"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
+            },
         )
 
         assert response is not None
@@ -1106,7 +1113,7 @@ async def test_openai_assistants_client_file_search_streaming() -> None:
 async def test_openai_assistants_agent_basic_run():
     """Test ChatAgent basic run functionality with OpenAIAssistantsClient."""
     async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
     ) as agent:
         # Run a simple query
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -1123,7 +1130,7 @@ async def test_openai_assistants_agent_basic_run():
 async def test_openai_assistants_agent_basic_run_streaming():
     """Test ChatAgent basic streaming functionality with OpenAIAssistantsClient."""
     async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
     ) as agent:
         # Run streaming query
         full_message: str = ""
@@ -1143,7 +1150,7 @@ async def test_openai_assistants_agent_basic_run_streaming():
 async def test_openai_assistants_agent_thread_persistence():
     """Test ChatAgent thread persistence across runs with OpenAIAssistantsClient."""
     async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -1175,7 +1182,7 @@ async def test_openai_assistants_agent_existing_thread_id():
     existing_thread_id = None
 
     async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
@@ -1218,7 +1225,7 @@ async def test_openai_assistants_agent_code_interpreter():
     """Test ChatAgent with code interpreter through OpenAIAssistantsClient."""
 
     async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
     ) as agent:
@@ -1238,7 +1245,7 @@ async def test_openai_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Assistants Client."""
 
     async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+        chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:

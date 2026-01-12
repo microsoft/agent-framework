@@ -67,6 +67,7 @@ __all__ = [
     "UsageDetails",
     "merge_chat_options",
     "prepare_function_call_results",
+    "prepend_instructions_to_messages",
     "validate_chat_options",
     "validate_tool_mode",
     "validate_tools",
@@ -2493,6 +2494,49 @@ def prepare_messages(
     return return_messages
 
 
+def prepend_instructions_to_messages(
+    messages: list[ChatMessage],
+    instructions: str | Sequence[str] | None,
+    role: Role | Literal["system", "user", "assistant", "developer"] = "system",
+) -> list[ChatMessage]:
+    """Prepend instructions to a list of messages with a specified role.
+
+    This is a helper method for chat clients that need to add instructions
+    from options as messages. Different providers support different roles for
+    instructions (e.g., OpenAI uses "system", some providers might use "user").
+
+    Args:
+        messages: The existing list of ChatMessage objects.
+        instructions: The instructions to prepend. Can be a single string or a sequence of strings.
+        role: The role to use for the instruction messages. Defaults to "system".
+
+    Returns:
+        A new list with instruction messages prepended.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import prepend_instructions_to_messages, ChatMessage
+
+            messages = [ChatMessage(role="user", text="Hello")]
+            instructions = "You are a helpful assistant"
+
+            # Prepend as system message (default)
+            messages_with_instructions = prepend_instructions_to_messages(messages, instructions)
+
+            # Or use a different role
+            messages_with_user_instructions = prepend_instructions_to_messages(messages, instructions, role="user")
+    """
+    if instructions is None:
+        return messages
+
+    if isinstance(instructions, str):
+        instructions = [instructions]
+
+    instruction_messages = [ChatMessage(role=role, text=instr) for instr in instructions]
+    return [*instruction_messages, *messages]
+
+
 # region ChatResponse
 
 
@@ -3456,17 +3500,13 @@ class ChatOptions(TypedDict, total=False):
     instructions: str
 
 
-# endregion TypedDict-based Chat Options
-
-
 # region Chat Options Utility Functions
 
 
-def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
+async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize chat options dictionary.
 
     Validates numeric constraints and converts types as needed.
-    This is the dict-based equivalent of ChatOptions.__init__ validation.
 
     Args:
         options: The options dictionary to validate.
@@ -3482,7 +3522,7 @@ def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
 
             from agent_framework import validate_chat_options
 
-            options = validate_chat_options({
+            options = await validate_chat_options({
                 "temperature": 0.7,
                 "max_tokens": 1000,
             })
@@ -3515,7 +3555,7 @@ def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
 
     # Validate and normalize tools
     if "tools" in result:
-        result["tools"] = validate_tools(result["tools"])
+        result["tools"] = await validate_tools(result["tools"])
 
     # Validate and normalize tool_choice
     if "tool_choice" in result:
@@ -3524,7 +3564,7 @@ def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def validate_tools(
+async def validate_tools(
     tools: (
         ToolProtocol
         | Callable[..., Any]
@@ -3532,11 +3572,12 @@ def validate_tools(
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None
     ),
-) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
+) -> list[ToolProtocol | MutableMapping[str, Any]]:
     """Validate and normalize tools into a list.
 
-    Converts callables to AIFunction objects and ensures all tools
-    are either ToolProtocol instances or MutableMappings.
+    Converts callables to AIFunction objects, expands MCP tools to their constituent
+    functions (connecting them if needed), and ensures all tools are either ToolProtocol
+    instances or MutableMappings.
 
     Args:
         tools: Tools to validate - can be a single tool, callable, or sequence.
@@ -3556,20 +3597,35 @@ def validate_tools(
 
 
             # Single tool
-            tools = validate_tools(my_tool)
+            tools = await validate_tools(my_tool)
 
             # List of tools
-            tools = validate_tools([my_tool, another_tool])
+            tools = await validate_tools([my_tool, another_tool])
     """
+    # Sequence of tools - convert callables and expand MCP tools
+    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
     if not tools:
-        return None
+        return final_tools
     if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
         # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
         if not isinstance(tools, (ToolProtocol, MutableMapping)):
             return [ai_function(tools)]
         return [tools]
-    # Sequence of tools
-    return [tool if isinstance(tool, (ToolProtocol, MutableMapping)) else ai_function(tool) for tool in tools]
+    for tool in tools:
+        # Import MCPTool here to avoid circular imports
+        from ._mcp import MCPTool
+
+        if isinstance(tool, MCPTool):
+            # Expand MCP tools to their constituent functions
+            if not tool.is_connected:
+                await tool.connect()
+            final_tools.extend(tool.functions)  # type: ignore
+        elif isinstance(tool, (ToolProtocol, MutableMapping)):
+            final_tools.append(tool)
+        else:
+            # Convert callable to AIFunction
+            final_tools.append(ai_function(tool))
+    return final_tools
 
 
 def validate_tool_mode(
@@ -3656,7 +3712,6 @@ def merge_chat_options(
     if not override:
         return dict(base)
 
-    # Start with a copy of base
     result: dict[str, Any] = {}
 
     # Copy base values (shallow copy for simple values, dict copy for dicts)
@@ -3710,6 +3765,3 @@ def merge_chat_options(
             result[key] = value
 
     return result
-
-
-# endregion Chat Options Utility Functions

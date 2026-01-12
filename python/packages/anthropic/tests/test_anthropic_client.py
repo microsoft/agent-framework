@@ -730,7 +730,7 @@ async def test_anthropic_client_integration_basic_chat() -> None:
 
     messages = [ChatMessage(role=Role.USER, text="Say 'Hello, World!' and nothing else.")]
 
-    response = await client.get_response(messages=messages, options=ChatOptions(max_tokens=50))
+    response = await client.get_response(messages=messages, options={"max_tokens": 50})
 
     assert response is not None
     assert len(response.messages) > 0
@@ -748,7 +748,7 @@ async def test_anthropic_client_integration_streaming_chat() -> None:
     messages = [ChatMessage(role=Role.USER, text="Count from 1 to 5.")]
 
     chunks = []
-    async for chunk in client.get_streaming_response(messages=messages, options=ChatOptions(max_tokens=50)):
+    async for chunk in client.get_streaming_response(messages=messages, options={"max_tokens": 50}):
         chunks.append(chunk)
 
     assert len(chunks) > 0
@@ -766,7 +766,7 @@ async def test_anthropic_client_integration_function_calling() -> None:
 
     response = await client.get_response(
         messages=messages,
-        options=ChatOptions(tools=tools, max_tokens=100),
+        options={"tools": tools, "max_tokens": 100},
     )
 
     assert response is not None
@@ -796,7 +796,7 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
 
     response = await client.get_response(
         messages=messages,
-        options=ChatOptions(tools=tools, max_tokens=100),
+        options={"tools": tools, "max_tokens": 100},
     )
 
     assert response is not None
@@ -814,7 +814,7 @@ async def test_anthropic_client_integration_with_system_message() -> None:
         ChatMessage(role=Role.USER, text="Hello!"),
     ]
 
-    response = await client.get_response(messages=messages, options=ChatOptions(max_tokens=50))
+    response = await client.get_response(messages=messages, options={"max_tokens": 50})
 
     assert response is not None
     assert len(response.messages) > 0
@@ -830,7 +830,7 @@ async def test_anthropic_client_integration_temperature_control() -> None:
 
     response = await client.get_response(
         messages=messages,
-        options=ChatOptions(max_tokens=20, temperature=0.0),
+        options={"max_tokens": 20, "temperature": 0.0},
     )
 
     assert response is not None

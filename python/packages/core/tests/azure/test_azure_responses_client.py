@@ -175,7 +175,7 @@ async def test_azure_responses_client_response() -> None:
     # Test that the client can be used to get a structured response
     structured_response = await azure_responses_client.get_response(  # type: ignore[reportAssignmentType]
         messages=messages,
-        response_format=OutputStruct,
+        options={"response_format": OutputStruct},
     )
 
     assert structured_response is not None
@@ -199,8 +199,7 @@ async def test_azure_responses_client_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await azure_responses_client.get_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
+        options={"tools": [get_weather], "tool_choice": "auto"},
     )
 
     assert response is not None
@@ -213,9 +212,7 @@ async def test_azure_responses_client_response_tools() -> None:
     # Test that the client can be used to get a response
     structured_response: ChatResponse = await azure_responses_client.get_response(  # type: ignore[reportAssignmentType]
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-        response_format=OutputStruct,
+        options={"tools": [get_weather], "tool_choice": "auto", "response_format": OutputStruct},
     )
 
     assert structured_response is not None
@@ -265,7 +262,7 @@ async def test_azure_responses_client_streaming() -> None:
     structured_response = await ChatResponse.from_chat_response_generator(
         azure_responses_client.get_streaming_response(
             messages=messages,
-            response_format=OutputStruct,
+            options={"response_format": OutputStruct},
         ),
         output_format_type=OutputStruct,
     )
@@ -289,8 +286,7 @@ async def test_azure_responses_client_streaming_tools() -> None:
     # Test that the client can be used to get a response
     response = azure_responses_client.get_streaming_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
+        options={"tools": [get_weather], "tool_choice": "auto"},
     )
     full_message: str = ""
     async for chunk in response:
@@ -307,9 +303,7 @@ async def test_azure_responses_client_streaming_tools() -> None:
 
     structured_response = azure_responses_client.get_streaming_response(
         messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-        response_format=OutputStruct,
+        options={"tools": [get_weather], "tool_choice": "auto", "response_format": OutputStruct},
     )
     full_message = ""
     async for chunk in structured_response:
@@ -401,7 +395,7 @@ async def test_azure_responses_client_agent_thread_storage_with_store_true():
         response = await agent.run(
             "Hello! Please remember that my name is Alex.",
             thread=thread,
-            store=True,
+            options={"store": True},
         )
 
         # Validate response
@@ -509,13 +503,15 @@ async def test_azure_responses_client_agent_chat_options_run_level() -> None:
     ) as agent:
         response = await agent.run(
             "Provide a brief, helpful response.",
-            max_tokens=100,
-            temperature=0.7,
-            top_p=0.9,
-            seed=123,
-            user="comprehensive-test-user",
-            tools=[get_weather],
-            tool_choice="auto",
+            options={
+                "max_tokens": 100,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "seed": 123,
+                "user": "comprehensive-test-user",
+                "tools": [get_weather],
+                "tool_choice": "auto",
+            },
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -530,13 +526,15 @@ async def test_azure_responses_client_agent_chat_options_agent_level() -> None:
     async with ChatAgent(
         chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=0.9,
-        seed=123,
-        user="comprehensive-test-user",
         tools=[get_weather],
-        tool_choice="auto",
+        default_options={
+            "max_tokens": 100,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "seed": 123,
+            "user": "comprehensive-test-user",
+            "tool_choice": "auto",
+        },
     ) as agent:
         response = await agent.run(
             "Provide a brief, helpful response.",
@@ -565,7 +563,7 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
             # this needs to be high enough to handle the full MCP tool response.
-            max_tokens=5000,
+            options={"max_tokens": 5000},
         )
 
         assert isinstance(response, AgentRunResponse)
@@ -591,8 +589,7 @@ async def test_azure_responses_client_file_search() -> None:
                 text="What is the weather today? Do a file search to find the answer.",
             )
         ],
-        tools=[HostedFileSearchTool(inputs=vector_store)],
-        tool_choice="auto",
+        options={"tools": [HostedFileSearchTool(inputs=vector_store)], "tool_choice": "auto"},
     )
 
     await delete_vector_store(azure_responses_client, file_id, vector_store.vector_store_id)
@@ -617,8 +614,7 @@ async def test_azure_responses_client_file_search_streaming() -> None:
                 text="What is the weather today? Do a file search to find the answer.",
             )
         ],
-        tools=[HostedFileSearchTool(inputs=vector_store)],
-        tool_choice="auto",
+        options={"tools": [HostedFileSearchTool(inputs=vector_store)], "tool_choice": "auto"},
     )
 
     assert response is not None

@@ -1357,7 +1357,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_chat_options(agent_options),
+                    system_instructions=_get_instructions_from_options(agent_options),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1429,7 +1429,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_chat_options(agent_options),
+                    system_instructions=_get_instructions_from_options(agent_options),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1598,12 +1598,12 @@ def _get_span(
         yield current_span
 
 
-def _get_instructions_from_chat_options(chat_options: Any) -> str | None:
-    """Extract instructions from chat_options dict."""
-    if chat_options is None:
+def _get_instructions_from_options(options: Any) -> str | None:
+    """Extract instructions from options dict."""
+    if options is None:
         return None
-    if isinstance(chat_options, dict):
-        return chat_options.get("instructions")
+    if isinstance(options, dict):
+        return options.get("instructions")
     return None
 
 
@@ -1661,8 +1661,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
     attributes: dict[str, Any] = {}
-    # Support 'options' and 'chat_options' dict from chat clients and agents
-    options = kwargs.get("options", kwargs.get("chat_options"))
+    options = kwargs.get("options")
     if options is not None and not isinstance(options, dict):
         options = None
 

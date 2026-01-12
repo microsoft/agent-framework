@@ -221,7 +221,7 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test message")]
-        chat_options = ChatOptions()
+        chat_options = {}
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
 
@@ -288,10 +288,9 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
-        chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.get_streaming_response(messages, options=chat_options):
+        async for update in client.get_streaming_response(messages):
             updates.append(update)
 
         function_calls = [
@@ -332,9 +331,8 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
-        chat_options = ChatOptions(tool_choice="auto", tools=[client_tool])
 
-        async for _ in client.get_streaming_response(messages, options=chat_options):
+        async for _ in client.get_streaming_response(messages, options={"tool_choice": "auto", "tools": [client_tool]}):
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
