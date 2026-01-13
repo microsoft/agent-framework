@@ -82,6 +82,53 @@ This integration supports all 7 AG-UI features:
 6. **Shared State**: Bidirectional state sync between client and server
 7. **Predictive State Updates**: Stream tool arguments as optimistic state updates during execution
 
+## Security: Authentication & Authorization
+
+The AG-UI endpoint does not enforce authentication by default. **For production deployments, you should add authentication** using FastAPI's dependency injection system via the `dependencies` parameter.
+
+### API Key Authentication Example
+
+```python
+import os
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
+from agent_framework import ChatAgent
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
+
+# Configure API key authentication
+API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+EXPECTED_API_KEY = os.environ.get("AG_UI_API_KEY")
+
+async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None:
+    """Verify the API key provided in the request header."""
+    if not api_key or api_key != EXPECTED_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+# Create agent and app
+agent = ChatAgent(name="my_agent", instructions="...", chat_client=...)
+app = FastAPI()
+
+# Register endpoint WITH authentication
+add_agent_framework_fastapi_endpoint(
+    app,
+    agent,
+    "/",
+    dependencies=[Depends(verify_api_key)],  # Authentication enforced here
+)
+```
+
+### Other Authentication Options
+
+The `dependencies` parameter accepts any FastAPI dependency, enabling integration with:
+
+- **OAuth 2.0 / OpenID Connect** - Use `fastapi.security.OAuth2PasswordBearer`
+- **JWT Tokens** - Validate tokens with libraries like `python-jose`
+- **Azure AD / Entra ID** - Use `azure-identity` for Microsoft identity platform
+- **Rate Limiting** - Add request throttling dependencies
+- **Custom Authentication** - Implement your organization's auth requirements
+
+For a complete authentication example, see [getting_started/server.py](getting_started/server.py).
+
 ## Architecture
 
 The package uses a clean, orchestrator-based architecture:
