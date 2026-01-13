@@ -380,7 +380,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 case "required":
                     if required_name := tool_mode.get("required_function_name"):
                         tool_config["toolChoice"] = {"tool": {"name": required_name}}
-                    tool_config["toolChoice"] = {"any": {}}
+                    else:
+                        tool_config["toolChoice"] = {"any": {}}
                 case _:
                     raise ServiceInitializationError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:

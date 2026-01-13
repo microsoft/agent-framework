@@ -45,7 +45,7 @@ def test_build_request_includes_tool_config() -> None:
     client = _build_client()
 
     tool = AIFunction(name="get_weather", description="desc", func=_dummy_weather, input_model=_WeatherArgs)
-    options: ChatOptions = {
+    options = {
         "tools": [tool],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
     }
