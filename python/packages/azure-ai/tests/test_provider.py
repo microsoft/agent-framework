@@ -271,7 +271,7 @@ async def test_provider_get_agent_missing_parameters(mock_project_client: MagicM
     """Test AzureAIProjectAgentProvider.get_agent raises when no identifier provided."""
     provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
-    with pytest.raises(ValueError, match="Either name, reference, or details must be provided"):
+    with pytest.raises(ValueError, match="Either name or reference must be provided"):
         await provider.get_agent()
 
 

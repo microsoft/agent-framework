@@ -15,7 +15,6 @@ from agent_framework import (
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    AgentDetails,
     AgentReference,
     AgentVersionDetails,
     FunctionTool,
@@ -218,7 +217,6 @@ class AzureAIProjectAgentProvider:
         *,
         name: str | None = None,
         reference: AgentReference | None = None,
-        details: AgentDetails | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -227,12 +225,12 @@ class AzureAIProjectAgentProvider:
     ) -> ChatAgent:
         """Retrieve an existing agent from the Azure AI service and return a local ChatAgent wrapper.
 
-        You must provide one of: name, reference, or details.
+        You must provide either name or reference. Use `as_agent()` if you already have
+        AgentVersionDetails and want to avoid an async call.
 
         Args:
             name: The name of the agent to retrieve (fetches latest version).
             reference: Reference containing the agent's name and optionally a specific version.
-            details: A pre-fetched AgentDetails object (uses latest version from it).
             tools: Tools to make available to the agent. Required if the agent has function tools.
 
         Returns:
@@ -248,15 +246,12 @@ class AzureAIProjectAgentProvider:
             existing_agent = await self._project_client.agents.get_version(
                 agent_name=reference.name, agent_version=reference.version
             )
-        else:
-            # Get agent details if not provided
-            if agent_name := (reference.name if reference else name):
-                details = await self._project_client.agents.get(agent_name=agent_name)
-
-            if not details:
-                raise ValueError("Either name, reference, or details must be provided to get an agent.")
-
+        elif agent_name := (reference.name if reference else name):
+            # Fetch latest version
+            details = await self._project_client.agents.get(agent_name=agent_name)
             existing_agent = details.versions.latest
+        else:
+            raise ValueError("Either name or reference must be provided to get an agent.")
 
         if not isinstance(existing_agent.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
