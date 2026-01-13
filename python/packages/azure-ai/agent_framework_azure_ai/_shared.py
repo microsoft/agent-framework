@@ -274,7 +274,7 @@ def _prepare_mcp_tool_for_azure_ai(tool: HostedMCPTool) -> MCPTool:
 
 
 def create_text_format_config(
-    response_format: Any,
+    response_format: type[BaseModel] | Mapping[str, Any],
 ) -> (
     ResponseTextFormatConfigurationJsonSchema
     | ResponseTextFormatConfigurationJsonObject
@@ -282,18 +282,25 @@ def create_text_format_config(
 ):
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        schema = response_format.model_json_schema()
+        # Ensure additionalProperties is explicitly false to satisfy Azure validation
+        if isinstance(schema, dict):
+            schema.setdefault("additionalProperties", False)
         return ResponseTextFormatConfigurationJsonSchema(
             name=response_format.__name__,
-            schema=response_format.model_json_schema(),
+            schema=schema,
         )
 
     if isinstance(response_format, Mapping):
         format_config = _convert_response_format(response_format)
         format_type = format_config.get("type")
         if format_type == "json_schema":
+            # Ensure schema includes additionalProperties=False to satisfy Azure validation
+            schema = dict(format_config.get("schema", {}))  # type: ignore[assignment]
+            schema.setdefault("additionalProperties", False)
             config_kwargs: dict[str, Any] = {
                 "name": format_config.get("name") or "response",
-                "schema": format_config["schema"],
+                "schema": schema,
             }
             if "strict" in format_config:
                 config_kwargs["strict"] = format_config["strict"]
