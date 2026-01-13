@@ -440,9 +440,8 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
     def get_run_request(
         self,
         message: str,
-        response_format: type[BaseModel] | None,
-        enable_tool_calls: bool,
-        wait_for_response: bool = True,
+        *,
+        options: dict[str, Any] | None = None,
     ) -> RunRequest:
         """Get the current run request from the orchestration context.
 
@@ -451,9 +450,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
         """
         request = super().get_run_request(
             message,
-            response_format,
-            enable_tool_calls,
-            wait_for_response,
+            options=options,
         )
         request.orchestration_id = self._context.instance_id
         return request
