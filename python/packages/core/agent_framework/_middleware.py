@@ -2,10 +2,10 @@
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
 from enum import Enum
 from functools import update_wrapper
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypedDict, TypeVar
 
 from ._serialization import SerializationMixin
 from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, prepare_messages
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AgentMiddleware",
-    "AgentMiddlewares",
+    "AgentMiddlewareTypes",
     "AgentRunContext",
     "ChatContext",
     "ChatMiddleware",
@@ -305,7 +305,7 @@ class AgentMiddleware(ABC):
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=RetryMiddleware())
+            agent = ChatAgent(chat_client=client, name="assistant", middleware=[RetryMiddleware()])
     """
 
     @abstractmethod
@@ -373,7 +373,7 @@ class FunctionMiddleware(ABC):
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=CachingMiddleware())
+            agent = ChatAgent(chat_client=client, name="assistant", middleware=[CachingMiddleware()])
     """
 
     @abstractmethod
@@ -432,7 +432,9 @@ class ChatMiddleware(ABC):
 
             # Use with an agent
             agent = ChatAgent(
-                chat_client=client, name="assistant", middleware=SystemPromptMiddleware("You are a helpful assistant.")
+                chat_client=client,
+                name="assistant",
+                middleware=[SystemPromptMiddleware("You are a helpful assistant.")],
             )
     """
 
@@ -480,7 +482,7 @@ Middleware: TypeAlias = (
     | ChatMiddleware
     | ChatMiddlewareCallable
 )
-AgentMiddlewares: TypeAlias = AgentMiddleware | AgentMiddlewareCallable
+AgentMiddlewareTypes: TypeAlias = AgentMiddleware | AgentMiddlewareCallable
 
 # region Middleware type markers for decorators
 
@@ -511,7 +513,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=logging_middleware)
+            agent = ChatAgent(chat_client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as agent middleware
     func._middleware_type: MiddlewareType = MiddlewareType.AGENT  # type: ignore
@@ -544,7 +546,7 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=logging_middleware)
+            agent = ChatAgent(chat_client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as function middleware
     func._middleware_type: MiddlewareType = MiddlewareType.FUNCTION  # type: ignore
@@ -577,7 +579,7 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=logging_middleware)
+            agent = ChatAgent(chat_client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as chat middleware
     func._middleware_type: MiddlewareType = MiddlewareType.CHAT  # type: ignore
@@ -609,7 +611,7 @@ class BaseMiddlewarePipeline(ABC):
 
     def __init__(self) -> None:
         """Initialize the base middleware pipeline."""
-        self._middlewares: list[Any] = []
+        self._middleware: list[Any] = []
 
     @abstractmethod
     def _register_middleware(self, middleware: Any) -> None:
@@ -624,12 +626,12 @@ class BaseMiddlewarePipeline(ABC):
 
     @property
     def has_middlewares(self) -> bool:
-        """Check if there are any middlewares registered.
+        """Check if there are any middleware registered.
 
         Returns:
-            True if middlewares are registered, False otherwise.
+            True if middleware are registered, False otherwise.
         """
-        return bool(self._middlewares)
+        return bool(self._middleware)
 
     def _register_middleware_with_wrapper(
         self,
@@ -645,9 +647,9 @@ class BaseMiddlewarePipeline(ABC):
             expected_type: The expected middleware base class type.
         """
         if isinstance(middleware, expected_type):
-            self._middlewares.append(middleware)
+            self._middleware.append(middleware)
         elif callable(middleware):
-            self._middlewares.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
+            self._middleware.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
 
     def _create_handler_chain(
         self,
@@ -667,7 +669,7 @@ class BaseMiddlewarePipeline(ABC):
         """
 
         def create_next_handler(index: int) -> Callable[[Any], Awaitable[None]]:
-            if index >= len(self._middlewares):
+            if index >= len(self._middleware):
 
                 async def final_wrapper(c: Any) -> None:
                     # Execute actual handler and populate context for observability
@@ -677,7 +679,7 @@ class BaseMiddlewarePipeline(ABC):
 
                 return final_wrapper
 
-            middleware = self._middlewares[index]
+            middleware = self._middleware[index]
             next_handler = create_next_handler(index + 1)
 
             async def current_handler(c: Any) -> None:
@@ -705,7 +707,7 @@ class BaseMiddlewarePipeline(ABC):
         """
 
         def create_next_handler(index: int) -> Callable[[Any], Awaitable[None]]:
-            if index >= len(self._middlewares):
+            if index >= len(self._middleware):
 
                 async def final_wrapper(c: Any) -> None:
                     # If terminate was set, skip execution
@@ -724,7 +726,7 @@ class BaseMiddlewarePipeline(ABC):
 
                 return final_wrapper
 
-            middleware = self._middlewares[index]
+            middleware = self._middleware[index]
             next_handler = create_next_handler(index + 1)
 
             async def current_handler(c: Any) -> None:
@@ -745,20 +747,20 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     to process the agent invocation and pass control to the next middleware in the chain.
     """
 
-    def __init__(self, middlewares: list[AgentMiddleware | AgentMiddlewareCallable] | None = None):
+    def __init__(self, middleware: Sequence[AgentMiddlewareTypes] | None = None):
         """Initialize the agent middleware pipeline.
 
         Args:
-            middlewares: The list of agent middleware to include in the pipeline.
+            middleware: The list of agent middleware to include in the pipeline.
         """
         super().__init__()
-        self._middlewares: list[AgentMiddleware] = []
+        self._middleware: list[AgentMiddleware] = []
 
-        if middlewares:
-            for middleware in middlewares:
-                self._register_middleware(middleware)
+        if middleware:
+            for mdlware in middleware:
+                self._register_middleware(mdlware)
 
-    def _register_middleware(self, middleware: AgentMiddleware | AgentMiddlewareCallable) -> None:
+    def _register_middleware(self, middleware: AgentMiddlewareTypes) -> None:
         """Register an agent middleware item.
 
         Args:
@@ -789,7 +791,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
         context.messages = messages
         context.is_streaming = False
 
-        if not self._middlewares:
+        if not self._middleware:
             return await final_handler(context)
 
         # Store the final result
@@ -841,7 +843,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
         context.messages = messages
         context.is_streaming = True
 
-        if not self._middlewares:
+        if not self._middleware:
             async for update in final_handler(context):
                 yield update
             return
@@ -874,18 +876,18 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     to process the function invocation and pass control to the next middleware in the chain.
     """
 
-    def __init__(self, middlewares: list[FunctionMiddleware | FunctionMiddlewareCallable] | None = None):
+    def __init__(self, middleware: Sequence[FunctionMiddleware | FunctionMiddlewareCallable] | None = None):
         """Initialize the function middleware pipeline.
 
         Args:
-            middlewares: The list of function middleware to include in the pipeline.
+            middleware: The list of function middleware to include in the pipeline.
         """
         super().__init__()
-        self._middlewares: list[FunctionMiddleware] = []
+        self._middleware: list[FunctionMiddleware] = []
 
-        if middlewares:
-            for middleware in middlewares:
-                self._register_middleware(middleware)
+        if middleware:
+            for mdlware in middleware:
+                self._register_middleware(mdlware)
 
     def _register_middleware(self, middleware: FunctionMiddleware | FunctionMiddlewareCallable) -> None:
         """Register a function middleware item.
@@ -917,7 +919,7 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
         context.function = function
         context.arguments = arguments
 
-        if not self._middlewares:
+        if not self._middleware:
             return await final_handler(context)
 
         # Store the final result
@@ -947,18 +949,18 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
     to process the chat request and pass control to the next middleware in the chain.
     """
 
-    def __init__(self, middlewares: list[ChatMiddleware | ChatMiddlewareCallable] | None = None):
+    def __init__(self, middleware: Sequence[ChatMiddleware | ChatMiddlewareCallable] | None = None):
         """Initialize the chat middleware pipeline.
 
         Args:
-            middlewares: The list of chat middleware to include in the pipeline.
+            middleware: The list of chat middleware to include in the pipeline.
         """
         super().__init__()
-        self._middlewares: list[ChatMiddleware] = []
+        self._middleware: list[ChatMiddleware] = []
 
-        if middlewares:
-            for middleware in middlewares:
-                self._register_middleware(middleware)
+        if middleware:
+            for mdlware in middleware:
+                self._register_middleware(mdlware)
 
     def _register_middleware(self, middleware: ChatMiddleware | ChatMiddlewareCallable) -> None:
         """Register a chat middleware item.
@@ -995,7 +997,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         context.messages = messages
         context.chat_options = chat_options
 
-        if not self._middlewares:
+        if not self._middleware:
             return await final_handler(context)
 
         # Store the final result
@@ -1045,7 +1047,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         context.chat_options = chat_options
         context.is_streaming = True
 
-        if not self._middlewares:
+        if not self._middleware:
             async for update in final_handler(context):
                 yield update
             return
@@ -1182,8 +1184,8 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
 
     def _build_middleware_pipelines(
-        agent_level_middlewares: Middleware | list[Middleware] | None,
-        run_level_middlewares: Middleware | list[Middleware] | None = None,
+        agent_level_middlewares: Sequence[Middleware] | None,
+        run_level_middlewares: Sequence[Middleware] | None = None,
     ) -> tuple[AgentMiddlewarePipeline, FunctionMiddlewarePipeline, list[ChatMiddleware | ChatMiddlewareCallable]]:
         """Build fresh agent and function middleware pipelines from the provided middleware lists.
 
@@ -1191,7 +1193,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             agent_level_middlewares: Agent-level middleware (executed first)
             run_level_middlewares: Run-level middleware (executed after agent middleware)
         """
-        middleware = categorize_middleware(agent_level_middlewares, run_level_middlewares)
+        middleware = categorize_middleware(*(agent_level_middlewares or ()), *(run_level_middlewares or ()))
 
         return (
             AgentMiddlewarePipeline(middleware["agent"]),  # type: ignore[arg-type]
@@ -1204,7 +1206,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Middleware-enabled run method."""
@@ -1253,7 +1255,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: Any = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Middleware-enabled run_stream method."""
@@ -1461,9 +1463,15 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
     return chat_client_class
 
 
+class MiddlewareDict(TypedDict):
+    agent: list[AgentMiddleware | AgentMiddlewareCallable]
+    function: list[FunctionMiddleware | FunctionMiddlewareCallable]
+    chat: list[ChatMiddleware | ChatMiddlewareCallable]
+
+
 def categorize_middleware(
-    *middleware_sources: Any | list[Any] | None,
-) -> dict[str, list[Any]]:
+    *middleware_sources: Middleware | None,
+) -> MiddlewareDict:
     """Categorize middleware from multiple sources into agent, function, and chat types.
 
     Args:
@@ -1472,7 +1480,7 @@ def categorize_middleware(
     Returns:
         Dict with keys "agent", "function", "chat" containing lists of categorized middleware.
     """
-    result: dict[str, list[Any]] = {"agent": [], "function": [], "chat": []}
+    result: MiddlewareDict = {"agent": [], "function": [], "chat": []}
 
     # Merge all middleware sources into a single list
     all_middleware: list[Any] = []
@@ -1495,11 +1503,11 @@ def categorize_middleware(
             # Always call _determine_middleware_type to ensure proper validation
             middleware_type = _determine_middleware_type(middleware)
             if middleware_type == MiddlewareType.AGENT:
-                result["agent"].append(middleware)
+                result["agent"].append(middleware)  # type: ignore
             elif middleware_type == MiddlewareType.FUNCTION:
-                result["function"].append(middleware)
+                result["function"].append(middleware)  # type: ignore
             elif middleware_type == MiddlewareType.CHAT:
-                result["chat"].append(middleware)
+                result["chat"].append(middleware)  # type: ignore
         else:
             # Fallback to agent middleware for unknown types
             result["agent"].append(middleware)
@@ -1508,7 +1516,7 @@ def categorize_middleware(
 
 
 def create_function_middleware_pipeline(
-    *middleware_sources: list[Middleware] | None,
+    *middleware_sources: Middleware,
 ) -> FunctionMiddlewarePipeline | None:
     """Create a function middleware pipeline from multiple middleware sources.
 
@@ -1518,26 +1526,8 @@ def create_function_middleware_pipeline(
     Returns:
         A FunctionMiddlewarePipeline if function middleware is found, None otherwise.
     """
-    middleware = categorize_middleware(*middleware_sources)
-    function_middlewares = middleware["function"]
+    function_middlewares = categorize_middleware(*middleware_sources)["function"]
     return FunctionMiddlewarePipeline(function_middlewares) if function_middlewares else None  # type: ignore[arg-type]
-
-
-def _merge_and_filter_chat_middleware(
-    instance_middleware: Any | list[Any] | None,
-    call_middleware: Any | list[Any] | None,
-) -> list[ChatMiddleware | ChatMiddlewareCallable]:
-    """Merge instance-level and call-level middleware, filtering for chat middleware only.
-
-    Args:
-        instance_middleware: Middleware defined at the instance level.
-        call_middleware: Middleware provided at the call level.
-
-    Returns:
-        A merged list of chat middleware only.
-    """
-    middleware = categorize_middleware(instance_middleware, call_middleware)
-    return middleware["chat"]  # type: ignore[return-value]
 
 
 def extract_and_merge_function_middleware(
@@ -1556,7 +1546,7 @@ def extract_and_merge_function_middleware(
     existing_pipeline: FunctionMiddlewarePipeline | None = kwargs.get("_function_middleware_pipeline")
 
     # Get middleware sources
-    client_middleware = getattr(chat_client, "middleware", None) if hasattr(chat_client, "middleware") else None
+    client_middleware = getattr(chat_client, "middleware", None)
     run_level_middleware = kwargs.get("middleware")
 
     # If we have an existing pipeline but no additional middleware sources, return it directly
@@ -1564,15 +1554,15 @@ def extract_and_merge_function_middleware(
         return existing_pipeline
 
     # If we have an existing pipeline with additional middleware, we need to merge
-    # Extract existing pipeline middlewares if present - cast to list[Middleware] for type compatibility
-    existing_middlewares: list[Middleware] | None = list(existing_pipeline._middlewares) if existing_pipeline else None
+    # Extract existing pipeline middleware if present - cast to list[Middleware] for type compatibility
+    existing_middleware: list[Middleware] | None = list(existing_pipeline._middleware) if existing_pipeline else None
 
     # Create combined pipeline from all sources using existing helper
     combined_pipeline = create_function_middleware_pipeline(
-        client_middleware, run_level_middleware, existing_middlewares
+        *(client_middleware or ()), *(run_level_middleware or ()), *(existing_middleware or ())
     )
 
-    # If we have an existing pipeline but combined is None (no new middlewares), return existing
+    # If we have an existing pipeline but combined is None (no new middleware), return existing
     if existing_pipeline and combined_pipeline is None:
         return existing_pipeline
 

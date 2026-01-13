@@ -228,7 +228,7 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
         // Act
@@ -244,17 +244,17 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public void DeserializeThread_WithValidState_ReturnsChatClientAgentThread()
+    public async Task DeserializeThread_WithValidState_ReturnsChatClientAgentThreadAsync()
     {
         // Arrange
         using var httpClient = new HttpClient();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread originalThread = agent.GetNewThread();
+        AgentThread originalThread = await agent.GetNewThreadAsync();
         JsonElement serialized = originalThread.Serialize();
 
         // Act
-        AgentThread deserialized = agent.DeserializeThread(serialized);
+        AgentThread deserialized = await agent.DeserializeThreadAsync(serialized);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -487,7 +487,7 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act

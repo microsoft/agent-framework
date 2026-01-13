@@ -832,11 +832,16 @@ class AnthropicClient(BaseChatClient):
                         )
                     )
                 case "input_json_delta":
-                    call_id, name = self._last_call_id_name if self._last_call_id_name else ("", "")
+                    # For streaming argument deltas, only pass call_id and arguments.
+                    # Pass empty string for name - it causes ag-ui to emit duplicate ToolCallStartEvents
+                    # since it triggers on `if content.name:`. The initial tool_use event already
+                    # provides the name, so deltas should only carry incremental arguments.
+                    # This matches OpenAI's behavior where streaming chunks have name="".
+                    call_id, _ = self._last_call_id_name if self._last_call_id_name else ("", "")
                     contents.append(
                         FunctionCallContent(
                             call_id=call_id,
-                            name=name,
+                            name="",
                             arguments=content_block.partial_json,
                             raw_representation=content_block,
                         )

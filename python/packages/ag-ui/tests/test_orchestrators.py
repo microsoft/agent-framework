@@ -7,8 +7,14 @@ from types import SimpleNamespace
 from typing import Any
 
 from ag_ui.core import BaseEvent, RunFinishedEvent
-from agent_framework import AgentRunResponseUpdate, AgentThread, ChatResponseUpdate, TextContent, ai_function
-from agent_framework._tools import FunctionInvocationConfiguration
+from agent_framework import (
+    AgentRunResponseUpdate,
+    AgentThread,
+    ChatResponseUpdate,
+    FunctionInvocationConfiguration,
+    TextContent,
+    ai_function,
+)
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, ExecutionContext

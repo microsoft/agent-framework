@@ -11,7 +11,7 @@ from agent_framework import TextContent
 from agent_framework._types import AgentRunResponseUpdate, ChatResponseUpdate
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_helpers_ag_ui import StubAgent
+from utils_test_ag_ui import StubAgent
 
 
 async def test_service_thread_id_when_there_are_updates():
