@@ -77,7 +77,9 @@ public sealed class A2AIntegrationTests
             Assert.NotNull(url);
             Assert.NotEmpty(url);
             Assert.StartsWith("http", url, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal($"{testServer.BaseAddress.ToString().TrimEnd('/')}/a2a/test-agent/v1/card", url);
+
+            // agentCard's URL matches the agent endpoint
+            Assert.Equal($"{testServer.BaseAddress.ToString().TrimEnd('/')}/a2a/test-agent", url);
         }
         finally
         {

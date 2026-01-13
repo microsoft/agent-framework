@@ -692,7 +692,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         List<ChatMessage> inputMessagesForChatClient = [];
         IList<ChatMessage>? aiContextProviderMessages = null;
-        IList<ChatMessage>? chatMessageStoreMessages = null;
+        IList<ChatMessage>? chatMessageStoreMessages = [];
 
         // Populate the thread messages only if we are not continuing an existing response as it's not allowed
         if (chatOptions?.ContinuationToken is null)
