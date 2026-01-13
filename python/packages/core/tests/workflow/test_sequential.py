@@ -35,7 +35,7 @@ class _EchoAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.display_name} reply")])
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} reply")])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -45,7 +45,7 @@ class _EchoAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         # Minimal async generator with one assistant update
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.display_name} reply")])
+        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.name} reply")])
 
 
 class _SummarizerExec(Executor):

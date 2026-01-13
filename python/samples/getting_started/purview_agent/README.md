@@ -116,18 +116,18 @@ This is only needed if you want to integrate with external caching systems.
 ```python
 class SimpleDictCacheProvider:
     """Custom cache provider that implements the CacheProvider protocol."""
-    
+
     def __init__(self) -> None:
         self._cache: dict[str, Any] = {}
-    
+
     async def get(self, key: str) -> Any | None:
         """Get a value from the cache."""
         return self._cache.get(key)
-    
+
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> None:
         """Set a value in the cache."""
         self._cache[key] = value
-    
+
     async def remove(self, key: str) -> None:
         """Remove a value from the cache."""
         self._cache.pop(key, None)
