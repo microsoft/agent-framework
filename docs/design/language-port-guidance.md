@@ -80,17 +80,48 @@ graph TD
 
 #### Declarative Workflows
 
+Microsoft Agent Framework supports a delcartive format for workflows which is shared with other teams within Microsoft e.g. Foundry Workflows. The declarative format uses YAML as the file format and the schema is implemented by the Agent Object Model.
+
+For examples of declarative workflows go [here](https://github.com/microsoft/agent-framework/tree/main/workflow-samples)
+
 #### Declarative Agents
+
+Microsoft Agent Framework supports a delcartive format for agents which is shared with other teams within Microsoft e.g. Copilot Studio agents. The declarative format uses YAML as the file format and the schema is implemented by the Agent Object Model.
+
+For examples of declarative agents go [here](https://github.com/microsoft/agent-framework/tree/main/agent-samples)
+
+For more information on the schema used for single agents go [here](https://github.com/microsoft/AgentSchema).
 
 #### Workflows
 
+Microsoft Agent Framework Workflows enables developers to build intelligent automation systems that seamlessly blend AI agents with business processes. It provides type-safe architecture so developers can orchestrate complex workflows.
+
+For more information on workflows go [here](https://learn.microsoft.com/en-us/agent-framework/user-guide/workflows/overview).
+
 #### AI Agent Implementations
+
+Microsoft Agent Framework provides agent implementations for the following services:
+
+- Chat completion services such as Azure OpenAI, OpenAI, Anthropic, Ollama, Amazon Bedrock, ...
+- Agent services such as Foundry Agent Service, OpenAI Assistants, ...
+
+For more information on supported agent types go [here](https://learn.microsoft.com/en-us/agent-framework/user-guide/agents/agent-types/).
 
 #### AI Agent Abstractions
 
+The AI Agent abstractions are the agentic primitives defined by Microsoft Agent Framework. These primitives allow runnable agents to be defined and different agents context strategies to be integrated. Agents defined using these abstractions can be orchestrated using the Workflows component.
+
 #### AI Primitives & Model Clients
 
+The AI Primitives allow developers to integrate and interact with a growing variety of artificial intelligence (AI) services in their apps. Microsoft Agent Framework takes Microsoft.Extensions.AI.Abstractions as a dependency for the .NET version and the team has also ported these abstractions to Python. If the language already has a set of AI Primitives and associated model clients that developers use consider building on top of these. This will save a lot of time, provide better coverage and reduce friction for developers.
+
+For more information on Microsoft.Extensions.AI.Abstractions go [here](https://github.com/dotnet/extensions/blob/main/src/Libraries/Microsoft.Extensions.AI.Abstractions/README.md)
+
 #### Agent Object Model
+
+The Agent Object Model is used for declarative agents and workflows. It provides the model objects required for declarative works which are created using Foundry and Copilot Studio.
+
+For more information on the schema used for single agents go [here](https://github.com/microsoft/AgentSchema).
 
 
 ## High-Level Plan for Porting Microsoft Agent Framework
