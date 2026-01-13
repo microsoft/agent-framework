@@ -418,7 +418,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
     """Test cases for multiple middleware execution order with ChatAgent."""
 
     async def test_multiple_agent_middleware_execution_order(self, chat_client: "MockChatClient") -> None:
-        """Test that multiple agent middlewares execute in correct order with ChatAgent."""
+        """Test that multiple agent middleware execute in correct order with ChatAgent."""
         execution_order: list[str] = []
 
         class OrderedMiddleware(AgentMiddleware):
@@ -432,12 +432,12 @@ class TestChatAgentMultipleMiddlewareOrdering:
                 await next(context)
                 execution_order.append(f"{self.name}_after")
 
-        # Create multiple middlewares
+        # Create multiple middleware
         middleware1 = OrderedMiddleware("first")
         middleware2 = OrderedMiddleware("second")
         middleware3 = OrderedMiddleware("third")
 
-        # Create ChatAgent with multiple middlewares
+        # Create ChatAgent with multiple middleware
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2, middleware3])
 
         # Execute the agent
@@ -453,7 +453,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert execution_order == expected_order
 
     async def test_mixed_middleware_types_with_chat_agent(self, chat_client: "MockChatClient") -> None:
-        """Test mixed class and function-based middlewares with ChatAgent."""
+        """Test mixed class and function-based middleware with ChatAgent."""
         execution_order: list[str] = []
 
         class ClassAgentMiddleware(AgentMiddleware):
@@ -507,8 +507,8 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert response is not None
         assert chat_client.call_count == 1
 
-        # Verify that agent middlewares were executed in correct order
-        # (Function middlewares won't execute since no functions are called)
+        # Verify that agent middleware were executed in correct order
+        # (Function middleware won't execute since no functions are called)
         expected_order = ["class_agent_before", "function_agent_before", "function_agent_after", "class_agent_after"]
         assert execution_order == expected_order
 
@@ -999,7 +999,7 @@ class TestRunLevelMiddleware:
         # Clear execution log
         execution_log.clear()
 
-        # Fourth run with both run middlewares - should see both
+        # Fourth run with both run middleware - should see both
         await agent.run("Test message 4", middleware=[run_middleware1, run_middleware2])
         assert execution_log == ["run1_start", "run2_start", "run2_end", "run1_end"]
 
