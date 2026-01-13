@@ -785,13 +785,13 @@ class TestAgentManagerConfiguration:
 
         chat_client = MagicMock()
         manager_agent = ChatAgent(chat_client=chat_client, name="Coordinator")
-        assert manager_agent.chat_options.response_format is None
+        assert manager_agent.default_options.get("response_format") is None
 
         worker = StubAgent("worker", "response")
 
         builder = GroupChatBuilder().set_manager(manager_agent).participants([worker])
 
-        assert manager_agent.chat_options.response_format is ManagerSelectionResponse
+        assert manager_agent.default_options.get("response_format") is ManagerSelectionResponse
         assert builder._manager_participant is manager_agent  # type: ignore[attr-defined]
 
     async def test_set_manager_accepts_agent_manager(self) -> None:
@@ -820,13 +820,15 @@ class TestAgentManagerConfiguration:
             value: str
 
         chat_client = MagicMock()
-        manager_agent = ChatAgent(chat_client=chat_client, name="Coordinator", response_format=CustomResponse)
+        manager_agent = ChatAgent(
+            chat_client=chat_client, name="Coordinator", default_options={"response_format": CustomResponse}
+        )
         worker = StubAgent("worker", "response")
 
         with pytest.raises(ValueError, match="response_format must be ManagerSelectionResponse"):
             GroupChatBuilder().set_manager(manager_agent).participants([worker])
 
-        assert manager_agent.chat_options.response_format is CustomResponse
+        assert manager_agent.default_options.get("response_format") is CustomResponse
 
 
 class TestFactoryFunctions:

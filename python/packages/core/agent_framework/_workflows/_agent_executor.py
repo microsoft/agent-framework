@@ -359,7 +359,7 @@ class AgentExecutor(Executor):
 
         # Build the final AgentRunResponse from the collected updates
         if isinstance(self._agent, ChatAgent):
-            response_format = self._agent.chat_options.response_format
+            response_format = self._agent.default_options.get("response_format")
             response = AgentRunResponse.from_agent_run_response_updates(
                 updates,
                 output_format_type=response_format,

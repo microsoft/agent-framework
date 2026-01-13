@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypedDict
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -19,18 +19,37 @@ from ._shared import (
     AzureOpenAISettings,
 )
 
+if TYPE_CHECKING:
+    from agent_framework.openai._responses_client import OpenAIResponsesOptions
+
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
-TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="AzureOpenAIResponsesClient")
+__all__ = ["AzureOpenAIResponsesClient"]
+
+
+TAzureOpenAIResponsesOptions = TypeVar(
+    "TAzureOpenAIResponsesOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
+    covariant=True,
+)
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient):
+class AzureOpenAIResponsesClient(
+    AzureOpenAIConfigMixin,
+    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
+    Generic[TAzureOpenAIResponsesOptions],
+):
     """Azure Responses completion class."""
 
     def __init__(
@@ -101,6 +120,18 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
 
                 # Or loading from a .env file
                 client = AzureOpenAIResponsesClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIResponsesOptions
+
+
+                class MyOptions(AzureOpenAIResponsesOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIResponsesClient[MyOptions] = AzureOpenAIResponsesClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)

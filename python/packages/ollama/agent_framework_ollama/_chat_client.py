@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -10,7 +11,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AIFunction,
@@ -46,6 +47,229 @@ from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import ValidationError
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+
+__all__ = ["OllamaChatClient", "OllamaChatOptions"]
+
+
+# region Ollama Chat Options TypedDict
+
+
+class OllamaChatOptions(ChatOptions, total=False):
+    """Ollama-specific chat options dict.
+
+    Extends base ChatOptions with Ollama-specific parameters.
+    Ollama passes model parameters through the `options` field.
+
+    See: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+    Keys:
+        # Inherited from ChatOptions (mapped to Ollama options):
+        model_id: The model name, translates to ``model`` in Ollama API.
+        temperature: Sampling temperature, translates to ``options.temperature``.
+        top_p: Nucleus sampling, translates to ``options.top_p``.
+        max_tokens: Maximum tokens to generate, translates to ``options.num_predict``.
+        stop: Stop sequences, translates to ``options.stop``.
+        seed: Random seed for reproducibility, translates to ``options.seed``.
+        frequency_penalty: Frequency penalty, translates to ``options.frequency_penalty``.
+        presence_penalty: Presence penalty, translates to ``options.presence_penalty``.
+        tools: List of function tools.
+        response_format: Output format, translates to ``format``.
+            Use 'json' for JSON mode or a JSON schema dict for structured output.
+
+        # Options not supported in Ollama:
+        tool_choice: Ollama only supports auto tool choice.
+        allow_multiple_tool_calls: Not configurable.
+        user: Not supported.
+        store: Not supported.
+        logit_bias: Not supported.
+        metadata: Not supported.
+
+        # Ollama model-level options (placed in `options` dict):
+        # See: https://github.com/ollama/ollama/blob/main/docs/modelfile.mdx#valid-parameters-and-values
+        num_predict: Maximum number of tokens to predict (alternative to max_tokens).
+        top_k: Top-k sampling: limits tokens to k most likely. Higher = more diverse.
+        min_p: Minimum probability threshold for token selection.
+        typical_p: Locally typical sampling parameter (0.0-1.0).
+        repeat_penalty: Penalty for repeating tokens. Higher = less repetition.
+        repeat_last_n: Number of tokens to consider for repeat penalty.
+        penalize_newline: Whether to penalize newline characters.
+        num_ctx: Context window size (number of tokens).
+        num_batch: Batch size for prompt processing.
+        num_keep: Number of tokens to keep from initial prompt.
+        num_gpu: Number of layers to offload to GPU.
+        main_gpu: Main GPU for computation.
+        use_mmap: Whether to use memory-mapped files.
+        num_thread: Number of threads for CPU computation.
+        numa: Enable NUMA optimization.
+
+        # Ollama-specific top-level options:
+        keep_alive: How long to keep model loaded (default: '5m').
+        think: Whether thinking models should think before responding.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_ollama import OllamaChatOptions
+
+            # Basic usage - standard options automatically mapped
+            options: OllamaChatOptions = {
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "seed": 42,
+            }
+
+            # With Ollama-specific model options
+            options: OllamaChatOptions = {
+                "top_k": 40,
+                "num_ctx": 4096,
+                "keep_alive": "10m",
+            }
+
+            # With JSON output format
+            options: OllamaChatOptions = {
+                "response_format": "json",
+            }
+
+            # With structured output (JSON schema)
+            options: OllamaChatOptions = {
+                "response_format": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+            }
+    """
+
+    # Ollama model-level options (will be placed in `options` dict)
+    num_predict: int
+    """Maximum number of tokens to predict (equivalent to max_tokens)."""
+
+    top_k: int
+    """Top-k sampling: limits tokens to k most likely. Higher = more diverse."""
+
+    min_p: float
+    """Minimum probability threshold for token selection."""
+
+    typical_p: float
+    """Locally typical sampling parameter (0.0-1.0)."""
+
+    repeat_penalty: float
+    """Penalty for repeating tokens. Higher = less repetition."""
+
+    repeat_last_n: int
+    """Number of tokens to consider for repeat penalty."""
+
+    penalize_newline: bool
+    """Whether to penalize newline characters."""
+
+    num_ctx: int
+    """Context window size (number of tokens)."""
+
+    num_batch: int
+    """Batch size for prompt processing."""
+
+    num_keep: int
+    """Number of tokens to keep from initial prompt."""
+
+    num_gpu: int
+    """Number of layers to offload to GPU."""
+
+    main_gpu: int
+    """Main GPU for computation."""
+
+    use_mmap: bool
+    """Whether to use memory-mapped files."""
+
+    num_thread: int
+    """Number of threads for CPU computation."""
+
+    numa: bool
+    """Enable NUMA optimization."""
+
+    # Ollama-specific top-level options
+    keep_alive: str | int
+    """How long to keep the model loaded in memory after request.
+    Can be duration string (e.g., '5m', '1h') or seconds as int.
+    Set to 0 to unload immediately after request."""
+
+    think: bool
+    """For thinking models: whether the model should think before responding."""
+
+    # ChatOptions fields not supported in Ollama
+    tool_choice: None  # type: ignore[misc]
+    """Not supported. Ollama only supports auto tool choice."""
+
+    allow_multiple_tool_calls: None  # type: ignore[misc]
+    """Not supported. Not configurable in Ollama."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+    logit_bias: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+    metadata: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+
+OLLAMA_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "response_format": "format",
+}
+"""Maps ChatOptions keys to Ollama API parameter names."""
+
+# Keys that should be placed in the nested `options` dict for the Ollama API
+OLLAMA_MODEL_OPTIONS: set[str] = {
+    # From ChatOptions (mapped to options.*)
+    "temperature",
+    "top_p",
+    "max_tokens",  # -> num_predict
+    "stop",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    # Ollama-specific model options
+    "num_predict",
+    "top_k",
+    "min_p",
+    "typical_p",
+    "repeat_penalty",
+    "repeat_last_n",
+    "penalize_newline",
+    "num_ctx",
+    "num_batch",
+    "num_keep",
+    "num_gpu",
+    "main_gpu",
+    "use_mmap",
+    "num_thread",
+    "numa",
+}
+
+# Translations for options that go into the nested `options` dict
+OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
+    "max_tokens": "num_predict",
+}
+"""Maps ChatOptions keys to Ollama model option parameter names."""
+
+TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
+
+
+# endregion
+
 
 class OllamaSettings(AFBaseSettings):
     """Ollama settings."""
@@ -62,7 +286,7 @@ logger = get_logger("agent_framework.ollama")
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OllamaChatClient(BaseChatClient):
+class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOptions]):
     """Ollama Chat completion class."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
@@ -110,15 +334,16 @@ class OllamaChatClient(BaseChatClient):
 
         super().__init__(**kwargs)
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         # prepare
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, options)
 
         try:
             # execute
@@ -133,15 +358,16 @@ class OllamaChatClient(BaseChatClient):
         # process
         return self._parse_response_from_ollama(response)
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # prepare
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, options)
 
         try:
             # execute
@@ -157,31 +383,43 @@ class OllamaChatClient(BaseChatClient):
         async for part in response_object:
             yield self._parse_streaming_response_from_ollama(part)
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        # tool choice - Currently Ollama only supports auto tool choice
-        if chat_options.tool_choice == "required":
-            raise ServiceInvalidRequestError("Ollama does not support required tool choice.")
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+        # Handle instructions by prepending to messages as system message
+        instructions = options.get("instructions")
+        if instructions:
+            from agent_framework._types import prepend_instructions_to_messages
 
-        run_options = chat_options.to_dict(
-            exclude={
-                "type",
-                "instructions",
-                "tool_choice",  # Ollama does not support tool_choice configuration
-                "additional_properties",  # handled separately
-            }
-        )
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+
+        # Keys to exclude from processing
+        exclude_keys = {"instructions", "tool_choice"}
+
+        # Build run_options and model_options separately
+        run_options: dict[str, Any] = {}
+        model_options: dict[str, Any] = {}
+
+        for key, value in options.items():
+            if key in exclude_keys or value is None:
+                continue
+
+            if key in OLLAMA_MODEL_OPTIONS:
+                # Apply model option translations (e.g., max_tokens -> num_predict)
+                translated_key = OLLAMA_MODEL_OPTION_TRANSLATIONS.get(key, key)
+                model_options[translated_key] = value
+            else:
+                # Apply top-level translations (e.g., model_id -> model)
+                translated_key = OLLAMA_OPTION_TRANSLATIONS.get(key, key)
+                run_options[translated_key] = value
+
+        # Add model options to run_options if any
+        if model_options:
+            run_options["options"] = model_options
 
         # messages
         if messages and "messages" not in run_options:
             run_options["messages"] = self._prepare_messages_for_ollama(messages)
         if "messages" not in run_options:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
-
-        # translations between ChatOptions and Ollama API
-        translations = {"model_id": "model"}
-        for old_key, new_key in translations.items():
-            if old_key in run_options and old_key != new_key:
-                run_options[new_key] = run_options.pop(old_key)
 
         # model id
         if not run_options.get("model"):
@@ -190,15 +428,9 @@ class OllamaChatClient(BaseChatClient):
             run_options["model"] = self.model_id
 
         # tools
-        if chat_options.tools and (tools := self._prepare_tools_for_ollama(chat_options.tools)):
-            run_options["tools"] = tools
-
-        # additional properties
-        additional_options = {
-            key: value for key, value in chat_options.additional_properties.items() if value is not None
-        }
-        if additional_options:
-            run_options.update(additional_options)
+        tools = options.get("tools")
+        if tools and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+            run_options["tools"] = prepared_tools
 
         return run_options
 
