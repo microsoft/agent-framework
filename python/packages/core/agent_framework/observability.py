@@ -1340,7 +1340,11 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
-        agent_options = getattr(self, "default_options", None)
+
+        from ._types import merge_chat_options
+
+        default_options = getattr(self, "default_options", {})
+        options = merge_chat_options(default_options, kwargs.get("options", {}))
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1348,7 +1352,7 @@ def _trace_agent_run(
             agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            agent_options=agent_options,
+            all_options=options,
             **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1357,7 +1361,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(agent_options),
+                    system_instructions=_get_instructions_from_options(options),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1408,11 +1412,12 @@ def _trace_agent_run_stream(
                 yield streaming_agent_response
             return
 
-        from ._types import AgentRunResponse
+        from ._types import AgentRunResponse, merge_chat_options
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
-        agent_options = getattr(self, "default_options", None)
+        default_options = getattr(self, "default_options", {})
+        options = merge_chat_options(default_options, kwargs.get("options", {}))
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1420,7 +1425,7 @@ def _trace_agent_run_stream(
             agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            agent_options=agent_options,
+            all_options=options,
             **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1429,7 +1434,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(agent_options),
+                    system_instructions=_get_instructions_from_options(options),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1661,11 +1666,9 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
     attributes: dict[str, Any] = {}
-    options = kwargs.get("options")
+    options = kwargs.get("all_options", kwargs.get("options"))
     if options is not None and not isinstance(options, dict):
         options = None
-    agent_options = kwargs.get("agent_options", {})
-    opts = {**(options or {}), **(agent_options or {})}
 
     for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
         # Normalize to tuple of keys
@@ -1673,8 +1676,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
 
         value = None
         for key in keys:
-            if check_options and opts is not None:
-                value = opts.get(key)
+            if check_options and options is not None:
+                value = options.get(key)
             if value is None:
                 value = kwargs.get(key)
             if value is not None:
