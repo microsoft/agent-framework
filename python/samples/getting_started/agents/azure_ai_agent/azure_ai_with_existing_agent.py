@@ -32,7 +32,7 @@ async def main() -> None:
         )
 
         try:
-            # Convert Azure agent instance to ChatAgent
+            # Wrap existing agent instance using provider.as_agent()
             agent = provider.as_agent(azure_ai_agent)
 
             query = "How are you?"
