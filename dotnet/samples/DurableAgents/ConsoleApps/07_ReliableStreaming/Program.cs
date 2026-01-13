@@ -258,6 +258,10 @@ string? lastCursor = null;
 
 async Task ReadStreamTask(string conversationId, string? cursor, CancellationToken cancellationToken)
 {
+    // Initialize lastCursor to the starting cursor position
+    // This ensures we have a valid cursor even if cancellation happens before any chunks are processed
+    lastCursor = cursor;
+
     await foreach (StreamChunk chunk in streamHandler.ReadStreamAsync(conversationId, cursor, cancellationToken))
     {
         if (chunk.Error != null)
@@ -280,7 +284,12 @@ async Task ReadStreamTask(string conversationId, string? cursor, CancellationTok
             Console.Write(chunk.Text);
         }
 
-        lastCursor = chunk.EntryId;
+        // Always update lastCursor to track the latest entry ID, even if text is null
+        // This ensures we can resume from the correct position after interruption
+        if (!string.IsNullOrEmpty(chunk.EntryId))
+        {
+            lastCursor = chunk.EntryId;
+        }
     }
 }
 
@@ -297,10 +306,8 @@ if (string.IsNullOrWhiteSpace(prompt) || prompt.Equals("exit", StringComparison.
 
 // Create a new agent thread
 AgentThread thread = agentProxy.GetNewThread();
-AgentThreadMetadata? metadata = thread.GetService<AgentThreadMetadata>();
-
-string conversationId = metadata?.ConversationId
-    ?? throw new InvalidOperationException("Failed to get conversation ID from thread metadata.");
+AgentSessionId sessionId = thread.GetService<AgentSessionId>();
+string conversationId = sessionId.ToString();
 
 Console.ForegroundColor = ConsoleColor.Green;
 Console.WriteLine($"Conversation ID: {conversationId}");
@@ -332,8 +339,12 @@ while (!streamCompleted)
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine("Stream cancelled. Press [Enter] to reconnect and resume the stream from the last cursor.");
-        Console.WriteLine($"Last cursor: {lastCursor ?? "(n/a)"}");
+        // Ensure lastCursor is set - if it's still null, we at least have the starting cursor
+        string cursorValue = lastCursor ?? "(n/a)";
+        Console.WriteLine($"Last cursor: {cursorValue}");
         Console.ResetColor();
+        // Explicitly flush to ensure the message is written immediately
+        Console.Out.Flush();
     }
 
     if (!streamCompleted)
