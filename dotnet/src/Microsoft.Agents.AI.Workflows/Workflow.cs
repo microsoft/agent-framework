@@ -36,6 +36,18 @@ public class Workflow
         );
     }
 
+    /// <summary>
+    /// Gets information about all executors in the workflow, keyed by their ID.
+    /// </summary>
+    /// <returns>A dictionary mapping executor IDs to their <see cref="ExecutorInfo"/>.</returns>
+    public Dictionary<string, ExecutorInfo> ReflectExecutors()
+    {
+        return this.ExecutorBindings.Values.ToDictionary(
+            keySelector: binding => binding.Id,
+            elementSelector: RepresentationExtensions.ToExecutorInfo
+        );
+    }
+
     internal Dictionary<string, RequestPort> Ports { get; init; } = [];
 
     /// <summary>

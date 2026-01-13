@@ -27,6 +27,7 @@ const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
 AIAgent agent = client.GetChatClient(deploymentName).CreateAIAgent(JokerInstructions, JokerName);
+AIAgent agent2 = client.GetChatClient(deploymentName).CreateAIAgent("You are good at telling inspirational quotes.", "InspirationBot");
 
 Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
 var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
@@ -35,7 +36,9 @@ Func<string, string> reverseTextFunc = s => s.ToUpperInvariant();
 var reverse = reverseTextFunc.BindAsExecutor("ReverseTextExecutor");
 
 WorkflowBuilder builder = new(uppercase);
-builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+builder.AddEdge(uppercase, agent2);
+builder.AddEdge(agent2, reverse).WithOutputFrom(agent2);
+
 var workflow = builder.WithName("MyTestWorkflow").Build();
 
 // Configure the function app to host the AI agent.

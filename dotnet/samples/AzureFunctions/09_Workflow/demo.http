@@ -2,7 +2,7 @@
 @authority=http://localhost:7071
 
 ### Prompt the agent
-POST {{authority}}/api/agents/Joker/run
+POST {{authority}}/api/workflows/MyTestWorkflow/run
 Content-Type: text/plain
 
 Tell me a joke about a pirate.
