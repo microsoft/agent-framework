@@ -110,7 +110,7 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
         name=agent.name,
         description=agent.description,
         chat_message_store_factory=agent.chat_message_store_factory,
-        context_providers=agent.context_provider,
+        context_provider=agent.context_provider,
         middleware=middleware,
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
         allow_multiple_tool_calls=False,
@@ -1041,7 +1041,7 @@ class HandoffBuilder:
 
         Each participant must have a unique identifier (name for agents, id for executors).
         The workflow will automatically create an alias map so agents can be referenced by
-        their name, display_name, or executor id when routing.
+        their name, id, or executor id when routing.
 
         Args:
             participants: Sequence of AgentProtocol or Executor instances. Each must have
@@ -1091,7 +1091,7 @@ class HandoffBuilder:
             if isinstance(participant, Executor):
                 identifier = participant.id
             elif isinstance(participant, AgentProtocol):
-                identifier = participant.display_name
+                identifier = participant.name or participant.id
             else:
                 raise TypeError(
                     f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
@@ -1838,7 +1838,7 @@ class HandoffBuilder:
                 if isinstance(instance, Executor):
                     identifier = instance.id
                 elif isinstance(instance, AgentProtocol):
-                    identifier = instance.display_name
+                    identifier = instance.name or instance.id
                 else:
                     raise TypeError(
                         f"Participants must be AgentProtocol or Executor instances. Got {type(instance).__name__}."
@@ -2026,9 +2026,9 @@ class HandoffBuilder:
         tool_targets = self._apply_auto_tools(cloned_agent, target_agents)
         if tool_targets:
             middleware = _AutoHandoffMiddleware(tool_targets)
-            existing_middleware = list(cloned_agent.middleware or [])
-            existing_middleware.append(middleware)
-            cloned_agent.middleware = existing_middleware
+            existing_middlewares = list(cloned_agent.middleware or [])
+            existing_middlewares.append(middleware)
+            cloned_agent.middleware = existing_middlewares
 
         new_executor = AgentExecutor(
             cloned_agent,

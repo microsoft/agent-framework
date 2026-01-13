@@ -36,7 +36,7 @@ async def main() -> None:
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_providers=Mem0Provider(user_id=user_id),
+            context_provider=Mem0Provider(user_id=user_id),
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.
