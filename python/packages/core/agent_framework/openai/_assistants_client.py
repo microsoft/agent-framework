@@ -2,7 +2,7 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence
 from typing import Any, cast
 
 from openai import AsyncOpenAI
@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from .._clients import BaseChatClient
 from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
+from .._tools import use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -43,7 +43,7 @@ from .._types import (
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import use_instrumentation
-from ._shared import OpenAIConfigMixin, OpenAISettings
+from ._shared import OpenAIConfigMixin, OpenAISettings, to_assistant_tools
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -431,24 +431,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
             if chat_options.tool_choice is not None:
-                tool_definitions: list[MutableMapping[str, Any]] = []
+                tool_definitions: list[dict[str, Any]] = []
                 if chat_options.tool_choice != "none" and chat_options.tools is not None:
-                    for tool in chat_options.tools:
-                        if isinstance(tool, AIFunction):
-                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                        elif isinstance(tool, HostedCodeInterpreterTool):
-                            tool_definitions.append({"type": "code_interpreter"})
-                        elif isinstance(tool, HostedFileSearchTool):
-                            params: dict[str, Any] = {
-                                "type": "file_search",
-                            }
-                            if tool.max_results is not None:
-                                params["max_num_results"] = tool.max_results
-                            tool_definitions.append(params)
-                        elif isinstance(tool, MutableMapping):
-                            tool_definitions.append(tool)
+                    tool_definitions = to_assistant_tools(list(chat_options.tools))
 
-                if len(tool_definitions) > 0:
+                if tool_definitions:
                     run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
