@@ -225,7 +225,11 @@ class AzureAIAgentsProvider:
             # Only convert non-MCP tools to Azure AI format
             non_mcp_tools = [t for t in normalized_tools if not isinstance(t, MCPTool)]
             if non_mcp_tools:
-                args["tools"] = to_azure_ai_agent_tools(non_mcp_tools)
+                # Pass run_options to capture tool_resources (e.g., for file search vector stores)
+                run_options: dict[str, Any] = {}
+                args["tools"] = to_azure_ai_agent_tools(non_mcp_tools, run_options)
+                if "tool_resources" in run_options:
+                    args["tool_resources"] = run_options["tool_resources"]
 
         # Create the agent on the service
         created_agent = await self._agents_client.create_agent(**args)
