@@ -148,7 +148,7 @@ Smaller questions to consider:
 Chosen Option: **Option 3: Consolidate + Merge Agent and Workflow Methods**
 
 Since this is the most pythonic option and it reduces the API surface and code duplication the most, we will go with this option.
-
+We will keep the default of `stream=False` for all methods to maintain backward compatibility and simplicity for new users.
 
 # Appendix
 ## Code Samples for Consolidated Method
