@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agent_framework import (
     AgentRunResponseUpdate,
+    ChatAgent,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
@@ -14,7 +15,7 @@ from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
 """
-Azure AI V2 Code Interpreter File Generation Sample
+Azure AI V2 Code Interpreter File Download Sample
 
 This sample demonstrates how the V2 AzureAIClient handles file annotations
 when code interpreter generates text files. It shows:
@@ -22,7 +23,7 @@ when code interpreter generates text files. It shows:
 2. How to download container files using the OpenAI containers API
 3. How to save downloaded files locally
 
-Note: Code interpreter generates files in containers, which require both 
+Note: Code interpreter generates files in containers, which require both
 file_id and container_id to download via client.containers.files.content.retrieve().
 """
 
@@ -32,7 +33,9 @@ QUERY = (
 )
 
 
-async def download_container_files(file_contents: list[CitationAnnotation | HostedFileContent], agent) -> None:
+async def download_container_files(
+    file_contents: list[CitationAnnotation | HostedFileContent], agent: ChatAgent
+) -> None:
     """Download container files using the OpenAI containers API.
 
     Code interpreter generates files in containers, which require both file_id
@@ -182,7 +185,7 @@ async def test_streaming() -> None:
 
 
 async def main() -> None:
-    print("AzureAIClient Code Interpreter File Generation Test\n")
+    print("AzureAIClient Code Interpreter File Download Test\n")
     await test_non_streaming()
     await test_streaming()
 
