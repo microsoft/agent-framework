@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import tempfile
 from pathlib import Path
 
 from agent_framework import (
@@ -52,8 +53,9 @@ async def download_container_files(
     if not file_contents:
         return
 
-    # Create output directory
-    output_dir = Path("downloaded_files")
+    # Create output directory in system temp folder
+    temp_dir = Path(tempfile.gettempdir())
+    output_dir = temp_dir / "agent_framework_downloads"
     output_dir.mkdir(exist_ok=True)
 
     print(f"\nDownloading {len(file_contents)} container file(s) to {output_dir.absolute()}...")
@@ -102,9 +104,9 @@ async def download_container_files(
             print(f"Failed: {e}")
 
 
-async def test_non_streaming() -> None:
-    """Test non-streaming response - should have annotations on TextContent."""
-    print("=== Testing Non-Streaming Response ===")
+async def non_streaming_example() -> None:
+    """Example of downloading files from non-streaming response using CitationAnnotation."""
+    print("=== Non-Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
@@ -141,9 +143,9 @@ async def test_non_streaming() -> None:
             print("WARNING: No file annotations found in non-streaming response")
 
 
-async def test_streaming() -> None:
-    """Test streaming response - check if file content is captured via HostedFileContent."""
-    print("\n=== Testing Streaming Response ===")
+async def streaming_example() -> None:
+    """Example of downloading files from streaming response using HostedFileContent."""
+    print("\n=== Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
@@ -185,9 +187,9 @@ async def test_streaming() -> None:
 
 
 async def main() -> None:
-    print("AzureAIClient Code Interpreter File Download Test\n")
-    await test_non_streaming()
-    await test_streaming()
+    print("AzureAIClient Code Interpreter File Download Sample\n")
+    await non_streaming_example()
+    await streaming_example()
 
 
 if __name__ == "__main__":
