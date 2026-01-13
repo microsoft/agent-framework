@@ -201,7 +201,7 @@ class AzureAIProjectAgentProvider:
         )
 
         # Pass the user-provided tools for function invocation
-        normalized_tools = ChatOptions(tools=tools).tools if tools else None
+        chat_agent_tools = ChatOptions(tools=tools).tools if tools else None
 
         # Only pass Pydantic models to ChatAgent for response parsing
         # Dict schemas are used by Azure AI for formatting, but can't be used for local parsing
@@ -210,7 +210,7 @@ class AzureAIProjectAgentProvider:
         )
 
         return self._create_chat_agent_from_details(
-            created_agent, normalized_tools, response_format=pydantic_response_format
+            created_agent, chat_agent_tools, response_format=pydantic_response_format
         )
 
     async def get_agent(
@@ -362,17 +362,17 @@ class AzureAIProjectAgentProvider:
         # Convert hosted tools from definition (MCP, code interpreter, file search, web search)
         # Function tools from the definition are skipped - we use user-provided implementations instead
         hosted_tools = from_azure_ai_tools(definition_tools)
-        for tool in hosted_tools:
+        for hosted_tool in hosted_tools:
             # Skip function tool dicts - they don't have implementations
-            if isinstance(tool, dict) and tool.get("type") == "function":
+            if isinstance(hosted_tool, dict) and hosted_tool.get("type") == "function":
                 continue
-            merged.append(tool)
+            merged.append(hosted_tool)
 
         # Add user-provided function tools (these have the actual implementations)
         if provided_tools:
-            for tool in provided_tools:
-                if isinstance(tool, AIFunction):
-                    merged.append(tool)
+            for provided_tool in provided_tools:
+                if isinstance(provided_tool, AIFunction):
+                    merged.append(provided_tool)  # type: ignore[reportUnknownArgumentType]
 
         return merged
 
