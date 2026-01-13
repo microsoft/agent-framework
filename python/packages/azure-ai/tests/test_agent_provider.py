@@ -677,7 +677,7 @@ def test_from_azure_ai_agent_tools_bing_custom_search_dict() -> None:
 
 
 def test_from_azure_ai_agent_tools_mcp_dict() -> None:
-    """Test converting mcp dict."""
+    """Test that mcp dict is skipped (hosted on Azure, no local handling needed)."""
     tool = {
         "type": "mcp",
         "mcp": {
@@ -689,9 +689,8 @@ def test_from_azure_ai_agent_tools_mcp_dict() -> None:
 
     result = from_azure_ai_agent_tools([tool])
 
-    assert len(result) == 1
-    assert isinstance(result[0], HostedMCPTool)
-    assert result[0].name == "my_server"
+    # MCP tools are hosted on Azure agent, skipped in conversion
+    assert len(result) == 0
 
 
 def test_from_azure_ai_agent_tools_function_dict() -> None:

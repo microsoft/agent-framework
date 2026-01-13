@@ -213,12 +213,9 @@ def _convert_dict_tool(tool: dict[str, Any]) -> ToolProtocol | dict[str, Any] | 
         )
 
     if tool_type == "mcp":
-        mcp_config = tool.get("mcp", {})
-        return HostedMCPTool(
-            name=mcp_config.get("server_label", "mcp_server"),
-            url=mcp_config.get("server_url", ""),
-            allowed_tools=mcp_config.get("allowed_tools"),
-        )
+        # Hosted MCP tools are defined on the Azure agent, no local handling needed
+        # Azure may not return full server_url, so skip conversion
+        return None
 
     if tool_type == "function":
         # Function tools are returned as dicts - users must provide implementations
@@ -256,12 +253,9 @@ def _convert_sdk_tool(tool: ToolDefinition) -> ToolProtocol | dict[str, Any] | N
         )
 
     if tool_type == "mcp":
-        mcp_config = getattr(tool, "mcp", None)
-        return HostedMCPTool(
-            name=getattr(mcp_config, "server_label", "mcp_server") if mcp_config else "mcp_server",
-            url=getattr(mcp_config, "server_url", "") if mcp_config else "",
-            allowed_tools=getattr(mcp_config, "allowed_tools", None) if mcp_config else None,
-        )
+        # Hosted MCP tools are defined on the Azure agent, no local handling needed
+        # Azure may not return full server_url, so skip conversion
+        return None
 
     if tool_type == "function":
         # Function tools from SDK don't have implementations - skip
