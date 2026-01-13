@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment this to enable JSON checkpointing to the local file system.
 //#define CHECKPOINT_JSON

@@ -151,9 +151,9 @@ AIAgent agent = chatClient.CreateAIAgent(
     tools: []);
 
 bool isFirstUpdate = true;
-AgentResponseUpdate? currentUpdate = null;
+AgentRunResponseUpdate? currentUpdate = null;
 
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
 {
     // First update indicates run started
     if (isFirstUpdate)
@@ -190,19 +190,19 @@ if (currentUpdate != null)
 The `RunStreamingAsync` method:
 1. Sends messages to the server via HTTP POST
 2. Receives server-sent events (SSE) stream
-3. Parses events into `AgentResponseUpdate` objects
+3. Parses events into `AgentRunResponseUpdate` objects
 4. Yields updates as they arrive for real-time display
 
 ## Key Concepts
 
 - **Thread**: Represents a conversation context that persists across multiple runs (accessed via `ConversationId` property)
 - **Run**: A single execution of the agent for a given set of messages (identified by `ResponseId` property)
-- **AgentResponseUpdate**: Contains the response data with:
+- **AgentRunResponseUpdate**: Contains the response data with:
   - `ResponseId`: The unique run identifier
   - `ConversationId`: The thread/conversation identifier
   - `Contents`: Collection of content items (TextContent, ErrorContent, etc.)
 - **Run Lifecycle**: 
-  - The **first** `AgentResponseUpdate` in a run indicates the run has started
+  - The **first** `AgentRunResponseUpdate` in a run indicates the run has started
   - Subsequent updates contain streaming content as the agent processes
-  - The **last** `AgentResponseUpdate` in a run indicates the run has finished
+  - The **last** `AgentRunResponseUpdate` in a run indicates the run has finished
   - If an error occurs, the update will contain `ErrorContent`

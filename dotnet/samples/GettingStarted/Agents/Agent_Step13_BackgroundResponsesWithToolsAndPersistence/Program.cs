@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use background responses with ChatClientAgent and Azure OpenAI Responses for long-running operations.
 // It shows polling for completion using continuation tokens, function calling during background operations,

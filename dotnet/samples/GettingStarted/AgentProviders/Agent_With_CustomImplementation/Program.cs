@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows all the required steps to create a fully custom agent implementation.
 // In this case the agent doesn't use AI at all, and simply parrots back the user input in upper case.
