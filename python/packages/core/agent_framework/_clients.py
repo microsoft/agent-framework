@@ -392,7 +392,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent with this client.

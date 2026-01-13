@@ -611,7 +611,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ChatAgent instance.
@@ -627,27 +627,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             description: A brief description of the agent's purpose.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-        <<<<<<< HEAD
-            context_provider: The context provider to include during agent invocation.
-            middleware: List of middleware to intercept agent, chat and function invocations.
-            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
-            conversation_id: The conversation ID for service-managed threads.
-                Cannot be used together with chat_message_store_factory.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model_id: The model_id to use for the agent.
-                This overrides the model_id set in the chat client if it contains one.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-        =======
-            context_providers: The collection of multiple context providers to include during agent invocation.
+            context_provider: The context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``ChatAgent[OpenAIChatOptions]``, this enables IDE autocomplete for
