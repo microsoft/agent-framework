@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, run
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._memory import AggregateContextProvider, ContextProvider
+from ._memory import ContextProvider
 from ._middleware import (
     ChatMiddleware,
     ChatMiddlewareCallable,
@@ -336,12 +336,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self,
         *,
         middleware: (
-            ChatMiddleware
-            | ChatMiddlewareCallable
-            | FunctionMiddleware
-            | FunctionMiddlewareCallable
-            | list[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable]
-            | None
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
         ) = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -722,8 +717,8 @@ class BaseChatClient(SerializationMixin, ABC):
         description: str | None = None,
         instructions: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
         frequency_penalty: float | None = None,
@@ -761,8 +756,8 @@ class BaseChatClient(SerializationMixin, ABC):
                 These will be put into the messages sent to the chat client service as a system message.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            context_providers: Context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: Context provider to include during agent invocation.
+            middleware: List of middleware to intercept chat and function invocations.
             allow_multiple_tool_calls: Whether to allow multiple tool calls per agent turn.
             conversation_id: The conversation ID to associate with the agent's messages.
             frequency_penalty: The frequency penalty to use.
@@ -813,7 +808,7 @@ class BaseChatClient(SerializationMixin, ABC):
             description=description,
             instructions=instructions,
             chat_message_store_factory=chat_message_store_factory,
-            context_providers=context_providers,
+            context_provider=context_provider,
             middleware=middleware,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,

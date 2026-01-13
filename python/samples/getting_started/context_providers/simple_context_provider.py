@@ -100,7 +100,7 @@ async def main():
         async with ChatAgent(
             chat_client=chat_client,
             instructions="You are a friendly assistant. Always address the user by their name.",
-            context_providers=memory_provider,
+            context_provider=memory_provider,
         ) as agent:
             # Create a new thread for the conversation
             thread = agent.get_new_thread()

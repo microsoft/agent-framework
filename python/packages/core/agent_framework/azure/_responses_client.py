@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urljoin
@@ -17,6 +18,11 @@ from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
 )
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="AzureOpenAIResponsesClient")
 
@@ -144,3 +150,10 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
             client=async_client,
             instruction_role=instruction_role,
         )
+
+    @override
+    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("deployment_name must be a non-empty string")
+            run_options["model"] = self.model_id
