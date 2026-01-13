@@ -218,12 +218,10 @@ class TestDurableAIAgent:
         assert hasattr(agent, "id")
         assert hasattr(agent, "name")
         assert hasattr(agent, "description")
-        assert hasattr(agent, "display_name")
 
         # Verify values
         assert agent.name == "TestAgent"
         assert agent.description == "Durable agent proxy for TestAgent"
-        assert agent.display_name == "TestAgent"
         assert agent.id is not None  # Auto-generated UUID
 
     def test_get_new_thread(self) -> None:
