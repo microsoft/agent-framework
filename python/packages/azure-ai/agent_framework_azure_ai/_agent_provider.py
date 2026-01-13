@@ -11,6 +11,7 @@ from agent_framework import (
     ChatOptions,
     ToolProtocol,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent, ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
@@ -218,9 +219,13 @@ class AzureAIAgentsProvider:
             args["response_format"] = self._create_response_format_config(response_format)
 
         # Normalize and convert tools
+        # Local MCP tools (MCPTool) are handled by ChatAgent at runtime, not stored on the Azure agent
         normalized_tools = ChatOptions(tools=tools).tools if tools else None
         if normalized_tools:
-            args["tools"] = to_azure_ai_agent_tools(normalized_tools)
+            # Only convert non-MCP tools to Azure AI format
+            non_mcp_tools = [t for t in normalized_tools if not isinstance(t, MCPTool)]
+            if non_mcp_tools:
+                args["tools"] = to_azure_ai_agent_tools(non_mcp_tools)
 
         # Create the agent on the service
         created_agent = await self._agents_client.create_agent(**args)
@@ -375,15 +380,18 @@ class AzureAIAgentsProvider:
         for hosted_tool in hosted_tools:
             # Skip function tool dicts - they don't have implementations
             # Skip OpenAPI tool dicts - they're defined on the agent, not needed at runtime
-            tool_type = hosted_tool.get("type")
-            if isinstance(hosted_tool, dict) and (tool_type == "function" or tool_type == "openapi"):
-                continue
+            if isinstance(hosted_tool, dict):
+                tool_type = hosted_tool.get("type")
+                if tool_type == "function" or tool_type == "openapi":
+                    continue
             merged.append(hosted_tool)
 
-        # Add user-provided function tools (these have implementations)
+        # Add user-provided function tools and MCP tools
         if provided_tools:
             for provided_tool in provided_tools:
-                if isinstance(provided_tool, AIFunction):
+                # AIFunction - has implementation for function calling
+                # MCPTool - ChatAgent handles MCP connection and tool discovery at runtime
+                if isinstance(provided_tool, (AIFunction, MCPTool)):
                     merged.append(provided_tool)  # type: ignore[reportUnknownArgumentType]
 
         return merged
