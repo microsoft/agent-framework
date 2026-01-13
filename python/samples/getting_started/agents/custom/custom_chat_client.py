@@ -123,7 +123,6 @@ async def main() -> None:
     )
 
     print(f"\nAgent Name: {echo_agent.name}")
-    print(f"Agent Display Name: {echo_agent.display_name}")
 
     # Test non-streaming with agent
     query = "This is a test message"

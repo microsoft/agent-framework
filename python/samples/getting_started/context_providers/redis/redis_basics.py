@@ -185,7 +185,7 @@ async def main() -> None:
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_providers=provider,
+        context_provider=provider,
     )
 
     # Teach a user preference; the agent writes this to the provider's memory
@@ -227,7 +227,7 @@ async def main() -> None:
             "Before answering, always check for stored context"
         ),
         tools=search_flights,
-        context_providers=provider,
+        context_provider=provider,
     )
     # Invoke the tool; outputs become part of memory/context
     query = "Are there any flights from new york city (jfk) to la? Give me details"

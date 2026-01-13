@@ -2,6 +2,8 @@
 
 using System;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -40,14 +42,14 @@ public sealed class ChatClientAgentOptions
     /// Gets or sets a factory function to create an instance of <see cref="ChatMessageStore"/>
     /// which will be used to store chat messages for this agent.
     /// </summary>
-    public Func<ChatMessageStoreFactoryContext, ChatMessageStore>? ChatMessageStoreFactory { get; set; }
+    public Func<ChatMessageStoreFactoryContext, CancellationToken, ValueTask<ChatMessageStore>>? ChatMessageStoreFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
     /// which will be used to create a context provider for each new thread, and can then
     /// provide additional context for each agent run.
     /// </summary>
-    public Func<AIContextProviderFactoryContext, AIContextProvider>? AIContextProviderFactory { get; set; }
+    public Func<AIContextProviderFactoryContext, CancellationToken, ValueTask<AIContextProvider>>? AIContextProviderFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,

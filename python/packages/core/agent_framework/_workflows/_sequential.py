@@ -290,7 +290,7 @@ class SequentialBuilder:
 
         for p in participants:
             if isinstance(p, (AgentProtocol, AgentExecutor)):
-                label = p.id if isinstance(p, AgentExecutor) else p.display_name
+                label = p.id if isinstance(p, AgentExecutor) else p.name
 
                 if self._request_info_enabled:
                     # Insert request info interceptor BEFORE the agent

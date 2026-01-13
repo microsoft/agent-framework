@@ -222,11 +222,6 @@ class MockAgent(AgentProtocol):
         return "Name"
 
     @property
-    def display_name(self) -> str:
-        """Returns the name of the agent."""
-        return "Display Name"
-
-    @property
     def description(self) -> str | None:
         return "Description"
 

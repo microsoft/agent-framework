@@ -31,17 +31,15 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = ctx =>
-        {
+        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(
             // Create a new chat message store for this agent that stores the messages in a vector store.
             // Each thread must get its own copy of the VectorChatMessageStore, since the store
             // also contains the id that the thread is stored under.
-            return new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions);
-        }
+            new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
 // Start a new thread for the agent conversation.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // Run the agent with the thread that stores conversation history in the vector store.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
@@ -58,7 +56,7 @@ Console.WriteLine(JsonSerializer.Serialize(serializedThread, new JsonSerializerO
 // and loaded again later.
 
 // Deserialize the thread state after loading from storage.
-AgentThread resumedThread = agent.DeserializeThread(serializedThread);
+AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
 // Run the agent with the thread that stores conversation history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
