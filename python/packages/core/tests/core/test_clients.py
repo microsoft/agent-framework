@@ -7,7 +7,6 @@ from agent_framework import (
     BaseChatClient,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     Role,
 )
 
@@ -50,12 +49,22 @@ async def test_chat_client_instructions_handling(chat_client_base: ChatClientPro
         chat_client_base,
         "_inner_get_response",
     ) as mock_inner_get_response:
-        await chat_client_base.get_response("hello", chat_options=ChatOptions(instructions=instructions))
+        await chat_client_base.get_response("hello", options={"instructions": instructions})
         mock_inner_get_response.assert_called_once()
         _, kwargs = mock_inner_get_response.call_args
         messages = kwargs.get("messages", [])
-        assert len(messages) == 2
-        assert messages[0].role == Role.SYSTEM
-        assert messages[0].text == instructions
-        assert messages[1].role == Role.USER
-        assert messages[1].text == "hello"
+        assert len(messages) == 1
+        assert messages[0].role == Role.USER
+        assert messages[0].text == "hello"
+
+        from agent_framework._types import prepend_instructions_to_messages
+
+        appended_messages = prepend_instructions_to_messages(
+            [ChatMessage(role=Role.USER, text="hello")],
+            instructions,
+        )
+        assert len(appended_messages) == 2
+        assert appended_messages[0].role == Role.SYSTEM
+        assert appended_messages[0].text == "You are a helpful assistant."
+        assert appended_messages[1].role == Role.USER
+        assert appended_messages[1].text == "hello"

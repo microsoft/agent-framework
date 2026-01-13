@@ -17,7 +17,6 @@ from agent_framework import (
     FunctionResultContent,
     RequestInfoEvent,
     Role,
-    ToolMode,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -177,7 +176,7 @@ def create_writer_agent() -> ChatAgent:
             "produce a 3-sentence draft."
         ),
         tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice=ToolMode.REQUIRED_ANY,
+        tool_choice="required",
     )
 
 

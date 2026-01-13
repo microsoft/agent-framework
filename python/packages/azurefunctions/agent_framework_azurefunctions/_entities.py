@@ -153,11 +153,11 @@ class AgentEntity:
                 for m in entry.messages
             ]
 
-            run_kwargs: dict[str, Any] = {"messages": chat_messages}
+            run_kwargs: dict[str, Any] = {"messages": chat_messages, "options": {}}
             if not enable_tool_calls:
-                run_kwargs["tools"] = None
+                run_kwargs["options"]["tools"] = None
             if response_format:
-                run_kwargs["response_format"] = response_format
+                run_kwargs["options"]["response_format"] = response_format
 
             agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def collect_server_tools(agent: Any) -> list[Any]:
     """Collect server tools from ChatAgent or duck-typed agent."""
     if isinstance(agent, ChatAgent):
-        tools_from_agent = agent.chat_options.tools
+        tools_from_agent = agent.default_options.get("tools")
         server_tools = list(tools_from_agent) if tools_from_agent else []
         logger.info(f"[TOOLS] Agent has {len(server_tools)} configured tools")
         for tool in server_tools:
@@ -23,9 +23,11 @@ def collect_server_tools(agent: Any) -> list[Any]:
         return server_tools
 
     try:
-        chat_options_attr = getattr(agent, "chat_options", None)
-        if chat_options_attr is not None:
-            return getattr(chat_options_attr, "tools", None) or []
+        default_options_attr = getattr(agent, "default_options", None)
+        if default_options_attr is not None:
+            if isinstance(default_options_attr, dict):
+                return default_options_attr.get("tools") or []
+            return getattr(default_options_attr, "tools", None) or []
     except AttributeError:
         return []
     return []

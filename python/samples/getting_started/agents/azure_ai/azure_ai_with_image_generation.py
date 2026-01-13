@@ -45,7 +45,7 @@ async def main() -> None:
         result = await agent.run(
             query,
             # These additional options are required for image generation
-            additional_chat_options={
+            options={
                 "extra_headers": {"x-ms-oai-image-generation-deployment": "gpt-image-1-mini"},
             },
         )
