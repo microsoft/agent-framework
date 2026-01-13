@@ -61,7 +61,7 @@ Console.WriteLine("Enter a message for the Joker agent (or 'exit' to quit):");
 Console.WriteLine();
 
 // Create a thread for the conversation
-AgentThread thread = agentProxy.GetNewThread();
+AgentThread thread = await agentProxy.GetNewThreadAsync();
 
 while (true)
 {

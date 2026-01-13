@@ -305,7 +305,7 @@ if (string.IsNullOrWhiteSpace(prompt) || prompt.Equals("exit", StringComparison.
 }
 
 // Create a new agent thread
-AgentThread thread = agentProxy.GetNewThread();
+AgentThread thread = await agentProxy.GetNewThreadAsync();
 AgentSessionId sessionId = thread.GetService<AgentSessionId>();
 string conversationId = sessionId.ToString();
 

@@ -48,7 +48,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
 {
     // Get the writer agent
     DurableAIAgent writerAgent = context.GetAgent("WriterAgent");
-    AgentThread writerThread = writerAgent.GetNewThread();
+    AgentThread writerThread = await writerAgent.GetNewThreadAsync();
 
     // Set initial status
     context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");

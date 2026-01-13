@@ -59,7 +59,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
 {
     // Get the writer agent
     DurableAIAgent writerAgent = context.GetAgent(WriterAgentName);
-    AgentThread writerThread = writerAgent.GetNewThread();
+    AgentThread writerThread = await writerAgent.GetNewThreadAsync();
 
     // Set initial status
     context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
@@ -299,7 +299,7 @@ Console.WriteLine("Enter a topic for the Publisher agent to write about (or 'exi
 Console.WriteLine();
 
 // Create a thread for the conversation
-AgentThread thread = agentProxy.GetNewThread();
+AgentThread thread = await agentProxy.GetNewThreadAsync();
 
 using CancellationTokenSource cts = new();
 Console.CancelKeyPress += (sender, e) =>
