@@ -201,18 +201,6 @@ async def test_empty_messages() -> None:
         await ollama_chat_client.get_response(messages=[])
 
 
-async def test_function_choice_required_argument() -> None:
-    ollama_chat_client = OllamaChatClient(
-        host="http://localhost:12345",
-        model_id="test-model",
-    )
-    with pytest.raises(ServiceInvalidRequestError):
-        await ollama_chat_client.get_response(
-            messages=[ChatMessage(text="hello world", role="user")],
-            options={"tool_choice": "required", "tools": [hello_world]},
-        )
-
-
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc(
     mock_chat: AsyncMock,

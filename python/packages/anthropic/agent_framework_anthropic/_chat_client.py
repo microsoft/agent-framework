@@ -588,6 +588,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 result["mcp_servers"] = mcp_server_list
 
         # Process tool choice
+        if options.get("tool_choice") is None:
+            return result or None
         tool_mode = validate_tool_mode(options.get("tool_choice"))
         allow_multiple = options.get("allow_multiple_tool_calls")
         match tool_mode.get("mode"):

@@ -180,12 +180,12 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
 
     # This should ignore the unsupported ToolProtocol and return empty list
     result = client._prepare_tools_for_openai([unsupported_tool])  # type: ignore
-    assert result == []
+    assert result == {}
 
     # Also test with a non-ToolProtocol that should be converted to dict
     dict_tool = {"type": "function", "name": "test"}
     result = client._prepare_tools_for_openai([dict_tool])  # type: ignore
-    assert result == [dict_tool]
+    assert result["tools"] == [dict_tool]
 
 
 @ai_function
