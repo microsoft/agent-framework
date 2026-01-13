@@ -412,7 +412,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
                 including temperature, max_tokens, model_id, tool_choice, and more.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            context_providers: Context providers to include during agent invocation.
+            context_provider: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 

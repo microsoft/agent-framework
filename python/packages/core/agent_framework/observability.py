@@ -1348,7 +1348,7 @@ def _trace_agent_run(
             agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            options=agent_options,
+            agent_options=agent_options,
             **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1420,7 +1420,7 @@ def _trace_agent_run_stream(
             agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            options=agent_options,
+            agent_options=agent_options,
             **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1664,6 +1664,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     options = kwargs.get("options")
     if options is not None and not isinstance(options, dict):
         options = None
+    agent_options = kwargs.get("agent_options", {})
+    opts = {**(options or {}), **(agent_options or {})}
 
     for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
         # Normalize to tuple of keys
@@ -1671,8 +1673,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
 
         value = None
         for key in keys:
-            if check_options and options is not None:
-                value = options.get(key)
+            if check_options and opts is not None:
+                value = opts.get(key)
             if value is None:
                 value = kwargs.get(key)
             if value is not None:
