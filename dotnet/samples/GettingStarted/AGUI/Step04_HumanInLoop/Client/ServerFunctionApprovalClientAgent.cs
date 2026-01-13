@@ -29,7 +29,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         CancellationToken cancellationToken = default)
     {
         return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(

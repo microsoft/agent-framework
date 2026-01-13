@@ -72,7 +72,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                 updates.Add(update);
             }
 
-            await context.SendMessageAsync(updates.ToAgentRunResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(updates.ToAgentResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {

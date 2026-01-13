@@ -42,7 +42,7 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
         CancellationToken cancellationToken = default)
     {
         return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
     /// <inheritdoc />

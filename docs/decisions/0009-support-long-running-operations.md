@@ -1184,7 +1184,7 @@ public class CustomAgent : AIAgent
     {
         var response = await this._client.CancelRunAsync(id, options?.Thread?.ConversationId);
 
-        return ConvertToAgentRunResponse(response); 
+        return ConvertToAgentResponse(response); 
     }
 
     // No overload for DeleteRunAsync as it's not supported by the underlying API

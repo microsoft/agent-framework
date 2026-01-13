@@ -73,7 +73,7 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
                       .SingleAsync(cancellationToken)
                       .ConfigureAwait(false)];
 
-        return update.ToAgentRunResponse();
+        return update.ToAgentResponse();
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)

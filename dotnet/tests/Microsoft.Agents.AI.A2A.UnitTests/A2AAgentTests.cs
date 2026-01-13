@@ -210,7 +210,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentRunResponseUpdatesAsync()
+    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentResponseUpdatesAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>

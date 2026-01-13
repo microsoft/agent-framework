@@ -139,7 +139,7 @@ public sealed class DurableAIAgent : AIAgent
         // Streaming is not supported for durable agents, so we just return the full response
         // as a single update.
         AgentResponse response = await this.RunAsync(messages, thread, options, cancellationToken);
-        foreach (AgentResponseUpdate update in response.ToAgentRunResponseUpdates())
+        foreach (AgentResponseUpdate update in response.ToAgentResponseUpdates())
         {
             yield return update;
         }
@@ -242,10 +242,10 @@ public sealed class DurableAIAgent : AIAgent
             : JsonSerializer.Deserialize<T>(response.Text, serializerOptions))
             ?? throw new InvalidOperationException($"Failed to deserialize agent response to type {typeof(T).Name}.");
 
-        return new DurableAIAgentRunResponse<T>(response, result);
+        return new DurableAIAgentResponse<T>(response, result);
     }
 
-    private sealed class DurableAIAgentRunResponse<T>(AgentResponse response, T result)
+    private sealed class DurableAIAgentResponse<T>(AgentResponse response, T result)
         : AgentResponse<T>(response.AsChatResponse())
     {
         public override T Result { get; } = result;

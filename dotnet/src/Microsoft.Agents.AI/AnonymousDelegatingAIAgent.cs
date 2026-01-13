@@ -127,7 +127,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
         {
             Debug.Assert(this._runStreamingFunc is not null, "Expected non-null streaming delegate.");
             return this._runStreamingFunc!(messages, thread, options, this.InnerAgent, cancellationToken)
-                .ToAgentRunResponseAsync(cancellationToken);
+                .ToAgentResponseAsync(cancellationToken);
         }
     }
 
@@ -183,7 +183,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
             static async IAsyncEnumerable<AgentResponseUpdate> GetStreamingRunAsyncViaRunAsync(Task<AgentResponse> task)
             {
                 AgentResponse response = await task.ConfigureAwait(false);
-                foreach (var update in response.ToAgentRunResponseUpdates())
+                foreach (var update in response.ToAgentResponseUpdates())
                 {
                     yield return update;
                 }

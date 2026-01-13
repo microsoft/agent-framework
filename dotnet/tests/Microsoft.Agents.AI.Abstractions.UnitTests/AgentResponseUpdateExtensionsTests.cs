@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 public class AgentResponseUpdateExtensionsTests
 {
-    public static IEnumerable<object[]> ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsMemberData()
+    public static IEnumerable<object[]> ToAgentResponseCoalescesVariousSequenceAndGapLengthsMemberData()
     {
         foreach (bool useAsync in new[] { false, true })
         {
@@ -32,13 +32,13 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Fact]
-    public void ToAgentRunResponseWithInvalidArgsThrows() =>
-        Assert.Throws<ArgumentNullException>("updates", () => ((List<AgentResponseUpdate>)null!).ToAgentRunResponse());
+    public void ToAgentResponseWithInvalidArgsThrows() =>
+        Assert.Throws<ArgumentNullException>("updates", () => ((List<AgentResponseUpdate>)null!).ToAgentResponse());
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ToAgentRunResponseSuccessfullyCreatesResponseAsync(bool useAsync)
+    public async Task ToAgentResponseSuccessfullyCreatesResponseAsync(bool useAsync)
     {
         AgentResponseUpdate[] updates =
         [
@@ -51,8 +51,8 @@ public class AgentResponseUpdateExtensionsTests
         ];
 
         AgentResponse response = useAsync ?
-            updates.ToAgentRunResponse() :
-            await YieldAsync(updates).ToAgentRunResponseAsync();
+            updates.ToAgentResponse() :
+            await YieldAsync(updates).ToAgentResponseAsync();
         Assert.NotNull(response);
 
         Assert.Equal("agentId", response.AgentId);
@@ -90,8 +90,8 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Theory]
-    [MemberData(nameof(ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsMemberData))]
-    public async Task ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsAsync(bool useAsync, int numSequences, int sequenceLength, int gapLength, bool gapBeginningEnd)
+    [MemberData(nameof(ToAgentResponseCoalescesVariousSequenceAndGapLengthsMemberData))]
+    public async Task ToAgentResponseCoalescesVariousSequenceAndGapLengthsAsync(bool useAsync, int numSequences, int sequenceLength, int gapLength, bool gapBeginningEnd)
     {
         List<AgentResponseUpdate> updates = [];
 
@@ -133,7 +133,7 @@ public class AgentResponseUpdateExtensionsTests
             }
         }
 
-        AgentResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
+        AgentResponse response = useAsync ? await YieldAsync(updates).ToAgentResponseAsync() : updates.ToAgentResponse();
         Assert.NotNull(response);
 
         ChatMessage message = response.Messages.Single();
@@ -152,7 +152,7 @@ public class AgentResponseUpdateExtensionsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ToAgentRunResponseCoalescesTextContentAndTextReasoningContentSeparatelyAsync(bool useAsync)
+    public async Task ToAgentResponseCoalescesTextContentAndTextReasoningContentSeparatelyAsync(bool useAsync)
     {
         AgentResponseUpdate[] updates =
         [
@@ -174,7 +174,7 @@ public class AgentResponseUpdateExtensionsTests
             new() { Contents = [new TextReasoningContent("P")] },
         ];
 
-        AgentResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
+        AgentResponse response = useAsync ? await YieldAsync(updates).ToAgentResponseAsync() : updates.ToAgentResponse();
         ChatMessage message = Assert.Single(response.Messages);
         Assert.Equal(8, message.Contents.Count);
         Assert.Equal("ABC", Assert.IsType<TextContent>(message.Contents[0]).Text);
@@ -188,7 +188,7 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Fact]
-    public async Task ToAgentRunResponseUsesContentExtractedFromContentsAsync()
+    public async Task ToAgentResponseUsesContentExtractedFromContentsAsync()
     {
         AgentResponseUpdate[] updates =
         [
@@ -197,7 +197,7 @@ public class AgentResponseUpdateExtensionsTests
             new() { Contents = [new UsageContent(new() { TotalTokenCount = 42 })] },
         ];
 
-        AgentResponse response = await YieldAsync(updates).ToAgentRunResponseAsync();
+        AgentResponse response = await YieldAsync(updates).ToAgentResponseAsync();
 
         Assert.NotNull(response);
 
@@ -210,7 +210,7 @@ public class AgentResponseUpdateExtensionsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ToAgentRunResponse_AlternativeTimestampsAsync(bool useAsync)
+    public async Task ToAgentResponse_AlternativeTimestampsAsync(bool useAsync)
     {
         DateTimeOffset early = new(2024, 1, 1, 10, 0, 0, TimeSpan.Zero);
         DateTimeOffset middle = new(2024, 1, 1, 11, 0, 0, TimeSpan.Zero);
@@ -243,8 +243,8 @@ public class AgentResponseUpdateExtensionsTests
         ];
 
         AgentResponse response = useAsync ?
-            updates.ToAgentRunResponse() :
-            await YieldAsync(updates).ToAgentRunResponseAsync();
+            updates.ToAgentResponse() :
+            await YieldAsync(updates).ToAgentResponseAsync();
         Assert.Single(response.Messages);
 
         Assert.Equal("abcdefg", response.Messages[0].Text);
@@ -253,7 +253,7 @@ public class AgentResponseUpdateExtensionsTests
         Assert.Equal(late, response.CreatedAt);
     }
 
-    public static IEnumerable<object?[]> ToAgentRunResponse_TimestampFolding_MemberData()
+    public static IEnumerable<object?[]> ToAgentResponse_TimestampFolding_MemberData()
     {
         // Base test cases
         var testCases = new (string? timestamp1, string? timestamp2, string? expectedTimestamp)[]
@@ -276,8 +276,8 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Theory]
-    [MemberData(nameof(ToAgentRunResponse_TimestampFolding_MemberData))]
-    public async Task ToAgentRunResponse_TimestampFoldingAsync(bool useAsync, string? timestamp1, string? timestamp2, string? expectedTimestamp)
+    [MemberData(nameof(ToAgentResponse_TimestampFolding_MemberData))]
+    public async Task ToAgentResponse_TimestampFoldingAsync(bool useAsync, string? timestamp1, string? timestamp2, string? expectedTimestamp)
     {
         DateTimeOffset? first = timestamp1 is not null ? DateTimeOffset.Parse(timestamp1) : null;
         DateTimeOffset? second = timestamp2 is not null ? DateTimeOffset.Parse(timestamp2) : null;
@@ -290,8 +290,8 @@ public class AgentResponseUpdateExtensionsTests
         ];
 
         AgentResponse response = useAsync ?
-            updates.ToAgentRunResponse() :
-            await YieldAsync(updates).ToAgentRunResponseAsync();
+            updates.ToAgentResponse() :
+            await YieldAsync(updates).ToAgentResponseAsync();
 
         Assert.Single(response.Messages);
         Assert.Equal("ab", response.Messages[0].Text);

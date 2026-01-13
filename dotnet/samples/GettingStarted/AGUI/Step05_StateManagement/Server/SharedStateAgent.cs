@@ -24,7 +24,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         CancellationToken cancellationToken = default)
     {
         return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
@@ -104,7 +104,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             }
         }
 
-        var response = allUpdates.ToAgentRunResponse();
+        var response = allUpdates.ToAgentResponse();
 
         // Try to deserialize the structured state response
         if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))

@@ -180,7 +180,7 @@ public class AgentResponseTests
     }
 
     [Fact]
-    public void ToAgentRunResponseUpdatesProducesUpdates()
+    public void ToAgentResponseUpdatesProducesUpdates()
     {
         AgentResponse response = new(new ChatMessage(new ChatRole("customRole"), "Text") { MessageId = "someMessage" })
         {
@@ -194,7 +194,7 @@ public class AgentResponseTests
             },
         };
 
-        AgentResponseUpdate[] updates = response.ToAgentRunResponseUpdates();
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
         Assert.NotNull(updates);
         Assert.Equal(2, updates.Length);
 

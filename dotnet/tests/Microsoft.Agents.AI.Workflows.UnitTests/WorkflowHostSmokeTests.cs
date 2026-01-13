@@ -54,7 +54,7 @@ public class WorkflowHostSmokeTests
         protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             return await this.RunStreamingAsync(messages, thread, options, cancellationToken)
-                             .ToAgentRunResponseAsync(cancellationToken);
+                             .ToAgentResponseAsync(cancellationToken);
         }
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)

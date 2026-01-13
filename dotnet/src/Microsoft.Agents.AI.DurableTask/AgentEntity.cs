@@ -76,7 +76,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             {
                 // If no message handler is provided, we can just get the full response at once.
                 // This is expected to be the common case for non-interactive agents.
-                response = await responseStream.ToAgentRunResponseAsync(this._cancellationToken);
+                response = await responseStream.ToAgentResponseAsync(this._cancellationToken);
             }
             else
             {
@@ -98,12 +98,12 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
                 }
 
                 await this._messageHandler.OnStreamingResponseUpdateAsync(StreamResultsAsync(), this._cancellationToken);
-                response = responseUpdates.ToAgentRunResponse();
+                response = responseUpdates.ToAgentResponse();
             }
 
             // Persist the agent response to the entity state for client polling
             this.State.Data.ConversationHistory.Add(
-                DurableAgentStateResponse.FromRunResponse(request.CorrelationId, response));
+                DurableAgentStateResponse.FromResponse(request.CorrelationId, response));
 
             string responseText = response.Text;
 

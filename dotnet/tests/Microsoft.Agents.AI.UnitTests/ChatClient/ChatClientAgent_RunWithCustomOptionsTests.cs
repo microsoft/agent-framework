@@ -328,12 +328,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
-        Assert.NotNull(agentRunResponse);
-        Assert.Single(agentRunResponse.Messages);
-        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        Assert.NotNull(agentResponse);
+        Assert.Single(agentResponse.Messages);
+        Assert.Equal("Tigger", agentResponse.Result.FullName);
         mockChatClient.Verify(
             x => x.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
@@ -358,12 +358,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>("Test message", thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>("Test message", thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
-        Assert.NotNull(agentRunResponse);
-        Assert.Single(agentRunResponse.Messages);
-        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        Assert.NotNull(agentResponse);
+        Assert.Single(agentResponse.Messages);
+        Assert.Equal("Tigger", agentResponse.Result.FullName);
         mockChatClient.Verify(
             x => x.GetResponseAsync(
                 It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Any(m => m.Text == "Test message")),
@@ -389,12 +389,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(message, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(message, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
-        Assert.NotNull(agentRunResponse);
-        Assert.Single(agentRunResponse.Messages);
-        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        Assert.NotNull(agentResponse);
+        Assert.Single(agentResponse.Messages);
+        Assert.Equal("Tigger", agentResponse.Result.FullName);
         mockChatClient.Verify(
             x => x.GetResponseAsync(
                 It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Contains(message)),
@@ -420,12 +420,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(messages, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
-        Assert.NotNull(agentRunResponse);
-        Assert.Single(agentRunResponse.Messages);
-        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        Assert.NotNull(agentResponse);
+        Assert.Single(agentResponse.Messages);
+        Assert.Equal("Tigger", agentResponse.Result.FullName);
         mockChatClient.Verify(
             x => x.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),

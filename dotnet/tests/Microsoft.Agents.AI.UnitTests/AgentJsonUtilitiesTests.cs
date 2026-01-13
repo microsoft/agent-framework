@@ -79,7 +79,7 @@ public class AgentJsonUtilitiesTests
 #endif
 
     [Fact]
-    public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentRunResponse()
+    public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentResponse()
     {
         var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hello"));
         string json = JsonSerializer.Serialize(response, AgentJsonUtilities.DefaultOptions);

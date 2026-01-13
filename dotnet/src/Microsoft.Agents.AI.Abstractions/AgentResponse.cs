@@ -245,7 +245,7 @@ public class AgentResponse
     /// original message sequence.
     /// </para>
     /// </remarks>
-    public AgentResponseUpdate[] ToAgentRunResponseUpdates()
+    public AgentResponseUpdate[] ToAgentResponseUpdates()
     {
         AgentResponseUpdate? extra = null;
         if (this.AdditionalProperties is not null || this.Usage is not null)

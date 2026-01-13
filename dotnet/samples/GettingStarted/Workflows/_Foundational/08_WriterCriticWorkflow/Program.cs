@@ -326,7 +326,7 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         Console.WriteLine("\n");
 
         // Convert the stream to a response and deserialize the structured output
-        AgentResponse response = await updates.ToAgentRunResponseAsync(cancellationToken);
+        AgentResponse response = await updates.ToAgentResponseAsync(cancellationToken);
         CriticDecision decision = response.Deserialize<CriticDecision>(JsonSerializerOptions.Web);
 
         Console.WriteLine($"Decision: {(decision.Approved ? "✅ APPROVED" : "❌ NEEDS REVISION")}");

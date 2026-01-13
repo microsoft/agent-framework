@@ -362,7 +362,7 @@ public class AgentExtensionsTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await this.RunAsync(messages, thread, options, cancellationToken);
-            foreach (var update in response.ToAgentRunResponseUpdates())
+            foreach (var update in response.ToAgentResponseUpdates())
             {
                 yield return update;
             }

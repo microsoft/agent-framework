@@ -32,6 +32,6 @@ public class AgentRunUpdateEvent : ExecutorEvent
     public AgentResponse AsResponse()
     {
         IEnumerable<AgentResponseUpdate> updates = [this.Update];
-        return updates.ToAgentRunResponse();
+        return updates.ToAgentResponse();
     }
 }

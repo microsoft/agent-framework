@@ -111,7 +111,7 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             }
         }
 
-        AgentResponse response = chatResponseUpdates.ToAgentRunResponse();
+        AgentResponse response = chatResponseUpdates.ToAgentResponse();
         messages.AddRange(response.Messages);
         foreach (AIContent approvalResponse in approvalResponses)
         {

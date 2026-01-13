@@ -35,7 +35,7 @@ internal sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInput
         roleChanged.ResetUserToAssistantForChangedRoles();
 
         List<ChatMessage> result = includeInputInOutput ? [.. messages] : [];
-        result.AddRange(updates.ToAgentRunResponse().Messages);
+        result.AddRange(updates.ToAgentResponse().Messages);
 
         await context.SendMessageAsync(result, cancellationToken: cancellationToken).ConfigureAwait(false);
     }

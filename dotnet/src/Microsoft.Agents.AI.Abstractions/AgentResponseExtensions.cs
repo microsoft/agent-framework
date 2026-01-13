@@ -113,12 +113,12 @@ public static class AgentResponseExtensions
     /// message boundaries, as well as coalescing contiguous <see cref="AIContent"/> items where applicable, e.g. multiple
     /// <see cref="TextContent"/> instances in a row may be combined into a single <see cref="TextContent"/>.
     /// </remarks>
-    public static AgentResponse ToAgentRunResponse(
+    public static AgentResponse ToAgentResponse(
         this IEnumerable<AgentResponseUpdate> updates)
     {
         _ = Throw.IfNull(updates);
 
-        AgentRunResponseDetails additionalDetails = new();
+        AgentResponseDetails additionalDetails = new();
         ChatResponse chatResponse =
             AsChatResponseUpdatesWithAdditionalDetails(updates, additionalDetails)
             .ToChatResponse();
@@ -138,7 +138,7 @@ public static class AgentResponseExtensions
     /// <exception cref="ArgumentNullException"><paramref name="updates"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// <para>
-    /// This is the asynchronous version of <see cref="ToAgentRunResponse(IEnumerable{AgentResponseUpdate})"/>.
+    /// This is the asynchronous version of <see cref="ToAgentResponse(IEnumerable{AgentResponseUpdate})"/>.
     /// It performs the same combining logic but operates on an asynchronous enumerable of updates.
     /// </para>
     /// <para>
@@ -148,19 +148,19 @@ public static class AgentResponseExtensions
     /// <see cref="TextContent"/> instances in a row may be combined into a single <see cref="TextContent"/>.
     /// </para>
     /// </remarks>
-    public static Task<AgentResponse> ToAgentRunResponseAsync(
+    public static Task<AgentResponse> ToAgentResponseAsync(
         this IAsyncEnumerable<AgentResponseUpdate> updates,
         CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(updates);
 
-        return ToAgentRunResponseAsync(updates, cancellationToken);
+        return ToAgentResponseAsync(updates, cancellationToken);
 
-        static async Task<AgentResponse> ToAgentRunResponseAsync(
+        static async Task<AgentResponse> ToAgentResponseAsync(
             IAsyncEnumerable<AgentResponseUpdate> updates,
             CancellationToken cancellationToken)
         {
-            AgentRunResponseDetails additionalDetails = new();
+            AgentResponseDetails additionalDetails = new();
             ChatResponse chatResponse = await
                 AsChatResponseUpdatesWithAdditionalDetailsAsync(updates, additionalDetails, cancellationToken)
                 .ToChatResponseAsync(cancellationToken)
@@ -175,7 +175,7 @@ public static class AgentResponseExtensions
 
     private static IEnumerable<ChatResponseUpdate> AsChatResponseUpdatesWithAdditionalDetails(
         IEnumerable<AgentResponseUpdate> updates,
-        AgentRunResponseDetails additionalDetails)
+        AgentResponseDetails additionalDetails)
     {
         foreach (var update in updates)
         {
@@ -186,7 +186,7 @@ public static class AgentResponseExtensions
 
     private static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesWithAdditionalDetailsAsync(
         IAsyncEnumerable<AgentResponseUpdate> updates,
-        AgentRunResponseDetails additionalDetails,
+        AgentResponseDetails additionalDetails,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -196,7 +196,7 @@ public static class AgentResponseExtensions
         }
     }
 
-    private static void UpdateAdditionalDetails(AgentResponseUpdate update, AgentRunResponseDetails details)
+    private static void UpdateAdditionalDetails(AgentResponseUpdate update, AgentResponseDetails details)
     {
         if (update.AgentId is { Length: > 0 })
         {
@@ -204,7 +204,7 @@ public static class AgentResponseExtensions
         }
     }
 
-    private sealed class AgentRunResponseDetails
+    private sealed class AgentResponseDetails
     {
         public string? AgentId { get; set; }
     }

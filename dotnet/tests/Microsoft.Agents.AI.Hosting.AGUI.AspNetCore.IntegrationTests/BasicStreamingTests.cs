@@ -49,7 +49,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         updates.Should().AllSatisfy(u => u.Role.Should().Be(ChatRole.Assistant));
 
         // Verify assistant response message
-        AgentResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
@@ -150,13 +150,13 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         secondTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
 
         // Verify first turn assistant response
-        AgentResponse firstResponse = firstTurnUpdates.ToAgentRunResponse();
+        AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
         firstResponse.Messages.Should().HaveCount(1);
         firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
         firstResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
 
         // Verify second turn assistant response
-        AgentResponse secondResponse = secondTurnUpdates.ToAgentRunResponse();
+        AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
         secondResponse.Messages.Should().HaveCount(1);
         secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
         secondResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
@@ -189,7 +189,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         messageIds.Should().HaveCountGreaterThan(1, "agent should send multiple messages");
 
         // Verify assistant messages from updates
-        AgentResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
         response.Messages.Should().HaveCountGreaterThan(1);
         response.Messages.Should().AllSatisfy(m => m.Role.Should().Be(ChatRole.Assistant));
     }
@@ -224,7 +224,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         updates.Should().Contain(u => u.Role == ChatRole.Assistant);
 
         // Verify assistant response message
-        AgentResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
@@ -298,7 +298,7 @@ internal sealed class FakeChatClientAgent : AIAgent
             updates.Add(update);
         }
 
-        return updates.ToAgentRunResponse();
+        return updates.ToAgentResponse();
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
@@ -362,7 +362,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
             updates.Add(update);
         }
 
-        return updates.ToAgentRunResponse();
+        return updates.ToAgentResponse();
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(

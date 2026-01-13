@@ -40,7 +40,7 @@ internal static class AgentProviderExtensions
             }
         }
 
-        AgentResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
 
         if (autoSend)
         {

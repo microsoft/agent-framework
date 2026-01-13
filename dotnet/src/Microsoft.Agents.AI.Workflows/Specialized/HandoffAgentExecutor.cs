@@ -98,7 +98,7 @@ internal sealed class HandoffAgentExecutor(
                 }
             }
 
-            allMessages.AddRange(updates.ToAgentRunResponse().Messages);
+            allMessages.AddRange(updates.ToAgentResponse().Messages);
 
             roleChanges.ResetUserToAssistantForChangedRoles();
 

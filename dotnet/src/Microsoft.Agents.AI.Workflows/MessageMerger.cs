@@ -38,7 +38,7 @@ internal sealed class MessageMerger
         {
             if (this.UpdatesByMessageId.TryGetValue(Throw.IfNull(messageId), out List<AgentResponseUpdate>? updates))
             {
-                return updates.ToAgentRunResponse();
+                return updates.ToAgentResponse();
             }
 
             throw new KeyNotFoundException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
@@ -51,7 +51,7 @@ internal sealed class MessageMerger
                 throw new InvalidOperationException("No dangling updates to compute a response from.");
             }
 
-            return this.DanglingUpdates.ToAgentRunResponse();
+            return this.DanglingUpdates.ToAgentResponse();
         }
 
         public List<ChatMessage> ComputeFlattened()
