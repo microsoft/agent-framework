@@ -2,8 +2,7 @@
 
 """Tests for human in the loop (function approval requests)."""
 
-from agent_framework import FunctionApprovalRequestContent, FunctionCallContent
-from agent_framework._types import AgentRunResponseUpdate
+from agent_framework import AgentRunResponseUpdate, FunctionApprovalRequestContent, FunctionCallContent
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 

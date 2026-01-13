@@ -4,13 +4,14 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
+from anyio import ClosedResourceError
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -21,7 +22,11 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, create_model
 
-from ._tools import AIFunction, HostedMCPSpecificApproval, _build_pydantic_model_from_json_schema
+from ._tools import (
+    AIFunction,
+    HostedMCPSpecificApproval,
+    _build_pydantic_model_from_json_schema,
+)
 from ._types import (
     ChatMessage,
     Contents,
@@ -329,7 +334,9 @@ class MCPTool:
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
+        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
         load_prompts: bool = True,
+        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
         chat_client: "ChatClientProtocol | None" = None,
@@ -347,7 +354,9 @@ class MCPTool:
         self.allowed_tools = allowed_tools
         self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
+        self.parse_tool_results = parse_tool_results
         self.load_prompts_flag = load_prompts
+        self.parse_prompt_results = parse_prompt_results
         self._exit_stack = AsyncExitStack()
         self.session = session
         self.request_timeout = request_timeout
@@ -367,15 +376,23 @@ class MCPTool:
             return self._functions
         return [func for func in self._functions if func.name in self.allowed_tools]
 
-    async def connect(self) -> None:
+    async def connect(self, *, reset: bool = False) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
         and loads tools and prompts if configured to do so.
 
+        Keyword Args:
+            reset: If True, forces a reconnection even if already connected.
+
         Raises:
             ToolException: If connection or session initialization fails.
         """
+        if reset:
+            await self._exit_stack.aclose()
+            self.session = None
+            self.is_connected = False
+            self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
@@ -565,86 +582,88 @@ class MCPTool:
         """Load prompts from the MCP server.
 
         Retrieves available prompts from the connected MCP server and converts
-        them into AIFunction instances.
+        them into AIFunction instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
-        if not self.session:
-            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
-        try:
-            prompt_list = await self.session.list_prompts()
-        except Exception as exc:
-            logger.info(
-                "Prompt could not be loaded, you can exclude trying to load, by setting: load_prompts=False",
-                exc_info=exc,
-            )
-            prompt_list = None
-
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
-        for prompt in prompt_list.prompts if prompt_list else []:
-            local_name = _normalize_mcp_name(prompt.name)
+        params: types.PaginatedRequestParams | None = None
+        while True:
+            # Ensure connection is still valid before each page request
+            await self._ensure_connected()
 
-            # Skip if already loaded
-            if local_name in existing_names:
-                continue
+            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
 
-            input_model = _get_input_model_from_mcp_prompt(prompt)
-            approval_mode = self._determine_approval_mode(local_name)
-            func: AIFunction[BaseModel, list[ChatMessage]] = AIFunction(
-                func=partial(self.get_prompt, prompt.name),
-                name=local_name,
-                description=prompt.description or "",
-                approval_mode=approval_mode,
-                input_model=input_model,
-            )
-            self._functions.append(func)
-            existing_names.add(local_name)
+            for prompt in prompt_list.prompts:
+                local_name = _normalize_mcp_name(prompt.name)
+
+                # Skip if already loaded
+                if local_name in existing_names:
+                    continue
+
+                input_model = _get_input_model_from_mcp_prompt(prompt)
+                approval_mode = self._determine_approval_mode(local_name)
+                func: AIFunction[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = AIFunction(
+                    func=partial(self.get_prompt, prompt.name),
+                    name=local_name,
+                    description=prompt.description or "",
+                    approval_mode=approval_mode,
+                    input_model=input_model,
+                )
+                self._functions.append(func)
+                existing_names.add(local_name)
+
+            # Check if there are more pages
+            if not prompt_list or not prompt_list.nextCursor:
+                break
+            params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
 
         Retrieves available tools from the connected MCP server and converts
-        them into AIFunction instances.
+        them into AIFunction instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
-        if not self.session:
-            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
-        try:
-            tool_list = await self.session.list_tools()
-        except Exception as exc:
-            logger.info(
-                "Tools could not be loaded, you can exclude trying to load, by setting: load_tools=False",
-                exc_info=exc,
-            )
-            tool_list = None
-
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
-        for tool in tool_list.tools if tool_list else []:
-            local_name = _normalize_mcp_name(tool.name)
+        params: types.PaginatedRequestParams | None = None
+        while True:
+            # Ensure connection is still valid before each page request
+            await self._ensure_connected()
 
-            # Skip if already loaded
-            if local_name in existing_names:
-                continue
+            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
 
-            input_model = _get_input_model_from_mcp_tool(tool)
-            approval_mode = self._determine_approval_mode(local_name)
-            # Create AIFunctions out of each tool
-            func: AIFunction[BaseModel, list[Contents]] = AIFunction(
-                func=partial(self.call_tool, tool.name),
-                name=local_name,
-                description=tool.description or "",
-                approval_mode=approval_mode,
-                input_model=input_model,
-            )
-            self._functions.append(func)
-            existing_names.add(local_name)
+            for tool in tool_list.tools:
+                local_name = _normalize_mcp_name(tool.name)
+
+                # Skip if already loaded
+                if local_name in existing_names:
+                    continue
+
+                input_model = _get_input_model_from_mcp_tool(tool)
+                approval_mode = self._determine_approval_mode(local_name)
+                # Create AIFunctions out of each tool
+                func: AIFunction[BaseModel, list[Contents] | Any | types.CallToolResult] = AIFunction(
+                    func=partial(self.call_tool, tool.name),
+                    name=local_name,
+                    description=tool.description or "",
+                    approval_mode=approval_mode,
+                    input_model=input_model,
+                )
+                self._functions.append(func)
+                existing_names.add(local_name)
+
+            # Check if there are more pages
+            if not tool_list or not tool_list.nextCursor:
+                break
+            params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
@@ -664,7 +683,28 @@ class MCPTool:
         """
         pass
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents]:
+    async def _ensure_connected(self) -> None:
+        """Ensure the connection is valid, reconnecting if necessary.
+
+        This method proactively checks if the connection is valid and
+        reconnects if it's not, avoiding the need to catch ClosedResourceError.
+
+        Raises:
+            ToolExecutionException: If reconnection fails.
+        """
+        try:
+            await self.session.send_ping()  # type: ignore[union-attr]
+        except Exception:
+            logger.info("MCP connection invalid or closed. Reconnecting...")
+            try:
+                await self.connect(reset=True)
+            except Exception as ex:
+                raise ToolExecutionException(
+                    "Failed to establish MCP connection.",
+                    inner_exception=ex,
+                ) from ex
+
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents] | Any | types.CallToolResult:
         """Call a tool with the given arguments.
 
         Args:
@@ -680,8 +720,6 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
                 or the tool call fails.
         """
-        if not self.session:
-            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         if not self.load_tools_flag:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
@@ -692,16 +730,44 @@ class MCPTool:
         filtered_kwargs = {
             k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
         }
-        try:
-            return _parse_contents_from_mcp_tool_result(
-                await self.session.call_tool(tool_name, arguments=filtered_kwargs)
-            )
-        except McpError as mcp_exc:
-            raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
-        except Exception as ex:
-            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
 
-    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage]:
+        # Try the operation, reconnecting once if the connection is closed
+        for attempt in range(2):
+            try:
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
+                if self.parse_tool_results is None:
+                    return result
+                if self.parse_tool_results is True:
+                    return _parse_contents_from_mcp_tool_result(result)
+                if callable(self.parse_tool_results):
+                    return self.parse_tool_results(result)
+                return result
+            except ClosedResourceError as cl_ex:
+                if attempt == 0:
+                    # First attempt failed, try reconnecting
+                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                    try:
+                        await self.connect(reset=True)
+                        continue  # Retry the operation
+                    except Exception as reconn_ex:
+                        raise ToolExecutionException(
+                            "Failed to reconnect to MCP server.",
+                            inner_exception=reconn_ex,
+                        ) from reconn_ex
+                else:
+                    # Second attempt also failed, give up
+                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                    raise ToolExecutionException(
+                        f"Failed to call tool '{tool_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
+            except McpError as mcp_exc:
+                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
+            except Exception as ex:
+                raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+        raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage] | Any | types.GetPromptResult:
         """Call a prompt with the given arguments.
 
         Args:
@@ -717,19 +783,46 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
                 or the prompt call fails.
         """
-        if not self.session:
-            raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         if not self.load_prompts_flag:
             raise ToolExecutionException(
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
-        try:
-            prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)
-            return [_parse_message_from_mcp(message) for message in prompt_result.messages]
-        except McpError as mcp_exc:
-            raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
-        except Exception as ex:
-            raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+
+        # Try the operation, reconnecting once if the connection is closed
+        for attempt in range(2):
+            try:
+                prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                if self.parse_prompt_results is None:
+                    return prompt_result
+                if self.parse_prompt_results is True:
+                    return [_parse_message_from_mcp(message) for message in prompt_result.messages]
+                if callable(self.parse_prompt_results):
+                    return self.parse_prompt_results(prompt_result)
+                return prompt_result
+            except ClosedResourceError as cl_ex:
+                if attempt == 0:
+                    # First attempt failed, try reconnecting
+                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                    try:
+                        await self.connect(reset=True)
+                        continue  # Retry the operation
+                    except Exception as reconn_ex:
+                        raise ToolExecutionException(
+                            "Failed to reconnect to MCP server.",
+                            inner_exception=reconn_ex,
+                        ) from reconn_ex
+                else:
+                    # Second attempt also failed, give up
+                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                    raise ToolExecutionException(
+                        f"Failed to call prompt '{prompt_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
+            except McpError as mcp_exc:
+                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
+            except Exception as ex:
+                raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+        raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -804,7 +897,9 @@ class MCPStdioTool(MCPTool):
         command: str,
         *,
         load_tools: bool = True,
+        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
         load_prompts: bool = True,
+        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -830,7 +925,15 @@ class MCPStdioTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
+            parse_tool_results: How to parse tool results from the MCP server.
+                Set to True, to use the default parser that converts to Agent Framework types.
+                Set to a callable to use a custom parser function.
+                Set to None to return the raw MCP tool result.
             load_prompts: Whether to load prompts from the MCP server.
+            parse_prompt_results: How to parse prompt results from the MCP server.
+                Set to True, to use the default parser that converts to Agent Framework types.
+                Set to a callable to use a custom parser function.
+                Set to None to return the raw MCP prompt result.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -857,7 +960,9 @@ class MCPStdioTool(MCPTool):
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
+            parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
+            parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
         )
         self.command = command
@@ -913,7 +1018,9 @@ class MCPStreamableHTTPTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
+        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
         load_prompts: bool = True,
+        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -939,7 +1046,15 @@ class MCPStreamableHTTPTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
+            parse_tool_results: How to parse tool results from the MCP server.
+                Set to True, to use the default parser that converts to Agent Framework types.
+                Set to a callable to use a custom parser function.
+                Set to None to return the raw MCP tool result.
             load_prompts: Whether to load prompts from the MCP server.
+            parse_prompt_results: How to parse prompt results from the MCP server.
+                Set to True, to use the default parser that converts to Agent Framework types.
+                Set to a callable to use a custom parser function.
+                Set to None to return the raw MCP prompt result.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -968,7 +1083,9 @@ class MCPStreamableHTTPTool(MCPTool):
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
+            parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
+            parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
         )
         self.url = url
@@ -1016,7 +1133,9 @@ class MCPWebsocketTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
+        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
         load_prompts: bool = True,
+        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -1040,7 +1159,15 @@ class MCPWebsocketTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
+            parse_tool_results: How to parse tool results from the MCP server.
+                Set to True, to use the default parser that converts to Agent Framework types.
+                Set to a callable to use a custom parser function.
+                Set to None to return the raw MCP tool result.
             load_prompts: Whether to load prompts from the MCP server.
+            parse_prompt_results: How to parse prompt results from the MCP server.
+                Set to True, to use the default parser that converts to Agent Framework types.
+                Set to a callable to use a custom parser function.
+                Set to None to return the raw MCP prompt result.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -1064,7 +1191,9 @@ class MCPWebsocketTool(MCPTool):
             session=session,
             chat_client=chat_client,
             load_tools=load_tools,
+            parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
+            parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
         )
         self.url = url
