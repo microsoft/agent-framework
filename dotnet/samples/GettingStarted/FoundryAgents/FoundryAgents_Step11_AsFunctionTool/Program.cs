@@ -39,7 +39,7 @@ AIAgent agent = aiProjectClient.CreateAIAgent(
     tools: [weatherAgent.AsAIFunction()]);
 
 // Invoke the agent and output the text result.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", thread));
 
 // Cleanup by agent name removes the agent versions created.

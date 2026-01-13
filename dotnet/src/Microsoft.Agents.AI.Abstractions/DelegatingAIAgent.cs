@@ -74,11 +74,11 @@ public abstract class DelegatingAIAgent : AIAgent
     }
 
     /// <inheritdoc />
-    public override AgentThread GetNewThread() => this.InnerAgent.GetNewThread();
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) => this.InnerAgent.GetNewThreadAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
 
     /// <inheritdoc />
     protected override Task<AgentRunResponse> RunCoreAsync(
