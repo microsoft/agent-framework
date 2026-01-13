@@ -374,7 +374,9 @@ class AzureAIAgentsProvider:
         hosted_tools = from_azure_ai_agent_tools(agent_tools)
         for hosted_tool in hosted_tools:
             # Skip function tool dicts - they don't have implementations
-            if isinstance(hosted_tool, dict) and hosted_tool.get("type") == "function":
+            # Skip OpenAPI tool dicts - they're defined on the agent, not needed at runtime
+            tool_type = hosted_tool.get("type")
+            if isinstance(hosted_tool, dict) and (tool_type == "function" or tool_type == "openapi"):
                 continue
             merged.append(hosted_tool)
 
