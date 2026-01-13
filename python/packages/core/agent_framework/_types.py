@@ -2894,7 +2894,7 @@ class ChatResponse(SerializationMixin):
         cls: type[TChatResponse],
         updates: AsyncIterable["ChatResponseUpdate"],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: type[BaseModel] | Mapping[str, Any] | None = None,
     ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2919,7 +2919,7 @@ class ChatResponse(SerializationMixin):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
+        if output_format_type and isinstance(output_format_type, type):
             msg.try_parse_value(output_format_type)
         return msg
 

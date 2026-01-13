@@ -42,7 +42,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from agent_framework.observability import use_instrumentation
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
@@ -90,7 +90,7 @@ from azure.ai.agents.models import (
     ToolOutput,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ._shared import AzureAISettings
 
@@ -930,12 +930,21 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         # response format
         response_format = options.get("response_format")
         if response_format is not None:
-            run_options["response_format"] = ResponseFormatJsonSchemaType(
-                json_schema=ResponseFormatJsonSchema(
-                    name=response_format.__name__,
-                    schema=response_format.model_json_schema(),
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                # Pydantic model - convert to Azure format
+                run_options["response_format"] = ResponseFormatJsonSchemaType(
+                    json_schema=ResponseFormatJsonSchema(
+                        name=response_format.__name__,
+                        schema=response_format.model_json_schema(),
+                    )
                 )
-            )
+            elif isinstance(response_format, Mapping):
+                # Runtime JSON schema dict - pass through as-is
+                run_options["response_format"] = response_format
+            else:
+                raise ServiceInvalidRequestError(
+                    "response_format must be a Pydantic BaseModel class or a dict with runtime JSON schema."
+                )
 
         # messages
         additional_messages, instructions, required_action_results = self._prepare_messages(messages)

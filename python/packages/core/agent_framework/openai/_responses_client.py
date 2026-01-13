@@ -79,6 +79,7 @@ from .._types import (
     UsageDetails,
     _parse_content,
     prepare_function_call_results,
+    prepend_instructions_to_messages,
 )
 from ..exceptions import (
     ServiceInitializationError,
@@ -508,13 +509,6 @@ class OpenAIBaseResponsesClient(
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
-        # Handle instructions by prepending to messages as system message
-        instructions = options.get("instructions")
-        if instructions:
-            from agent_framework._types import prepend_instructions_to_messages
-
-            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-
         # Exclude keys that are not supported or handled separately
         exclude_keys = {
             "type",
@@ -530,6 +524,9 @@ class OpenAIBaseResponsesClient(
         run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
         # messages
+        # Handle instructions by prepending to messages as system message
+        if instructions := options.get("instructions"):
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
@@ -567,9 +564,24 @@ class OpenAIBaseResponsesClient(
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool_choice: ToolMode serializes to {"type": "tool_mode", "mode": "..."}, extract mode
-        if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
-            run_options["tool_choice"] = tool_choice["mode"]
+        # tool_choice: convert ToolMode to appropriate format
+        if tool_choice := run_options.get("tool_choice"):
+            if isinstance(tool_choice, dict):
+                # Handle already-serialized dict format
+                if len(tool_choice) == 2:
+                    run_options["tool_choice"] = tool_choice
+                elif "mode" in tool_choice:
+                    run_options["tool_choice"] = tool_choice["mode"]
+            else:
+                if tool_choice.required_function_name:
+                    # Format as function tool choice for specific function requirement
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "name": tool_choice.required_function_name,
+                    }
+                else:
+                    # Just the mode string for auto/required/none
+                    run_options["tool_choice"] = tool_choice.mode
 
         # response format and text config
         response_format = options.get("response_format")
@@ -1032,8 +1044,10 @@ class OpenAIBaseResponsesClient(
             args["usage_details"] = usage_details
         if structured_response:
             args["value"] = structured_response
-        elif options.get("response_format"):
-            args["response_format"] = options["response_format"]
+        elif (response_format := options.get("response_format")) and isinstance(response_format, type):
+            # Only pass response_format to ChatResponse if it's a Pydantic model type,
+            # not a runtime JSON schema dict
+            args["response_format"] = response_format
         return ChatResponse(**args)
 
     def _parse_chunk_from_openai(
