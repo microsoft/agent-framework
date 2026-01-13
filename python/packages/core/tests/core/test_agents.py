@@ -10,8 +10,8 @@ from pytest import raises
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatAgent,
     ChatClientProtocol,
@@ -45,7 +45,7 @@ async def test_agent_run(agent: AgentProtocol) -> None:
 
 
 async def test_agent_run_streaming(agent: AgentProtocol) -> None:
-    async def collect_updates(updates: AsyncIterable[AgentRunResponseUpdate]) -> list[AgentRunResponseUpdate]:
+    async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]
 
     updates = await collect_updates(agent.run_stream(messages="test"))
@@ -87,7 +87,7 @@ async def test_chat_client_agent_run(chat_client: ChatClientProtocol) -> None:
 async def test_chat_client_agent_run_streaming(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
 
-    result = await AgentRunResponse.from_agent_response_generator(agent.run_stream("Hello"))
+    result = await AgentResponse.from_agent_response_generator(agent.run_stream("Hello"))
 
     assert result.text == "test streaming response another update"
 
@@ -329,7 +329,7 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
     # Collect all stream updates
-    updates: list[AgentRunResponseUpdate] = []
+    updates: list[AgentResponseUpdate] = []
     async for update in agent.run_stream("Hello"):
         updates.append(update)
 
@@ -440,9 +440,9 @@ async def test_chat_agent_as_tool_with_stream_callback(chat_client: ChatClientPr
     agent = ChatAgent(chat_client=chat_client, name="StreamingAgent")
 
     # Collect streaming updates
-    collected_updates: list[AgentRunResponseUpdate] = []
+    collected_updates: list[AgentResponseUpdate] = []
 
-    def stream_callback(update: AgentRunResponseUpdate) -> None:
+    def stream_callback(update: AgentResponseUpdate) -> None:
         collected_updates.append(update)
 
     tool = agent.as_tool(stream_callback=stream_callback)
@@ -474,9 +474,9 @@ async def test_chat_agent_as_tool_with_async_stream_callback(chat_client: ChatCl
     agent = ChatAgent(chat_client=chat_client, name="AsyncStreamingAgent")
 
     # Collect streaming updates using an async callback
-    collected_updates: list[AgentRunResponseUpdate] = []
+    collected_updates: list[AgentResponseUpdate] = []
 
-    async def async_stream_callback(update: AgentRunResponseUpdate) -> None:
+    async def async_stream_callback(update: AgentResponseUpdate) -> None:
         collected_updates.append(update)
 
     tool = agent.as_tool(stream_callback=async_stream_callback)

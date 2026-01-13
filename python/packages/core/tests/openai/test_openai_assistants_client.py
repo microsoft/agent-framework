@@ -11,8 +11,8 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import Field
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatAgent,
     ChatClientProtocol,
@@ -1118,7 +1118,7 @@ async def test_openai_assistants_agent_basic_run():
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
         assert "Hello World" in response.text
@@ -1135,7 +1135,7 @@ async def test_openai_assistants_agent_basic_run_streaming():
         full_message: str = ""
         async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert chunk is not None
-            assert isinstance(chunk, AgentRunResponseUpdate)
+            assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_message += chunk.text
 
@@ -1159,14 +1159,14 @@ async def test_openai_assistants_agent_thread_persistence():
         first_response = await agent.run(
             "Remember this number: 42. What number did I just tell you to remember?", thread=thread
         )
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert "42" in first_response.text
 
         # Second message - test conversation memory
         second_response = await agent.run(
             "What number did I tell you to remember in my previous message?", thread=thread
         )
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert "42" in second_response.text
 
         # Verify thread has been populated with conversation ID
@@ -1190,7 +1190,7 @@ async def test_openai_assistants_agent_existing_thread_id():
         response1 = await agent.run("What's the weather in Paris?", thread=thread)
 
         # Validate first response
-        assert isinstance(response1, AgentRunResponse)
+        assert isinstance(response1, AgentResponse)
         assert response1.text is not None
         assert any(word in response1.text.lower() for word in ["weather", "paris"])
 
@@ -1212,7 +1212,7 @@ async def test_openai_assistants_agent_existing_thread_id():
         response2 = await agent.run("What was the last city I asked about?", thread=thread)
 
         # Validate that the agent remembers the previous conversation
-        assert isinstance(response2, AgentRunResponse)
+        assert isinstance(response2, AgentResponse)
         assert response2.text is not None
         # Should reference Paris from the previous conversation
         assert "paris" in response2.text.lower()
@@ -1232,7 +1232,7 @@ async def test_openai_assistants_agent_code_interpreter():
         response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         # Factorial of 5 is 120
         assert "120" in response.text or "factorial" in response.text.lower()
@@ -1251,7 +1251,7 @@ async def test_agent_level_tool_persistence():
         # First run - agent-level tool should be available
         first_response = await agent.run("What's the weather like in Chicago?")
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
         assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
@@ -1259,7 +1259,7 @@ async def test_agent_level_tool_persistence():
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])

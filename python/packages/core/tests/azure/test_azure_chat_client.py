@@ -17,8 +17,8 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDe
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     BaseChatClient,
     ChatAgent,
     ChatClientProtocol,
@@ -731,7 +731,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
         # Test basic run
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
         assert "response test" in response.text.lower()
@@ -747,7 +747,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
         # Test streaming run
         full_text = ""
         async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
-            assert isinstance(chunk, AgentRunResponseUpdate)
+            assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
 
@@ -769,13 +769,13 @@ async def test_azure_openai_chat_client_agent_thread_persistence():
         # First interaction
         response1 = await agent.run("My name is Alice. Remember this.", thread=thread)
 
-        assert isinstance(response1, AgentRunResponse)
+        assert isinstance(response1, AgentResponse)
         assert response1.text is not None
 
         # Second interaction - test memory
         response2 = await agent.run("What is my name?", thread=thread)
 
-        assert isinstance(response2, AgentRunResponse)
+        assert isinstance(response2, AgentResponse)
         assert response2.text is not None
         assert "alice" in response2.text.lower()
 
@@ -795,7 +795,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
         thread = first_agent.get_new_thread()
         first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # Preserve the thread for reuse
@@ -810,7 +810,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
             # Reuse the preserved thread
             second_response = await second_agent.run("What is my name?", thread=preserved_thread)
 
-            assert isinstance(second_response, AgentRunResponse)
+            assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "alice" in second_response.text.lower()
 
@@ -828,7 +828,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         # First run - agent-level tool should be available
         first_response = await agent.run("What's the weather like in Chicago?")
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
         assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
@@ -836,7 +836,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])

@@ -7,8 +7,8 @@ import pytest
 
 from agent_framework import (
     AgentExecutor,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -29,11 +29,11 @@ class DummyAgent(BaseAgent):
                     norm.append(m)
                 elif isinstance(m, str):
                     norm.append(ChatMessage(role=Role.USER, text=m))
-        return AgentRunResponse(messages=norm)
+        return AgentResponse(messages=norm)
 
     async def run_stream(self, messages=None, *, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
         # Minimal async generator
-        yield AgentRunResponseUpdate()
+        yield AgentResponseUpdate()
 
 
 def test_builder_accepts_agents_directly():

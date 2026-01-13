@@ -6,8 +6,8 @@ from typing import Annotated, Any
 import pytest
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -55,9 +55,9 @@ class _KwargsCapturingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         self.captured_kwargs.append(dict(kwargs))
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} response")])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} response")])
 
     async def run_stream(
         self,
@@ -65,9 +65,9 @@ class _KwargsCapturingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         self.captured_kwargs.append(dict(kwargs))
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.name} response")])
+        yield AgentResponseUpdate(contents=[TextContent(text=f"{self.name} response")])
 
 
 # region Sequential Builder Tests

@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
 
-from agent_framework import AgentRunResponseUpdate, FunctionInvocationConfiguration, TextContent, ai_function
+from agent_framework import AgentResponseUpdate, FunctionInvocationConfiguration, TextContent, ai_function
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, ExecutionContext
@@ -36,9 +36,9 @@ class DummyAgent:
         thread: Any,
         tools: list[Any] | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+    ) -> AsyncGenerator[AgentResponseUpdate, None]:
         self.seen_tools = tools
-        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+        yield AgentResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
 
 
 class RecordingAgent:
@@ -59,9 +59,9 @@ class RecordingAgent:
         thread: Any,
         tools: list[Any] | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+    ) -> AsyncGenerator[AgentResponseUpdate, None]:
         self.seen_messages = messages
-        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+        yield AgentResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
 
 
 async def test_default_orchestrator_merges_client_tools() -> None:

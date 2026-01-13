@@ -15,8 +15,8 @@ from typing import Any, cast
 import azure.durable_functions as df
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatMessage,
     ErrorContent,
     Role,
@@ -95,7 +95,7 @@ class AgentEntity:
         self,
         context: df.DurableEntityContext,
         request: RunRequest | dict[str, Any] | str,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """(Deprecated) Execute the agent with a message directly in the entity.
 
         Args:
@@ -103,7 +103,7 @@ class AgentEntity:
             request: RunRequest object, dict, or string message (for backward compatibility)
 
         Returns:
-            AgentRunResponse enriched with execution metadata.
+            AgentResponse enriched with execution metadata.
         """
         return await self.run(context, request)
 
@@ -111,7 +111,7 @@ class AgentEntity:
         self,
         context: df.DurableEntityContext,
         request: RunRequest | dict[str, Any] | str,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Execute the agent with a message directly in the entity.
 
         Args:
@@ -119,7 +119,7 @@ class AgentEntity:
             request: RunRequest object, dict, or string message (for backward compatibility)
 
         Returns:
-            AgentRunResponse enriched with execution metadata.
+            AgentResponse enriched with execution metadata.
         """
         if isinstance(request, str):
             run_request = RunRequest(message=request, role=Role.USER)
@@ -159,7 +159,7 @@ class AgentEntity:
             if response_format:
                 run_kwargs["options"]["response_format"] = response_format
 
-            agent_run_response: AgentRunResponse = await self._invoke_agent(
+            agent_response: AgentResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
                 correlation_id=correlation_id,
                 thread_id=thread_id,
@@ -168,11 +168,11 @@ class AgentEntity:
 
             logger.debug(
                 "[AgentEntity.run] Agent invocation completed - response type: %s",
-                type(agent_run_response).__name__,
+                type(agent_response).__name__,
             )
 
             try:
-                response_text = agent_run_response.text if agent_run_response.text else "No response"
+                response_text = agent_response.text if agent_response.text else "No response"
                 logger.debug(f"Response: {response_text[:100]}...")
             except Exception as extraction_error:
                 logger.error(
@@ -181,12 +181,12 @@ class AgentEntity:
                     exc_info=True,
                 )
 
-            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
+            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_response)
             self.state.data.conversation_history.append(state_response)
 
-            logger.debug("[AgentEntity.run] AgentRunResponse stored in conversation history")
+            logger.debug("[AgentEntity.run] AgentResponse stored in conversation history")
 
-            return agent_run_response
+            return agent_response
 
         except Exception as exc:
             logger.exception("[AgentEntity.run] Agent execution failed.")
@@ -196,7 +196,7 @@ class AgentEntity:
                 role=Role.ASSISTANT, contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)]
             )
 
-            error_response = AgentRunResponse(messages=[error_message])
+            error_response = AgentResponse(messages=[error_message])
 
             # Create and store error response in conversation history
             error_state_response = DurableAgentStateResponse.from_run_response(correlation_id, error_response)
@@ -211,7 +211,7 @@ class AgentEntity:
         correlation_id: str,
         thread_id: str,
         request_message: str,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Execute the agent, preferring streaming when available."""
         callback_context: AgentCallbackContext | None = None
         if self.callback is not None:
@@ -229,7 +229,7 @@ class AgentEntity:
                     stream_candidate = await stream_candidate
 
                 return await self._consume_stream(
-                    stream=cast(AsyncIterable[AgentRunResponseUpdate], stream_candidate),
+                    stream=cast(AsyncIterable[AgentResponseUpdate], stream_candidate),
                     callback_context=callback_context,
                 )
             except TypeError as type_error:
@@ -248,32 +248,32 @@ class AgentEntity:
         else:
             logger.debug("Agent does not expose run_stream; falling back to run().")
 
-        agent_run_response = await self._invoke_non_stream(run_kwargs)
-        await self._notify_final_response(agent_run_response, callback_context)
-        return agent_run_response
+        agent_response = await self._invoke_non_stream(run_kwargs)
+        await self._notify_final_response(agent_response, callback_context)
+        return agent_response
 
     async def _consume_stream(
         self,
-        stream: AsyncIterable[AgentRunResponseUpdate],
+        stream: AsyncIterable[AgentResponseUpdate],
         callback_context: AgentCallbackContext | None = None,
-    ) -> AgentRunResponse:
-        """Consume streaming responses and build the final AgentRunResponse."""
-        updates: list[AgentRunResponseUpdate] = []
+    ) -> AgentResponse:
+        """Consume streaming responses and build the final AgentResponse."""
+        updates: list[AgentResponseUpdate] = []
 
         async for update in stream:
             updates.append(update)
             await self._notify_stream_update(update, callback_context)
 
         if updates:
-            response = AgentRunResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_agent_run_response_updates(updates)
         else:
             logger.debug("[AgentEntity] No streaming updates received; creating empty response")
-            response = AgentRunResponse(messages=[])
+            response = AgentResponse(messages=[])
 
         await self._notify_final_response(response, callback_context)
         return response
 
-    async def _invoke_non_stream(self, run_kwargs: dict[str, Any]) -> AgentRunResponse:
+    async def _invoke_non_stream(self, run_kwargs: dict[str, Any]) -> AgentResponse:
         """Invoke the agent without streaming support."""
         run_callable = getattr(self.agent, "run", None)
         if run_callable is None or not callable(run_callable):
@@ -283,14 +283,14 @@ class AgentEntity:
         if inspect.isawaitable(result):
             result = await result
 
-        if not isinstance(result, AgentRunResponse):
-            raise TypeError(f"Agent run() must return an AgentRunResponse instance; received {type(result).__name__}")
+        if not isinstance(result, AgentResponse):
+            raise TypeError(f"Agent run() must return an AgentResponse instance; received {type(result).__name__}")
 
         return result
 
     async def _notify_stream_update(
         self,
-        update: AgentRunResponseUpdate,
+        update: AgentResponseUpdate,
         context: AgentCallbackContext | None,
     ) -> None:
         """Invoke the streaming callback if one is registered."""
@@ -310,7 +310,7 @@ class AgentEntity:
 
     async def _notify_final_response(
         self,
-        response: AgentRunResponse,
+        response: AgentResponse,
         context: AgentCallbackContext | None,
     ) -> None:
         """Invoke the final response callback if one is registered."""
