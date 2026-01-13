@@ -35,7 +35,7 @@ ChatClientAgent agent = await aiProjectClient.CreateAIAgentAsync(
     });
 
 // Set PersonInfo as the type parameter of RunAsync method to specify the expected structured output from the agent and invoke the agent with some unstructured input.
-AgentRunResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");
+AgentResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
 // Access the structured output via the Result property of the agent response.
 Console.WriteLine("Assistant Output:");
@@ -57,7 +57,7 @@ ChatClientAgent agentWithPersonInfo = aiProjectClient.CreateAIAgent(
     });
 
 // Invoke the agent with some unstructured input while streaming, to extract the structured information from.
-IAsyncEnumerable<AgentRunResponseUpdate> updates = agentWithPersonInfo.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
+IAsyncEnumerable<AgentResponseUpdate> updates = agentWithPersonInfo.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
 // Assemble all the parts of the streamed output, since we can only deserialize once we have the full json,
 // then deserialize the response into the PersonInfo class.

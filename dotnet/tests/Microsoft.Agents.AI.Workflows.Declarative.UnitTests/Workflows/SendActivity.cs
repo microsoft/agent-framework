@@ -77,7 +77,7 @@ public static class WorkflowProvider
                     Input: "{Local.TestValue}"
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;

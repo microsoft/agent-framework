@@ -93,7 +93,7 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        AgentRunResponse runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
+        AgentResponse runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
 
         // Main interaction loop
         const int MaxIterations = 10;

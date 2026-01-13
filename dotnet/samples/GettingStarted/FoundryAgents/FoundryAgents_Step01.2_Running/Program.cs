@@ -27,7 +27,7 @@ AgentVersion agentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName:
 AIAgent jokerAgent = aiProjectClient.GetAIAgent(agentVersion);
 
 // Invoke the agent with streaming support.
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))
 {
     Console.WriteLine(update);
 }

@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
-public class AgentRunResponseUpdateExtensionsTests
+public class AgentResponseUpdateExtensionsTests
 {
     public static IEnumerable<object[]> ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsMemberData()
     {
@@ -33,14 +33,14 @@ public class AgentRunResponseUpdateExtensionsTests
 
     [Fact]
     public void ToAgentRunResponseWithInvalidArgsThrows() =>
-        Assert.Throws<ArgumentNullException>("updates", () => ((List<AgentRunResponseUpdate>)null!).ToAgentRunResponse());
+        Assert.Throws<ArgumentNullException>("updates", () => ((List<AgentResponseUpdate>)null!).ToAgentRunResponse());
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ToAgentRunResponseSuccessfullyCreatesResponseAsync(bool useAsync)
     {
-        AgentRunResponseUpdate[] updates =
+        AgentResponseUpdate[] updates =
         [
             new(ChatRole.Assistant, "Hello") { ResponseId = "someResponse", MessageId = "12345", CreatedAt = new DateTimeOffset(1, 2, 3, 4, 5, 6, TimeSpan.Zero), AgentId = "agentId" },
             new(new("human"), ", ") { AuthorName = "Someone", AdditionalProperties = new() { ["a"] = "b" } },
@@ -50,7 +50,7 @@ public class AgentRunResponseUpdateExtensionsTests
             new() { Contents = [new UsageContent(new() { InputTokenCount = 4, OutputTokenCount = 5 })] },
         ];
 
-        AgentRunResponse response = useAsync ?
+        AgentResponse response = useAsync ?
             updates.ToAgentRunResponse() :
             await YieldAsync(updates).ToAgentRunResponseAsync();
         Assert.NotNull(response);
@@ -93,7 +93,7 @@ public class AgentRunResponseUpdateExtensionsTests
     [MemberData(nameof(ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsMemberData))]
     public async Task ToAgentRunResponseCoalescesVariousSequenceAndGapLengthsAsync(bool useAsync, int numSequences, int sequenceLength, int gapLength, bool gapBeginningEnd)
     {
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         List<string> expected = [];
 
@@ -133,7 +133,7 @@ public class AgentRunResponseUpdateExtensionsTests
             }
         }
 
-        AgentRunResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
+        AgentResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
         Assert.NotNull(response);
 
         ChatMessage message = response.Messages.Single();
@@ -154,7 +154,7 @@ public class AgentRunResponseUpdateExtensionsTests
     [InlineData(true)]
     public async Task ToAgentRunResponseCoalescesTextContentAndTextReasoningContentSeparatelyAsync(bool useAsync)
     {
-        AgentRunResponseUpdate[] updates =
+        AgentResponseUpdate[] updates =
         [
             new(null, "A"),
             new(null, "B"),
@@ -174,7 +174,7 @@ public class AgentRunResponseUpdateExtensionsTests
             new() { Contents = [new TextReasoningContent("P")] },
         ];
 
-        AgentRunResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
+        AgentResponse response = useAsync ? await YieldAsync(updates).ToAgentRunResponseAsync() : updates.ToAgentRunResponse();
         ChatMessage message = Assert.Single(response.Messages);
         Assert.Equal(8, message.Contents.Count);
         Assert.Equal("ABC", Assert.IsType<TextContent>(message.Contents[0]).Text);
@@ -190,14 +190,14 @@ public class AgentRunResponseUpdateExtensionsTests
     [Fact]
     public async Task ToAgentRunResponseUsesContentExtractedFromContentsAsync()
     {
-        AgentRunResponseUpdate[] updates =
+        AgentResponseUpdate[] updates =
         [
             new(null, "Hello, "),
             new(null, "world!"),
             new() { Contents = [new UsageContent(new() { TotalTokenCount = 42 })] },
         ];
 
-        AgentRunResponse response = await YieldAsync(updates).ToAgentRunResponseAsync();
+        AgentResponse response = await YieldAsync(updates).ToAgentRunResponseAsync();
 
         Assert.NotNull(response);
 
@@ -217,7 +217,7 @@ public class AgentRunResponseUpdateExtensionsTests
         DateTimeOffset late = new(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
         DateTimeOffset unixEpoch = new(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-        AgentRunResponseUpdate[] updates =
+        AgentResponseUpdate[] updates =
         [
 
             // Start with an early timestamp
@@ -242,7 +242,7 @@ public class AgentRunResponseUpdateExtensionsTests
             new(null, "g") { CreatedAt = null },
         ];
 
-        AgentRunResponse response = useAsync ?
+        AgentResponse response = useAsync ?
             updates.ToAgentRunResponse() :
             await YieldAsync(updates).ToAgentRunResponseAsync();
         Assert.Single(response.Messages);
@@ -283,13 +283,13 @@ public class AgentRunResponseUpdateExtensionsTests
         DateTimeOffset? second = timestamp2 is not null ? DateTimeOffset.Parse(timestamp2) : null;
         DateTimeOffset? expected = expectedTimestamp is not null ? DateTimeOffset.Parse(expectedTimestamp) : null;
 
-        AgentRunResponseUpdate[] updates =
+        AgentResponseUpdate[] updates =
         [
             new(ChatRole.Assistant, "a") { CreatedAt = first },
             new(null, "b") { CreatedAt = second },
         ];
 
-        AgentRunResponse response = useAsync ?
+        AgentResponse response = useAsync ?
             updates.ToAgentRunResponse() :
             await YieldAsync(updates).ToAgentRunResponseAsync();
 
@@ -299,9 +299,9 @@ public class AgentRunResponseUpdateExtensionsTests
         Assert.Equal(expected, response.CreatedAt);
     }
 
-    private static async IAsyncEnumerable<AgentRunResponseUpdate> YieldAsync(IEnumerable<AgentRunResponseUpdate> updates)
+    private static async IAsyncEnumerable<AgentResponseUpdate> YieldAsync(IEnumerable<AgentResponseUpdate> updates)
     {
-        foreach (AgentRunResponseUpdate update in updates)
+        foreach (AgentResponseUpdate update in updates)
         {
             await Task.Yield();
             yield return update;

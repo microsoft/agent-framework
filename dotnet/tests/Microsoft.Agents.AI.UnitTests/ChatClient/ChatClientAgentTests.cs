@@ -801,7 +801,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockService.Object, options: new());
 
         // Act
-        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages: [new(ChatRole.User, "Hello")], serializerOptions: JsonContext2.Default.Options);
+        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages: [new(ChatRole.User, "Hello")], serializerOptions: JsonContext2.Default.Options);
 
         // Assert
         Assert.Single(agentRunResponse.Messages);
@@ -1972,7 +1972,7 @@ public partial class ChatClientAgentTests
 
         // Act
         var updates = agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]);
-        List<AgentRunResponseUpdate> result = [];
+        List<AgentResponseUpdate> result = [];
         await foreach (var update in updates)
         {
             result.Add(update);

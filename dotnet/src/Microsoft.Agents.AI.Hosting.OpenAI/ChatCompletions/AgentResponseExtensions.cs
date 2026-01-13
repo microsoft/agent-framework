@@ -12,9 +12,9 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 /// <summary>
 /// Extension methods for converting agent responses to ChatCompletion models.
 /// </summary>
-internal static class AgentRunResponseExtensions
+internal static class AgentResponseExtensions
 {
-    public static ChatCompletion ToChatCompletion(this AgentRunResponse agentRunResponse, CreateChatCompletion request)
+    public static ChatCompletion ToChatCompletion(this AgentResponse agentRunResponse, CreateChatCompletion request)
     {
         IList<ChatCompletionChoice> choices = agentRunResponse.ToChoices();
 
@@ -29,7 +29,7 @@ internal static class AgentRunResponseExtensions
         };
     }
 
-    public static List<ChatCompletionChoice> ToChoices(this AgentRunResponse agentRunResponse)
+    public static List<ChatCompletionChoice> ToChoices(this AgentResponse agentRunResponse)
     {
         var chatCompletionChoices = new List<ChatCompletionChoice>();
         var index = 0;

@@ -65,7 +65,7 @@ public static class SampleWorkflowProvider
             bool autoSend = true;
             IList<ChatMessage>? inputMessages = null;
 
-            AgentRunResponse agentResponse =
+            AgentResponse agentResponse =
                 await InvokeAgentAsync(
                     context,
                     agentName,
@@ -102,7 +102,7 @@ public static class SampleWorkflowProvider
             bool autoSend = false;
             IList<ChatMessage>? inputMessages = null;
 
-            AgentRunResponse agentResponse =
+            AgentResponse agentResponse =
                 await InvokeAgentAsync(
                     context,
                     agentName,
@@ -175,7 +175,7 @@ public static class SampleWorkflowProvider
                     GOLD STAR!
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
@@ -196,7 +196,7 @@ public static class SampleWorkflowProvider
                     Let's try again later...
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;

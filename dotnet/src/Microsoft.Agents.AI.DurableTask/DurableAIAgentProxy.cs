@@ -23,7 +23,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         return ValueTask.FromResult<AgentThread>(new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!)));
     }
 
-    protected override async Task<AgentRunResponse> RunCoreAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -64,13 +64,13 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         if (isFireAndForget)
         {
             // If the request is fire and forget, return an empty response.
-            return new AgentRunResponse();
+            return new AgentResponse();
         }
 
         return await agentRunHandle.ReadAgentResponseAsync(cancellationToken);
     }
 
-    protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

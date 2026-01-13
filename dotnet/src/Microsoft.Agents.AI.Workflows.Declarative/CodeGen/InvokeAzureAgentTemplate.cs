@@ -64,7 +64,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");
             this.Write(@"
         
-        AgentRunResponse agentResponse =
+        AgentResponse agentResponse =
             await InvokeAgentAsync(
                 context,
                 agentName,

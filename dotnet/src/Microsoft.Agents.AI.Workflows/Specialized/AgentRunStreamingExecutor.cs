@@ -22,7 +22,7 @@ internal sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInput
     {
         List<ChatMessage>? roleChanged = messages.ChangeAssistantToUserForOtherParticipants(agent.Name ?? agent.Id);
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             updates.Add(update);

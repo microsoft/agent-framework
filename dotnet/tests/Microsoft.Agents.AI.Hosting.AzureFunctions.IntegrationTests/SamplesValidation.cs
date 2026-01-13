@@ -286,7 +286,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
             this._outputHelper.WriteLine($"Agent response: {startResponseText}");
 
-            // The response should be deserializable as an AgentRunResponse object and have a valid thread ID
+            // The response should be deserializable as an AgentResponse object and have a valid thread ID
             startResponse.Headers.TryGetValues("x-ms-thread-id", out IEnumerable<string>? agentIdValues);
             string? threadId = agentIdValues?.FirstOrDefault();
             Assert.NotNull(threadId);

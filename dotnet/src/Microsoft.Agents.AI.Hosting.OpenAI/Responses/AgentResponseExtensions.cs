@@ -13,19 +13,19 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// <summary>
 /// Extension methods for converting agent responses to Response models.
 /// </summary>
-internal static class AgentRunResponseExtensions
+internal static class AgentResponseExtensions
 {
     private static ChatRole s_DeveloperRole => new("developer");
 
     /// <summary>
-    /// Converts an AgentRunResponse to a Response model.
+    /// Converts an AgentResponse to a Response model.
     /// </summary>
     /// <param name="agentRunResponse">The agent run response to convert.</param>
     /// <param name="request">The original create response request.</param>
     /// <param name="context">The agent invocation context.</param>
     /// <returns>A Response model.</returns>
     public static Response ToResponse(
-        this AgentRunResponse agentRunResponse,
+        this AgentResponse agentRunResponse,
         CreateResponse request,
         AgentInvocationContext context)
     {

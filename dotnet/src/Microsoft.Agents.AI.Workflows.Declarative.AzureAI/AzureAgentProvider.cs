@@ -90,7 +90,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
         string agentId,
         string? agentVersion,
         string? conversationId,
@@ -120,12 +120,12 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         ChatClientAgentRunOptions runOptions = new(chatOptions);
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentResponse =
+        IAsyncEnumerable<AgentResponseUpdate> agentResponse =
             messages is not null ?
                 agent.RunStreamingAsync([.. messages], null, runOptions, cancellationToken) :
                 agent.RunStreamingAsync([new ChatMessage(ChatRole.User, string.Empty)], null, runOptions, cancellationToken);
 
-        await foreach (AgentRunResponseUpdate update in agentResponse.ConfigureAwait(false))
+        await foreach (AgentResponseUpdate update in agentResponse.ConfigureAwait(false))
         {
             update.AuthorName = agentVersionResult.Name;
             yield return update;

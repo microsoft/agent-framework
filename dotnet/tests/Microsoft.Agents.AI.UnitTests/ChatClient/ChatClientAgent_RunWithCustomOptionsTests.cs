@@ -34,7 +34,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse result = await agent.RunAsync(thread, options);
+        AgentResponse result = await agent.RunAsync(thread, options);
 
         // Assert
         Assert.NotNull(result);
@@ -63,7 +63,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse result = await agent.RunAsync("Test message", thread, options);
+        AgentResponse result = await agent.RunAsync("Test message", thread, options);
 
         // Assert
         Assert.NotNull(result);
@@ -93,7 +93,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse result = await agent.RunAsync(message, thread, options);
+        AgentResponse result = await agent.RunAsync(message, thread, options);
 
         // Assert
         Assert.NotNull(result);
@@ -123,7 +123,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse result = await agent.RunAsync(messages, thread, options);
+        AgentResponse result = await agent.RunAsync(messages, thread, options);
 
         // Assert
         Assert.NotNull(result);
@@ -151,7 +151,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new(new ChatOptions { Temperature = 0.5f });
 
         // Act
-        AgentRunResponse result = await agent.RunAsync("Test", null, options);
+        AgentResponse result = await agent.RunAsync("Test", null, options);
 
         // Assert
         Assert.NotNull(result);
@@ -183,7 +183,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(thread, options))
         {
             updates.Add(update);
@@ -215,7 +215,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync("Test message", thread, options))
         {
             updates.Add(update);
@@ -248,7 +248,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(message, thread, options))
         {
             updates.Add(update);
@@ -281,7 +281,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(messages, thread, options))
         {
             updates.Add(update);
@@ -328,7 +328,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentRunResponse);
@@ -358,7 +358,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>("Test message", thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>("Test message", thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentRunResponse);
@@ -389,7 +389,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(message, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(message, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentRunResponse);
@@ -420,7 +420,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentRunResponse);
