@@ -137,9 +137,17 @@ def test_edge_can_handle():
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
 
+    _ = Edge(source_id=source.id, target_id=target.id)
+
+
+async def test_edge_should_route():
+    """Test edge should_route with no condition."""
+    source = MockExecutor(id="source_executor")
+    target = MockExecutor(id="target_executor")
+
     edge = Edge(source_id=source.id, target_id=target.id)
 
-    assert edge.should_route(MockMessage(data="test"))
+    assert await edge.should_route(MockMessage(data="test"))
 
 
 # endregion Edge
