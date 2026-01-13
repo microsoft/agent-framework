@@ -206,6 +206,7 @@ agents.md
 WARP.md
 **/memory-bank/
 **/projectBrief.md
+**/tmpclaude*
 
 # Azurite storage emulator files
 */__azurite_db_blob__.json
