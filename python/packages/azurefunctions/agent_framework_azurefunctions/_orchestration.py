@@ -182,31 +182,10 @@ class DurableAIAgent(AgentProtocol):
         """
         self.context = context
         self.agent_name = agent_name
-        self._id = str(uuid.uuid4())
-        self._name = agent_name
-        self._display_name = agent_name
-        self._description = f"Durable agent proxy for {agent_name}"
+        self.id = str(uuid.uuid4())
+        self.name = agent_name
+        self.description = f"Durable agent proxy for {agent_name}"
         logger.debug("[DurableAIAgent] Initialized for agent: %s", agent_name)
-
-    @property
-    def id(self) -> str:
-        """Get the unique identifier for this agent."""
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        """Get the name of the agent."""
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        """Get the display name of the agent."""
-        return self._display_name
-
-    @property
-    def description(self) -> str | None:
-        """Get the description of the agent."""
-        return self._description
 
     # We return an AgentTask here which is a TaskBase subclass.
     # This is an intentional deviation from AgentProtocol which defines run() as async.

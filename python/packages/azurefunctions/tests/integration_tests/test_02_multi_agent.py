@@ -15,8 +15,7 @@ Usage:
 """
 
 import pytest
-
-from .testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
+from testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [

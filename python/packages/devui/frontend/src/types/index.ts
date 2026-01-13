@@ -39,8 +39,8 @@ export interface AgentInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
-  middleware?: string[];
+  context_provider?: string | undefined;
+  middleware?: string[] | undefined;
 }
 
 // JSON Schema types for workflow input

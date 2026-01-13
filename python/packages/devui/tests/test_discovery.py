@@ -91,10 +91,6 @@ class NonStreamingAgent:
     name = "Non-Streaming Agent"
     description = "Agent without run_stream"
 
-    @property
-    def display_name(self):
-        return self.name
-
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentRunResponse(
             messages=[ChatMessage(

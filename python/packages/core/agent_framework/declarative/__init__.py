@@ -5,7 +5,21 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_declarative"
 PACKAGE_NAME = "agent-framework-declarative"
-_IMPORTS = ["__version__", "AgentFactory", "DeclarativeLoaderError", "ProviderLookupError", "ProviderTypeMapping"]
+_IMPORTS = [
+    "__version__",
+    "AgentFactory",
+    "AgentExternalInputRequest",
+    "AgentExternalInputResponse",
+    "AgentInvocationError",
+    "DeclarativeLoaderError",
+    "DeclarativeWorkflowError",
+    "ExternalInputRequest",
+    "ExternalInputResponse",
+    "ProviderLookupError",
+    "ProviderTypeMapping",
+    "WorkflowFactory",
+    "WorkflowState",
+]
 
 
 def __getattr__(name: str) -> Any:

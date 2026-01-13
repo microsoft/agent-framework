@@ -53,7 +53,7 @@ def wrap_participant(participant: AgentProtocol | Executor, *, executor_id: str 
             f"Participants must implement AgentProtocol or be Executor instances. Got {type(participant).__name__}."
         )
 
-    executor_id = executor_id or participant.display_name
+    executor_id = executor_id or participant.name or participant.id
     return AgentExecutor(participant, id=executor_id)
 
 
@@ -89,11 +89,11 @@ def build_alias_map(participant: AgentProtocol | Executor, executor: Executor) -
 
     if isinstance(participant, AgentProtocol):
         name = getattr(participant, "name", None)
-        display = getattr(participant, "display_name", None)
-        _register([name, display])
+        agent_id = getattr(participant, "id", None)
+        _register([name, agent_id])
     else:
-        display = getattr(participant, "display_name", None)
-        _register([display])
+        participant_id = getattr(participant, "id", None)
+        _register([participant_id])
 
     return aliases
 
