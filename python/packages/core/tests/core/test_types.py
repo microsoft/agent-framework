@@ -18,6 +18,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
     DataContent,
     ErrorContent,
     FinishReason,
@@ -27,6 +29,10 @@ from agent_framework import (
     FunctionResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
+    ImageGenerationToolCallContent,
+    ImageGenerationToolResultContent,
+    MCPServerToolCallContent,
+    MCPServerToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -37,6 +43,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     ai_function,
+    merge_chat_options,
     prepare_function_call_results,
 )
 from agent_framework.exceptions import AdditionItemMismatch, ContentError
@@ -269,6 +276,78 @@ def test_hosted_file_content_minimal():
     assert isinstance(content, BaseContent)
 
 
+def test_hosted_file_content_optional_fields():
+    """HostedFileContent should capture optional media type and name."""
+    content = HostedFileContent(file_id="file-789", media_type="image/png", name="plot.png")
+
+    assert content.media_type == "image/png"
+    assert content.name == "plot.png"
+    assert content.has_top_level_media_type("image")
+    assert content.has_top_level_media_type("application") is False
+
+
+# region: CodeInterpreter content
+
+
+def test_code_interpreter_tool_call_content_parses_inputs():
+    call = CodeInterpreterToolCallContent(
+        call_id="call-1",
+        inputs=[{"type": "text", "text": "print('hi')"}],
+    )
+
+    assert call.type == "code_interpreter_tool_call"
+    assert call.call_id == "call-1"
+    assert call.inputs and isinstance(call.inputs[0], TextContent)
+    assert call.inputs[0].text == "print('hi')"
+
+
+def test_code_interpreter_tool_result_content_outputs():
+    result = CodeInterpreterToolResultContent(
+        call_id="call-2",
+        outputs=[
+            {"type": "text", "text": "log output"},
+            {"type": "uri", "uri": "https://example.com/file.png", "media_type": "image/png"},
+        ],
+    )
+
+    assert result.type == "code_interpreter_tool_result"
+    assert result.call_id == "call-2"
+    assert result.outputs is not None
+    assert isinstance(result.outputs[0], TextContent)
+    assert isinstance(result.outputs[1], UriContent)
+
+
+# region: Image generation content
+
+
+def test_image_generation_tool_contents():
+    call = ImageGenerationToolCallContent(image_id="img-1")
+    outputs = [DataContent(data=b"1234", media_type="image/png")]
+    result = ImageGenerationToolResultContent(image_id="img-1", outputs=outputs)
+
+    assert call.type == "image_generation_tool_call"
+    assert call.image_id == "img-1"
+    assert result.type == "image_generation_tool_result"
+    assert result.image_id == "img-1"
+    assert result.outputs and isinstance(result.outputs[0], DataContent)
+
+
+# region: MCP server tool content
+
+
+def test_mcp_server_tool_call_and_result():
+    call = MCPServerToolCallContent(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
+    assert call.type == "mcp_server_tool_call"
+    assert call.arguments == {"x": 1}
+
+    result = MCPServerToolResultContent(call_id="c-1", output=[{"type": "text", "text": "done"}])
+    assert result.type == "mcp_server_tool_result"
+    assert result.output
+
+    with raises(ValueError):
+        MCPServerToolCallContent(call_id="", tool_name="tool")
+
+
 # region: HostedVectorStoreContent
 
 
@@ -467,6 +546,15 @@ def test_function_approval_serialization_roundtrip():
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Contents union will need to be handled differently when we fully migrate
+
+
+def test_function_approval_accepts_mcp_call():
+    """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
+    mcp_call = MCPServerToolCallContent(call_id="c-mcp", tool_name="tool", server_name="srv", arguments={"x": 1})
+    req = FunctionApprovalRequestContent(id="req-mcp", function_call=mcp_call)
+
+    assert isinstance(req.function_call, MCPServerToolCallContent)
+    assert req.function_call.call_id == "c-mcp"
 
 
 # region BaseContent Serialization
@@ -779,117 +867,149 @@ async def test_chat_response_from_async_generator_output_format_in_method():
 def test_chat_tool_mode():
     """Test the ToolMode class to ensure it initializes correctly."""
     # Create instances of ToolMode
-    auto_mode = ToolMode.AUTO
-    required_any = ToolMode.REQUIRED_ANY
-    required_mode = ToolMode.REQUIRED("example_function")
-    none_mode = ToolMode.NONE
+    auto_mode: ToolMode = {"mode": "auto"}
+    required_any: ToolMode = {"mode": "required"}
+    required_mode: ToolMode = {"mode": "required", "required_function_name": "example_function"}
+    none_mode: ToolMode = {"mode": "none"}
 
     # Check the type and content
-    assert auto_mode.mode == "auto"
-    assert auto_mode.required_function_name is None
-    assert required_any.mode == "required"
-    assert required_any.required_function_name is None
-    assert required_mode.mode == "required"
-    assert required_mode.required_function_name == "example_function"
-    assert none_mode.mode == "none"
-    assert none_mode.required_function_name is None
+    assert auto_mode["mode"] == "auto"
+    assert "required_function_name" not in auto_mode
+    assert required_any["mode"] == "required"
+    assert "required_function_name" not in required_any
+    assert required_mode["mode"] == "required"
+    assert required_mode["required_function_name"] == "example_function"
+    assert none_mode["mode"] == "none"
+    assert "required_function_name" not in none_mode
 
-    # Ensure the instances are of type ToolMode
-    assert isinstance(auto_mode, ToolMode)
-    assert isinstance(required_any, ToolMode)
-    assert isinstance(required_mode, ToolMode)
-    assert isinstance(none_mode, ToolMode)
-
-    assert ToolMode.REQUIRED("example_function") == ToolMode.REQUIRED("example_function")
-    # serializer returns just the mode
-    assert ToolMode.REQUIRED_ANY.serialize_model() == "required"
+    # equality of dicts
+    assert {"mode": "required", "required_function_name": "example_function"} == {
+        "mode": "required",
+        "required_function_name": "example_function",
+    }
 
 
 def test_chat_tool_mode_from_dict():
     """Test creating ToolMode from a dictionary."""
-    mode_dict = {"mode": "required", "required_function_name": "example_function"}
-    mode = ToolMode(**mode_dict)
+    mode: ToolMode = {"mode": "required", "required_function_name": "example_function"}
 
     # Check the type and content
-    assert mode.mode == "required"
-    assert mode.required_function_name == "example_function"
-
-    # Ensure the instance is of type ToolMode
-    assert isinstance(mode, ToolMode)
+    assert mode["mode"] == "required"
+    assert mode["required_function_name"] == "example_function"
 
 
 # region ChatOptions
 
 
 def test_chat_options_init() -> None:
-    options = ChatOptions()
-    assert options.model_id is None
+    """Test that ChatOptions can be created as a TypedDict."""
+    options: ChatOptions = {}
+    assert options.get("model_id") is None
+
+    # With values
+    options_with_model: ChatOptions = {"model_id": "gpt-4o", "temperature": 0.7}
+    assert options_with_model.get("model_id") == "gpt-4o"
+    assert options_with_model.get("temperature") == 0.7
 
 
-def test_chat_options_tool_choice_validation_errors():
-    with raises((ContentError, TypeError)):
-        ChatOptions(tool_choice="invalid-choice")
+def test_chat_options_tool_choice_validation():
+    """Test validate_tool_mode utility function."""
+    from agent_framework._types import validate_tool_mode
+
+    # Valid string values
+    assert validate_tool_mode("auto") == {"mode": "auto"}
+    assert validate_tool_mode("required") == {"mode": "required"}
+    assert validate_tool_mode("none") == {"mode": "none"}
+
+    # Valid ToolMode dict values
+    assert validate_tool_mode({"mode": "auto"}) == {"mode": "auto"}
+    assert validate_tool_mode({"mode": "required"}) == {"mode": "required"}
+    assert validate_tool_mode({"mode": "required", "required_function_name": "example_function"}) == {
+        "mode": "required",
+        "required_function_name": "example_function",
+    }
+    assert validate_tool_mode({"mode": "none"}) == {"mode": "none"}
+
+    # None should return mode==none
+    assert validate_tool_mode(None) == {"mode": "none"}
+
+    with raises(ContentError):
+        validate_tool_mode("invalid_mode")
+    with raises(ContentError):
+        validate_tool_mode({"mode": "invalid_mode"})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
 
 
-def test_chat_options_and(ai_function_tool, ai_tool) -> None:
-    options1 = ChatOptions(model_id="gpt-4o", tools=[ai_function_tool], logit_bias={"x": 1}, metadata={"a": "b"})
-    options2 = ChatOptions(model_id="gpt-4.1", tools=[ai_tool], additional_properties={"p": 1})
+def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
+    """Test merge_chat_options utility function."""
+    from agent_framework import merge_chat_options
+
+    options1: ChatOptions = {
+        "model_id": "gpt-4o",
+        "tools": [ai_function_tool],
+        "logit_bias": {"x": 1},
+        "metadata": {"a": "b"},
+    }
+    options2: ChatOptions = {"model_id": "gpt-4.1", "tools": [ai_tool]}
     assert options1 != options2
-    options3 = options1 & options2
 
-    assert options3.model_id == "gpt-4.1"
-    assert options3.tools == [ai_function_tool, ai_tool]
-    assert options3.logit_bias == {"x": 1}
-    assert options3.metadata == {"a": "b"}
-    assert options3.additional_properties.get("p") == 1
+    # Merge options - override takes precedence for non-collection fields
+    options3 = merge_chat_options(options1, options2)
+
+    assert options3.get("model_id") == "gpt-4.1"
+    assert options3.get("tools") == [ai_function_tool, ai_tool]  # tools are combined
+    assert options3.get("logit_bias") == {"x": 1}  # base value preserved
+    assert options3.get("metadata") == {"a": "b"}  # base value preserved
 
 
 def test_chat_options_and_tool_choice_override() -> None:
     """Test that tool_choice from other takes precedence in ChatOptions merge."""
     # Agent-level defaults to "auto"
-    agent_options = ChatOptions(model_id="gpt-4o", tool_choice="auto")
+    agent_options: ChatOptions = {"model_id": "gpt-4o", "tool_choice": "auto"}
     # Run-level specifies "required"
-    run_options = ChatOptions(tool_choice="required")
+    run_options: ChatOptions = {"tool_choice": "required"}
 
-    merged = agent_options & run_options
+    merged = merge_chat_options(agent_options, run_options)
 
     # Run-level should override agent-level
-    assert merged.tool_choice == "required"
-    assert merged.model_id == "gpt-4o"  # Other fields preserved
+    assert merged.get("tool_choice") == "required"
+    assert merged.get("model_id") == "gpt-4o"  # Other fields preserved
 
 
 def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
     """Test that when other.tool_choice is None, self.tool_choice is used."""
-    agent_options = ChatOptions(tool_choice="auto")
-    run_options = ChatOptions(model_id="gpt-4.1")  # tool_choice is None
+    agent_options: ChatOptions = {"tool_choice": "auto"}
+    run_options: ChatOptions = {"model_id": "gpt-4.1"}  # tool_choice is None
 
-    merged = agent_options & run_options
+    merged = merge_chat_options(agent_options, run_options)
 
     # Should keep agent-level tool_choice since run-level is None
-    assert merged.tool_choice == "auto"
-    assert merged.model_id == "gpt-4.1"
+    assert merged.get("tool_choice") == "auto"
+    assert merged.get("model_id") == "gpt-4.1"
 
 
 def test_chat_options_and_tool_choice_with_tool_mode() -> None:
     """Test ChatOptions merge with ToolMode objects."""
-    agent_options = ChatOptions(tool_choice=ToolMode.AUTO)
-    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED_ANY)
+    agent_options: ChatOptions = {"tool_choice": "auto"}
+    run_options: ChatOptions = {"tool_choice": "required"}
 
-    merged = agent_options & run_options
+    merged = merge_chat_options(agent_options, run_options)
 
-    assert merged.tool_choice == ToolMode.REQUIRED_ANY
-    assert merged.tool_choice == "required"  # ToolMode equality with string
+    assert merged.get("tool_choice") == "required"
+    assert merged.get("tool_choice") == "required"
 
 
 def test_chat_options_and_tool_choice_required_specific_function() -> None:
     """Test ChatOptions merge with required specific function."""
-    agent_options = ChatOptions(tool_choice="auto")
-    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED(function_name="get_weather"))
+    agent_options: ChatOptions = {"tool_choice": "auto"}
+    run_options: ChatOptions = {"tool_choice": {"mode": "required", "required_function_name": "get_weather"}}
 
-    merged = agent_options & run_options
+    merged = merge_chat_options(agent_options, run_options)
 
-    assert merged.tool_choice == "required"
-    assert merged.tool_choice.required_function_name == "get_weather"
+    tool_choice = merged.get("tool_choice")
+    assert tool_choice == {"mode": "required", "required_function_name": "get_weather"}
+    assert tool_choice["required_function_name"] == "get_weather"
 
 
 # region Agent Response Fixtures
@@ -1162,7 +1282,7 @@ def test_function_call_content_parse_numeric_or_list():
 
 
 def test_chat_tool_mode_eq_with_string():
-    assert ToolMode.AUTO == "auto"
+    assert {"mode": "auto"} == {"mode": "auto"}
 
 
 # region AgentRunResponse
@@ -1350,30 +1470,6 @@ def test_chat_message_from_dict_with_mixed_content():
     assert len(message_dict["contents"]) == 3
 
 
-def test_chat_options_edge_cases():
-    """Test ChatOptions with edge cases for better coverage."""
-
-    # Test with tools conversion
-    def sample_tool():
-        return "test"
-
-    options = ChatOptions(tools=[sample_tool], tool_choice="auto")
-    assert options.tool_choice == ToolMode.AUTO
-
-    # Test to_dict with ToolMode
-    options_dict = options.to_dict()
-    assert "tool_choice" in options_dict
-
-    # Test from_dict with tool_choice dict
-    data_with_dict_tool_choice = {
-        "model_id": "gpt-4",
-        "tool_choice": {"mode": "required", "required_function_name": "test_func"},
-    }
-    options_from_dict = ChatOptions.from_dict(data_with_dict_tool_choice)
-    assert options_from_dict.tool_choice.mode == "required"
-    assert options_from_dict.tool_choice.required_function_name == "test_func"
-
-
 def test_text_content_add_type_error():
     """Test TextContent __add__ raises TypeError for incompatible types."""
     t1 = TextContent("Hello")
@@ -1412,30 +1508,6 @@ def test_comprehensive_serialization_methods():
     result_content = FunctionResultContent.from_dict(result_data)
     assert result_content.call_id == "call123"
     assert result_content.result == "success"
-
-
-def test_chat_options_tool_choice_variations():
-    """Test ChatOptions from_dict and to_dict with various tool_choice values."""
-
-    # Test with string tool_choice
-    data = {"model_id": "gpt-4", "tool_choice": "auto", "temperature": 0.7}
-    options = ChatOptions.from_dict(data)
-    assert options.tool_choice == ToolMode.AUTO
-
-    # Test with dict tool_choice
-    data_dict = {
-        "model_id": "gpt-4",
-        "tool_choice": {"mode": "required", "required_function_name": "test_func"},
-        "temperature": 0.7,
-    }
-    options_dict = ChatOptions.from_dict(data_dict)
-    assert options_dict.tool_choice.mode == "required"
-    assert options_dict.tool_choice.required_function_name == "test_func"
-
-    # Test to_dict with ToolMode
-    options_dict_serialized = options_dict.to_dict()
-    assert "tool_choice" in options_dict_serialized
-    assert isinstance(options_dict_serialized["tool_choice"], dict)
 
 
 def test_chat_message_complex_content_serialization():

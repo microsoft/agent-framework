@@ -46,7 +46,7 @@ async def main() -> None:
         result = await agent.run(
             query,
             # Specify type to use as response
-            additional_chat_options={
+            options={
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {

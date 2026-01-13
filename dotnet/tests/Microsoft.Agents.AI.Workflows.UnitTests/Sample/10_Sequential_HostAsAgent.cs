@@ -21,7 +21,7 @@ internal static class Step10EntryPoint
     {
         AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
 
-        AgentThread thread = hostAgent.GetNewThread();
+        AgentThread thread = await hostAgent.GetNewThreadAsync();
         foreach (string input in inputs)
         {
             AgentRunResponse response;

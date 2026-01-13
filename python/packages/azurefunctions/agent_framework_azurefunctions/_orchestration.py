@@ -6,7 +6,7 @@ This module provides support for using agents inside Durable Function orchestrat
 """
 
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from agent_framework import (
@@ -182,31 +182,10 @@ class DurableAIAgent(AgentProtocol):
         """
         self.context = context
         self.agent_name = agent_name
-        self._id = str(uuid.uuid4())
-        self._name = agent_name
-        self._display_name = agent_name
-        self._description = f"Durable agent proxy for {agent_name}"
+        self.id = str(uuid.uuid4())
+        self.name = agent_name
+        self.description = f"Durable agent proxy for {agent_name}"
         logger.debug("[DurableAIAgent] Initialized for agent: %s", agent_name)
-
-    @property
-    def id(self) -> str:
-        """Get the unique identifier for this agent."""
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        """Get the name of the agent."""
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        """Get the display name of the agent."""
-        return self._display_name
-
-    @property
-    def description(self) -> str | None:
-        """Get the description of the agent."""
-        return self._description
 
     # We return an AgentTask here which is a TaskBase subclass.
     # This is an intentional deviation from AgentProtocol which defines run() as async.
@@ -214,7 +193,7 @@ class DurableAIAgent(AgentProtocol):
     # a typed AgentRunResponse result.
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
@@ -303,7 +282,7 @@ class DurableAIAgent(AgentProtocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -348,7 +327,7 @@ class DurableAIAgent(AgentProtocol):
         """
         return "\n".join([msg.text or "" for msg in messages])
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def _normalize_messages(self, messages: str | ChatMessage | Sequence[str | ChatMessage] | None) -> str:
         """Convert supported message inputs to a single string."""
         if messages is None:
             return ""

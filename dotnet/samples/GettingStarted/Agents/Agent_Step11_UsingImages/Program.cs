@@ -22,7 +22,7 @@ ChatMessage message = new(ChatRole.User, [
     new UriContent("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg", "image/jpeg")
 ]);
 
-var thread = agent.GetNewThread();
+var thread = await agent.GetNewThreadAsync();
 
 await foreach (var update in agent.RunStreamingAsync(message, thread))
 {

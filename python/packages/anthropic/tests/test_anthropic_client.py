@@ -595,6 +595,53 @@ def test_parse_contents_from_anthropic_tool_use(mock_anthropic_client: MagicMock
     assert result[0].name == "get_weather"
 
 
+def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(mock_anthropic_client: MagicMock) -> None:
+    """Test that input_json_delta events have empty name to prevent duplicate ToolCallStartEvents.
+
+    When streaming tool calls, the initial tool_use event provides the name,
+    and subsequent input_json_delta events should have name="" to prevent
+    ag-ui from emitting duplicate ToolCallStartEvents.
+    """
+    chat_client = create_test_anthropic_client(mock_anthropic_client)
+
+    # First, simulate a tool_use event that sets _last_call_id_name
+    tool_use_content = MagicMock()
+    tool_use_content.type = "tool_use"
+    tool_use_content.id = "call_123"
+    tool_use_content.name = "get_weather"
+    tool_use_content.input = {}
+
+    result = chat_client._parse_contents_from_anthropic([tool_use_content])
+    assert len(result) == 1
+    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].call_id == "call_123"
+    assert result[0].name == "get_weather"  # Initial event has name
+
+    # Now simulate input_json_delta events (argument streaming)
+    delta_content_1 = MagicMock()
+    delta_content_1.type = "input_json_delta"
+    delta_content_1.partial_json = '{"location":'
+
+    result = chat_client._parse_contents_from_anthropic([delta_content_1])
+    assert len(result) == 1
+    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].call_id == "call_123"
+    assert result[0].name == ""  # Delta events should have empty name
+    assert result[0].arguments == '{"location":'
+
+    # Another delta
+    delta_content_2 = MagicMock()
+    delta_content_2.type = "input_json_delta"
+    delta_content_2.partial_json = '"San Francisco"}'
+
+    result = chat_client._parse_contents_from_anthropic([delta_content_2])
+    assert len(result) == 1
+    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].call_id == "call_123"
+    assert result[0].name == ""  # Still empty name for subsequent deltas
+    assert result[0].arguments == '"San Francisco"}'
+
+
 # Stream Processing Tests
 
 
@@ -630,7 +677,7 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
     chat_options = ChatOptions(max_tokens=10)
 
     response = await chat_client._inner_get_response(  # type: ignore[attr-defined]
-        messages=messages, chat_options=chat_options
+        messages=messages, options=chat_options
     )
 
     assert response is not None
@@ -655,7 +702,7 @@ async def test_inner_get_streaming_response(mock_anthropic_client: MagicMock) ->
 
     chunks: list[ChatResponseUpdate] = []
     async for chunk in chat_client._inner_get_streaming_response(  # type: ignore[attr-defined]
-        messages=messages, chat_options=chat_options
+        messages=messages, options=chat_options
     ):
         if chunk:
             chunks.append(chunk)
@@ -683,7 +730,7 @@ async def test_anthropic_client_integration_basic_chat() -> None:
 
     messages = [ChatMessage(role=Role.USER, text="Say 'Hello, World!' and nothing else.")]
 
-    response = await client.get_response(messages=messages, chat_options=ChatOptions(max_tokens=50))
+    response = await client.get_response(messages=messages, options={"max_tokens": 50})
 
     assert response is not None
     assert len(response.messages) > 0
@@ -701,7 +748,7 @@ async def test_anthropic_client_integration_streaming_chat() -> None:
     messages = [ChatMessage(role=Role.USER, text="Count from 1 to 5.")]
 
     chunks = []
-    async for chunk in client.get_streaming_response(messages=messages, chat_options=ChatOptions(max_tokens=50)):
+    async for chunk in client.get_streaming_response(messages=messages, options={"max_tokens": 50}):
         chunks.append(chunk)
 
     assert len(chunks) > 0
@@ -719,7 +766,7 @@ async def test_anthropic_client_integration_function_calling() -> None:
 
     response = await client.get_response(
         messages=messages,
-        chat_options=ChatOptions(tools=tools, max_tokens=100),
+        options={"tools": tools, "max_tokens": 100},
     )
 
     assert response is not None
@@ -749,7 +796,7 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
 
     response = await client.get_response(
         messages=messages,
-        chat_options=ChatOptions(tools=tools, max_tokens=100),
+        options={"tools": tools, "max_tokens": 100},
     )
 
     assert response is not None
@@ -767,7 +814,7 @@ async def test_anthropic_client_integration_with_system_message() -> None:
         ChatMessage(role=Role.USER, text="Hello!"),
     ]
 
-    response = await client.get_response(messages=messages, chat_options=ChatOptions(max_tokens=50))
+    response = await client.get_response(messages=messages, options={"max_tokens": 50})
 
     assert response is not None
     assert len(response.messages) > 0
@@ -783,7 +830,7 @@ async def test_anthropic_client_integration_temperature_control() -> None:
 
     response = await client.get_response(
         messages=messages,
-        chat_options=ChatOptions(max_tokens=20, temperature=0.0),
+        options={"max_tokens": 20, "temperature": 0.0},
     )
 
     assert response is not None

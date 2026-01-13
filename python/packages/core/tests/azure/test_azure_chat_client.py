@@ -212,7 +212,7 @@ async def test_cmc_with_logit_bias(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    await azure_chat_client.get_response(messages=chat_history, logit_bias=token_bias)
+    await azure_chat_client.get_response(messages=chat_history, options={"logit_bias": token_bias})
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
@@ -237,7 +237,7 @@ async def test_cmc_with_stop(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    await azure_chat_client.get_response(messages=chat_history, stop=stop)
+    await azure_chat_client.get_response(messages=chat_history, options={"stop": stop})
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
@@ -300,7 +300,7 @@ async def test_azure_on_your_data(
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
-        additional_properties={"extra_body": expected_data_settings},
+        options={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
@@ -370,7 +370,7 @@ async def test_azure_on_your_data_string(
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
-        additional_properties={"extra_body": expected_data_settings},
+        options={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
@@ -429,7 +429,7 @@ async def test_azure_on_your_data_fail(
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
-        additional_properties={"extra_body": expected_data_settings},
+        options={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
@@ -652,8 +652,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
 
     assert response is not None
@@ -709,8 +708,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     # Test that the client can be used to get a response
     response = azure_chat_client.get_streaming_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
     full_message: str = ""
     async for chunk in response:

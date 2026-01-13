@@ -17,9 +17,9 @@ from agent_framework import (
     RequestInfoEvent,
     Role,
     TextContent,
-    ToolMode,
     WorkflowEvent,
     WorkflowOutputEvent,
+    resolve_agent_id,
     use_function_invocation,
 )
 
@@ -27,6 +27,8 @@ from agent_framework import (
 @use_function_invocation
 class MockChatClient:
     """Mock chat client for testing handoff workflows."""
+
+    additional_properties: dict[str, Any]
 
     def __init__(
         self,
@@ -44,10 +46,6 @@ class MockChatClient:
         self._name = name
         self._handoff_to = handoff_to
         self._call_index = 0
-
-    @property
-    def additional_properties(self) -> dict[str, Any]:
-        return {}
 
     async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
         contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
@@ -154,7 +152,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
         # With autonomous mode, this should continue until the termination condition is met.
         .with_autonomous_mode(
             agents=[specialist],
-            turn_limits={specialist.display_name: 1},
+            turn_limits={resolve_agent_id(specialist): 1},
         )
         # This termination condition ensures the workflow runs through both agents.
         # First message is the user message to triage, second is triage's response, which
@@ -188,7 +186,7 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
     workflow = (
         HandoffBuilder(participants=[triage, worker])
         .with_start_agent(triage)
-        .with_autonomous_mode(agents=[worker], turn_limits={worker.display_name: 2})
+        .with_autonomous_mode(agents=[worker], turn_limits={resolve_agent_id(worker): 2})
         .with_termination_condition(lambda conv: False)
         .build()
     )
@@ -256,14 +254,12 @@ async def test_handoff_async_termination_condition() -> None:
 
 async def test_tool_choice_preserved_from_agent_config():
     """Verify that agent-level tool_choice configuration is preserved and not overridden."""
-
     # Create a mock chat client that records the tool_choice used
     recorded_tool_choices: list[Any] = []
 
-    async def mock_get_response(messages: Any, **kwargs: Any) -> ChatResponse:
-        chat_options = kwargs.get("chat_options")
-        if chat_options:
-            recorded_tool_choices.append(chat_options.tool_choice)
+    async def mock_get_response(messages: Any, options: dict[str, Any] | None = None, **kwargs: Any) -> ChatResponse:
+        if options:
+            recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, text="Response")],
             response_id="test_response",
@@ -272,11 +268,11 @@ async def test_tool_choice_preserved_from_agent_config():
     mock_client = MagicMock()
     mock_client.get_response = AsyncMock(side_effect=mock_get_response)
 
-    # Create agent with specific tool_choice configuration
+    # Create agent with specific tool_choice configuration via default_options
     agent = ChatAgent(
         chat_client=mock_client,
         name="test_agent",
-        tool_choice=ToolMode(mode="required"),  # type: ignore[arg-type]
+        default_options={"tool_choice": {"mode": "required"}},
     )
 
     # Run the agent
@@ -286,7 +282,7 @@ async def test_tool_choice_preserved_from_agent_config():
     assert len(recorded_tool_choices) > 0, "No tool_choice recorded"
     last_tool_choice = recorded_tool_choices[-1]
     assert last_tool_choice is not None, "tool_choice should not be None"
-    assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
+    assert last_tool_choice == {"mode": "required"}, f"Expected 'required', got {last_tool_choice}"
 
 
 # region Participant Factory Tests

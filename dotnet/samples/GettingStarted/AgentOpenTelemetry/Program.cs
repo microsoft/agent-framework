@@ -128,7 +128,7 @@ var agent = new ChatClientAgent(instrumentedChatClient,
     .UseOpenTelemetry(SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
     .Build();
 
-var thread = agent.GetNewThread();
+var thread = await agent.GetNewThreadAsync();
 
 appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 

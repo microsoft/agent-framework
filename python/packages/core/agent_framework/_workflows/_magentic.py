@@ -1613,7 +1613,7 @@ class MagenticBuilder:
             manager_agent = ChatAgent(
                 name="Coordinator",
                 chat_client=OpenAIChatClient(model_id="gpt-4o"),
-                chat_options=ChatOptions(temperature=0.3, seed=42),
+                options=ChatOptions(temperature=0.3, seed=42),
                 instructions="Be concise and focus on accuracy",
             )
 

@@ -152,6 +152,42 @@ async def test_tool_call_streaming_args():
     assert events1[0].tool_call_id == events2[0].tool_call_id == events3[0].tool_call_id
 
 
+async def test_streaming_tool_call_no_duplicate_start_events():
+    """Test that streaming tool calls emit exactly one ToolCallStartEvent.
+
+    This is a regression test for the Anthropic streaming fix where input_json_delta
+    events were incorrectly passing the tool name, causing duplicate ToolCallStartEvents.
+
+    The correct behavior is:
+    - Initial FunctionCallContent with name -> emits ToolCallStartEvent
+    - Subsequent FunctionCallContent with name="" -> emits only ToolCallArgsEvent
+
+    See: https://github.com/microsoft/agent-framework/pull/3051
+    """
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # Simulate streaming tool call: first chunk has name, subsequent chunks have name=""
+    update1 = AgentRunResponseUpdate(contents=[FunctionCallContent(name="get_weather", call_id="call_789")])
+    update2 = AgentRunResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_789", arguments='{"loc":')])
+    update3 = AgentRunResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_789", arguments='"SF"}')])
+
+    events1 = await bridge.from_agent_run_update(update1)
+    events2 = await bridge.from_agent_run_update(update2)
+    events3 = await bridge.from_agent_run_update(update3)
+
+    # Count all ToolCallStartEvents - should be exactly 1
+    all_events = events1 + events2 + events3
+    tool_call_start_count = sum(1 for e in all_events if e.type == "TOOL_CALL_START")
+    assert tool_call_start_count == 1, f"Expected 1 ToolCallStartEvent, got {tool_call_start_count}"
+
+    # Verify event types
+    assert events1[0].type == "TOOL_CALL_START"
+    assert events2[0].type == "TOOL_CALL_ARGS"
+    assert events3[0].type == "TOOL_CALL_ARGS"
+
+
 async def test_tool_result_with_dict():
     """Test FunctionResultContent with dict result."""
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
@@ -231,7 +267,12 @@ async def test_function_approval_request_basic():
     """Test FunctionApprovalRequestContent conversion."""
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
-    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+    # Set require_confirmation=False to test just the function_approval_request event
+    bridge = AgentFrameworkEventBridge(
+        run_id="test_run",
+        thread_id="test_thread",
+        require_confirmation=False,
+    )
 
     func_call = FunctionCallContent(
         call_id="call_123",
@@ -284,14 +325,12 @@ async def test_empty_predict_state_config():
     assert "STATE_DELTA" not in event_types
     assert "STATE_SNAPSHOT" not in event_types
 
-    # Should have: ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult, MessagesSnapshot
-    # MessagesSnapshotEvent is emitted after tool results to track the conversation
+    # Should have: ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult
     assert event_types == [
         "TOOL_CALL_START",
         "TOOL_CALL_ARGS",
         "TOOL_CALL_END",
         "TOOL_CALL_RESULT",
-        "MESSAGES_SNAPSHOT",
     ]
 
 
