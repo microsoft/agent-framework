@@ -636,7 +636,7 @@ class DefaultOrchestrator(Orchestrator):
                 context.update_thread_id(conv_id)
                 should_recreate_event_bridge = True
 
-            if hasattr(update, "response_id") and update.response_id and update.response_id != context.run_id:
+            if update.response_id and update.response_id != context.run_id:
                 context.update_run_id(update.response_id)
                 should_recreate_event_bridge = True
 
