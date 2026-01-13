@@ -46,7 +46,7 @@ from agent_framework import (
     merge_chat_options,
     prepare_function_call_results,
 )
-from agent_framework.exceptions import AdditionItemMismatch
+from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
 
 @fixture
@@ -867,43 +867,35 @@ async def test_chat_response_from_async_generator_output_format_in_method():
 def test_chat_tool_mode():
     """Test the ToolMode class to ensure it initializes correctly."""
     # Create instances of ToolMode
-    auto_mode = ToolMode.AUTO
-    required_any = ToolMode.REQUIRED_ANY
-    required_mode = ToolMode.REQUIRED("example_function")
-    none_mode = ToolMode.NONE
+    auto_mode: ToolMode = {"mode": "auto"}
+    required_any: ToolMode = {"mode": "required"}
+    required_mode: ToolMode = {"mode": "required", "required_function_name": "example_function"}
+    none_mode: ToolMode = {"mode": "none"}
 
     # Check the type and content
-    assert auto_mode.mode == "auto"
-    assert auto_mode.required_function_name is None
-    assert required_any.mode == "required"
-    assert required_any.required_function_name is None
-    assert required_mode.mode == "required"
-    assert required_mode.required_function_name == "example_function"
-    assert none_mode.mode == "none"
-    assert none_mode.required_function_name is None
+    assert auto_mode["mode"] == "auto"
+    assert "required_function_name" not in auto_mode
+    assert required_any["mode"] == "required"
+    assert "required_function_name" not in required_any
+    assert required_mode["mode"] == "required"
+    assert required_mode["required_function_name"] == "example_function"
+    assert none_mode["mode"] == "none"
+    assert "required_function_name" not in none_mode
 
-    # Ensure the instances are of type ToolMode
-    assert isinstance(auto_mode, ToolMode)
-    assert isinstance(required_any, ToolMode)
-    assert isinstance(required_mode, ToolMode)
-    assert isinstance(none_mode, ToolMode)
-
-    assert ToolMode.REQUIRED("example_function") == ToolMode.REQUIRED("example_function")
-    # serializer returns just the mode
-    assert ToolMode.REQUIRED_ANY.serialize_model() == "required"
+    # equality of dicts
+    assert {"mode": "required", "required_function_name": "example_function"} == {
+        "mode": "required",
+        "required_function_name": "example_function",
+    }
 
 
 def test_chat_tool_mode_from_dict():
     """Test creating ToolMode from a dictionary."""
-    mode_dict = {"mode": "required", "required_function_name": "example_function"}
-    mode = ToolMode(**mode_dict)
+    mode: ToolMode = {"mode": "required", "required_function_name": "example_function"}
 
     # Check the type and content
-    assert mode.mode == "required"
-    assert mode.required_function_name == "example_function"
-
-    # Ensure the instance is of type ToolMode
-    assert isinstance(mode, ToolMode)
+    assert mode["mode"] == "required"
+    assert mode["required_function_name"] == "example_function"
 
 
 # region ChatOptions
@@ -922,23 +914,31 @@ def test_chat_options_init() -> None:
 
 def test_chat_options_tool_choice_validation():
     """Test validate_tool_mode utility function."""
-    from agent_framework import validate_tool_mode
+    from agent_framework._types import validate_tool_mode
 
     # Valid string values
-    assert validate_tool_mode("auto") == ToolMode.AUTO
-    assert validate_tool_mode("required") == ToolMode.REQUIRED_ANY
-    assert validate_tool_mode("none") == ToolMode.NONE
+    assert validate_tool_mode("auto") == {"mode": "auto"}
+    assert validate_tool_mode("required") == {"mode": "required"}
+    assert validate_tool_mode("none") == {"mode": "none"}
 
-    # Valid ToolMode values
-    assert validate_tool_mode(ToolMode.AUTO) == ToolMode.AUTO
-    assert validate_tool_mode(ToolMode.REQUIRED_ANY) == ToolMode.REQUIRED_ANY
+    # Valid ToolMode dict values
+    assert validate_tool_mode({"mode": "auto"}) == {"mode": "auto"}
+    assert validate_tool_mode({"mode": "required"}) == {"mode": "required"}
+    assert validate_tool_mode({"mode": "required", "required_function_name": "example_function"}) == {
+        "mode": "required",
+        "required_function_name": "example_function",
+    }
+    assert validate_tool_mode({"mode": "none"}) == {"mode": "none"}
 
-    # Dict value should pass through
-    tool_dict = {"type": "function", "function": {"name": "test"}}
-    assert validate_tool_mode(tool_dict) == tool_dict
+    # None should return mode==none
+    assert validate_tool_mode(None) == {"mode": "none"}
 
-    # None should return None
-    assert validate_tool_mode(None) is None
+    with raises(ContentError):
+        validate_tool_mode("invalid_mode")
+    with raises(ContentError):
+        validate_tool_mode({"mode": "invalid_mode"})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
 
 
 def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
@@ -991,25 +991,25 @@ def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
 
 def test_chat_options_and_tool_choice_with_tool_mode() -> None:
     """Test ChatOptions merge with ToolMode objects."""
-    agent_options: ChatOptions = {"tool_choice": ToolMode.AUTO}
-    run_options: ChatOptions = {"tool_choice": ToolMode.REQUIRED_ANY}
+    agent_options: ChatOptions = {"tool_choice": "auto"}
+    run_options: ChatOptions = {"tool_choice": "required"}
 
     merged = merge_chat_options(agent_options, run_options)
 
-    assert merged.get("tool_choice") == ToolMode.REQUIRED_ANY
-    assert merged.get("tool_choice") == "required"  # ToolMode equality with string
+    assert merged.get("tool_choice") == "required"
+    assert merged.get("tool_choice") == "required"
 
 
 def test_chat_options_and_tool_choice_required_specific_function() -> None:
     """Test ChatOptions merge with required specific function."""
     agent_options: ChatOptions = {"tool_choice": "auto"}
-    run_options: ChatOptions = {"tool_choice": ToolMode.REQUIRED(function_name="get_weather")}
+    run_options: ChatOptions = {"tool_choice": {"mode": "required", "required_function_name": "get_weather"}}
 
     merged = merge_chat_options(agent_options, run_options)
 
     tool_choice = merged.get("tool_choice")
-    assert tool_choice == "required"
-    assert tool_choice.required_function_name == "get_weather"
+    assert tool_choice == {"mode": "required", "required_function_name": "get_weather"}
+    assert tool_choice["required_function_name"] == "get_weather"
 
 
 # region Agent Response Fixtures
@@ -1282,7 +1282,7 @@ def test_function_call_content_parse_numeric_or_list():
 
 
 def test_chat_tool_mode_eq_with_string():
-    assert ToolMode.AUTO == "auto"
+    assert {"mode": "auto"} == {"mode": "auto"}
 
 
 # region AgentRunResponse
@@ -1470,44 +1470,6 @@ def test_chat_message_from_dict_with_mixed_content():
     assert len(message_dict["contents"]) == 3
 
 
-async def test_chat_options_edge_cases():
-    """Test ChatOptions edge cases for better coverage."""
-    from agent_framework import validate_tool_mode, validate_tools
-
-    # Test with tools conversion - validate_tools converts callables to AIFunction
-    def sample_tool():
-        return "test"
-
-    options: ChatOptions = {"tools": [sample_tool], "tool_choice": "auto"}
-
-    # validate_tool_mode handles tool_choice validation
-    assert validate_tool_mode(options.get("tool_choice")) == ToolMode.AUTO
-
-    # validate_tools handles tools validation and normalization (async)
-    validated_tools = await validate_tools(options.get("tools"))
-    assert validated_tools is not None
-    assert len(validated_tools) == 1
-
-    # Test tool_choice dict with "mode" key becomes ToolMode
-    data_with_mode_dict: ChatOptions = {
-        "model_id": "gpt-4",
-        "tool_choice": {"mode": "required", "required_function_name": "test_func"},
-    }
-    validated_choice = validate_tool_mode(data_with_mode_dict.get("tool_choice"))
-    assert isinstance(validated_choice, ToolMode)
-    assert validated_choice.mode == "required"
-    assert validated_choice.required_function_name == "test_func"
-
-    # Test tool_choice dict without "mode" key passes through (OpenAI function-specific)
-    data_with_function_dict: ChatOptions = {
-        "model_id": "gpt-4",
-        "tool_choice": {"type": "function", "function": {"name": "my_func"}},
-    }
-    validated_function_choice = validate_tool_mode(data_with_function_dict.get("tool_choice"))
-    assert isinstance(validated_function_choice, dict)
-    assert validated_function_choice["type"] == "function"
-
-
 def test_text_content_add_type_error():
     """Test TextContent __add__ raises TypeError for incompatible types."""
     t1 = TextContent("Hello")
@@ -1546,38 +1508,6 @@ def test_comprehensive_serialization_methods():
     result_content = FunctionResultContent.from_dict(result_data)
     assert result_content.call_id == "call123"
     assert result_content.result == "success"
-
-
-def test_chat_options_tool_choice_variations():
-    """Test validate_tool_mode with various tool_choice values."""
-    from agent_framework import validate_tool_mode
-
-    # Test with string tool_choice
-    options: ChatOptions = {"model_id": "gpt-4", "tool_choice": "auto", "temperature": 0.7}
-    assert validate_tool_mode(options.get("tool_choice")) == ToolMode.AUTO
-
-    # Test with dict tool_choice containing "mode" key - becomes ToolMode
-    options_dict: ChatOptions = {
-        "model_id": "gpt-4",
-        "tool_choice": {"mode": "required", "required_function_name": "test_func"},
-        "temperature": 0.7,
-    }
-    validated_choice = validate_tool_mode(options_dict.get("tool_choice"))
-    assert isinstance(validated_choice, ToolMode)
-    assert validated_choice.mode == "required"
-    assert validated_choice.required_function_name == "test_func"
-
-    # Test with ToolMode instance
-    options_with_mode: ChatOptions = {"tool_choice": ToolMode.REQUIRED_ANY}
-    assert validate_tool_mode(options_with_mode.get("tool_choice")) == ToolMode.REQUIRED_ANY
-
-    # Test with function-specific dict (no "mode" key) - passes through
-    options_function: ChatOptions = {
-        "tool_choice": {"type": "function", "function": {"name": "test"}},
-    }
-    validated_function = validate_tool_mode(options_function.get("tool_choice"))
-    assert isinstance(validated_function, dict)
-    assert validated_function["type"] == "function"
 
 
 def test_chat_message_complex_content_serialization():

@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, TypedDict
+from typing import Any, Generic, Literal, TypedDict
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -67,6 +67,20 @@ logger = get_logger("agent_framework.openai")
 # region OpenAI Chat Options TypedDict
 
 
+class PredictionTextContent(TypedDict, total=False):
+    """Prediction text content options for OpenAI Chat completions."""
+
+    type: Literal["text"]
+    text: str
+
+
+class Prediction(TypedDict, total=False):
+    """Prediction options for OpenAI Chat completions."""
+
+    type: Literal["content"]
+    content: str | list[PredictionTextContent]
+
+
 class OpenAIChatOptions(ChatOptions, total=False):
     """OpenAI-specific chat options dict.
 
@@ -96,12 +110,14 @@ class OpenAIChatOptions(ChatOptions, total=False):
         logit_bias: Token bias values (-100 to 100).
         logprobs: Whether to return log probabilities.
         top_logprobs: Number of top log probabilities to return (0-20).
+        prediction: Whether to use predicted return tokens.
     """
 
     # OpenAI-specific generation parameters (supported by all models)
     logit_bias: dict[str | int, float]  # type: ignore[misc]
     logprobs: bool
     top_logprobs: int
+    prediction: Prediction
 
 
 TOpenAIChatOptions = TypeVar("TOpenAIChatOptions", bound=TypedDict, default="OpenAIChatOptions", covariant=True)  # type: ignore[valid-type]
@@ -185,50 +201,45 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
     # region content creation
 
-    def _prepare_tools_for_openai(
-        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _prepare_tools_for_openai(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> dict[str, Any]:
         chat_tools: list[dict[str, Any]] = []
+        web_search_options: dict[str, Any] | None = None
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
                     case AIFunction():
                         chat_tools.append(tool.to_json_schema_spec())
+                    case HostedWebSearchTool():
+                        web_search_options = (
+                            {
+                                "user_location": {
+                                    "approximate": tool.additional_properties.get("user_location", None),
+                                    "type": "approximate",
+                                }
+                            }
+                            if tool.additional_properties and "user_location" in tool.additional_properties
+                            else {}
+                        )
                     case _:
                         logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
             else:
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
-        return chat_tools
-
-    def _process_web_search_tool(
-        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]
-    ) -> dict[str, Any] | None:
-        for tool in tools:
-            if isinstance(tool, HostedWebSearchTool):
-                # Web search tool requires special handling
-                return (
-                    {
-                        "user_location": {
-                            "approximate": tool.additional_properties.get("user_location", None),
-                            "type": "approximate",
-                        }
-                    }
-                    if tool.additional_properties and "user_location" in tool.additional_properties
-                    else {}
-                )
-
-        return None
+        ret_dict: dict[str, Any] = {}
+        if chat_tools:
+            ret_dict["tools"] = chat_tools
+        if web_search_options is not None:
+            ret_dict["web_search_options"] = web_search_options
+        return ret_dict
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist
-        instructions = options.get("instructions")
-        if instructions:
-            from agent_framework._types import prepend_instructions_to_messages
+        from .._types import prepend_instructions_to_messages, validate_tool_mode
 
+        if instructions := options.get("instructions"):
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Start with a copy of options
-        run_options = {k: v for k, v in options.items() if v is not None}
+        run_options = {k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools"}}
 
         # messages
         if messages and "messages" not in run_options:
@@ -250,26 +261,28 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         # tools
         tools = options.get("tools")
         if tools is not None:
-            # Preprocess web search tool if it exists
-            if web_search_options := self._process_web_search_tool(tools):
-                run_options["web_search_options"] = web_search_options
-            run_options["tools"] = self._prepare_tools_for_openai(tools)
+            run_options.update(self._prepare_tools_for_openai(tools))
         if not run_options.get("tools"):
-            run_options.pop("tools", None)
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
-        if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
-            run_options["tool_choice"] = tool_choice["mode"]
+        if tool_choice := run_options.pop("tool_choice", None):
+            tool_mode = validate_tool_mode(tool_choice)
+            if (mode := tool_mode.get("mode")) == "required" and (
+                func_name := tool_mode.get("required_function_name")
+            ) is not None:
+                run_options["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": func_name},
+                }
+            else:
+                run_options["tool_choice"] = mode
 
         # response format
-        response_format = options.get("response_format")
-        if response_format:
+        if response_format := options.get("response_format"):
             if isinstance(response_format, dict):
                 run_options["response_format"] = response_format
             else:
                 run_options["response_format"] = type_to_response_format_param(response_format)
-
         return run_options
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: dict[str, Any]) -> "ChatResponse":

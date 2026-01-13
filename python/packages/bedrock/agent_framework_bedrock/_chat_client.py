@@ -29,6 +29,7 @@ from agent_framework import (
     prepare_function_call_results,
     use_chat_middleware,
     use_function_invocation,
+    validate_tool_mode,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
@@ -312,7 +313,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        request = self._build_converse_request(messages, options, **kwargs)
+        request = self._prepare_options(messages, options, **kwargs)
         raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
         return self._process_converse_response(raw_response)
 
@@ -336,19 +337,12 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             raw_representation=response.raw_representation,
         )
 
-    def _build_converse_request(
+    def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        # Prepend instructions from options if they exist
-        instructions = options.get("instructions")
-        if instructions:
-            from agent_framework._types import prepend_instructions_to_messages
-
-            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-
         model_id = options.get("model_id") or self.model_id
         if not model_id:
             raise ServiceInitializationError(
@@ -358,43 +352,41 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         system_prompts, conversation = self._prepare_bedrock_messages(messages)
         if not conversation:
             raise ServiceInitializationError("At least one non-system message is required for Bedrock requests.")
+        # Prepend instructions from options if they exist
+        if instructions := options.get("instructions"):
+            system_prompts = [{"text": instructions}, *system_prompts]
 
-        payload: dict[str, Any] = {
+        run_options: dict[str, Any] = {
             "modelId": model_id,
             "messages": conversation,
+            "inferenceConfig": {"maxTokens": options.get("max_tokens", DEFAULT_MAX_TOKENS)},
         }
         if system_prompts:
-            payload["system"] = system_prompts
+            run_options["system"] = system_prompts
 
-        inference_config: dict[str, Any] = {}
-        max_tokens = options.get("max_tokens")
-        inference_config["maxTokens"] = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
-        temperature = options.get("temperature")
-        if temperature is not None:
-            inference_config["temperature"] = temperature
-        top_p = options.get("top_p")
-        if top_p is not None:
-            inference_config["topP"] = top_p
-        stop = options.get("stop")
-        if stop is not None:
-            inference_config["stopSequences"] = stop
-        if inference_config:
-            payload["inferenceConfig"] = inference_config
+        if (temperature := options.get("temperature")) is not None:
+            run_options["inferenceConfig"]["temperature"] = temperature
+        if (top_p := options.get("top_p")) is not None:
+            run_options["inferenceConfig"]["topP"] = top_p
+        if (stop := options.get("stop")) is not None:
+            run_options["inferenceConfig"]["stopSequences"] = stop
 
-        tool_config = self._convert_tools_to_bedrock_config(options.get("tools"))
-        if tool_choice := self._convert_tool_choice(options.get("tool_choice")):
-            if tool_config is None:
-                tool_config = {}
-            tool_config["toolChoice"] = tool_choice
+        tool_config = self._prepare_tools(options.get("tools"))
+        if tool_mode := validate_tool_mode(options.get("tool_choice")):
+            tool_config = tool_config or {}
+            match tool_mode.get("mode"):
+                case "auto" | "none":
+                    tool_config["toolChoice"] = {tool_mode.get("mode"): {}}
+                case "required":
+                    if required_name := tool_mode.get("required_function_name"):
+                        tool_config["toolChoice"] = {"tool": {"name": required_name}}
+                    tool_config["toolChoice"] = {"any": {}}
+                case _:
+                    raise ServiceInitializationError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
-            payload["toolConfig"] = tool_config
+            run_options["toolConfig"] = tool_config
 
-        additional_properties = options.get("additional_properties")
-        if additional_properties:
-            payload.update(additional_properties)
-        if kwargs:
-            payload.update(kwargs)
-        return payload
+        return run_options
 
     def _prepare_bedrock_messages(
         self, messages: Sequence[ChatMessage]
@@ -547,12 +539,10 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 return {"text": str(value)}
         return {"text": str(value)}
 
-    def _convert_tools_to_bedrock_config(
-        self, tools: list[ToolProtocol | MutableMapping[str, Any]] | None
-    ) -> dict[str, Any] | None:
+    def _prepare_tools(self, tools: list[ToolProtocol | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
+        converted: list[dict[str, Any]] = []
         if not tools:
             return None
-        converted: list[dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, MutableMapping):
                 converted.append(dict(tool))
@@ -568,24 +558,6 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 continue
             logger.debug("Ignoring unsupported tool type for Bedrock: %s", type(tool))
         return {"tools": converted} if converted else None
-
-    def _convert_tool_choice(self, tool_choice: Any) -> dict[str, Any] | None:
-        if not tool_choice:
-            return None
-        mode = tool_choice.mode if hasattr(tool_choice, "mode") else str(tool_choice)
-        required_name = getattr(tool_choice, "required_function_name", None)
-        match mode:
-            case "auto":
-                return {"auto": {}}
-            case "none":
-                return {"none": {}}
-            case "required":
-                if required_name:
-                    return {"tool": {"name": required_name}}
-                return {"any": {}}
-            case _:
-                logger.debug("Unsupported tool choice mode for Bedrock: %s", mode)
-                return None
 
     @staticmethod
     def _generate_tool_call_id() -> str:

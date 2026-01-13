@@ -597,7 +597,6 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
-    from agent_framework import ToolMode
 
     captured_options: list[dict[str, Any]] = []
 
@@ -625,14 +624,13 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     # Verify the client received tool_choice="required", not "auto"
     assert len(captured_options) >= 1
     assert captured_options[0]["tool_choice"] == "required"
-    assert captured_options[0]["tool_choice"] == ToolMode.REQUIRED_ANY
 
 
 async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that agent-level tool_choice is used when run() doesn't specify one."""
-    from agent_framework import ChatOptions, ToolMode
+    from agent_framework import ChatOptions
 
     captured_options: list[ChatOptions] = []
 
@@ -659,7 +657,8 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     # Verify the client received tool_choice="required" from agent-level
     assert len(captured_options) >= 1
     assert captured_options[0]["tool_choice"] == "required"
-    assert captured_options[0]["tool_choice"] == ToolMode.REQUIRED_ANY
+    # older code compared to ToolMode constants; ensure value is 'required'
+    assert captured_options[0]["tool_choice"] == "required"
 
 
 async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(

@@ -31,9 +31,6 @@ from openai.types.responses.tool_param import (
     Mcp,
     ToolParam,
 )
-from openai.types.responses.web_search_tool_param import (
-    UserLocation as WebSearchUserLocation,
-)
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
 
@@ -80,6 +77,7 @@ from .._types import (
     _parse_content,
     prepare_function_call_results,
     prepend_instructions_to_messages,
+    validate_tool_mode,
 )
 from ..exceptions import (
     ServiceInitializationError,
@@ -435,25 +433,30 @@ class OpenAIBaseResponsesClient(
                             )
                         )
                     case HostedWebSearchTool():
-                        location: dict[str, str] | None = (
+                        web_search_tool = WebSearchToolParam(type="web_search")
+                        if location := (
                             tool.additional_properties.get("user_location", None)
                             if tool.additional_properties
                             else None
-                        )
-                        response_tools.append(
-                            WebSearchToolParam(
-                                type="web_search",
-                                user_location=WebSearchUserLocation(
-                                    type="approximate",
-                                    city=location.get("city", None),
-                                    country=location.get("country", None),
-                                    region=location.get("region", None),
-                                    timezone=location.get("timezone", None),
-                                )
-                                if location
-                                else None,
-                            )
-                        )
+                        ):
+                            web_search_tool["user_location"] = {
+                                "type": "approximate",
+                                "city": location.get("city", None),
+                                "country": location.get("country", None),
+                                "region": location.get("region", None),
+                                "timezone": location.get("timezone", None),
+                            }
+                        if filters := (
+                            tool.additional_properties.get("filters", None) if tool.additional_properties else None
+                        ):
+                            web_search_tool["filters"] = filters
+                        if search_context_size := (
+                            tool.additional_properties.get("search_context_size", None)
+                            if tool.additional_properties
+                            else None
+                        ):
+                            web_search_tool["search_context_size"] = search_context_size
+                        response_tools.append(web_search_tool)
                     case HostedImageGenerationTool():
                         mapped_tool: dict[str, Any] = {"type": "image_generation"}
                         if tool.options:
@@ -520,6 +523,7 @@ class OpenAIBaseResponsesClient(
             "instructions",  # already added as system message
             "response_format",  # handled separately
             "conversation_id",  # handled separately
+            "tool_choice",  # handled separately
         }
         run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
@@ -561,27 +565,21 @@ class OpenAIBaseResponsesClient(
         # tools
         if tools := self._prepare_tools_for_openai(options.get("tools")):
             run_options["tools"] = tools
+            # tool_choice: convert ToolMode to appropriate format
+            if tool_choice := options.get("tool_choice"):
+                tool_mode = validate_tool_mode(tool_choice)
+                if (mode := tool_mode.get("mode")) == "required" and (
+                    func_name := tool_mode.get("required_function_name")
+                ) is not None:
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "name": func_name,
+                    }
+                else:
+                    run_options["tool_choice"] = mode
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool_choice: convert ToolMode to appropriate format
-        if tool_choice := run_options.get("tool_choice"):
-            if isinstance(tool_choice, dict):
-                # Handle already-serialized dict format
-                if len(tool_choice) == 2:
-                    run_options["tool_choice"] = tool_choice
-                elif "mode" in tool_choice:
-                    run_options["tool_choice"] = tool_choice["mode"]
-            else:
-                if tool_choice.required_function_name:
-                    # Format as function tool choice for specific function requirement
-                    run_options["tool_choice"] = {
-                        "type": "function",
-                        "name": tool_choice.required_function_name,
-                    }
-                else:
-                    # Just the mode string for auto/required/none
-                    run_options["tool_choice"] = tool_choice.mode
 
         # response format and text config
         response_format = options.get("response_format")

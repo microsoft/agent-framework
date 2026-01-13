@@ -397,7 +397,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Start with a copy of options
-        run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None}
+        run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None and k not in {"instructions"}}
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -534,6 +534,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         Returns:
             A dictionary with tools, mcp_servers, and tool_choice configuration, or None if empty.
         """
+        from agent_framework._types import validate_tool_mode
+
         result: dict[str, Any] = {}
         tools = options.get("tools")
 
@@ -586,41 +588,29 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 result["mcp_servers"] = mcp_server_list
 
         # Process tool choice
-        tool_choice_value = options.get("tool_choice")
+        tool_mode = validate_tool_mode(options.get("tool_choice"))
         allow_multiple = options.get("allow_multiple_tool_calls")
-        if tool_choice_value is not None:
-            # Handle tool_choice as string, dict, or object with .mode attribute
-            if isinstance(tool_choice_value, str):
-                tool_choice_mode = tool_choice_value
-                required_function_name = None
-            elif isinstance(tool_choice_value, dict):
-                tool_choice_mode = tool_choice_value.get("mode", "auto")
-                required_function_name = tool_choice_value.get("required_function_name")
-            else:
-                tool_choice_mode = tool_choice_value.mode
-                required_function_name = getattr(tool_choice_value, "required_function_name", None)
-
-            match tool_choice_mode:
-                case "auto":
-                    tool_choice: dict[str, Any] = {"type": "auto"}
-                    if allow_multiple is not None:
-                        tool_choice["disable_parallel_tool_use"] = not allow_multiple
-                    result["tool_choice"] = tool_choice
-                case "required":
-                    if required_function_name:
-                        tool_choice = {
-                            "type": "tool",
-                            "name": required_function_name,
-                        }
-                    else:
-                        tool_choice = {"type": "any"}
-                    if allow_multiple is not None:
-                        tool_choice["disable_parallel_tool_use"] = not allow_multiple
-                    result["tool_choice"] = tool_choice
-                case "none":
-                    result["tool_choice"] = {"type": "none"}
-                case _:
-                    logger.debug(f"Ignoring unsupported tool choice mode: {tool_choice_mode} for now")
+        match tool_mode.get("mode"):
+            case "auto":
+                tool_choice: dict[str, Any] = {"type": "auto"}
+                if allow_multiple is not None:
+                    tool_choice["disable_parallel_tool_use"] = not allow_multiple
+                result["tool_choice"] = tool_choice
+            case "required":
+                if "required_function_name" in tool_mode:
+                    tool_choice = {
+                        "type": "tool",
+                        "name": tool_mode["required_function_name"],
+                    }
+                else:
+                    tool_choice = {"type": "any"}
+                if allow_multiple is not None:
+                    tool_choice["disable_parallel_tool_use"] = not allow_multiple
+                result["tool_choice"] = tool_choice
+            case "none":
+                result["tool_choice"] = {"type": "none"}
+            case _:
+                logger.debug(f"Ignoring unsupported tool choice mode: {tool_mode} for now")
 
         return result or None
 

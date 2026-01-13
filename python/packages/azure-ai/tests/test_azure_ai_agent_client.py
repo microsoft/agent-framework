@@ -31,7 +31,6 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
-    ToolMode,
     UriContent,
 )
 from agent_framework._serialization import SerializationMixin
@@ -614,7 +613,7 @@ async def test_azure_ai_chat_client_prepare_options_with_auto_tool_choice(
     """Test _prepare_options with tool_choice set to 'auto'."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    chat_options: ChatOptions = {"tool_choice": "auto"}
+    chat_options = {"tool_choice": "auto"}
 
     run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
 
@@ -626,10 +625,10 @@ async def test_azure_ai_chat_client_prepare_options_with_auto_tool_choice(
 async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specific_function(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_options with ToolMode.REQUIRED specifying a specific function name."""
+    """Test _prepare_options with required tool_choice specifying a specific function name."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    required_tool_mode = ToolMode.REQUIRED("specific_function_name")
+    required_tool_mode = {"mode": "required", "required_function_name": "specific_function_name"}
 
     dict_tool = {"type": "function", "function": {"name": "test_function"}}
 

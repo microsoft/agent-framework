@@ -47,7 +47,6 @@ from .._types import (
     MCPServerToolCallContent,
     Role,
     TextContent,
-    ToolMode,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -595,6 +594,8 @@ class OpenAIAssistantsClient(
         options: dict[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent] | None]:
+        from .._types import validate_tool_mode
+
         run_options: dict[str, Any] = {**kwargs}
 
         # Extract options from the dict
@@ -619,41 +620,36 @@ class OpenAIAssistantsClient(
         if allow_multiple_tool_calls is not None:
             run_options["parallel_tool_calls"] = allow_multiple_tool_calls
 
-        if tool_choice is not None:
-            tool_definitions: list[MutableMapping[str, Any]] = []
-            if tool_choice != "none" and tools is not None:
-                for tool in tools:
-                    if isinstance(tool, AIFunction):
-                        tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                    elif isinstance(tool, HostedCodeInterpreterTool):
-                        tool_definitions.append({"type": "code_interpreter"})
-                    elif isinstance(tool, HostedFileSearchTool):
-                        params: dict[str, Any] = {
-                            "type": "file_search",
-                        }
-                        if tool.max_results is not None:
-                            params["max_num_results"] = tool.max_results
-                        tool_definitions.append(params)
-                    elif isinstance(tool, MutableMapping):
-                        tool_definitions.append(tool)
+        tool_mode = validate_tool_mode(tool_choice)
+        tool_definitions: list[MutableMapping[str, Any]] = []
+        if tool_mode["mode"] != "none" and tools is not None:
+            for tool in tools:
+                if isinstance(tool, AIFunction):
+                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+                elif isinstance(tool, HostedCodeInterpreterTool):
+                    tool_definitions.append({"type": "code_interpreter"})
+                elif isinstance(tool, HostedFileSearchTool):
+                    params: dict[str, Any] = {
+                        "type": "file_search",
+                    }
+                    if tool.max_results is not None:
+                        params["max_num_results"] = tool.max_results
+                    tool_definitions.append(params)
+                elif isinstance(tool, MutableMapping):
+                    tool_definitions.append(tool)
 
-            if len(tool_definitions) > 0:
-                run_options["tools"] = tool_definitions
+        if len(tool_definitions) > 0:
+            run_options["tools"] = tool_definitions
 
-            if tool_choice == "none" or tool_choice == "auto":
-                if isinstance(tool_choice, ToolMode):
-                    run_options["tool_choice"] = tool_choice.mode
-                else:
-                    run_options["tool_choice"] = tool_choice
-            elif (
-                isinstance(tool_choice, ToolMode)
-                and tool_choice == "required"
-                and tool_choice.required_function_name is not None
-            ):
-                run_options["tool_choice"] = {
-                    "type": "function",
-                    "function": {"name": tool_choice.required_function_name},
-                }
+        if (mode := tool_mode["mode"]) == "required" and (
+            func_name := tool_mode.get("required_function_name")
+        ) is not None:
+            run_options["tool_choice"] = {
+                "type": "function",
+                "function": {"name": func_name},
+            }
+        else:
+            run_options["tool_choice"] = mode
 
         if response_format is not None:
             if isinstance(response_format, dict):

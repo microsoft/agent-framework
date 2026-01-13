@@ -2919,7 +2919,7 @@ class ChatResponse(SerializationMixin):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type and isinstance(output_format_type, type):
+        if output_format_type and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
             msg.try_parse_value(output_format_type)
         return msg
 
@@ -2933,7 +2933,7 @@ class ChatResponse(SerializationMixin):
 
     def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
         """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
+        if self.value is None and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
             try:
                 self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             except ValidationError as ex:
@@ -3350,86 +3350,16 @@ class AgentRunResponseUpdate(SerializationMixin):
 # region ChatOptions
 
 
-class ToolMode(SerializationMixin, metaclass=EnumLike):
-    """Defines if and how tools are used in a chat request.
+class ToolMode(TypedDict, total=False):
+    """Tool choice mode for the chat options.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import ToolMode
-
-            # Use predefined tool modes
-            auto_mode = ToolMode.AUTO  # Model decides when to use tools
-            required_mode = ToolMode.REQUIRED_ANY  # Model must use a tool
-            none_mode = ToolMode.NONE  # No tools allowed
-
-            # Require a specific function
-            specific_mode = ToolMode.REQUIRED(function_name="get_weather")
-            print(specific_mode.required_function_name)  # "get_weather"
-
-            # Compare modes
-            print(auto_mode == "auto")  # True
+    Fields:
+        mode: One of "auto", "required", or "none".
+        required_function_name: Optional function name when `mode == "required"`.
     """
 
-    # Constants configuration for EnumLike metaclass
-    _constants: ClassVar[dict[str, tuple[str, ...]]] = {
-        "AUTO": ("auto",),
-        "REQUIRED_ANY": ("required",),
-        "NONE": ("none",),
-    }
-
-    # Type annotations for constants
-    AUTO: "ToolMode"
-    REQUIRED_ANY: "ToolMode"
-    NONE: "ToolMode"
-
-    def __init__(
-        self,
-        mode: Literal["auto", "required", "none"] = "none",
-        *,
-        required_function_name: str | None = None,
-    ) -> None:
-        """Initialize ToolMode.
-
-        Args:
-            mode: The tool mode - "auto", "required", or "none".
-
-        Keyword Args:
-            required_function_name: Optional function name for required mode.
-        """
-        self.mode = mode
-        self.required_function_name = required_function_name
-
-    @classmethod
-    def REQUIRED(cls, function_name: str | None = None) -> "ToolMode":
-        """Returns a ToolMode that requires the specified function to be called."""
-        return cls(mode="required", required_function_name=function_name)
-
-    def __eq__(self, other: object) -> bool:
-        """Checks equality with another ToolMode or string."""
-        if isinstance(other, str):
-            return self.mode == other
-        if isinstance(other, ToolMode):
-            return self.mode == other.mode and self.required_function_name == other.required_function_name
-        return False
-
-    def __hash__(self) -> int:
-        """Return hash of the ToolMode for use in sets and dicts."""
-        return hash((self.mode, self.required_function_name))
-
-    def serialize_model(self) -> str:
-        """Serializes the ToolMode to just the mode string."""
-        return self.mode
-
-    def __str__(self) -> str:
-        """Returns the string representation of the mode."""
-        return self.mode
-
-    def __repr__(self) -> str:
-        """Returns the string representation of the ToolMode."""
-        if self.required_function_name:
-            return f"ToolMode(mode={self.mode!r}, required_function_name={self.required_function_name!r})"
-        return f"ToolMode(mode={self.mode!r})"
+    mode: Literal["auto", "required", "none"]
+    required_function_name: str
 
 
 # region TypedDict-based Chat Options
@@ -3459,7 +3389,7 @@ class ChatOptions(TypedDict, total=False):
             # With tools
             options_with_tools: ChatOptions = {
                 "model_id": "gpt-4",
-                "tool_choice": ToolMode.AUTO,
+                "tool_choice": "auto",
                 "temperature": 0.7,
             }
 
@@ -3484,7 +3414,7 @@ class ChatOptions(TypedDict, total=False):
 
     # Tool configuration (forward reference to avoid circular import)
     tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
-    tool_choice: "ToolMode | Literal['auto', 'required', 'none'] | dict[str, Any]"
+    tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
     # Response configuration
@@ -3557,10 +3487,6 @@ async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
     if "tools" in result:
         result["tools"] = await validate_tools(result["tools"])
 
-    # Validate and normalize tool_choice
-    if "tool_choice" in result:
-        result["tool_choice"] = validate_tool_mode(result["tool_choice"])
-
     return result
 
 
@@ -3629,54 +3555,31 @@ async def validate_tools(
 
 
 def validate_tool_mode(
-    tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None,
-) -> ToolMode | Mapping[str, Any] | None:
-    """Validate and normalize tool_choice to a ToolMode.
+    tool_choice: ToolMode | Literal["auto", "required", "none"] | None,
+) -> ToolMode:
+    """Validate and normalize tool_choice to a ToolMode dict.
 
     Args:
         tool_choice: The tool choice value to validate.
 
     Returns:
-        A ToolMode instance, a dict (for function-specific tool choice), or None.
+        A ToolMode dict (contains keys: "mode", and optionally "required_function_name").
 
     Raises:
         ContentError: If the tool_choice string is invalid.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import validate_tool_mode, ToolMode
-
-            # From string
-            mode = validate_tool_mode("auto")  # Returns ToolMode.AUTO
-
-            # From ToolMode (passthrough)
-            mode = validate_tool_mode(ToolMode.REQUIRED_ANY)
-
-            # From dict with mode key
-            mode = validate_tool_mode({"mode": "required"})  # Returns ToolMode
-
-            # From dict without mode key (passthrough for function-specific)
-            mode = validate_tool_mode({"type": "function", "function": {"name": "test"}})
     """
     if not tool_choice:
-        return None
+        return {"mode": "none"}
     if isinstance(tool_choice, str):
-        match tool_choice:
-            case "auto":
-                return ToolMode.AUTO
-            case "required":
-                return ToolMode.REQUIRED_ANY
-            case "none":
-                return ToolMode.NONE
-            case _:
-                raise ContentError(f"Invalid tool choice: {tool_choice}")
-    if isinstance(tool_choice, (dict, Mapping)):
-        # If the dict has a "mode" key, convert to ToolMode
-        # Otherwise, pass through (e.g., function-specific tool choice for OpenAI)
-        if "mode" in tool_choice:
-            return ToolMode.from_dict(tool_choice)  # type: ignore
-        return tool_choice
+        if tool_choice not in ("auto", "required", "none"):
+            raise ContentError(f"Invalid tool choice: {tool_choice}")
+        return {"mode": tool_choice}
+    if "mode" not in tool_choice:
+        raise ContentError("tool_choice dict must contain 'mode' key")
+    if tool_choice["mode"] not in ("auto", "required", "none"):
+        raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
+    if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
+        raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
     return tool_choice
 
 

@@ -20,7 +20,6 @@ from agent_framework import (
     HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
-    ToolMode,
     ai_function,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -147,13 +146,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 @pytest.mark.parametrize(
-    "streaming",
-    [
-        param(False, id="non-streaming"),
-        param(True, id="streaming"),
-    ],
-)
-@pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
     [
         # Simple ChatOptions - just verify they don't fail
@@ -177,7 +169,12 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         # Complex options requiring output validation
         param("tools", [get_weather], True, id="tools_function"),
         param("tool_choice", "auto", True, id="tool_choice_auto"),
-        param("tool_choice", ToolMode.REQUIRED(function_name="get_weather"), True, id="tool_choice_required"),
+        param(
+            "tool_choice",
+            {"mode": "required", "required_function_name": "get_weather"},
+            True,
+            id="tool_choice_required",
+        ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
         param(
             "response_format",
@@ -205,8 +202,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         ),
     ],
 )
-async def test_azure_openai_responses_integration_tests(
-    streaming: bool,
+async def test_integration_options(
     option_name: str,
     option_value: Any,
     needs_validation: bool,
@@ -221,141 +217,116 @@ async def test_azure_openai_responses_integration_tests(
     # to ensure toolmode required does not endlessly loop
     client.function_invocation_configuration.max_iterations = 1
 
-    # Prepare test message
-    if option_name == "tools" or option_name == "tool_choice":
-        # Use weather-related prompt for tool tests
-        messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
-    elif option_name == "response_format":
-        # Use prompt that works well with structured output
-        messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-        messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
-    else:
-        # Generic prompt for simple options
-        messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
-
-    # Build options dict
-    options: dict[str, Any] = {option_name: option_value}
-
-    # Add tools if testing tool_choice to avoid errors
-    if option_name == "tool_choice":
-        options["tools"] = [get_weather]
-
-    if streaming:
-        # Test streaming mode
-        response_gen = client.get_streaming_response(
-            messages=messages,
-            options=options,
-        )
-
-        output_format = option_value if option_name == "response_format" else None
-        response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
-    else:
-        # Test non-streaming mode
-        response = await client.get_response(
-            messages=messages,
-            options=options,
-        )
-
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    assert response.text is not None, f"No text in response for option '{option_name}'"
-    assert len(response.text) > 0, f"Empty response for option '{option_name}'"
-
-    # Validate based on option type
-    if needs_validation:
+    for streaming in [False, True]:
+        # Prepare test message
         if option_name == "tools" or option_name == "tool_choice":
-            # Should have called the weather function
-            text = response.text.lower()
-            assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
+            # Use weather-related prompt for tool tests
+            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
         elif option_name == "response_format":
-            if option_value == OutputStruct:
-                # Should have structured output
-                assert response.value is not None, "No structured output"
-                assert isinstance(response.value, OutputStruct)
-                assert "seattle" in response.value.location.lower()
-            else:
-                # Runtime JSON schema
-                assert response.value is None, "No structured output, can't parse any json."
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
-                assert "seattle" in response_value["location"].lower()
+            # Use prompt that works well with structured output
+            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
+            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+        else:
+            # Generic prompt for simple options
+            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+
+        # Build options dict
+        options: dict[str, Any] = {option_name: option_value}
+
+        # Add tools if testing tool_choice to avoid errors
+        if option_name == "tool_choice":
+            options["tools"] = [get_weather]
+
+        if streaming:
+            # Test streaming mode
+            response_gen = client.get_streaming_response(
+                messages=messages,
+                options=options,
+            )
+
+            output_format = option_value if option_name == "response_format" else None
+            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+        else:
+            # Test non-streaming mode
+            response = await client.get_response(
+                messages=messages,
+                options=options,
+            )
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None, f"No text in response for option '{option_name}'"
+        assert len(response.text) > 0, f"Empty response for option '{option_name}'"
+
+        # Validate based on option type
+        if needs_validation:
+            if option_name == "tools" or option_name == "tool_choice":
+                # Should have called the weather function
+                text = response.text.lower()
+                assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
+            elif option_name == "response_format":
+                if option_value == OutputStruct:
+                    # Should have structured output
+                    assert response.value is not None, "No structured output"
+                    assert isinstance(response.value, OutputStruct)
+                    assert "seattle" in response.value.location.lower()
+                else:
+                    # Runtime JSON schema
+                    assert response.value is None, "No structured output, can't parse any json."
+                    response_value = json.loads(response.text)
+                    assert isinstance(response_value, dict)
+                    assert "location" in response_value
+                    assert "seattle" in response_value["location"].lower()
 
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_responses_web_search() -> None:
+async def test_integration_web_search() -> None:
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
-    # Test that the client will use the web search tool
-    response = await client.get_response(
-        "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
-        options={
-            "tool_choice": "auto",
-            "tools": [HostedWebSearchTool()],
-        },
-    )
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    assert "Rumi" in response.text
-    assert "Mira" in response.text
-    assert "Zoey" in response.text
 
-    # Test that the client will use the web search tool with location
-    additional_properties = {
-        "user_location": {
-            "country": "US",
-            "city": "Seattle",
+    for streaming in [False, True]:
+        content = {
+            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "options": {
+                "tool_choice": "auto",
+                "tools": [HostedWebSearchTool()],
+            },
         }
-    }
-    response = await client.get_response(
-        "What is the current weather? Do not ask for my current location.",
-        options={
-            "tool_choice": "auto",
-            "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
-        },
-    )
-    assert response.text is not None
+        if streaming:
+            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+        else:
+            response = await client.get_response(**content)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert "Rumi" in response.text
+        assert "Mira" in response.text
+        assert "Zoey" in response.text
+
+        # Test that the client will use the web search tool with location
+        additional_properties = {
+            "user_location": {
+                "country": "US",
+                "city": "Seattle",
+            }
+        }
+        content = {
+            "messages": "What is the current weather? Do not ask for my current location.",
+            "options": {
+                "tool_choice": "auto",
+                "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+            },
+        }
+        if streaming:
+            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+        else:
+            response = await client.get_response(**content)
+        assert response.text is not None
 
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_responses_web_search_streaming() -> None:
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
-    # Test that the client will use the web search tool
-    response = client.get_streaming_response(
-        "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
-        options={
-            "tool_choice": "auto",
-            "tools": [HostedWebSearchTool()],
-        },
-    )
-    assert response is not None
-    full_response = await ChatResponse.from_chat_response_generator(response)
-    assert "Rumi" in full_response.text
-    assert "Mira" in full_response.text
-    assert "Zoey" in full_response.text
-
-    # Test that the client will use the web search tool with location
-    additional_properties = {
-        "user_location": {
-            "country": "US",
-            "city": "Seattle",
-        }
-    }
-    response = client.get_streaming_response(
-        "What is the current weather? Do not ask for my current location.",
-        options={
-            "tool_choice": "auto",
-            "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
-        },
-    )
-    full_response = await ChatResponse.from_chat_response_generator(response)
-    assert full_response.text is not None
-
-
-@pytest.mark.flaky
-@skip_if_azure_integration_tests_disabled
-async def test_azure_responses_client_file_search() -> None:
+async def test_integration_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     file_id, vector_store = await create_vector_store(azure_responses_client)
@@ -379,7 +350,7 @@ async def test_azure_responses_client_file_search() -> None:
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_responses_client_file_search_streaming() -> None:
+async def test_integration_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     file_id, vector_store = await create_vector_store(azure_responses_client)
@@ -405,7 +376,7 @@ async def test_azure_responses_client_file_search_streaming() -> None:
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
+async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     response = await client.get_response(
@@ -429,7 +400,7 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_responses_client_agent_hosted_code_interpreter_tool():
+async def test_integration_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with HostedCodeInterpreterTool through AzureOpenAIResponsesClient."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
@@ -448,7 +419,7 @@ async def test_azure_responses_client_agent_hosted_code_interpreter_tool():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_responses_client_agent_existing_thread():
+async def test_integration_client_agent_existing_thread():
     """Test Azure Responses Client agent with existing thread to continue conversations across agent instances."""
     # First conversation - capture the thread
     preserved_thread = None

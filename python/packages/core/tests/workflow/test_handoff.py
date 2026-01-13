@@ -658,14 +658,12 @@ async def test_tool_choice_preserved_from_agent_config():
     """Verify that agent-level tool_choice configuration is preserved and not overridden."""
     from unittest.mock import AsyncMock
 
-    from agent_framework import ChatResponse, ToolMode
+    from agent_framework import ChatResponse
 
     # Create a mock chat client that records the tool_choice used
     recorded_tool_choices: list[Any] = []
 
-    async def mock_get_response(messages: Any, **kwargs: Any) -> ChatResponse:
-        # Options are passed as 'options' key (not 'chat_options')
-        options = kwargs.get("options")
+    async def mock_get_response(messages: Any, options: dict[str, Any] | None = None, **kwargs: Any) -> ChatResponse:
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
@@ -680,7 +678,7 @@ async def test_tool_choice_preserved_from_agent_config():
     agent = ChatAgent(
         chat_client=mock_client,
         name="test_agent",
-        default_options={"tool_choice": ToolMode(mode="required")},
+        default_options={"tool_choice": {"mode": "required"}},
     )
 
     # Run the agent
@@ -690,7 +688,7 @@ async def test_tool_choice_preserved_from_agent_config():
     assert len(recorded_tool_choices) > 0, "No tool_choice recorded"
     last_tool_choice = recorded_tool_choices[-1]
     assert last_tool_choice is not None, "tool_choice should not be None"
-    assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
+    assert last_tool_choice == {"mode": "required"}, f"Expected 'required', got {last_tool_choice}"
 
 
 async def test_handoff_builder_with_request_info():

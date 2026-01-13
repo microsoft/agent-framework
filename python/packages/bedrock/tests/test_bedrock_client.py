@@ -66,4 +66,4 @@ def test_build_request_requires_non_system_messages() -> None:
     messages = [ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="Only system text")])]
 
     with pytest.raises(ServiceInitializationError):
-        client._build_converse_request(messages, {})
+        client._prepare_options(messages, {})

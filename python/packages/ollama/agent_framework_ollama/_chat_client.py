@@ -391,17 +391,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
 
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
-        # tool choice - Currently Ollama only supports auto tool choice
-        tool_choice = options.get("tool_choice")
-        if tool_choice == "required":
-            raise ServiceInvalidRequestError("Ollama does not support required tool choice.")
-
         # Keys to exclude from processing
-        exclude_keys = {
-            "type",
-            "instructions",
-            "tool_choice",  # Ollama does not support tool_choice configuration
-        }
+        exclude_keys = {"instructions"}
 
         # Build run_options and model_options separately
         run_options: dict[str, Any] = {}

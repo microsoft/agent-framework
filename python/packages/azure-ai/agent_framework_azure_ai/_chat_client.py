@@ -32,7 +32,6 @@ from agent_framework import (
     Role,
     TextContent,
     TextSpanRegion,
-    ToolMode,
     ToolProtocol,
     UriContent,
     UsageContent,
@@ -978,15 +977,13 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             return AgentsToolChoiceOptionMode.NONE
         if tool_choice == "auto":
             return AgentsToolChoiceOptionMode.AUTO
-        if (
-            isinstance(tool_choice, ToolMode)
-            and tool_choice == "required"
-            and tool_choice.required_function_name is not None
-        ):
-            return AgentsNamedToolChoice(
-                type=AgentsNamedToolChoiceType.FUNCTION,
-                function=FunctionName(name=tool_choice.required_function_name),
-            )
+        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") == "required":
+            req_fn = tool_choice.get("required_function_name")
+            if req_fn:
+                return AgentsNamedToolChoice(
+                    type=AgentsNamedToolChoiceType.FUNCTION,
+                    function=FunctionName(name=str(req_fn)),
+                )
         return None
 
     async def _prepare_tool_definitions_and_resources(
