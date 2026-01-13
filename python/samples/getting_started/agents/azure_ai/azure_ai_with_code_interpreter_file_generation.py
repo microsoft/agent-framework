@@ -3,12 +3,12 @@
 import asyncio
 
 from agent_framework import (
+    AgentRunResponseUpdate,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
 )
-from agent_framework._agents import AgentRunResponseUpdate
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
