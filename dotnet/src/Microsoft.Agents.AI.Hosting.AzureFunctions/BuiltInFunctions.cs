@@ -11,6 +11,7 @@ using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
@@ -49,16 +50,18 @@ internal static class BuiltInFunctions
     //    return new List<string>();
     //}
 
-    //[Function("dafx-Orchestration")]
-    public static async Task<List<string>> RunWorkflowOrchestratorAsync(TaskOrchestrationContext taskOrchestrationContext)
+    public static async Task<List<string>> RunWorkflowOrchestratorAsync(string taskOrchestrationContext, FunctionContext functionsContext)
     {
-        //ILogger logger = context.CreateReplaySafeLogger(nameof(Function));
-        //logger.LogInformation("Invoking RunWorkflowOrchestrator");
+        var logger = functionsContext.GetLogger("BuiltInFunctions");
         var outputs = new List<string>();
+        const string WorkflowName = "MyTestWorkflow"; // to do: get from TaskOrchestrtionContext
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation("Orchestrator {WorkflowName} is executing. Input: {Input}", WorkflowName, taskOrchestrationContext);
+        }
 
-        await Task.Delay(1);
-        outputs.Add("to do - call get executor result");
-
+        //var runner = functionsContext.InstanceServices.GetService<DurableWorkflowRunner>();
+        //await runner!.RunAsync(null, WorkflowName);
         return outputs;
     }
 
@@ -95,7 +98,7 @@ internal static class BuiltInFunctions
         var workflowName = context.FunctionDefinition.Name.Replace("http", "dafx");
 
         //string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("dafx-MyTestWorkflow");
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("OrchFunction"); // dafx-MyTestWorkflow");
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("dafx-MyTestWorkflow"); //OrchFunction"); // dafx-MyTestWorkflow");
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}.{instanceId}");

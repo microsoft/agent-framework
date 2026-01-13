@@ -34,7 +34,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             if (taskOrechstrationContextBinding.IsCompletedSuccessfully)
             {
                 var t = taskOrechstrationContextBinding.Result.Value;
-                context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync(t!);
+                context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync("todo", context);
             }
 
             return;
@@ -137,20 +137,6 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                    httpRequestData,
                    durableTaskClient!,
                    context);
-            return;
-        }
-        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint)
-        {
-            var triggerBinding = context.FunctionDefinition.InputBindings.Values.FirstOrDefault(b => b.Type == "orchestrationTrigger");
-            var taskOrechstrationContextBinding = context.BindInputAsync<TaskOrchestrationContext>(triggerBinding!);
-
-            if (taskOrechstrationContextBinding.IsCompletedSuccessfully)
-            {
-                var t = taskOrechstrationContextBinding.Result.Value;
-                context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync(t!);
-            }
-
-            //context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync(null);
             return;
         }
 

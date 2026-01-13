@@ -25,6 +25,7 @@ public static class FunctionsApplicationBuilderExtensions
         var options = new DurableWorkflowOptions();
         configure(options);
         builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton<DurableWorkflowRunner>();
         builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
 
         return builder;

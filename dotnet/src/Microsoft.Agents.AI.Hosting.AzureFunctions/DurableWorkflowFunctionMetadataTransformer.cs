@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 using Microsoft.Extensions.Logging;
 
@@ -21,29 +22,20 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
 
     public void Transform(IList<IFunctionMetadata> original)
     {
-        if (this._logger.IsEnabled(LogLevel.Information))
-        {
-            this._logger.LogInformation("Transforming function metadata to add durable workflow functions. Initial function count: {FunctionCount}", original.Count);
-        }
+        this._logger.LogTransformStart(original.Count);
 
         foreach (var workflow in this._options.Workflows)
         {
-            if (this._logger.IsEnabled(LogLevel.Information))
-            {
-                this._logger.LogInformation("Adding durable workflow function for workflow: {WorkflowName}", workflow.Key);
-            }
+            this._logger.LogAddingWorkflowFunction(workflow.Key);
 
             original.Add(CreateOrchestrationTrigger(workflow.Key));
-            // We also want to create an HTTP trigge for this orchestration so users can start it via HTTP.
-            if (this._logger.IsEnabled(LogLevel.Information))
-            {
-                this._logger.LogInformation("Adding HTTP trigger function for workflow: {WorkflowName}", workflow.Key);
-                var httpTriggerMetadata = CreateHttpTrigger(workflow.Key, $"workflows/{workflow.Key}/run");
-                original.Add(httpTriggerMetadata);
-            }
 
-            // Create activity functions for each executor in the workflow
-            // Extract executor IDs from edges and start executor (since ExecutorBindings is internal)
+            // We also want to create an HTTP trigger for this orchestration so users can start it via HTTP.
+            this._logger.LogAddingHttpTrigger(workflow.Key);
+            original.Add(CreateHttpTrigger(workflow.Key, $"workflows/{workflow.Key}/run"));
+
+            // Create activity/entity functions for each executor in the workflow based on their type
+            // Extract executor IDs from edges and start executor
             var executorIds = new HashSet<string> { workflow.Value.StartExecutorId };
 
             var reflectedEdges = workflow.Value.ReflectEdges();
@@ -59,23 +51,41 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                 }
             }
 
-            foreach (var executorId in executorIds)
-            {
-                if (this._logger.IsEnabled(LogLevel.Information))
-                {
-                    this._logger.LogInformation(
-                        "Adding activity function for executor: {ExecutorId} in workflow: {WorkflowName}",
-                        executorId,
-                        workflow.Key);
-                }
+            Dictionary<string, ExecutorInfo> executorInfos = workflow.Value.ReflectExecutors();
 
-                original.Add(CreateActivityTrigger(workflow.Key, executorId));
+            foreach (string executorId in executorIds)
+            {
+                if (executorInfos.TryGetValue(executorId, out ExecutorInfo? executorInfo))
+                {
+                    string functionName = $"{AgentSessionId.ToEntityName(workflow.Key)}_{executorId}";
+
+                    // Check if the executor type is an agent-related type
+                    if (IsAgentExecutorType(executorInfo.ExecutorType))
+                    {
+                        this._logger.LogAddingAgentEntityFunction(executorId, executorInfo.ExecutorType.TypeName, workflow.Key);
+                        original.Add(CreateAgentTrigger(functionName));
+                    }
+                    else
+                    {
+                        this._logger.LogAddingActivityFunction(executorId, executorInfo.ExecutorType.TypeName, workflow.Key);
+                        original.Add(CreateActivityTrigger(functionName));
+                    }
+                }
             }
         }
 
-        if (this._logger.IsEnabled(LogLevel.Information))
+        this._logger.LogTransformFinished(original.Count);
+
+        static bool IsAgentExecutorType(TypeId executorType)
         {
-            this._logger.LogInformation("Transform finished. Updated function count: {FunctionCount}", original.Count);
+            // hack for now. In the future, the MAF type could expose something which can help with this.
+            // Check if the type name or assembly indicates it's an agent executor
+            // This includes AgentRunStreamingExecutor, AgentExecutor, ChatClientAgent wrappers, etc.
+            string typeName = executorType.TypeName;
+            string assemblyName = executorType.AssemblyName;
+
+            return typeName.Contains("AIAgentHostExecutor", StringComparison.OrdinalIgnoreCase) &&
+                    assemblyName.Contains("Microsoft.Agents.AI", StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -113,10 +123,8 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         };
     }
 
-    private static DefaultFunctionMetadata CreateActivityTrigger(string workflowName, string executorId)
+    private static DefaultFunctionMetadata CreateActivityTrigger(string functionName)
     {
-        string functionName = $"{AgentSessionId.ToEntityName(workflowName)}_{executorId}";
-
         return new DefaultFunctionMetadata()
         {
             Name = functionName,
@@ -126,6 +134,22 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                 """{"name":"input","type":"activityTrigger","direction":"In","dataType":"String"}""",
             ],
             EntryPoint = BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint,
+            ScriptFile = BuiltInFunctions.ScriptFile,
+        };
+    }
+
+    private static DefaultFunctionMetadata CreateAgentTrigger(string functionName)
+    {
+        return new DefaultFunctionMetadata()
+        {
+            Name = functionName,
+            Language = "dotnet-isolated",
+            RawBindings =
+            [
+                """{"name":"encodedEntityRequest","type":"entityTrigger","direction":"In"}""",
+                """{"name":"client","type":"durableClient","direction":"In"}"""
+            ],
+            EntryPoint = BuiltInFunctions.RunAgentEntityFunctionEntryPoint,
             ScriptFile = BuiltInFunctions.ScriptFile,
         };
     }
