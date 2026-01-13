@@ -13,6 +13,7 @@ This folder contains examples demonstrating different ways to create and use age
 | [`openai_assistants_with_explicit_settings.py`](openai_assistants_with_explicit_settings.py) | Configuring `OpenAIAssistantProvider` with explicit settings including API key and model ID. |
 | [`openai_assistants_with_file_search.py`](openai_assistants_with_file_search.py) | Using `HostedFileSearchTool` with `OpenAIAssistantProvider` for file search capabilities. |
 | [`openai_assistants_with_function_tools.py`](openai_assistants_with_function_tools.py) | Function tools with `OpenAIAssistantProvider` at both agent-level and query-level. |
+| [`openai_assistants_with_response_format.py`](openai_assistants_with_response_format.py) | Structured outputs with `OpenAIAssistantProvider` using Pydantic models. |
 | [`openai_assistants_with_thread.py`](openai_assistants_with_thread.py) | Thread management with `OpenAIAssistantProvider` for conversation context persistence. |
 | [`openai_chat_client_basic.py`](openai_chat_client_basic.py) | The simplest way to create an agent using `ChatAgent` with `OpenAIChatClient`. Shows both streaming and non-streaming responses for chat-based interactions with OpenAI models. |
 | [`openai_chat_client_with_explicit_settings.py`](openai_chat_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific chat client, configuring settings explicitly including API key and model ID. |
