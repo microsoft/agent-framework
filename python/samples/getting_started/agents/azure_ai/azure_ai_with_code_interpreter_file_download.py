@@ -5,20 +5,20 @@ import tempfile
 from pathlib import Path
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ChatAgent,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
 )
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI V2 Code Interpreter File Download Sample
 
-This sample demonstrates how the V2 AzureAIClient handles file annotations
+This sample demonstrates how the AzureAIProjectAgentProvider handles file annotations
 when code interpreter generates text files. It shows:
 1. How to extract file IDs and container IDs from annotations
 2. How to download container files using the OpenAI containers API
@@ -36,7 +36,7 @@ QUERY = (
 
 async def download_container_files(
     file_contents: list[CitationAnnotation | HostedFileContent], agent: ChatAgent
-) -> None:
+) -> list[Path]:
     """Download container files using the OpenAI containers API.
 
     Code interpreter generates files in containers, which require both file_id
@@ -49,9 +49,12 @@ async def download_container_files(
         file_contents: List of CitationAnnotation or HostedFileContent objects
                       containing file_id and container_id.
         agent: The ChatAgent instance with access to the AzureAIClient.
+
+    Returns:
+        List of Path objects for successfully downloaded files.
     """
     if not file_contents:
-        return
+        return []
 
     # Create output directory in system temp folder
     temp_dir = Path(tempfile.gettempdir())
@@ -62,6 +65,8 @@ async def download_container_files(
 
     # Access the OpenAI client from AzureAIClient
     openai_client = agent.chat_client.client
+
+    downloaded_files: list[Path] = []
 
     for content in file_contents:
         file_id = content.file_id
@@ -100,8 +105,12 @@ async def download_container_files(
             file_size = output_path.stat().st_size
             print(f"({file_size} bytes)")
 
+            downloaded_files.append(output_path)
+
         except Exception as e:
             print(f"Failed: {e}")
+
+    return downloaded_files
 
 
 async def non_streaming_example() -> None:
@@ -110,12 +119,14 @@ async def non_streaming_example() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
 
         result = await agent.run(QUERY)
@@ -123,7 +134,7 @@ async def non_streaming_example() -> None:
 
         # Check for annotations in the response
         annotations_found: list[CitationAnnotation] = []
-        # AgentRunResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
                 if isinstance(content, TextContent) and content.annotations:
@@ -138,7 +149,12 @@ async def non_streaming_example() -> None:
             print(f"SUCCESS: Found {len(annotations_found)} file annotation(s)")
 
             # Download the container files
-            await download_container_files(annotations_found, agent)
+            downloaded_paths = await download_container_files(annotations_found, agent)
+
+            if downloaded_paths:
+                print("\nDownloaded files available at:")
+                for path in downloaded_paths:
+                    print(f"  - {path.absolute()}")
         else:
             print("WARNING: No file annotations found in non-streaming response")
 
@@ -149,18 +165,20 @@ async def streaming_example() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
         file_contents_found: list[HostedFileContent] = []
         text_chunks: list[str] = []
 
         async for update in agent.run_stream(QUERY):
-            if isinstance(update, AgentRunResponseUpdate):
+            if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
                     if isinstance(content, TextContent):
                         if content.text:
@@ -181,7 +199,12 @@ async def streaming_example() -> None:
             print(f"SUCCESS: Found {len(file_contents_found)} file reference(s) in streaming")
 
             # Download the container files
-            await download_container_files(file_contents_found, agent)
+            downloaded_paths = await download_container_files(file_contents_found, agent)
+
+            if downloaded_paths:
+                print("\n✓ Downloaded files available at:")
+                for path in downloaded_paths:
+                    print(f"  - {path.absolute()}")
         else:
             print("WARNING: No file annotations found in streaming response")
 
