@@ -11,7 +11,6 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
-    ToolMode,
     ai_function,
 )
 
@@ -31,7 +30,7 @@ async def main() -> None:
         chat_client=BedrockChatClient(),
         instructions="You are a concise travel assistant.",
         name="BedrockWeatherAgent",
-        tool_choice=ToolMode.AUTO,
+        tool_choice="auto",
         tools=[get_weather],
     )
 

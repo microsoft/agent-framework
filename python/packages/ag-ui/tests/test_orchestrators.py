@@ -6,8 +6,7 @@ from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
 
-from agent_framework import AgentRunResponseUpdate, TextContent, ai_function
-from agent_framework._tools import FunctionInvocationConfiguration
+from agent_framework import AgentRunResponseUpdate, FunctionInvocationConfiguration, TextContent, ai_function
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, ExecutionContext
@@ -23,7 +22,7 @@ class DummyAgent:
     """Minimal agent stub to capture run_stream parameters."""
 
     def __init__(self) -> None:
-        self.chat_options = SimpleNamespace(tools=[server_tool], response_format=None)
+        self.default_options: dict[str, Any] = {"tools": [server_tool], "response_format": None}
         self.tools = [server_tool]
         self.chat_client = SimpleNamespace(
             function_invocation_configuration=FunctionInvocationConfiguration(),

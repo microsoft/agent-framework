@@ -202,7 +202,7 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middleware=HighPriorityMiddleware(),  # Run-level middleware
+            middleware=[HighPriorityMiddleware()],  # Run-level middleware
         )
         print(f"Agent: {result.text if result.text else 'No response'}")
         print()

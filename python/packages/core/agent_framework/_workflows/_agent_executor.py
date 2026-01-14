@@ -10,6 +10,7 @@ from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResp
 from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread
 from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ._agent_utils import resolve_agent_id
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._conversation_state import encode_chat_messages
@@ -88,16 +89,20 @@ class AgentExecutor(Executor):
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
-        exec_id = id or agent.name
+        exec_id = id or resolve_agent_id(agent)
         if not exec_id:
-            raise ValueError("Agent must have a name or an explicit id must be provided.")
+            raise ValueError("Agent must have a non-empty name or id or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
         self._pending_agent_requests: dict[str, FunctionApprovalRequestContent] = {}
         self._pending_responses_to_agent: list[FunctionApprovalResponseContent] = []
         self._output_response = output_response
+
+        # AgentExecutor maintains an internal cache of messages in between runs
         self._cache: list[ChatMessage] = []
+        # This tracks the full conversation after each run
+        self._full_conversation: list[ChatMessage] = []
 
     @property
     def output_response(self) -> bool:
@@ -227,6 +232,7 @@ class AgentExecutor(Executor):
 
         return {
             "cache": encode_chat_messages(self._cache),
+            "full_conversation": encode_chat_messages(self._full_conversation),
             "agent_thread": serialized_thread,
             "pending_agent_requests": encode_checkpoint_value(self._pending_agent_requests),
             "pending_responses_to_agent": encode_checkpoint_value(self._pending_responses_to_agent),
@@ -250,6 +256,16 @@ class AgentExecutor(Executor):
                 self._cache = []
         else:
             self._cache = []
+
+        full_conversation_payload = state.get("full_conversation")
+        if full_conversation_payload:
+            try:
+                self._full_conversation = decode_chat_messages(full_conversation_payload)
+            except Exception as exc:
+                logger.warning("Failed to restore full conversation: %s", exc)
+                self._full_conversation = []
+        else:
+            self._full_conversation = []
 
         thread_payload = state.get("agent_thread")
         if thread_payload:
@@ -289,6 +305,12 @@ class AgentExecutor(Executor):
             # Non-streaming mode: use run() and emit single event
             response = await self._run_agent(cast(WorkflowContext, ctx))
 
+        # Always extend full conversation with cached messages plus agent outputs
+        # (agent_run_response.messages) after each run. This is to avoid losing context
+        # when agent did not complete and the cache is cleared when responses come back.
+        # Do not mutate response.messages so AgentRunEvent remains faithful to the raw output.
+        self._full_conversation.extend(list(self._cache) + (list(response.messages) if response else []))
+
         if response is None:
             # Agent did not complete (e.g., waiting for user input); do not emit response
             logger.info("AgentExecutor %s: Agent did not complete, awaiting user input", self.id)
@@ -297,12 +319,7 @@ class AgentExecutor(Executor):
         if self._output_response:
             await ctx.yield_output(response)
 
-        # Always construct a full conversation snapshot from inputs (cache)
-        # plus agent outputs (agent_run_response.messages). Do not mutate
-        # response.messages so AgentRunEvent remains faithful to the raw output.
-        full_conversation: list[ChatMessage] = list(self._cache) + list(response.messages)
-
-        agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
+        agent_response = AgentExecutorResponse(self.id, response, full_conversation=self._full_conversation)
         await ctx.send_message(agent_response)
         self._cache.clear()
 
@@ -359,7 +376,7 @@ class AgentExecutor(Executor):
 
         # Build the final AgentRunResponse from the collected updates
         if isinstance(self._agent, ChatAgent):
-            response_format = self._agent.chat_options.response_format
+            response_format = self._agent.default_options.get("response_format")
             response = AgentRunResponse.from_agent_run_response_updates(
                 updates,
                 output_format_type=response_format,

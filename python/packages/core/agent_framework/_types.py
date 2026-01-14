@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, cast, overload
+from typing import Any, ClassVar, Literal, TypedDict, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -36,6 +36,7 @@ __all__ = [
     "BaseAnnotation",
     "BaseContent",
     "ChatMessage",
+    "ChatOptions",  # Backward compatibility alias
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
@@ -64,7 +65,12 @@ __all__ = [
     "UriContent",
     "UsageContent",
     "UsageDetails",
+    "merge_chat_options",
     "prepare_function_call_results",
+    "prepend_instructions_to_messages",
+    "validate_chat_options",
+    "validate_tool_mode",
+    "validate_tools",
 ]
 
 logger = get_logger("agent_framework")
@@ -2457,7 +2463,7 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+    messages: str | ChatMessage | Sequence[str | ChatMessage], system_instructions: str | Sequence[str] | None = None
 ) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
@@ -2486,6 +2492,49 @@ def prepare_messages(
             msg = ChatMessage(role="user", text=msg)
         return_messages.append(msg)
     return return_messages
+
+
+def prepend_instructions_to_messages(
+    messages: list[ChatMessage],
+    instructions: str | Sequence[str] | None,
+    role: Role | Literal["system", "user", "assistant"] = "system",
+) -> list[ChatMessage]:
+    """Prepend instructions to a list of messages with a specified role.
+
+    This is a helper method for chat clients that need to add instructions
+    from options as messages. Different providers support different roles for
+    instructions (e.g., OpenAI uses "system", some providers might use "user").
+
+    Args:
+        messages: The existing list of ChatMessage objects.
+        instructions: The instructions to prepend. Can be a single string or a sequence of strings.
+        role: The role to use for the instruction messages. Defaults to "system".
+
+    Returns:
+        A new list with instruction messages prepended.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import prepend_instructions_to_messages, ChatMessage
+
+            messages = [ChatMessage(role="user", text="Hello")]
+            instructions = "You are a helpful assistant"
+
+            # Prepend as system message (default)
+            messages_with_instructions = prepend_instructions_to_messages(messages, instructions)
+
+            # Or use a different role
+            messages_with_user_instructions = prepend_instructions_to_messages(messages, instructions, role="user")
+    """
+    if instructions is None:
+        return messages
+
+    if isinstance(instructions, str):
+        instructions = [instructions]
+
+    instruction_messages = [ChatMessage(role=role, text=instr) for instr in instructions]
+    return [*instruction_messages, *messages]
 
 
 # region ChatResponse
@@ -2845,7 +2894,7 @@ class ChatResponse(SerializationMixin):
         cls: type[TChatResponse],
         updates: AsyncIterable["ChatResponseUpdate"],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: type[BaseModel] | Mapping[str, Any] | None = None,
     ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2870,7 +2919,7 @@ class ChatResponse(SerializationMixin):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
+        if output_format_type and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
             msg.try_parse_value(output_format_type)
         return msg
 
@@ -2884,7 +2933,7 @@ class ChatResponse(SerializationMixin):
 
     def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
         """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
+        if self.value is None and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
             try:
                 self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             except ValidationError as ex:
@@ -3301,372 +3350,321 @@ class AgentRunResponseUpdate(SerializationMixin):
 # region ChatOptions
 
 
-class ToolMode(SerializationMixin, metaclass=EnumLike):
-    """Defines if and how tools are used in a chat request.
+class ToolMode(TypedDict, total=False):
+    """Tool choice mode for the chat options.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import ToolMode
-
-            # Use predefined tool modes
-            auto_mode = ToolMode.AUTO  # Model decides when to use tools
-            required_mode = ToolMode.REQUIRED_ANY  # Model must use a tool
-            none_mode = ToolMode.NONE  # No tools allowed
-
-            # Require a specific function
-            specific_mode = ToolMode.REQUIRED(function_name="get_weather")
-            print(specific_mode.required_function_name)  # "get_weather"
-
-            # Compare modes
-            print(auto_mode == "auto")  # True
+    Fields:
+        mode: One of "auto", "required", or "none".
+        required_function_name: Optional function name when `mode == "required"`.
     """
 
-    # Constants configuration for EnumLike metaclass
-    _constants: ClassVar[dict[str, tuple[str, ...]]] = {
-        "AUTO": ("auto",),
-        "REQUIRED_ANY": ("required",),
-        "NONE": ("none",),
-    }
-
-    # Type annotations for constants
-    AUTO: "ToolMode"
-    REQUIRED_ANY: "ToolMode"
-    NONE: "ToolMode"
-
-    def __init__(
-        self,
-        mode: Literal["auto", "required", "none"] = "none",
-        *,
-        required_function_name: str | None = None,
-    ) -> None:
-        """Initialize ToolMode.
-
-        Args:
-            mode: The tool mode - "auto", "required", or "none".
-
-        Keyword Args:
-            required_function_name: Optional function name for required mode.
-        """
-        self.mode = mode
-        self.required_function_name = required_function_name
-
-    @classmethod
-    def REQUIRED(cls, function_name: str | None = None) -> "ToolMode":
-        """Returns a ToolMode that requires the specified function to be called."""
-        return cls(mode="required", required_function_name=function_name)
-
-    def __eq__(self, other: object) -> bool:
-        """Checks equality with another ToolMode or string."""
-        if isinstance(other, str):
-            return self.mode == other
-        if isinstance(other, ToolMode):
-            return self.mode == other.mode and self.required_function_name == other.required_function_name
-        return False
-
-    def __hash__(self) -> int:
-        """Return hash of the ToolMode for use in sets and dicts."""
-        return hash((self.mode, self.required_function_name))
-
-    def serialize_model(self) -> str:
-        """Serializes the ToolMode to just the mode string."""
-        return self.mode
-
-    def __str__(self) -> str:
-        """Returns the string representation of the mode."""
-        return self.mode
-
-    def __repr__(self) -> str:
-        """Returns the string representation of the ToolMode."""
-        if self.required_function_name:
-            return f"ToolMode(mode={self.mode!r}, required_function_name={self.required_function_name!r})"
-        return f"ToolMode(mode={self.mode!r})"
+    mode: Literal["auto", "required", "none"]
+    required_function_name: str
 
 
-class ChatOptions(SerializationMixin):
-    """Common request settings for AI services.
+# region TypedDict-based Chat Options
+
+
+class ChatOptions(TypedDict, total=False):
+    """Common request settings for AI services as a TypedDict.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    These options represent the common denominator across chat providers.
+    Individual implementations may raise errors for unsupported options.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatOptions, ai_function
+            from agent_framework import ChatOptions, ToolMode
 
-            # Create basic chat options
-            options = ChatOptions(
-                model_id="gpt-4",
-                temperature=0.7,
-                max_tokens=1000,
-            )
-
+            # Type-safe options
+            options: ChatOptions = {
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "model_id": "gpt-4",
+            }
 
             # With tools
-            @ai_function
-            def get_weather(location: str) -> str:
-                '''Get weather for a location.'''
-                return f"Weather in {location}"
+            options_with_tools: ChatOptions = {
+                "model_id": "gpt-4",
+                "tool_choice": "auto",
+                "temperature": 0.7,
+            }
 
-
-            options = ChatOptions(
-                model_id="gpt-4",
-                tools=get_weather,
-                tool_choice="auto",
-            )
-
-            # Require a specific tool to be called
-            options_required = ChatOptions(
-                model_id="gpt-4",
-                tools=get_weather,
-                tool_choice=ToolMode.REQUIRED(function_name="get_weather"),
-            )
-
-            # Combine options
-            base_options = ChatOptions(temperature=0.5)
-            extended_options = ChatOptions(max_tokens=500, tools=get_weather)
-            combined = base_options & extended_options
+            # Used with Unpack for function signatures
+            # async def get_response(self, **options: Unpack[ChatOptions]) -> ChatResponse:
     """
 
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"_tools"}  # Internal field, use .tools property
+    # Model selection
+    model_id: str
 
-    def __init__(
-        self,
-        *,
-        model_id: str | None = None,
-        allow_multiple_tool_calls: bool | None = None,
-        conversation_id: str | None = None,
-        frequency_penalty: float | None = None,
-        instructions: str | None = None,
-        logit_bias: MutableMapping[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: MutableMapping[str, str] | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None,
-        tools: ToolProtocol
+    # Generation parameters
+    temperature: float
+    top_p: float
+    max_tokens: int
+    stop: str | Sequence[str]
+    seed: int
+    logit_bias: dict[str | int, float]
+
+    # Penalty parameters
+    frequency_penalty: float
+    presence_penalty: float
+
+    # Tool configuration (forward reference to avoid circular import)
+    tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
+    tool_choice: ToolMode | Literal["auto", "required", "none"]
+    allow_multiple_tool_calls: bool
+
+    # Response configuration
+    response_format: type[BaseModel] | dict[str, Any]
+
+    # Metadata
+    metadata: dict[str, Any]
+    user: str
+    store: bool
+    conversation_id: str
+
+    # System/instructions
+    instructions: str
+
+
+# region Chat Options Utility Functions
+
+
+async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize chat options dictionary.
+
+    Validates numeric constraints and converts types as needed.
+
+    Args:
+        options: The options dictionary to validate.
+
+    Returns:
+        The validated and normalized options dictionary.
+
+    Raises:
+        ValueError: If any option value is invalid.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import validate_chat_options
+
+            options = await validate_chat_options({
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            })
+    """
+    result = dict(options)  # Make a copy
+
+    # Validate numeric constraints
+    if (freq_pen := result.get("frequency_penalty")) is not None:
+        if not (-2.0 <= freq_pen <= 2.0):
+            raise ValueError("frequency_penalty must be between -2.0 and 2.0")
+        result["frequency_penalty"] = float(freq_pen)
+
+    if (pres_pen := result.get("presence_penalty")) is not None:
+        if not (-2.0 <= pres_pen <= 2.0):
+            raise ValueError("presence_penalty must be between -2.0 and 2.0")
+        result["presence_penalty"] = float(pres_pen)
+
+    if (temp := result.get("temperature")) is not None:
+        if not (0.0 <= temp <= 2.0):
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        result["temperature"] = float(temp)
+
+    if (top_p := result.get("top_p")) is not None:
+        if not (0.0 <= top_p <= 1.0):
+            raise ValueError("top_p must be between 0.0 and 1.0")
+        result["top_p"] = float(top_p)
+
+    if (max_tokens := result.get("max_tokens")) is not None and max_tokens <= 0:
+        raise ValueError("max_tokens must be greater than 0")
+
+    # Validate and normalize tools
+    if "tools" in result:
+        result["tools"] = await validate_tools(result["tools"])
+
+    return result
+
+
+async def validate_tools(
+    tools: (
+        ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        """Initialize ChatOptions.
+        | None
+    ),
+) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    """Validate and normalize tools into a list.
 
-        Keyword Args:
-            model_id: The AI model ID to use.
-            allow_multiple_tool_calls: Whether to allow multiple tool calls.
-            conversation_id: The conversation ID.
-            frequency_penalty: The frequency penalty (must be between -2.0 and 2.0).
-            instructions: the instructions, will be turned into a system or equivalent message.
-            logit_bias: The logit bias mapping.
-            max_tokens: The maximum number of tokens (must be > 0).
-            metadata: Metadata mapping.
-            presence_penalty: The presence penalty (must be between -2.0 and 2.0).
-            response_format: Structured output response format schema. Must be a valid Pydantic model.
-            seed: Random seed for reproducibility.
-            stop: Stop sequences.
-            store: Whether to store the conversation.
-            temperature: The temperature (must be between 0.0 and 2.0).
-            tool_choice: The tool choice mode.
-            tools: List of available tools.
-            top_p: The top-p value (must be between 0.0 and 1.0).
-            user: The user ID.
-            additional_properties: Provider-specific additional properties, can also be passed as kwargs.
-            **kwargs: Additional properties to include in additional_properties.
-        """
-        # Validate numeric constraints and convert types as needed
-        if frequency_penalty is not None:
-            if not (-2.0 <= frequency_penalty <= 2.0):
-                raise ValueError("frequency_penalty must be between -2.0 and 2.0")
-            frequency_penalty = float(frequency_penalty)
-        if presence_penalty is not None:
-            if not (-2.0 <= presence_penalty <= 2.0):
-                raise ValueError("presence_penalty must be between -2.0 and 2.0")
-            presence_penalty = float(presence_penalty)
-        if temperature is not None:
-            if not (0.0 <= temperature <= 2.0):
-                raise ValueError("temperature must be between 0.0 and 2.0")
-            temperature = float(temperature)
-        if top_p is not None:
-            if not (0.0 <= top_p <= 1.0):
-                raise ValueError("top_p must be between 0.0 and 1.0")
-            top_p = float(top_p)
-        if max_tokens is not None and max_tokens <= 0:
-            raise ValueError("max_tokens must be greater than 0")
+    Converts callables to AIFunction objects, expands MCP tools to their constituent
+    functions (connecting them if needed), and ensures all tools are either ToolProtocol
+    instances or MutableMappings.
 
-        if additional_properties is None:
-            additional_properties = {}
-        if kwargs:
-            additional_properties.update(kwargs)
+    Args:
+        tools: Tools to validate - can be a single tool, callable, or sequence.
 
-        self.additional_properties = cast(dict[str, Any], additional_properties)
-        self.model_id = model_id
-        self.allow_multiple_tool_calls = allow_multiple_tool_calls
-        self.conversation_id = conversation_id
-        self.frequency_penalty = frequency_penalty
-        self.instructions = instructions
-        self.logit_bias = logit_bias
-        self.max_tokens = max_tokens
-        self.metadata = metadata
-        self.presence_penalty = presence_penalty
-        self.response_format = response_format
-        self.seed = seed
-        self.stop = stop
-        self.store = store
-        self.temperature = temperature
-        self.tool_choice = self._validate_tool_mode(tool_choice)
-        self._tools = self._validate_tools(tools)
-        self.top_p = top_p
-        self.user = user
+    Returns:
+        Normalized list of tools, or None if no tools provided.
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatOptions":
-        """Create a runtime-safe copy without deep-copying tool instances."""
-        clone = type(self).__new__(type(self))
-        memo[id(self)] = clone
-        for key, value in self.__dict__.items():
-            if key == "_tools":
-                setattr(clone, key, list(value) if value is not None else None)
-                continue
-            if key in {"logit_bias", "metadata", "additional_properties"}:
-                setattr(clone, key, self._safe_deepcopy_mapping(value, memo))
-                continue
-            setattr(clone, key, self._safe_deepcopy_value(value, memo))
-        return clone
+    Examples:
+        .. code-block:: python
 
-    @staticmethod
-    def _safe_deepcopy_mapping(
-        value: MutableMapping[str, Any] | None, memo: dict[int, Any]
-    ) -> MutableMapping[str, Any] | None:
-        """Deep copy helper that falls back to a shallow copy for problematic mappings."""
-        if value is None:
-            return None
-        try:
-            return deepcopy(value, memo)  # type: ignore[arg-type]
-        except Exception:
-            return dict(value)
+            from agent_framework import validate_tools, ai_function
 
-    @staticmethod
-    def _safe_deepcopy_value(value: Any, memo: dict[int, Any]) -> Any:
-        """Deep copy helper that avoids failing on non-copyable instances."""
-        try:
-            return deepcopy(value, memo)
-        except Exception:
-            return value
 
-    @property
-    def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
-        """Return the tools that are specified."""
-        return self._tools
+            @ai_function
+            def my_tool(x: int) -> int:
+                return x * 2
 
-    @tools.setter
-    def tools(
-        self,
-        new_tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None,
-    ) -> None:
-        """Set the tools."""
-        self._tools = self._validate_tools(new_tools)
 
-    @classmethod
-    def _validate_tools(
-        cls,
-        tools: (
-            ToolProtocol
-            | Callable[..., Any]
-            | MutableMapping[str, Any]
-            | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-            | None
-        ),
-    ) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
-        """Parse the tools field."""
-        if not tools:
-            return None
-        if not isinstance(tools, Sequence):
-            if not isinstance(tools, (ToolProtocol, MutableMapping)):
-                return [ai_function(tools)]
-            return [tools]
-        return [tool if isinstance(tool, (ToolProtocol, MutableMapping)) else ai_function(tool) for tool in tools]
+            # Single tool
+            tools = await validate_tools(my_tool)
 
-    @classmethod
-    def _validate_tool_mode(
-        cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ToolMode | None:
-        """Validates the tool_choice field to ensure it is a valid ToolMode."""
-        if not tool_choice:
-            return None
-        if isinstance(tool_choice, str):
-            match tool_choice:
-                case "auto":
-                    return ToolMode.AUTO
-                case "required":
-                    return ToolMode.REQUIRED_ANY
-                case "none":
-                    return ToolMode.NONE
-                case _:
-                    raise ContentError(f"Invalid tool choice: {tool_choice}")
-        if isinstance(tool_choice, (dict, Mapping)):
-            return ToolMode.from_dict(tool_choice)  # type: ignore
-        return tool_choice
+            # List of tools
+            tools = await validate_tools([my_tool, another_tool])
+    """
+    # Sequence of tools - convert callables and expand MCP tools
+    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+    if not tools:
+        return final_tools
+    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
+        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
+        if not isinstance(tools, (ToolProtocol, MutableMapping)):
+            return [ai_function(tools)]
+        return [tools]
+    for tool in tools:
+        # Import MCPTool here to avoid circular imports
+        from ._mcp import MCPTool
 
-    def __and__(self, other: object) -> "ChatOptions":
-        """Combines two ChatOptions instances.
-
-        The values from the other ChatOptions take precedence.
-        List and dicts are combined.
-        """
-        if not isinstance(other, ChatOptions):
-            return self
-        other_tools = other.tools
-        # tool_choice has a specialized serialize method. Save it here so we can fix it later.
-        tool_choice = other.tool_choice or self.tool_choice
-        # response_format is a class type that can't be serialized. Save it here so we can restore it later.
-        response_format = self.response_format
-        # Start with a shallow copy of self that preserves tool objects
-        combined = ChatOptions.from_dict(self.to_dict())
-        combined.tool_choice = self.tool_choice
-        combined.tools = list(self.tools) if self.tools else None
-        combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
-        combined.metadata = dict(self.metadata) if self.metadata else None
-        combined.response_format = response_format
-
-        # Apply scalar and mapping updates from the other options
-        updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
-        logit_bias = updated_data.pop("logit_bias", {})
-        metadata = updated_data.pop("metadata", {})
-        additional_properties: dict[str, Any] = updated_data.pop("additional_properties", {})
-
-        for key, value in updated_data.items():
-            setattr(combined, key, value)
-
-        combined.tool_choice = tool_choice
-        # Preserve response_format from other if it exists, otherwise keep self's
-        if other.response_format is not None:
-            combined.response_format = other.response_format
-        if other.instructions:
-            combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
-
-        combined.logit_bias = (
-            {**(combined.logit_bias or {}), **logit_bias} if logit_bias or combined.logit_bias else None
-        )
-        combined.metadata = {**(combined.metadata or {}), **metadata} if metadata or combined.metadata else None
-        if combined.additional_properties and additional_properties:
-            combined.additional_properties.update(additional_properties)
+        if isinstance(tool, MCPTool):
+            # Expand MCP tools to their constituent functions
+            if not tool.is_connected:
+                await tool.connect()
+            final_tools.extend(tool.functions)  # type: ignore
+        elif isinstance(tool, (ToolProtocol, MutableMapping)):
+            final_tools.append(tool)
         else:
-            if additional_properties:
-                combined.additional_properties = additional_properties
-        if other_tools:
-            if combined.tools is None:
-                combined.tools = list(other_tools)
+            # Convert callable to AIFunction
+            final_tools.append(ai_function(tool))
+    return final_tools
+
+
+def validate_tool_mode(
+    tool_choice: ToolMode | Literal["auto", "required", "none"] | None,
+) -> ToolMode:
+    """Validate and normalize tool_choice to a ToolMode dict.
+
+    Args:
+        tool_choice: The tool choice value to validate.
+
+    Returns:
+        A ToolMode dict (contains keys: "mode", and optionally "required_function_name").
+
+    Raises:
+        ContentError: If the tool_choice string is invalid.
+    """
+    if not tool_choice:
+        return {"mode": "none"}
+    if isinstance(tool_choice, str):
+        if tool_choice not in ("auto", "required", "none"):
+            raise ContentError(f"Invalid tool choice: {tool_choice}")
+        return {"mode": tool_choice}
+    if "mode" not in tool_choice:
+        raise ContentError("tool_choice dict must contain 'mode' key")
+    if tool_choice["mode"] not in ("auto", "required", "none"):
+        raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
+    if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
+        raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
+    return tool_choice
+
+
+def merge_chat_options(
+    base: dict[str, Any] | None,
+    override: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge two chat options dictionaries.
+
+    Values from override take precedence over base.
+    Lists and dicts are combined (not replaced).
+    Instructions are concatenated with newlines.
+
+    Args:
+        base: The base options dictionary.
+        override: The override options dictionary.
+
+    Returns:
+        A new merged options dictionary.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import merge_chat_options
+
+            base = {"temperature": 0.5, "model_id": "gpt-4"}
+            override = {"temperature": 0.7, "max_tokens": 1000}
+            merged = merge_chat_options(base, override)
+            # {"temperature": 0.7, "model_id": "gpt-4", "max_tokens": 1000}
+    """
+    if not base:
+        return dict(override) if override else {}
+    if not override:
+        return dict(base)
+
+    result: dict[str, Any] = {}
+
+    # Copy base values (shallow copy for simple values, dict copy for dicts)
+    for key, value in base.items():
+        if isinstance(value, dict):
+            result[key] = dict(value)
+        elif isinstance(value, list):
+            result[key] = list(value)
+        else:
+            result[key] = value
+
+    # Apply overrides
+    for key, value in override.items():
+        if value is None:
+            continue
+
+        if key == "instructions":
+            # Concatenate instructions
+            base_instructions = result.get("instructions")
+            if base_instructions:
+                result["instructions"] = f"{base_instructions}\n{value}"
             else:
-                for tool in other_tools:
-                    if tool not in combined.tools:
-                        combined.tools.append(tool)
-        return combined
+                result["instructions"] = value
+        elif key == "tools":
+            # Merge tools lists
+            base_tools = result.get("tools")
+            if base_tools and value:
+                # Add tools that aren't already present
+                merged_tools = list(base_tools)
+                for tool in value if isinstance(value, list) else [value]:
+                    if tool not in merged_tools:
+                        merged_tools.append(tool)
+                result["tools"] = merged_tools
+            elif value:
+                result["tools"] = list(value) if isinstance(value, list) else [value]
+        elif key in ("logit_bias", "metadata", "additional_properties"):
+            # Merge dicts
+            base_dict = result.get(key)
+            if base_dict and isinstance(value, dict):
+                result[key] = {**base_dict, **value}
+            elif value:
+                result[key] = dict(value) if isinstance(value, dict) else value
+        elif key == "tool_choice":
+            # tool_choice from override takes precedence
+            result["tool_choice"] = value if value else result.get("tool_choice")
+        elif key == "response_format":
+            # response_format from override takes precedence if set
+            result["response_format"] = value
+        else:
+            # Simple override
+            result[key] = value
+
+    return result

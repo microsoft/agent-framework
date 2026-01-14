@@ -299,8 +299,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
         # Test that the client can be used to get a response
         response = await azure_assistants_client.get_response(
             messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
+            options={"tools": [get_weather], "tool_choice": "auto"},
         )
 
         assert response is not None
@@ -352,8 +351,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
         # Test that the client can be used to get a response
         response = azure_assistants_client.get_streaming_response(
             messages=messages,
-            tools=[get_weather],
-            tool_choice="auto",
+            options={"tools": [get_weather], "tool_choice": "auto"},
         )
         full_message: str = ""
         async for chunk in response:

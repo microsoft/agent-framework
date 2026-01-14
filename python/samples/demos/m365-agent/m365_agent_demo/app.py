@@ -189,7 +189,7 @@ def create_app(config: AppConfig) -> web.Application:
         web.Application: Fully initialized web application.
     """
     middleware_fn = build_anonymous_claims_middleware(config.use_anonymous_mode)
-    app = web.Application(middlewares=[middleware_fn])
+    app = web.Application(middleware=[middleware_fn])
 
     storage = MemoryStorage()
     agent = build_agent()

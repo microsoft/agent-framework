@@ -367,9 +367,9 @@ class ExecutorFailedEvent(ExecutorEvent):
 class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
-    data: AgentRunResponseUpdate | None
+    data: AgentRunResponseUpdate
 
-    def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
+    def __init__(self, executor_id: str, data: AgentRunResponseUpdate):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
 
@@ -381,9 +381,9 @@ class AgentRunUpdateEvent(ExecutorEvent):
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
 
-    data: AgentRunResponse | None
+    data: AgentRunResponse
 
-    def __init__(self, executor_id: str, data: AgentRunResponse | None = None):
+    def __init__(self, executor_id: str, data: AgentRunResponse):
         """Initialize the agent run event."""
         super().__init__(executor_id, data)
 

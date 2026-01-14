@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import (
+    AgentExecutorResponse,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
@@ -35,7 +36,7 @@ class _EchoAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.display_name} reply")])
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} reply")])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -45,14 +46,15 @@ class _EchoAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         # Minimal async generator with one assistant update
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.display_name} reply")])
+        yield AgentRunResponseUpdate(contents=[TextContent(text=f"{self.name} reply")])
 
 
 class _SummarizerExec(Executor):
     """Custom executor that summarizes by appending a short assistant message."""
 
     @handler
-    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        conversation = agent_response.full_conversation or []
         user_texts = [m.text for m in conversation if m.role == Role.USER]
         agents = [m.author_name or m.role for m in conversation if m.role == Role.ASSISTANT]
         summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary of users:{len(user_texts)} agents:{len(agents)}")

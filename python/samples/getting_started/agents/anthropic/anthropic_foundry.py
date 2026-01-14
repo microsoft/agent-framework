@@ -38,10 +38,12 @@ async def main() -> None:
             ),
             HostedWebSearchTool(),
         ],
-        # anthropic needs a value for the max_tokens parameter
-        # we set it to 1024, but you can override like this:
-        max_tokens=20000,
-        additional_chat_options={"thinking": {"type": "enabled", "budget_tokens": 10000}},
+        default_options={
+            # anthropic needs a value for the max_tokens parameter
+            # we set it to 1024, but you can override like this:
+            "max_tokens": 20000,
+            "thinking": {"type": "enabled", "budget_tokens": 10000},
+        },
     )
 
     query = "Can you compare Python decorators with C# attributes?"
