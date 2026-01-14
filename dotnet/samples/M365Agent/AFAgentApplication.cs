@@ -49,16 +49,16 @@ internal sealed class AFAgentApplication : AgentApplication
         ChatMessage chatMessage = HandleUserInput(turnContext);
 
         // Invoke the WeatherForecastAgent to process the message
-        AgentRunResponse agentRunResponse = await this._agent.RunAsync(chatMessage, agentThread, cancellationToken: cancellationToken);
+        AgentResponse agentResponse = await this._agent.RunAsync(chatMessage, agentThread, cancellationToken: cancellationToken);
 
         // Check for any user input requests in the response
         // and turn them into adaptive cards in the streaming response.
         List<Attachment>? attachments = null;
-        HandleUserInputRequests(agentRunResponse, ref attachments);
+        HandleUserInputRequests(agentResponse, ref attachments);
 
         // Check for Adaptive Card content in the response messages
         // and return them appropriately in the response.
-        var adaptiveCards = agentRunResponse.Messages.SelectMany(x => x.Contents).OfType<AdaptiveCardAIContent>().ToList();
+        var adaptiveCards = agentResponse.Messages.SelectMany(x => x.Contents).OfType<AdaptiveCardAIContent>().ToList();
         if (adaptiveCards.Count > 0)
         {
             attachments ??= [];
@@ -70,7 +70,7 @@ internal sealed class AFAgentApplication : AgentApplication
         }
         else
         {
-            turnContext.StreamingResponse.QueueTextChunk(agentRunResponse.Text);
+            turnContext.StreamingResponse.QueueTextChunk(agentResponse.Text);
         }
 
         // If created any adaptive cards, add them to the final message.
@@ -134,9 +134,9 @@ internal sealed class AFAgentApplication : AgentApplication
     /// When the agent returns any user input requests, this method converts them into adaptive cards that
     /// asks the user to approve or deny the requests.
     /// </summary>
-    /// <param name="response">The <see cref="AgentRunResponse"/> that may contain the user input requests.</param>
+    /// <param name="response">The <see cref="AgentResponse"/> that may contain the user input requests.</param>
     /// <param name="attachments">The list of <see cref="Attachment"/> to which the adaptive cards will be added.</param>
-    private static void HandleUserInputRequests(AgentRunResponse response, ref List<Attachment>? attachments)
+    private static void HandleUserInputRequests(AgentResponse response, ref List<Attachment>? attachments)
     {
         var userInputRequests = response.UserInputRequests.ToList();
         if (userInputRequests.Count > 0)

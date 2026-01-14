@@ -22,7 +22,7 @@ ChatClientAgent agentGenAI = new(
     name: JokerName,
     instructions: JokerInstructions);
 
-AgentRunResponse response = await agentGenAI.RunAsync("Tell me a joke about a pirate.");
+AgentResponse response = await agentGenAI.RunAsync("Tell me a joke about a pirate.");
 Console.WriteLine($"Google GenAI client based agent response:\n{response}");
 
 // Using a community driven Mscc.GenerativeAI.Microsoft package

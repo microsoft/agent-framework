@@ -26,7 +26,7 @@ async def run_agent_framework() -> None:
         name="TourGuide",
         instructions="Provide travel recommendations in short bursts.",
     )
-    # AF streaming provides incremental AgentRunResponseUpdate objects.
+    # AF streaming provides incremental AgentResponseUpdate objects.
     print("[AF][stream]", end=" ")
     async for update in agent.run_stream("Plan a day in Copenhagen for foodies."):
         if update.text:

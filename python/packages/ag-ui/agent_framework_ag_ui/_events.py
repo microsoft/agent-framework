@@ -24,7 +24,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     FunctionApprovalRequestContent,
     FunctionCallContent,
     FunctionResultContent,
@@ -81,9 +81,9 @@ class AgentFrameworkEventBridge:
         self.should_stop_after_confirm: bool = False  # Flag to stop run after confirm_changes
         self.suppressed_summary: str = ""  # Store LLM summary to show after confirmation
 
-    async def from_agent_run_update(self, update: AgentRunResponseUpdate) -> list[BaseEvent]:
+    async def from_agent_run_update(self, update: AgentResponseUpdate) -> list[BaseEvent]:
         """
-        Convert an AgentRunResponseUpdate to AG-UI events.
+        Convert an AgentResponseUpdate to AG-UI events.
 
         Args:
             update: The agent run update to convert.

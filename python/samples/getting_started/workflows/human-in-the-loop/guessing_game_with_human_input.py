@@ -103,7 +103,7 @@ class TurnManager(Executor):
         2) Request info with a HumanFeedbackRequest as the payload.
         """
         # Parse structured model output
-        text = result.agent_run_response.text
+        text = result.agent_response.text
         last_guess = GuessOutput.model_validate_json(text).guess
 
         # Craft a precise human prompt that defines higher and lower relative to the agent's guess.

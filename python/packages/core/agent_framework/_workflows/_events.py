@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeAlias
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+from agent_framework import AgentResponse, AgentResponseUpdate
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._typing_utils import deserialize_type, serialize_type
@@ -367,9 +367,9 @@ class ExecutorFailedEvent(ExecutorEvent):
 class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
-    data: AgentRunResponseUpdate
+    data: AgentResponseUpdate
 
-    def __init__(self, executor_id: str, data: AgentRunResponseUpdate):
+    def __init__(self, executor_id: str, data: AgentResponseUpdate):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
 
@@ -381,9 +381,9 @@ class AgentRunUpdateEvent(ExecutorEvent):
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
 
-    data: AgentRunResponse
+    data: AgentResponse
 
-    def __init__(self, executor_id: str, data: AgentRunResponse):
+    def __init__(self, executor_id: str, data: AgentResponse):
         """Initialize the agent run event."""
         super().__init__(executor_id, data)
 

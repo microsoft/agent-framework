@@ -54,7 +54,7 @@ The table below represents the majority of the naming changes discussed in issue
 | *Mcp* & *Http* | *MCP* & *HTTP* | accepted | Acronyms should be uppercased in class names, according to PEP 8. | None |
 | `agent.run_streaming` | `agent.run_stream` | accepted | Shorter and more closely aligns with AutoGen and Semantic Kernel names for the same methods. | None |
 | `workflow.run_streaming` | `workflow.run_stream` | accepted | In sync with `agent.run_stream` and shorter and more closely aligns with AutoGen and Semantic Kernel names for the same methods. | None |
-| AgentRunResponse & AgentRunResponseUpdate | AgentResponse & AgentResponseUpdate | rejected | Rejected, because it is the response to a run invocation and AgentResponse is too generic. | None |
+| AgentResponse & AgentResponseUpdate | AgentResponse & AgentResponseUpdate | rejected | Rejected, because it is the response to a run invocation and AgentResponse is too generic. | None |
 | *Content | * | rejected | Rejected other content type renames (removing `Content` suffix) because it would reduce clarity and discoverability. | Item was also considered, but rejected as it is very similar to Content, but would be inconsistent with dotnet. |
 | ChatResponse & ChatResponseUpdate | Response & ResponseUpdate | rejected | Rejected, because Response is too generic. | None |
 

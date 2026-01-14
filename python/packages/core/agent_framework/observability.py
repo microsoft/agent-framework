@@ -35,8 +35,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import (
-        AgentRunResponse,
-        AgentRunResponseUpdate,
+        AgentResponse,
+        AgentResponseUpdate,
         ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
@@ -1315,10 +1315,10 @@ def use_instrumentation(
 
 
 def _trace_agent_run(
-    run_func: Callable[..., Awaitable["AgentRunResponse"]],
+    run_func: Callable[..., Awaitable["AgentResponse"]],
     provider_name: str,
     capture_usage: bool = True,
-) -> Callable[..., Awaitable["AgentRunResponse"]]:
+) -> Callable[..., Awaitable["AgentResponse"]]:
     """Decorator to trace chat completion activities.
 
     Args:
@@ -1334,7 +1334,7 @@ def _trace_agent_run(
         *,
         thread: "AgentThread | None" = None,
         **kwargs: Any,
-    ) -> "AgentRunResponse":
+    ) -> "AgentResponse":
         global OBSERVABILITY_SETTINGS
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
@@ -1384,10 +1384,10 @@ def _trace_agent_run(
 
 
 def _trace_agent_run_stream(
-    run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
+    run_streaming_func: Callable[..., AsyncIterable["AgentResponseUpdate"]],
     provider_name: str,
     capture_usage: bool,
-) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
+) -> Callable[..., AsyncIterable["AgentResponseUpdate"]]:
     """Decorator to trace streaming agent run activities.
 
     Args:
@@ -1403,7 +1403,7 @@ def _trace_agent_run_stream(
         *,
         thread: "AgentThread | None" = None,
         **kwargs: Any,
-    ) -> AsyncIterable["AgentRunResponseUpdate"]:
+    ) -> AsyncIterable["AgentResponseUpdate"]:
         global OBSERVABILITY_SETTINGS
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
@@ -1412,9 +1412,9 @@ def _trace_agent_run_stream(
                 yield streaming_agent_response
             return
 
-        from ._types import AgentRunResponse, merge_chat_options
+        from ._types import AgentResponse, merge_chat_options
 
-        all_updates: list["AgentRunResponseUpdate"] = []
+        all_updates: list["AgentResponseUpdate"] = []
 
         default_options = getattr(self, "default_options", {})
         options = merge_chat_options(default_options, kwargs.get("options", {}))
@@ -1444,7 +1444,7 @@ def _trace_agent_run_stream(
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             else:
-                response = AgentRunResponse.from_agent_run_response_updates(all_updates)
+                response = AgentResponse.from_agent_run_response_updates(all_updates)
                 attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                 _capture_response(span=span, attributes=attributes)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
@@ -1784,7 +1784,7 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
 
 def _get_response_attributes(
     attributes: dict[str, Any],
-    response: "ChatResponse | AgentRunResponse",
+    response: "ChatResponse | AgentResponse",
     duration: float | None = None,
     *,
     capture_usage: bool = True,

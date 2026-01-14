@@ -19,9 +19,9 @@ import logging
 import os
 from datetime import timedelta
 
-import redis.asyncio as aioredis
-from agent_framework import AgentRunResponseUpdate
 import azure.functions as func
+import redis.asyncio as aioredis
+from agent_framework import AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
@@ -29,7 +29,6 @@ from agent_framework.azure import (
     AzureOpenAIChatClient,
 )
 from azure.identity import AzureCliCredential
-
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
 
@@ -38,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 REDIS_CONNECTION_STRING = os.environ.get("REDIS_CONNECTION_STRING", "redis://localhost:6379")
 REDIS_STREAM_TTL_MINUTES = int(os.environ.get("REDIS_STREAM_TTL_MINUTES", "10"))
+
 
 async def get_stream_handler() -> RedisStreamResponseHandler:
     """Create a new Redis stream handler for each request.
@@ -70,7 +70,7 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
 
     async def on_streaming_response_update(
         self,
-        update: AgentRunResponseUpdate,
+        update: AgentResponseUpdate,
         context: AgentCallbackContext,
     ) -> None:
         """Write streaming update to Redis Stream.
@@ -291,24 +291,21 @@ def _format_chunk(chunk: StreamChunk, use_sse_format: bool) -> str:
     """Format a text chunk."""
     if use_sse_format:
         return _format_sse_event("message", chunk.text, chunk.entry_id)
-    else:
-        return chunk.text
+    return chunk.text
 
 
 def _format_end_of_stream(entry_id: str, use_sse_format: bool) -> str:
     """Format end-of-stream marker."""
     if use_sse_format:
         return _format_sse_event("done", "[DONE]", entry_id)
-    else:
-        return "\n"
+    return "\n"
 
 
 def _format_error(error: str, use_sse_format: bool) -> str:
     """Format error message."""
     if use_sse_format:
         return _format_sse_event("error", error, None)
-    else:
-        return f"\n[Error: {error}]\n"
+    return f"\n[Error: {error}]\n"
 
 
 def _format_sse_event(event_type: str, data: str, event_id: str | None = None) -> str:

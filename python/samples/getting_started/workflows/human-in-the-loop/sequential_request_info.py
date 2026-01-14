@@ -96,7 +96,7 @@ async def main() -> None:
                     print("\n" + "-" * 40)
                     print("REQUEST INFO: INPUT REQUESTED")
                     print(
-                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_run_response.text}'. "
+                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
                         "Please provide your feedback."
                     )
                     print("-" * 40)

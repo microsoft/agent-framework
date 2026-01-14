@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import (
-    AgentRunResponse,
+    AgentResponse,
     ChatAgent,
     ChatMessage,
     FunctionCallContent,
@@ -101,7 +101,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     return triage_agent, refund_agent, order_agent, return_agent
 
 
-def handle_response_and_requests(response: AgentRunResponse) -> dict[str, HandoffAgentUserRequest]:
+def handle_response_and_requests(response: AgentResponse) -> dict[str, HandoffAgentUserRequest]:
     """Process agent response messages and extract any user requests.
 
     This function inspects the agent response and:
@@ -109,7 +109,7 @@ def handle_response_and_requests(response: AgentRunResponse) -> dict[str, Handof
     - Collects HandoffAgentUserRequest instances for response handling
 
     Args:
-        response: The AgentRunResponse from the agent run call.
+        response: The AgentResponse from the agent run call.
 
     Returns:
         A dictionary mapping request IDs to HandoffAgentUserRequest instances.

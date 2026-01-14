@@ -16,54 +16,54 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="AgentRunResponseUpdate"/> is so named because it represents updates
+/// <see cref="AgentResponseUpdate"/> is so named because it represents updates
 /// that layer on each other to form a single agent response. Conceptually, this combines the roles of
-/// <see cref="AgentRunResponse"/> and <see cref="ChatMessage"/> in streaming output.
+/// <see cref="AgentResponse"/> and <see cref="ChatMessage"/> in streaming output.
 /// </para>
 /// <para>
-/// To get the text result of this response chunk, use the <see cref="Text"/> property or simply call <see cref="ToString()"/> on the <see cref="AgentRunResponseUpdate"/>.
+/// To get the text result of this response chunk, use the <see cref="Text"/> property or simply call <see cref="ToString()"/> on the <see cref="AgentResponseUpdate"/>.
 /// </para>
 /// <para>
-/// The relationship between <see cref="AgentRunResponse"/> and <see cref="AgentRunResponseUpdate"/> is
-/// codified in the <see cref="AgentRunResponseExtensions.ToAgentRunResponseAsync"/> and
-/// <see cref="AgentRunResponse.ToAgentRunResponseUpdates"/>, which enable bidirectional conversions
+/// The relationship between <see cref="AgentResponse"/> and <see cref="AgentResponseUpdate"/> is
+/// codified in the <see cref="AgentResponseExtensions.ToAgentResponseAsync"/> and
+/// <see cref="AgentResponse.ToAgentResponseUpdates"/>, which enable bidirectional conversions
 /// between the two. Note, however, that the provided conversions may be lossy, for example if multiple
 /// updates all have different <see cref="RawRepresentation"/> objects whereas there's only one slot for
-/// such an object available in <see cref="AgentRunResponse.RawRepresentation"/>.
+/// such an object available in <see cref="AgentResponse.RawRepresentation"/>.
 /// </para>
 /// </remarks>
 [DebuggerDisplay("[{Role}] {ContentForDebuggerDisplay}{EllipsesForDebuggerDisplay,nq}")]
-public class AgentRunResponseUpdate
+public class AgentResponseUpdate
 {
     /// <summary>The response update content items.</summary>
     private IList<AIContent>? _contents;
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
+    /// <summary>Initializes a new instance of the <see cref="AgentResponseUpdate"/> class.</summary>
     [JsonConstructor]
-    public AgentRunResponseUpdate()
+    public AgentResponseUpdate()
     {
     }
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
+    /// <summary>Initializes a new instance of the <see cref="AgentResponseUpdate"/> class.</summary>
     /// <param name="role">The role of the author of the update.</param>
     /// <param name="content">The text content of the update.</param>
-    public AgentRunResponseUpdate(ChatRole? role, string? content)
+    public AgentResponseUpdate(ChatRole? role, string? content)
         : this(role, content is null ? null : [new TextContent(content)])
     {
     }
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
+    /// <summary>Initializes a new instance of the <see cref="AgentResponseUpdate"/> class.</summary>
     /// <param name="role">The role of the author of the update.</param>
     /// <param name="contents">The contents of the update.</param>
-    public AgentRunResponseUpdate(ChatRole? role, IList<AIContent>? contents)
+    public AgentResponseUpdate(ChatRole? role, IList<AIContent>? contents)
     {
         this.Role = role;
         this._contents = contents;
     }
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
-    /// <param name="chatResponseUpdate">The <see cref="ChatResponseUpdate"/> from which to seed this <see cref="AgentRunResponseUpdate"/>.</param>
-    public AgentRunResponseUpdate(ChatResponseUpdate chatResponseUpdate)
+    /// <summary>Initializes a new instance of the <see cref="AgentResponseUpdate"/> class.</summary>
+    /// <param name="chatResponseUpdate">The <see cref="ChatResponseUpdate"/> from which to seed this <see cref="AgentResponseUpdate"/>.</param>
+    public AgentResponseUpdate(ChatResponseUpdate chatResponseUpdate)
     {
         _ = Throw.IfNull(chatResponseUpdate);
 
@@ -112,7 +112,7 @@ public class AgentRunResponseUpdate
 
     /// <summary>Gets or sets the raw representation of the response update from an underlying implementation.</summary>
     /// <remarks>
-    /// If a <see cref="AgentRunResponseUpdate"/> is created to represent some underlying object from another object
+    /// If a <see cref="AgentResponseUpdate"/> is created to represent some underlying object from another object
     /// model, this property can be used to store that original object. This can be useful for debugging or
     /// for enabling a consumer to access the underlying object model if needed.
     /// </remarks>
@@ -136,8 +136,8 @@ public class AgentRunResponseUpdate
     /// Some providers may consider streaming responses to be a single message, and in that case
     /// the value of this property may be the same as the response ID.
     ///
-    /// This value is used when <see cref="AgentRunResponseExtensions.ToAgentRunResponseAsync(IAsyncEnumerable{AgentRunResponseUpdate}, System.Threading.CancellationToken)"/>
-    /// groups <see cref="AgentRunResponseUpdate"/> instances into <see cref="AgentRunResponse"/> instances.
+    /// This value is used when <see cref="AgentResponseExtensions.ToAgentResponseAsync(IAsyncEnumerable{AgentResponseUpdate}, System.Threading.CancellationToken)"/>
+    /// groups <see cref="AgentResponseUpdate"/> instances into <see cref="AgentResponse"/> instances.
     /// The value must be unique to each call to the underlying provider, and must be shared by
     /// all updates that are part of the same logical message within a streaming response.
     /// </remarks>

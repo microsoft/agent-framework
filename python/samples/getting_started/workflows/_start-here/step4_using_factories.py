@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import (
-    AgentRunResponse,
+    AgentResponse,
     ChatAgent,
     Executor,
     WorkflowBuilder,
@@ -83,9 +83,9 @@ async def main():
         .build()
     )
 
-    output: AgentRunResponse | None = None
+    output: AgentResponse | None = None
     async for event in workflow.run_stream("hello world"):
-        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentRunResponse):
+        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponse):
             output = event.data
 
     if output:

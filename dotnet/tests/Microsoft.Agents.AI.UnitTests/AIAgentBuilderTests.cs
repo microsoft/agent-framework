@@ -376,7 +376,7 @@ public class AIAgentBuilderTests
         var builder = new AIAgentBuilder(mockAgent.Object);
 
         // Act
-        var result = builder.Use((_, _, _, _, _) => Task.FromResult(new AgentRunResponse()), null).Build();
+        var result = builder.Use((_, _, _, _, _) => Task.FromResult(new AgentResponse()), null).Build();
 
         // Assert
         Assert.IsType<AnonymousDelegatingAIAgent>(result);
@@ -393,7 +393,7 @@ public class AIAgentBuilderTests
         var builder = new AIAgentBuilder(mockAgent.Object);
 
         // Act
-        var result = builder.Use(null, (_, _, _, _, _) => AsyncEnumerable.Empty<AgentRunResponseUpdate>()).Build();
+        var result = builder.Use(null, (_, _, _, _, _) => AsyncEnumerable.Empty<AgentResponseUpdate>()).Build();
 
         // Assert
         Assert.IsType<AnonymousDelegatingAIAgent>(result);
@@ -411,8 +411,8 @@ public class AIAgentBuilderTests
 
         // Act
         var result = builder.Use(
-            (_, _, _, _, _) => Task.FromResult(new AgentRunResponse()),
-            (_, _, _, _, _) => AsyncEnumerable.Empty<AgentRunResponseUpdate>()).Build();
+            (_, _, _, _, _) => Task.FromResult(new AgentResponse()),
+            (_, _, _, _, _) => AsyncEnumerable.Empty<AgentResponseUpdate>()).Build();
 
         // Assert
         Assert.IsType<AnonymousDelegatingAIAgent>(result);

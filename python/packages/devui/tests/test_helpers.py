@@ -18,8 +18,8 @@ from collections.abc import AsyncIterable, MutableSequence
 from typing import Any, Generic
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     BaseChatClient,
@@ -172,9 +172,9 @@ class MockAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         self.call_count += 1
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=self.response_text)])]
         )
 
@@ -184,10 +184,10 @@ class MockAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         for chunk in self.streaming_chunks:
-            yield AgentRunResponseUpdate(contents=[TextContent(text=chunk)], role=Role.ASSISTANT)
+            yield AgentResponseUpdate(contents=[TextContent(text=chunk)], role=Role.ASSISTANT)
 
 
 class MockToolCallingAgent(BaseAgent):
@@ -203,9 +203,9 @@ class MockToolCallingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         self.call_count += 1
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
 
     async def run_stream(
         self,
@@ -213,15 +213,15 @@ class MockToolCallingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         # First: text
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="Let me search for that...")],
             role=Role.ASSISTANT,
         )
         # Second: tool call
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[
                 FunctionCallContent(
                     call_id="call_123",
@@ -232,7 +232,7 @@ class MockToolCallingAgent(BaseAgent):
             role=Role.ASSISTANT,
         )
         # Third: tool result
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[
                 FunctionResultContent(
                     call_id="call_123",
@@ -242,7 +242,7 @@ class MockToolCallingAgent(BaseAgent):
             role=Role.TOOL,
         )
         # Fourth: final text
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="The weather is sunny, 72°F.")],
             role=Role.ASSISTANT,
         )
@@ -295,9 +295,9 @@ def create_mock_tool_agent(id: str = "tool_agent", name: str = "ToolAgent") -> M
     return MockToolCallingAgent(id=id, name=name)
 
 
-def create_agent_run_response(text: str = "Test response") -> AgentRunResponse:
-    """Create an AgentRunResponse with the given text."""
-    return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=text)])])
+def create_agent_run_response(text: str = "Test response") -> AgentResponse:
+    """Create an AgentResponse with the given text."""
+    return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=text)])])
 
 
 def create_agent_executor_response(
@@ -308,7 +308,7 @@ def create_agent_executor_response(
     agent_response = create_agent_run_response(response_text)
     return AgentExecutorResponse(
         executor_id=executor_id,
-        agent_run_response=agent_response,
+        agent_response=agent_response,
         full_conversation=[
             ChatMessage(role=Role.USER, contents=[TextContent(text="User input")]),
             ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)]),
@@ -324,7 +324,7 @@ def create_executor_completed_event(
 
     This creates the exact data structure that caused the serialization bug:
     ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
-    AgentRunResponse and ChatMessage objects (SerializationMixin, not Pydantic).
+    AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
     """
     data = create_agent_executor_response(executor_id) if with_agent_response else {"simple": "dict"}
     return ExecutorCompletedEvent(executor_id=executor_id, data=data)

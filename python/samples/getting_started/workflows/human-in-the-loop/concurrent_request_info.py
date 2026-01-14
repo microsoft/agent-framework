@@ -64,7 +64,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 
     for r in results:
         try:
-            messages = getattr(r.agent_run_response, "messages", [])
+            messages = getattr(r.agent_response, "messages", [])
             final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
             expert_sections.append(f"{getattr(r, 'executor_id', 'analyst')}:\n{final_text}")
 
@@ -161,7 +161,7 @@ async def main() -> None:
                     print("\n" + "-" * 40)
                     print("INPUT REQUESTED")
                     print(
-                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_run_response.text}'. "
+                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
                         "Please provide your feedback."
                     )
                     print("-" * 40)

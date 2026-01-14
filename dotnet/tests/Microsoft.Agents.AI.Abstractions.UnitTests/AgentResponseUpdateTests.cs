@@ -7,12 +7,12 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
-public class AgentRunResponseUpdateTests
+public class AgentResponseUpdateTests
 {
     [Fact]
     public void ConstructorPropsDefaulted()
     {
-        AgentRunResponseUpdate update = new();
+        AgentResponseUpdate update = new();
         Assert.Null(update.AuthorName);
         Assert.Null(update.Role);
         Assert.Empty(update.Text);
@@ -45,7 +45,7 @@ public class AgentRunResponseUpdateTests
             ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
 
-        AgentRunResponseUpdate response = new(chatResponseUpdate);
+        AgentResponseUpdate response = new(chatResponseUpdate);
         Assert.Same(chatResponseUpdate.AdditionalProperties, response.AdditionalProperties);
         Assert.Equal(chatResponseUpdate.AuthorName, response.AuthorName);
         Assert.Same(chatResponseUpdate.Contents, response.Contents);
@@ -60,7 +60,7 @@ public class AgentRunResponseUpdateTests
     [Fact]
     public void PropertiesRoundtrip()
     {
-        AgentRunResponseUpdate update = new();
+        AgentResponseUpdate update = new();
 
         Assert.Null(update.AuthorName);
         update.AuthorName = "author";
@@ -114,7 +114,7 @@ public class AgentRunResponseUpdateTests
     [Fact]
     public void TextGetUsesAllTextContent()
     {
-        AgentRunResponseUpdate update = new()
+        AgentResponseUpdate update = new()
         {
             Role = ChatRole.User,
             Contents =
@@ -142,7 +142,7 @@ public class AgentRunResponseUpdateTests
     [Fact]
     public void JsonSerializationRoundtrips()
     {
-        AgentRunResponseUpdate original = new()
+        AgentResponseUpdate original = new()
         {
             AuthorName = "author",
             Role = ChatRole.Assistant,
@@ -164,7 +164,7 @@ public class AgentRunResponseUpdateTests
 
         string json = JsonSerializer.Serialize(original, AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        AgentRunResponseUpdate? result = JsonSerializer.Deserialize<AgentRunResponseUpdate>(json, AgentAbstractionsJsonUtilities.DefaultOptions);
+        AgentResponseUpdate? result = JsonSerializer.Deserialize<AgentResponseUpdate>(json, AgentAbstractionsJsonUtilities.DefaultOptions);
 
         Assert.NotNull(result);
         Assert.Equal(5, result.Contents.Count);
