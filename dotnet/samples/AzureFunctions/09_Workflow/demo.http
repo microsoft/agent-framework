@@ -2,7 +2,7 @@
 @authority=http://localhost:7071
 
 ### Prompt the agent
-POST {{authority}}/api/workflows/MyTestWorkflow/run
+POST {{authority}}/api/workflows/HandleSurveyResponse/run
 Content-Type: text/plain
 
-Tell me a joke about a pirate.
+Rating: 5. Why was I charged $99 when my plan should be $49? I need a refund for the overcharge

@@ -246,4 +246,25 @@ public class Workflow
             }
         }
     }
+
+    /// <summary>
+    /// Creates an instance of the specified executor.
+    /// </summary>
+    /// <param name="executorId">The identifier of the executor to create.</param>
+    /// <param name="runId">A unique identifier for the run context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="ValueTask{Executor}"/> representing the asynchronous operation.</returns>
+    /// <remarks>
+    /// This method is useful for Azure Functions scenarios where you need to create executor instances
+    /// outside of the normal workflow execution flow.
+    /// </remarks>
+    public async ValueTask<Executor> CreateExecutorInstanceAsync(string executorId, string runId, CancellationToken cancellationToken = default)
+    {
+        if (!this.ExecutorBindings.TryGetValue(executorId, out ExecutorBinding? binding))
+        {
+            throw new InvalidOperationException($"Executor '{executorId}' not found in workflow.");
+        }
+
+        return await binding.CreateInstanceAsync(runId).ConfigureAwait(false);
+    }
 }

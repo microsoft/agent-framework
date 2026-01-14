@@ -152,10 +152,37 @@ internal sealed class DurableWorkflowRunner
 
         this._logger.LogExecutingActivity(executorPair.Key, executorPair.Value.ExecutorType.TypeName);
 
-        const string result = "Many types are internal.";
+        // Attempt to invoke the executor using Executor.ExecuteAsync
+        // This allows the executor to handle its own execution logic
+        try
+        {
+            // Create the executor instance
+            Executor executor = await workflow.CreateExecutorInstanceAsync(
+                executorPair.Key,
+                "activity-run",
+                CancellationToken.None).ConfigureAwait(false);
 
-        this._logger.LogActivityExecuted(executorPair.Key, result);
+            // Create a minimal workflow context for the executor
+            MinimalActivityContext context = new(executorPair.Key);
 
-        return result;
+            // Execute the executor with the input
+            // The executor handles its own routing logic internally
+            object? result = await executor.ExecuteAsync(
+                input,
+                new TypeId(typeof(string)),
+                context,
+                CancellationToken.None).ConfigureAwait(false);
+
+            // Convert result to string
+            string resultString = result?.ToString() ?? string.Empty;
+
+            this._logger.LogActivityExecuted(executorPair.Key, resultString);
+            return resultString;
+        }
+        catch (Exception ex)
+        {
+            this._logger.LogError(ex, "Error executing executor '{ExecutorId}' in activity", executorPair.Key);
+            throw;
+        }
     }
 }
