@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
@@ -242,10 +242,10 @@ public sealed class DurableAIAgent : AIAgent
             : JsonSerializer.Deserialize<T>(response.Text, serializerOptions))
             ?? throw new InvalidOperationException($"Failed to deserialize agent response to type {typeof(T).Name}.");
 
-        return new DurableAIAgentResponse<T>(response, result);
+        return new DurableAIAgentRunResponse<T>(response, result);
     }
 
-    private sealed class DurableAIAgentResponse<T>(AgentResponse response, T result)
+    private sealed class DurableAIAgentRunResponse<T>(AgentResponse response, T result)
         : AgentResponse<T>(response.AsChatResponse())
     {
         public override T Result { get; } = result;

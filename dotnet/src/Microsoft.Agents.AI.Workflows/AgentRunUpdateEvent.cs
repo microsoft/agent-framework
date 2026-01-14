@@ -14,14 +14,14 @@ public class AgentRunUpdateEvent : ExecutorEvent
     /// Initializes a new instance of the <see cref="AgentRunUpdateEvent"/> class.
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
-    /// <param name="update">The agent response update.</param>
+    /// <param name="update">The agent run response update.</param>
     public AgentRunUpdateEvent(string executorId, AgentResponseUpdate update) : base(executorId, data: update)
     {
         this.Update = Throw.IfNull(update);
     }
 
     /// <summary>
-    /// Gets the agent response update.
+    /// Gets the agent run response update.
     /// </summary>
     public AgentResponseUpdate Update { get; }
 
