@@ -72,7 +72,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
     } 
      
             this.Write("\n            );\n        AgentResponse response = new([new ChatMessage(ChatRole" +
-                    ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRunRes" +
+                    ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRes" +
                     "ponseEvent(this.Id, response)).ConfigureAwait(false);");
 
 } 

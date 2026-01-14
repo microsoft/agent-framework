@@ -96,7 +96,7 @@ public static class Program
         {
             switch (evt)
             {
-                case AgentRunUpdateEvent agentUpdate:
+                case AgentResponseUpdateEvent agentUpdate:
                     // Stream agent output in real-time
                     if (!string.IsNullOrEmpty(agentUpdate.Update.Text))
                     {

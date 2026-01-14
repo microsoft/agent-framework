@@ -5,22 +5,22 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
-/// Represents an event triggered when an agent run produces an update.
+/// Represents an event triggered when an agent produces a response.
 /// </summary>
-public class AgentRunResponseEvent : ExecutorEvent
+public class AgentResponseEvent : ExecutorEvent
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRunUpdateEvent"/> class.
+    /// Initializes a new instance of the <see cref="AgentResponseEvent"/> class.
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
-    /// <param name="response">The agent run response.</param>
-    public AgentRunResponseEvent(string executorId, AgentResponse response) : base(executorId, data: response)
+    /// <param name="response">The agent response.</param>
+    public AgentResponseEvent(string executorId, AgentResponse response) : base(executorId, data: response)
     {
         this.Response = Throw.IfNull(response);
     }
 
     /// <summary>
-    /// Gets the agent run response.
+    /// Gets the agent response.
     /// </summary>
     public AgentResponse Response { get; }
 }

@@ -393,7 +393,7 @@ public class AgentWorkflowBuilderTests
         WorkflowOutputEvent? output = null;
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is AgentRunUpdateEvent executorComplete)
+            if (evt is AgentResponseUpdateEvent executorComplete)
             {
                 sb.Append(executorComplete.Data);
             }

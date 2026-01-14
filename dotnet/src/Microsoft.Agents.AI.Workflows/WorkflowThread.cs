@@ -151,7 +151,7 @@ internal sealed class WorkflowThread : AgentThread
             {
                 switch (evt)
                 {
-                    case AgentRunUpdateEvent agentUpdate:
+                    case AgentResponseUpdateEvent agentUpdate:
                         yield return agentUpdate.Update;
                         break;
 

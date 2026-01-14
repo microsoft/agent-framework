@@ -28,7 +28,7 @@ internal sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInput
             updates.Add(update);
             if (emitEvents is true)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
             }
         }
 

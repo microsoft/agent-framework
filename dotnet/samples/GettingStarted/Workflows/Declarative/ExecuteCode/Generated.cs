@@ -76,7 +76,7 @@ public static class SampleWorkflowProvider
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
             return default;
@@ -113,7 +113,7 @@ public static class SampleWorkflowProvider
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
             await context.QueueStateUpdateAsync(key: "TeacherResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
@@ -176,7 +176,7 @@ public static class SampleWorkflowProvider
                     """
                 );
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }
@@ -197,7 +197,7 @@ public static class SampleWorkflowProvider
                     """
                 );
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }

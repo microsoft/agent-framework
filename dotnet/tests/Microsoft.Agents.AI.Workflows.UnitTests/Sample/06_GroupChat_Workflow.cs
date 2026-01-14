@@ -39,7 +39,7 @@ internal static class Step6EntryPoint
             {
                 Debug.WriteLine($"{executorCompleted.ExecutorId}: {executorCompleted.Data}");
             }
-            else if (evt is AgentRunUpdateEvent update)
+            else if (evt is AgentResponseUpdateEvent update)
             {
                 AgentResponse response = update.AsResponse();
 

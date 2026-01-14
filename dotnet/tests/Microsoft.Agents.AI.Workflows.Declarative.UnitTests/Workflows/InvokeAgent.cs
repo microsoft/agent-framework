@@ -81,7 +81,7 @@ public static class WorkflowProvider
     
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
     
             return default;

@@ -61,7 +61,7 @@ public static class WorkflowProvider
                     """
                 );
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
         }
