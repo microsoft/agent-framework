@@ -11,7 +11,10 @@ public sealed class DurableAgentsOptions
     private readonly Dictionary<string, Func<IServiceProvider, AIAgent>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TimeSpan?> _agentTimeToLive = new(StringComparer.OrdinalIgnoreCase);
 
-    internal DurableAgentsOptions()
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DurableAgentsOptions"/> class.
+    /// </summary>
+    public DurableAgentsOptions()
     {
     }
 
