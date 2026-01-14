@@ -128,7 +128,7 @@ def get_worker(
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
-        log_handler: Optional logging handler
+        log_handler: Optional logging handler for worker logging
         
     Returns:
         Configured DurableTaskSchedulerWorker instance

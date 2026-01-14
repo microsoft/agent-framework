@@ -203,7 +203,7 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
         # Branch based on wait_for_response
         if not run_request.wait_for_response:
             # Fire-and-forget mode: signal entity and return pre-completed task
-            logger.info(
+            logger.debug(
                 "[AzureFunctionsAgentExecutor] Fire-and-forget mode: signaling entity (correlation: %s)",
                 run_request.correlation_id,
             )
