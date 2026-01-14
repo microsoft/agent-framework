@@ -78,7 +78,7 @@ public static class ChatClientBuilderExtensions
         ChatClientAgentOptions? options,
         ILoggerFactory? loggerFactory = null,
         IServiceProvider? services = null) =>
-        Throw.IfNull(builder).Build(services).CreateAIAgent(
+        Throw.IfNull(builder).Build(services).AsAIAgent(
             options: options,
             loggerFactory: loggerFactory,
             services: services);

@@ -32,7 +32,7 @@ public static class OpenAIResponseClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this ResponsesClient client,
         string? instructions = null,
         string? name = null,
@@ -44,7 +44,7 @@ public static class OpenAIResponseClientExtensions
     {
         Throw.IfNull(client);
 
-        return client.CreateAIAgent(
+        return client.AsAIAgent(
             new ChatClientAgentOptions()
             {
                 Name = name,
@@ -70,7 +70,7 @@ public static class OpenAIResponseClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this ResponsesClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
