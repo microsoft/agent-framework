@@ -27,7 +27,10 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
 
         if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint)
         {
-            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeWorkflowActivityAsync("aa", context);
+            var binding = context.FunctionDefinition.InputBindings.Values.FirstOrDefault(a => a.Name == "input");
+            var input = await context.BindInputAsync<string>(binding!);
+            var val = input.Value;
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeWorkflowActivityAsync(val!, context);
             return;
         }
 
