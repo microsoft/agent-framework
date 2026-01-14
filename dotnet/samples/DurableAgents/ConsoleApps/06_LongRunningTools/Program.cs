@@ -65,7 +65,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
     context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
 
     // Step 1: Generate initial content
-    AgentRunResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
+    AgentResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
         message: $"Write a short article about '{input.Topic}'.",
         thread: writerThread);
     GeneratedContent content = writerResponse.Result;
@@ -328,7 +328,7 @@ while (!cts.Token.IsCancellationRequested)
 
     try
     {
-        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+        AgentResponse agentResponse = await agentProxy.RunAsync(
             message: input,
             thread: thread,
             cancellationToken: cts.Token);

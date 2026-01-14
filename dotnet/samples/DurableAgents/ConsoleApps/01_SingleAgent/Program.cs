@@ -83,7 +83,7 @@ while (true)
 
     try
     {
-        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+        AgentResponse agentResponse = await agentProxy.RunAsync(
             message: input,
             thread: thread,
             cancellationToken: CancellationToken.None);

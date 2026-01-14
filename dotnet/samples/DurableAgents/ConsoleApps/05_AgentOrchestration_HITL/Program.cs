@@ -54,7 +54,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
     context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
 
     // Step 1: Generate initial content
-    AgentRunResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
+    AgentResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
         message: $"Write a short article about '{input.Topic}' in less than 300 words.",
         thread: writerThread);
     GeneratedContent content = writerResponse.Result;
