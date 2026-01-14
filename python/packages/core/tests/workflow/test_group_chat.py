@@ -1109,7 +1109,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
             *,
             thread: AgentThread | None = None,
             **kwargs: Any,
-        ) -> AgentRunResponse:
+        ) -> AgentResponse:
             if self._call_count == 0:
                 self._call_count += 1
                 payload = {
@@ -1118,7 +1118,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                     "next_speaker": "alpha",
                     "final_message": None,
                 }
-                return AgentRunResponse(
+                return AgentResponse(
                     messages=[
                         ChatMessage(
                             role=Role.ASSISTANT,
@@ -1138,7 +1138,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                 "next_speaker": None,
                 "final_message": "dynamic manager final",
             }
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=[
                     ChatMessage(
                         role=Role.ASSISTANT,
