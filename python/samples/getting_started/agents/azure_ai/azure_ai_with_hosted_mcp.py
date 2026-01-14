@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from agent_framework import AgentProtocol, AgentResponse, AgentThread, ChatMessage, HostedMCPTool
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -59,12 +59,13 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
 
 async def run_hosted_mcp_without_approval() -> None:
     """Example showing MCP Tools without approval."""
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyLearnDocsAgent",
             instructions="You are a helpful assistant that can help with Microsoft documentation questions.",
             tools=HostedMCPTool(
@@ -72,8 +73,8 @@ async def run_hosted_mcp_without_approval() -> None:
                 url="https://learn.microsoft.com/api/mcp",
                 approval_mode="never_require",
             ),
-        ) as agent,
-    ):
+        )
+
         query = "How to create an Azure storage account using az cli?"
         print(f"User: {query}")
         result = await handle_approvals_without_thread(query, agent)
@@ -84,12 +85,13 @@ async def run_hosted_mcp_with_approval_and_thread() -> None:
     """Example showing MCP Tools with approvals using a thread."""
     print("=== MCP with approvals and with thread ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyApiSpecsAgent",
             instructions="You are a helpful agent that can use MCP tools to assist users.",
             tools=HostedMCPTool(
@@ -97,8 +99,8 @@ async def run_hosted_mcp_with_approval_and_thread() -> None:
                 url="https://gitmcp.io/Azure/azure-rest-api-specs",
                 approval_mode="always_require",
             ),
-        ) as agent,
-    ):
+        )
+
         thread = agent.get_new_thread()
         query = "Please summarize the Azure REST API specifications Readme"
         print(f"User: {query}")
