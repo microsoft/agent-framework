@@ -47,7 +47,7 @@ public static class WorkflowProvider
             await context.QueueStateUpdateAsync("TestValue", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
-    
+
     /// <summary>
     /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TestValue" variable.
     /// </summary>
@@ -58,11 +58,11 @@ public static class WorkflowProvider
         {
             object? evaluatedValue = await context.EvaluateValueAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
-    
+
             return default;
         }
     }
-    
+
     /// <summary>
     /// Conditional branching similar to an if / elseif / elseif / else chain.
     /// </summary>
@@ -76,17 +76,17 @@ public static class WorkflowProvider
             {
                 return "conditionItem_odd";
             }
-    
+
             bool condition1 = await context.EvaluateValueAsync<bool>("Mod(Local.TestValue, 2) = 0").ConfigureAwait(false);
             if (condition1)
             {
                 return "conditionItem_even";
             }
-    
+
             return "conditionGroup_testElseActions";
         }
     }
-    
+
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
@@ -103,11 +103,11 @@ public static class WorkflowProvider
                 );
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
-    
+
             return default;
         }
     }
-    
+
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
@@ -124,11 +124,11 @@ public static class WorkflowProvider
                 );
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
-    
+
             return default;
         }
     }
-    
+
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
@@ -145,14 +145,14 @@ public static class WorkflowProvider
                 );
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
             await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
-    
+
             return default;
         }
     }
-    
+
     public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
-        Func<TInput, ChatMessage>? inputTransform = null) 
+        Func<TInput, ChatMessage>? inputTransform = null)
         where TInput : notnull
     {
         // Create root executor to initialize the workflow.
