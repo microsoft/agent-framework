@@ -8,7 +8,7 @@ from agent_framework import (
     HostedFileContent,
     TextContent,
 )
-from agent_framework._agents import AgentRunResponseUpdate
+from agent_framework._agents import AgentResponseUpdate
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
@@ -45,7 +45,7 @@ async def test_non_streaming() -> None:
 
         # Check for annotations in the response
         annotations_found: list[str] = []
-        # AgentRunResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
                 if isinstance(content, TextContent) and content.annotations:
@@ -78,7 +78,7 @@ async def test_streaming() -> None:
         file_ids_found: list[str] = []
 
         async for update in agent.run_stream(QUERY):
-            if isinstance(update, AgentRunResponseUpdate):
+            if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
                     if isinstance(content, TextContent):
                         if content.text:

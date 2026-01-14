@@ -208,7 +208,7 @@ export interface UsageDetails {
 }
 
 // Agent run response update (streaming)
-export interface AgentRunResponseUpdate {
+export interface AgentResponseUpdate {
   contents: Contents[];
   role?: Role;
   author_name?: string;
@@ -222,7 +222,7 @@ export interface AgentRunResponseUpdate {
 }
 
 // Agent run response (final)
-export interface AgentRunResponse {
+export interface AgentResponse {
   messages: ChatMessage[];
   response_id?: string;
   created_at?: CreatedAtT;
@@ -302,11 +302,11 @@ export interface ExecutorEvent extends WorkflowEvent {
 }
 
 export interface AgentRunUpdateEvent extends ExecutorEvent {
-  data?: AgentRunResponseUpdate;
+  data?: AgentResponseUpdate;
 }
 
 export interface AgentRunEvent extends ExecutorEvent {
-  data?: AgentRunResponse;
+  data?: AgentResponse;
 }
 
 // Span event structure (from OpenTelemetry)

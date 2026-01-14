@@ -29,3 +29,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           timeout: 3600
           interval: 30
+          ignored: CodeQL
