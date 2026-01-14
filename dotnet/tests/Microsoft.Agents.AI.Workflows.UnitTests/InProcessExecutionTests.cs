@@ -39,7 +39,7 @@ public class InProcessExecutionTests
         run.OutgoingEvents.Should().NotBeEmpty("workflow should produce events during execution");
 
         // Check that we have an agent execution event
-        var agentEvents = run.OutgoingEvents.OfType<AgentRunUpdateEvent>().ToList();
+        var agentEvents = run.OutgoingEvents.OfType<AgentResponseUpdateEvent>().ToList();
         agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
 
         // Check that we have output events
@@ -79,7 +79,7 @@ public class InProcessExecutionTests
         events.Should().NotBeEmpty("workflow should produce events during execution");
 
         // Check that we have agent execution events
-        var agentEvents = events.OfType<AgentRunUpdateEvent>().ToList();
+        var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
         agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
 
         // Check that we have output events
@@ -125,8 +125,8 @@ public class InProcessExecutionTests
         nonStreamingEvents.Should().NotBeEmpty("non-streaming version should also produce events");
 
         // Both should have similar types of events
-        var streamingAgentEvents = streamingEvents.OfType<AgentRunUpdateEvent>().Count();
-        var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentRunUpdateEvent>().Count();
+        var streamingAgentEvents = streamingEvents.OfType<AgentResponseUpdateEvent>().Count();
+        var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentResponseUpdateEvent>().Count();
 
         nonStreamingAgentEvents.Should().Be(streamingAgentEvents,
             "both versions should produce the same number of agent events");

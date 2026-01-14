@@ -36,7 +36,7 @@ internal static class AgentProviderExtensions
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -44,7 +44,7 @@ internal static class AgentProviderExtensions
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }
 
         // If autoSend is enabled and this is not the workflow conversation, copy messages to the workflow conversation.

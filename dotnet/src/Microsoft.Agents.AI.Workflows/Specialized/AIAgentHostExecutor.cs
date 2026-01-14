@@ -63,7 +63,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
 
                 // TODO: FunctionCall request handling, and user info request handling.
                 // In some sense: We should just let it be handled as a ChatMessage, though we should consider

@@ -8,14 +8,14 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Represents an event triggered when an agent run produces an update.
 /// </summary>
-public class AgentRunUpdateEvent : ExecutorEvent
+public class AgentResponseUpdateEvent : ExecutorEvent
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRunUpdateEvent"/> class.
+    /// Initializes a new instance of the <see cref="AgentResponseUpdateEvent"/> class.
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
     /// <param name="update">The agent run response update.</param>
-    public AgentRunUpdateEvent(string executorId, AgentResponseUpdate update) : base(executorId, data: update)
+    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update) : base(executorId, data: update)
     {
         this.Update = Throw.IfNull(update);
     }
