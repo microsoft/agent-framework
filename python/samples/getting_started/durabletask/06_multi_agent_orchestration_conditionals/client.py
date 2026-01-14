@@ -1,18 +1,16 @@
-"""Client application for starting a single agent chaining orchestration.
+"""Client application for starting a spam detection orchestration.
 
 This client connects to the Durable Task Scheduler and starts an orchestration
-that runs a writer agent twice sequentially on the same thread, demonstrating
-how conversation context is maintained across multiple agent invocations.
+that uses conditional logic to either handle spam emails or draft professional responses.
 
 Prerequisites: 
-- The worker must be running with the writer agent and orchestration registered
+- The worker must be running with both agents, orchestration, and activities registered
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
 
 import asyncio
-import json
 import logging
 import os
 
@@ -56,21 +54,32 @@ def get_client(
     )
 
 
-def run_client(client: DurableTaskSchedulerClient) -> None:
-    """Run client to start and monitor the orchestration.
+def run_client(
+    client: DurableTaskSchedulerClient,
+    email_id: str = "email-001",
+    email_content: str = "Hello! I wanted to reach out about our upcoming project meeting."
+) -> None:
+    """Run client to start and monitor the spam detection orchestration.
     
     Args:
         client: The DurableTaskSchedulerClient instance
+        email_id: The email ID
+        email_content: The email content to analyze
     """
-    logger.debug("Starting single agent chaining orchestration...")
+    payload = {
+        "email_id": email_id,
+        "email_content": email_content,
+    }
     
-    # Start the orchestration
+    logger.debug("Starting spam detection orchestration...")
+    
+    # Start the orchestration with the email payload
     instance_id = client.schedule_new_orchestration(    # type: ignore
-        orchestrator="single_agent_chaining_orchestration",
-        input="",
+        orchestrator="spam_detection_orchestration",
+        input=payload,
     )
     
-    logger.info(f"Orchestration started with instance ID: {instance_id}")
+    logger.debug(f"Orchestration started with instance ID: {instance_id}")
     logger.debug("Waiting for orchestration to complete...")
     
     # Retrieve the final state
@@ -86,8 +95,10 @@ def run_client(client: DurableTaskSchedulerClient) -> None:
         
         # Parse and display the result
         if result:
-            final_text = json.loads(result)
-            logger.info("Final refined sentence: %s \n", final_text)
+            # Remove quotes if present
+            if result.startswith('"') and result.endswith('"'):
+                result = result[1:-1]
+            logger.info(f"Result: {result}")
         
     elif metadata:
         logger.error(f"Orchestration ended with status: {metadata.runtime_status.name}")
@@ -99,13 +110,30 @@ def run_client(client: DurableTaskSchedulerClient) -> None:
 
 async def main() -> None:
     """Main entry point for the client application."""
-    logger.debug("Starting Durable Task Single Agent Chaining Orchestration Client...")
+    logger.debug("Starting Durable Task Spam Detection Orchestration Client...")
     
     # Create client using helper function
     client = get_client()
     
     try:
-        run_client(client)
+        # Test with a legitimate email
+        logger.info("TEST 1: Legitimate Email")
+        
+        run_client(
+            client,
+            email_id="email-001",
+            email_content="Hello! I wanted to reach out about our upcoming project meeting scheduled for next week."
+        )
+        
+        # Test with a spam email
+        logger.info("TEST 2: Spam Email")
+        
+        run_client(
+            client,
+            email_id="email-002",
+            email_content="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!"
+        )
+        
     except Exception as e:
         logger.exception(f"Error during orchestration: {e}")
     finally:

@@ -25,6 +25,7 @@ class TestRunRequest:
         assert request.role == Role.USER
         assert request.response_format is None
         assert request.enable_tool_calls is True
+        assert request.wait_for_response is True
 
     def test_init_with_all_fields(self) -> None:
         """Test RunRequest initialization with all fields."""
@@ -35,6 +36,7 @@ class TestRunRequest:
             role=Role.SYSTEM,
             response_format=schema,
             enable_tool_calls=False,
+            wait_for_response=False,
         )
 
         assert request.message == "Hello"
@@ -42,6 +44,7 @@ class TestRunRequest:
         assert request.role == Role.SYSTEM
         assert request.response_format is schema
         assert request.enable_tool_calls is False
+        assert request.wait_for_response is False
 
     def test_init_coerces_string_role(self) -> None:
         """Ensure string role values are coerced into Role instances."""
@@ -56,6 +59,7 @@ class TestRunRequest:
 
         assert data["message"] == "Test message"
         assert data["enable_tool_calls"] is True
+        assert data["wait_for_response"] is True
         assert data["role"] == "user"
         assert data["correlationId"] == "corr-004"
         assert "response_format" not in data or data["response_format"] is None
@@ -70,6 +74,7 @@ class TestRunRequest:
             role=Role.ASSISTANT,
             response_format=schema,
             enable_tool_calls=False,
+            wait_for_response=False,
         )
         data = request.to_dict()
 
@@ -80,6 +85,7 @@ class TestRunRequest:
         assert data["response_format"]["module"] == schema.__module__
         assert data["response_format"]["qualname"] == schema.__qualname__
         assert data["enable_tool_calls"] is False
+        assert data["wait_for_response"] is False
         assert "thread_id" not in data
 
     def test_from_dict_with_defaults(self) -> None:
@@ -91,6 +97,7 @@ class TestRunRequest:
         assert request.correlation_id == "corr-006"
         assert request.role == Role.USER
         assert request.enable_tool_calls is True
+        assert request.wait_for_response is True
 
     def test_from_dict_ignores_thread_id_field(self) -> None:
         """Ensure legacy thread_id input does not break RunRequest parsing."""

@@ -104,6 +104,8 @@ class RunRequest:
         role: The role of the message sender (user, system, or assistant)
         response_format: Optional Pydantic BaseModel type describing the structured response format
         enable_tool_calls: Whether to enable tool calls for this request
+        wait_for_response: If True (default), caller will wait for agent response. If False,
+                          returns immediately after signaling (fire-and-forget mode)
         correlation_id: Correlation ID for tracking the response to this specific request
         created_at: Optional timestamp when the request was created
         orchestration_id: Optional ID of the orchestration that initiated this request
@@ -115,6 +117,7 @@ class RunRequest:
     role: Role = Role.USER
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
+    wait_for_response: bool = True
     created_at: datetime | None = None
     orchestration_id: str | None = None
 
@@ -126,6 +129,7 @@ class RunRequest:
         role: Role | str | None = Role.USER,
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
+        wait_for_response: bool = True,
         created_at: datetime | None = None,
         orchestration_id: str | None = None,
     ) -> None:
@@ -135,6 +139,7 @@ class RunRequest:
         self.response_format = response_format
         self.request_response_format = request_response_format
         self.enable_tool_calls = enable_tool_calls
+        self.wait_for_response = wait_for_response
         self.created_at = created_at if created_at is not None else datetime.now(tz=timezone.utc)
         self.orchestration_id = orchestration_id
 
@@ -155,6 +160,7 @@ class RunRequest:
         result = {
             "message": self.message,
             "enable_tool_calls": self.enable_tool_calls,
+            "wait_for_response": self.wait_for_response,
             "role": self.role.value,
             "request_response_format": self.request_response_format,
             "correlationId": self.correlation_id,
@@ -198,6 +204,7 @@ class RunRequest:
             request_response_format=data.get("request_response_format", REQUEST_RESPONSE_FORMAT_TEXT),
             role=cls.coerce_role(data.get("role")),
             response_format=_deserialize_response_format(data.get("response_format")),
+            wait_for_response=data.get("wait_for_response", True),
             enable_tool_calls=data.get("enable_tool_calls", True),
             created_at=created_at,
             orchestration_id=data.get("orchestrationId"),

@@ -1,7 +1,8 @@
-"""Worker process for hosting a single Azure OpenAI-powered agent using Durable Task.
+"""Worker process for hosting multiple agents with different tools using Durable Task.
 
-This worker registers agents as durable entities and continuously listens for requests.
-The worker should run as a background service, processing incoming agent requests.
+This worker registers two agents - a weather assistant and a math assistant - each
+with their own specialized tools. This demonstrates how to host multiple agents
+with different capabilities in a single worker process.
 
 Prerequisites: 
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
@@ -12,6 +13,7 @@ Prerequisites:
 import asyncio
 import logging
 import os
+from typing import Any
 
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_durabletask import DurableAIAgentWorker
@@ -19,19 +21,67 @@ from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 # Configure logging
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Agent names
+WEATHER_AGENT_NAME = "WeatherAgent"
+MATH_AGENT_NAME = "MathAgent"
 
-def create_joker_agent():
-    """Create the Joker agent using Azure OpenAI.
+
+def get_weather(location: str) -> dict[str, Any]:
+    """Get current weather for a location."""
+    logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
+    result = {
+        "location": location,
+        "temperature": 72,
+        "conditions": "Sunny",
+        "humidity": 45,
+    }
+    logger.info(f"✓ [TOOL RESULT] {result}")
+    return result
+
+
+def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str, Any]:
+    """Calculate tip amount and total bill."""
+    logger.info(
+        f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})"
+    )
+    tip = bill_amount * (tip_percentage / 100)
+    total = bill_amount + tip
+    result = {
+        "bill_amount": bill_amount,
+        "tip_percentage": tip_percentage,
+        "tip_amount": round(tip, 2),
+        "total": round(total, 2),
+    }
+    logger.info(f"✓ [TOOL RESULT] {result}")
+    return result
+
+
+def create_weather_agent():
+    """Create the Weather agent using Azure OpenAI.
     
     Returns:
-        AgentProtocol: The configured Joker agent
+        AgentProtocol: The configured Weather agent with weather tool
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
-        name="Joker",
-        instructions="You are good at telling jokes.",
+        name=WEATHER_AGENT_NAME,
+        instructions="You are a helpful weather assistant. Provide current weather information.",
+        tools=[get_weather],
+    )
+
+
+def create_math_agent():
+    """Create the Math agent using Azure OpenAI.
+    
+    Returns:
+        AgentProtocol: The configured Math agent with calculation tools
+    """
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        name=MATH_AGENT_NAME,
+        instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
+        tools=[calculate_tip],
     )
 
 
@@ -68,7 +118,7 @@ def get_worker(
 
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
-    """Set up the worker with agents registered.
+    """Set up the worker with multiple agents registered.
     
     Args:
         worker: The DurableTaskSchedulerWorker instance
@@ -79,20 +129,22 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
     
-    # Create and register the Joker agent
-    logger.debug("Creating and registering Joker agent...")
-    joker_agent = create_joker_agent()
-    agent_worker.add_agent(joker_agent)
+    # Create and register both agents
+    logger.debug("Creating and registering agents...")
+    weather_agent = create_weather_agent()
+    math_agent = create_math_agent()
     
-    logger.debug(f"✓ Registered agent: {joker_agent.name}")
-    logger.debug(f"  Entity name: dafx-{joker_agent.name}")
+    agent_worker.add_agent(weather_agent)
+    agent_worker.add_agent(math_agent)
+    
+    logger.debug(f"✓ Registered agents: {weather_agent.name}, {math_agent.name}")
     
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
-    logger.debug("Starting Durable Task Agent Worker...")
+    logger.debug("Starting Durable Task Multi-Agent Worker...")
     
     # Create a worker using the helper function
     worker = get_worker()
@@ -101,8 +153,7 @@ async def main():
     setup_worker(worker)
     
     logger.info("Worker is ready and listening for requests...")
-    logger.info("Press Ctrl+C to stop.")
-    logger.info("")
+    logger.info("Press Ctrl+C to stop. \n")
     
     try:
         # Start the worker (this blocks until stopped)
@@ -114,7 +165,7 @@ async def main():
     except KeyboardInterrupt:
         logger.debug("Worker shutdown initiated")
     
-    logger.debug("Worker stopped")
+    logger.info("Worker stopped")
 
 
 if __name__ == "__main__":

@@ -16,10 +16,10 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentRunResponse, AgentThread, ChatMessage, ErrorContent, Role, get_logger
+from agent_framework import AgentRunResponse, AgentThread, ChatMessage, ErrorContent, Role, TextContent, get_logger
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
-from durabletask.task import CompositeTask, OrchestrationContext, Task
+from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
 from pydantic import BaseModel
 
 from ._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
@@ -33,16 +33,19 @@ logger = get_logger("agent_framework.durabletask.executors")
 TaskT = TypeVar("TaskT")
 
 
-class DurableAgentTask(CompositeTask[AgentRunResponse]):
+class DurableAgentTask(CompositeTask[AgentRunResponse], CompletableTask[AgentRunResponse]):
     """A custom Task that wraps entity calls and provides typed AgentRunResponse results.
 
     This task wraps the underlying entity call task and intercepts its completion
     to convert the raw result into a typed AgentRunResponse object.
+
+    When yielded in an orchestration, this task returns an AgentRunResponse:
+        response: AgentRunResponse = yield durable_agent_task
     """
 
     def __init__(
         self,
-        entity_task: Task[Any],
+        entity_task: CompletableTask[Any],
         response_format: type[BaseModel] | None,
         correlation_id: str,
     ):
@@ -55,7 +58,7 @@ class DurableAgentTask(CompositeTask[AgentRunResponse]):
         """
         self._response_format = response_format
         self._correlation_id = correlation_id
-        super().__init__([entity_task])  # type: ignore[misc]
+        super().__init__([entity_task])  # type: ignore
 
     def on_child_completed(self, task: Task[Any]) -> None:
         """Handle completion of the underlying entity task.
@@ -69,11 +72,8 @@ class DurableAgentTask(CompositeTask[AgentRunResponse]):
             return
 
         if task.is_failed:
-            # Propagate the failure
-            self._exception = task.get_exception()
-            self._is_complete = True
-            if self._parent is not None:
-                self._parent.on_child_completed(self)
+            # Propagate the failure - pass the original exception directly
+            self.fail("call_entity Task failed", task.get_exception())
             return
 
         # Task succeeded - transform the raw result
@@ -94,18 +94,12 @@ class DurableAgentTask(CompositeTask[AgentRunResponse]):
                 )
 
             # Set the typed AgentRunResponse as this task's result
-            self._result = response
-            self._is_complete = True
+            self.complete(response)
 
-            if self._parent is not None:
-                self._parent.on_child_completed(self)
-
-        except Exception:
-            logger.exception(
-                "[DurableAgentTask] Failed to convert result for correlation_id: %s",
-                self._correlation_id,
-            )
-            raise
+        except Exception as ex:
+            err_msg = "[DurableAgentTask] Failed to convert result for correlation_id: " + self._correlation_id
+            logger.exception(err_msg)
+            self.fail(err_msg, ex)
 
 
 class DurableAgentExecutor(ABC, Generic[TaskT]):
@@ -155,6 +149,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         message: str,
         response_format: type[BaseModel] | None,
         enable_tool_calls: bool,
+        wait_for_response: bool = True,
     ) -> RunRequest:
         """Create a RunRequest for the given parameters."""
         correlation_id = self.generate_unique_id()
@@ -162,7 +157,32 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
             message=message,
             response_format=response_format,
             enable_tool_calls=enable_tool_calls,
+            wait_for_response=wait_for_response,
             correlation_id=correlation_id,
+        )
+
+    def _create_acceptance_response(self, correlation_id: str) -> AgentRunResponse:
+        """Create an acceptance response for fire-and-forget mode.
+
+        Args:
+            correlation_id: Correlation ID for tracking the request
+
+        Returns:
+            AgentRunResponse: Acceptance response with correlation ID
+        """
+        acceptance_message = ChatMessage(
+            role=Role.SYSTEM,
+            contents=[
+                TextContent(
+                    f"Request accepted for processing (correlation_id: {correlation_id}). "
+                    f"Agent is executing in the background. "
+                    f"Retrieve response via your configured streaming or callback mechanism."
+                )
+            ],
+        )
+        return AgentRunResponse(
+            messages=[acceptance_message],
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -205,10 +225,19 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
             thread: Optional conversation thread (creates new if not provided)
 
         Returns:
-            AgentRunResponse: The agent's response after execution completes
+            AgentRunResponse: The agent's response after execution completes, or an immediate
+                            acknowledgement if wait_for_response is False
         """
         # Signal the entity with the request
         entity_id = self._signal_agent_entity(agent_name, run_request, thread)
+
+        # If fire-and-forget mode, return immediately without polling
+        if not run_request.wait_for_response:
+            logger.info(
+                "[ClientAgentExecutor] Fire-and-forget mode: request signaled (correlation: %s)",
+                run_request.correlation_id,
+            )
+            return self._create_acceptance_response(run_request.correlation_id)
 
         # Poll for the response
         agent_response = self._poll_for_agent_response(entity_id, run_request.correlation_id)
@@ -395,11 +424,16 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
         self._context = context
         logger.debug("[OrchestrationAgentExecutor] Initialized")
 
+    def generate_unique_id(self) -> str:
+        """Create a new UUID that is safe for replay within an orchestration or operation."""
+        return self._context.new_uuid()
+
     def get_run_request(
         self,
         message: str,
         response_format: type[BaseModel] | None,
         enable_tool_calls: bool,
+        wait_for_response: bool = True,
     ) -> RunRequest:
         """Get the current run request from the orchestration context.
 
@@ -410,6 +444,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
             message,
             response_format,
             enable_tool_calls,
+            wait_for_response,
         )
         request.orchestration_id = self._context.instance_id
         return request
@@ -449,8 +484,22 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
             session_id,
         )
 
-        # Call the entity and get the underlying task
-        entity_task: Task[Any] = self._context.call_entity(entity_id, "run", run_request.to_dict())  # type: ignore
+        # Branch based on wait_for_response
+        if not run_request.wait_for_response:
+            # Fire-and-forget mode: signal entity and return pre-completed task
+            logger.info(
+                "[OrchestrationAgentExecutor] Fire-and-forget mode: signaling entity (correlation: %s)",
+                run_request.correlation_id,
+            )
+            self._context.signal_entity(entity_id, "run", run_request.to_dict())
+
+            # Create a pre-completed task with acceptance response
+            acceptance_response = self._create_acceptance_response(run_request.correlation_id)
+            entity_task: CompletableTask[AgentRunResponse] = CompletableTask()
+            entity_task.complete(acceptance_response)
+        else:
+            # Blocking mode: call entity and wait for response
+            entity_task = self._context.call_entity(entity_id, "run", run_request.to_dict())  # type: ignore
 
         # Wrap in DurableAgentTask for response transformation
         return DurableAgentTask(

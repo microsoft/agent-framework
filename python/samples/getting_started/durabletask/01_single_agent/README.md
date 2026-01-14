@@ -1,6 +1,6 @@
-# Single Agent Sample
+# Single Agent
 
-This sample demonstrates how to use the durable agents extension to create a worker-client setup that hosts a single AI agent and provides interactive conversation via the Durable Task Scheduler.
+This sample demonstrates how to create a worker-client setup that hosts a single AI agent and provides interactive conversation via the Durable Task Scheduler.
 
 ## Key Concepts Demonstrated
 
@@ -15,18 +15,24 @@ See the [README.md](../README.md) file in the parent directory for more informat
 
 ## Running the Sample
 
-With the environment setup, you can run the sample using separate worker and client processes:
+With the environment setup, you can run the sample using the combined approach or separate worker and client processes:
 
-**Start the worker:**
+**Option 1: Combined (Recommended for Testing)**
 
 ```bash
 cd samples/getting_started/durabletask/01_single_agent
+python sample.py
+```
+
+**Option 2: Separate Processes**
+
+Start the worker in one terminal:
+
+```bash
 python worker.py
 ```
 
-The worker will register the Joker agent and listen for requests.
-
-**In a new terminal, run the client:**
+In a new terminal, run the client:
 
 ```bash
 python client.py
@@ -58,9 +64,10 @@ Because light attracts bugs!
 You can view the state of the agent in the Durable Task Scheduler dashboard:
 
 1. Open your browser and navigate to `http://localhost:8082`
-2. In the dashboard, you can view the state of the Joker agent, including its conversation history and current state
-
-The agent maintains conversation state across multiple interactions, and you can inspect this state in the dashboard to understand how the durable agents extension manages conversation context.
+2. In the dashboard, you can view:
+   - The state of the Joker agent entity (dafx-Joker)
+   - Conversation history and current state
+   - How the durable agents extension manages conversation context
 
 
 

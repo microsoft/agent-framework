@@ -2,9 +2,17 @@
 
 This directory contains samples for durable agent hosting using the Durable Task Scheduler. These samples demonstrate the worker-client architecture pattern, enabling distributed agent execution with persistent conversation state.
 
-- **[01_single_agent](01_single_agent/)**: A sample that demonstrates how to host a single conversational agent using the Durable Task Scheduler and interact with it via a client.
-- **[04_single_agent_orchestration_chaining](04_single_agent_orchestration_chaining/)**: A sample that demonstrates how to chain multiple invocations of the same agent using a durable orchestration.
-- **[05_multi_agent_orchestration_concurrency](05_multi_agent_orchestration_concurrency/)**: A sample that demonstrates how to host multiple agents and run them concurrently using a durable orchestration.
+## Sample Catalog
+
+### Basic Patterns
+- **[01_single_agent](01_single_agent/)**: Host a single conversational agent and interact with it via a client. Demonstrates basic worker-client architecture and agent state management.
+- **[02_multi_agent](02_multi_agent/)**: Host multiple domain-specific agents (physicist and chemist) and route requests to the appropriate agent based on the question topic.
+
+### Orchestration Patterns
+- **[04_single_agent_orchestration_chaining](04_single_agent_orchestration_chaining/)**: Chain multiple invocations of the same agent using durable orchestration, preserving conversation context across sequential runs.
+- **[05_multi_agent_orchestration_concurrency](05_multi_agent_orchestration_concurrency/)**: Run multiple agents concurrently within an orchestration, aggregating their responses in parallel.
+- **[06_multi_agent_orchestration_conditionals](06_multi_agent_orchestration_conditionals/)**: Implement conditional branching in orchestrations with spam detection and email assistant agents. Demonstrates structured outputs with Pydantic models and activity functions for side effects.
+- **[07_single_agent_orchestration_hitl](07_single_agent_orchestration_hitl/)**: Human-in-the-loop pattern with external event handling, timeouts, and iterative refinement based on human feedback. Shows long-running workflows with external interactions.
 
 ## Running the Samples
 
@@ -78,18 +86,33 @@ The DTS dashboard will be available at `http://localhost:8082`.
 
 Each sample reads configuration from environment variables. You'll need to set the following environment variables:
 
+Bash (Linux/macOS/WSL):
+
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
 ```
 
+PowerShell:
+
+```powershell
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
+```
+
 ### Installing Dependencies
 
-Navigate to the sample directory and install dependencies:
+Navigate to the sample directory and install dependencies. For example:
 
 ```bash
 cd samples/getting_started/durabletask/01_single_agent
 pip install -r requirements.txt
+```
+
+If you're using `uv` for package management:
+
+```bash
+uv pip install -r requirements.txt
 ```
 
 ### Running the Samples

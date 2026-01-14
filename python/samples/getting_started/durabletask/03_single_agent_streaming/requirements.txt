@@ -1,0 +1,9 @@
+# Agent Framework packages (installing from local package until a package is published)
+-e ../../../../
+-e ../../../../packages/durabletask
+
+# Azure authentication
+azure-identity
+
+# Redis client
+redis

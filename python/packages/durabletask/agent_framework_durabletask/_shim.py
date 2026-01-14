@@ -108,8 +108,19 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
+        wait_for_response: bool = True,
     ) -> TaskT:
         """Execute the agent via the injected provider.
+
+        Args:
+            messages: The message(s) to send to the agent
+            thread: Optional agent thread for conversation context
+            response_format: Optional Pydantic model for structured response
+            enable_tool_calls: Whether to enable tool calls for this request
+            wait_for_response: If True (default), waits for agent response.
+                             If False, returns immediately (fire-and-forget mode).
+
+                             **Only supported for DurableAIAgentClient contexts.**
 
         Note:
             This method overrides AgentProtocol.run() with a different return type:
@@ -121,6 +132,9 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
         Returns:
             TaskT: The task type specific to the executor
+
+        Raises:
+            ValueError: If wait_for_response=False is used in an unsupported context
         """
         message_str = self._normalize_messages(messages)
 
@@ -128,6 +142,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             message=message_str,
             response_format=response_format,
             enable_tool_calls=enable_tool_calls,
+            wait_for_response=wait_for_response,
         )
 
         return self._executor.run_durable_agent(

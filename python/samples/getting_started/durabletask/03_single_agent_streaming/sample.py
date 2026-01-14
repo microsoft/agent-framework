@@ -1,13 +1,18 @@
-"""Single Agent Sample - Durable Task Integration (Combined Worker + Client)
+# Copyright (c) Microsoft. All rights reserved.
 
-This sample demonstrates running both the worker and client in a single process.
-The worker is started first to register the agent, then client operations are
-performed against the running worker.
+"""Single Agent Streaming Sample - Durable Task Integration (Combined Worker + Client)
+
+This sample demonstrates running both the worker and client in a single process
+with reliable Redis-based streaming for agent responses.
+
+The worker is started first to register the TravelPlanner agent with Redis streaming
+callback, then client operations are performed against the running worker.
 
 Prerequisites: 
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
+- Redis must be running (e.g., docker run -d --name redis -p 6379:6379 redis:latest)
 
 To run this sample:
     python sample.py
@@ -27,13 +32,13 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point - runs both worker and client in single process."""
-    logger.debug("Starting Durable Task Agent Sample (Combined Worker + Client)...")
+    logger.debug("Starting Durable Task Agent Sample with Redis Streaming...")
 
     silent_handler = logging.NullHandler()
     
     # Create and start the worker using helper function and context manager
     with get_worker(log_handler=silent_handler) as dts_worker:
-        # Register agents using helper function
+        # Register agents and callbacks using helper function
         setup_worker(dts_worker)
         
         # Start the worker
