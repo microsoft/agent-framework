@@ -59,21 +59,12 @@ if TYPE_CHECKING:
         FunctionCallContent,
     )
 
-if sys.version_info >= (3, 12):
-    from typing import (
-        TypedDict,  # pragma: no cover
-        override,  # type: ignore # pragma: no cover
-    )
-else:
-    from typing_extensions import (
-        TypedDict,  # pragma: no cover
-        override,  # type: ignore[import] # pragma: no cover
-    )
+from typing import overload
 
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import overload  # pragma: no cover
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 logger = get_logger()
 
@@ -97,7 +88,7 @@ logger = get_logger()
 FUNCTION_INVOKING_CHAT_CLIENT_MARKER: Final[str] = "__function_invoking_chat_client__"
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
+TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 # region Helpers
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
@@ -1764,19 +1755,19 @@ def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None)
         kwargs["conversation_id"] = conversation_id
 
 
-def _extract_tools(kwargs: dict[str, Any]) -> Any:
-    """Extract tools from kwargs or chat_options.
+def _extract_tools(options: dict[str, Any] | None) -> Any:
+    """Extract tools from options dict.
+
+    Args:
+        options: The options dict containing chat options.
 
     Returns:
         ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] |
         Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None
     """
-    from ._types import ChatOptions
-
-    tools = kwargs.get("tools")
-    if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-        tools = chat_options.tools
-    return tools
+    if options and isinstance(options, dict):
+        return options.get("tools")
+    return None
 
 
 def _collect_approval_responses(
@@ -1869,6 +1860,8 @@ def _handle_function_calls_response(
         async def function_invocation_wrapper(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> "ChatResponse":
             from ._middleware import extract_and_merge_function_middleware
@@ -1897,7 +1890,7 @@ def _handle_function_calls_response(
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
-                    tools = _extract_tools(kwargs)
+                    tools = _extract_tools(options)
                     # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Contents] = []
@@ -1929,8 +1922,9 @@ def _handle_function_calls_response(
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 # Filter out internal framework kwargs before passing to clients.
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-                response = await func(self, messages=prepped_messages, **filtered_kwargs)
+                # Also exclude tools and tool_choice since they are now in options dict.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
+                response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
                 # if there are function calls, we will handle them first
                 function_results = {
                     it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -1946,7 +1940,7 @@ def _handle_function_calls_response(
                     prepped_messages = []
 
                 # we load the tools here, since middleware might have changed them compared to before calling func.
-                tools = _extract_tools(kwargs)
+                tools = _extract_tools(options)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
@@ -2029,11 +2023,13 @@ def _handle_function_calls_response(
                 return response
 
             # Failsafe: give up on tools, ask model for plain answer
-            kwargs["tool_choice"] = "none"
+            if options is None:
+                options = {}
+            options["tool_choice"] = "none"
 
             # Filter out internal framework kwargs before passing to clients.
             filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-            response = await func(self, messages=prepped_messages, **filtered_kwargs)
+            response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
             if fcc_messages:
                 for msg in reversed(fcc_messages):
                     response.messages.insert(0, msg)
@@ -2065,6 +2061,8 @@ def _handle_function_calls_streaming_response(
         async def streaming_function_invocation_wrapper(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
             """Wrap the inner get streaming response method to handle tool calls."""
@@ -2093,7 +2091,7 @@ def _handle_function_calls_streaming_response(
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
-                    tools = _extract_tools(kwargs)
+                    tools = _extract_tools(options)
                     # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Contents] = []
@@ -2119,7 +2117,7 @@ def _handle_function_calls_streaming_response(
                 all_updates: list["ChatResponseUpdate"] = []
                 # Filter out internal framework kwargs before passing to clients.
                 filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-                async for update in func(self, messages=prepped_messages, **filtered_kwargs):
+                async for update in func(self, messages=prepped_messages, options=options, **filtered_kwargs):
                     all_updates.append(update)
                     yield update
 
@@ -2157,7 +2155,7 @@ def _handle_function_calls_streaming_response(
                     prepped_messages = []
 
                 # we load the tools here, since middleware might have changed them compared to before calling func.
-                tools = _extract_tools(kwargs)
+                tools = _extract_tools(options)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
@@ -2236,10 +2234,12 @@ def _handle_function_calls_streaming_response(
                 return
 
             # Failsafe: give up on tools, ask model for plain answer
-            kwargs["tool_choice"] = "none"
+            if options is None:
+                options = {}
+            options["tool_choice"] = "none"
             # Filter out internal framework kwargs before passing to clients.
             filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-            async for update in func(self, messages=prepped_messages, **filtered_kwargs):
+            async for update in func(self, messages=prepped_messages, options=options, **filtered_kwargs):
                 yield update
 
         return streaming_function_invocation_wrapper

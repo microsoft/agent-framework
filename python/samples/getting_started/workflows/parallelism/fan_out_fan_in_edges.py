@@ -36,7 +36,7 @@ Show how to construct a parallel branch pattern in workflows. Demonstrate:
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 - Azure OpenAI access configured for AzureOpenAIChatClient. Log in with Azure CLI and set any required environment variables.
-- Comfort reading AgentExecutorResponse.agent_run_response.text for assistant output aggregation.
+- Comfort reading AgentExecutorResponse.agent_response.text for assistant output aggregation.
 """
 
 
@@ -67,8 +67,8 @@ class AggregateInsights(Executor):
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:
-            # AgentExecutorResponse.agent_run_response.text is the assistant text produced by the agent.
-            by_id[r.executor_id] = r.agent_run_response.text
+            # AgentExecutorResponse.agent_response.text is the assistant text produced by the agent.
+            by_id[r.executor_id] = r.agent_response.text
 
         research_text = by_id.get("researcher", "")
         marketing_text = by_id.get("marketer", "")

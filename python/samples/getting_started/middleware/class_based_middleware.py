@@ -8,8 +8,8 @@ from typing import Annotated
 
 from agent_framework import (
     AgentMiddleware,
+    AgentResponse,
     AgentRunContext,
-    AgentRunResponse,
     ChatMessage,
     FunctionInvocationContext,
     FunctionMiddleware,
@@ -58,7 +58,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
             if "password" in query.lower() or "secret" in query.lower():
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
                 # Override the result with warning message
-                context.result = AgentRunResponse(
+                context.result = AgentResponse(
                     messages=[
                         ChatMessage(role=Role.ASSISTANT, text="Detected sensitive information, the request is blocked.")
                     ]

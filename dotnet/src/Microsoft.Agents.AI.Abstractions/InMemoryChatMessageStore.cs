@@ -29,7 +29,7 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 [DebuggerDisplay("Count = {Count}")]
 [DebuggerTypeProxy(typeof(DebugView))]
-public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>
+public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>, IReadOnlyList<ChatMessage>
 {
     private List<ChatMessage> _messages;
 
