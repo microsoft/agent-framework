@@ -16,7 +16,7 @@ using HttpClient httpClient = new()
 AGUIChatClient chatClient = new(httpClient, serverUrl);
 
 // Create agent
-ChatClientAgent baseAgent = chatClient.CreateAIAgent(
+ChatClientAgent baseAgent = chatClient.AsAIAgent(
     name: "AGUIAssistant",
     instructions: "You are a helpful assistant.");
 

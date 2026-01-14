@@ -20,7 +20,7 @@ public static class ChatClientExtensions
     /// </summary>
     /// <inheritdoc cref="ChatClientAgent(IChatClient, string?, string?, string?, IList{AITool}?, ILoggerFactory?, IServiceProvider?)"/>
     /// <returns>A new <see cref="ChatClientAgent"/> instance.</returns>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this IChatClient chatClient,
         string? instructions = null,
         string? name = null,

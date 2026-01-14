@@ -49,7 +49,7 @@ public static class ChatClientBuilderExtensions
         IList<AITool>? tools = null,
         ILoggerFactory? loggerFactory = null,
         IServiceProvider? services = null) =>
-        Throw.IfNull(builder).Build(services).CreateAIAgent(
+        Throw.IfNull(builder).Build(services).AsAIAgent(
             instructions: instructions,
             name: name,
             description: description,
