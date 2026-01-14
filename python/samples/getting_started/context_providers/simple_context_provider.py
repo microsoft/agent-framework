@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import MutableSequence, Sequence
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, ChatOptions, Context, ContextProvider
+from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Context, ContextProvider
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
@@ -46,11 +46,9 @@ class UserInfoMemory(ContextProvider):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
-                    chat_options=ChatOptions(
-                        instructions="Extract the user's name and age from the message if present. "
-                        "If not present return nulls.",
-                        response_format=UserInfo,
-                    ),
+                    instructions="Extract the user's name and age from the message if present. "
+                    "If not present return nulls.",
+                    response_format=UserInfo,
                 )
 
                 # Update user info with extracted data
@@ -100,7 +98,7 @@ async def main():
         async with ChatAgent(
             chat_client=chat_client,
             instructions="You are a friendly assistant. Always address the user by their name.",
-            context_providers=memory_provider,
+            context_provider=memory_provider,
         ) as agent:
             # Create a new thread for the conversation
             thread = agent.get_new_thread()

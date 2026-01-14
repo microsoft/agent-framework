@@ -4,20 +4,20 @@
 
 from typing import Any
 
-from agent_framework import AgentRunResponse, get_logger
+from agent_framework import AgentResponse, get_logger
 from pydantic import BaseModel
 
 logger = get_logger("agent_framework.durabletask.response_utils")
 
 
-def load_agent_response(agent_response: AgentRunResponse | dict[str, Any] | None) -> AgentRunResponse:
-    """Convert raw payloads into AgentRunResponse instance.
+def load_agent_response(agent_response: AgentResponse | dict[str, Any] | None) -> AgentResponse:
+    """Convert raw payloads into AgentResponse instance.
 
     Args:
-        agent_response: The response to convert, can be an AgentRunResponse, dict, or None
+        agent_response: The response to convert, can be an AgentResponse, dict, or None
 
     Returns:
-        AgentRunResponse: The converted response object
+        AgentResponse: The converted response object
 
     Raises:
         ValueError: If agent_response is None
@@ -28,11 +28,11 @@ def load_agent_response(agent_response: AgentRunResponse | dict[str, Any] | None
 
     logger.debug("[load_agent_response] Loading agent response of type: %s", type(agent_response))
 
-    if isinstance(agent_response, AgentRunResponse):
+    if isinstance(agent_response, AgentResponse):
         return agent_response
     if isinstance(agent_response, dict):
-        logger.debug("[load_agent_response] Converting dict payload using AgentRunResponse.from_dict")
-        return AgentRunResponse.from_dict(agent_response)
+        logger.debug("[load_agent_response] Converting dict payload using AgentResponse.from_dict")
+        return AgentResponse.from_dict(agent_response)
 
     raise TypeError(f"Unsupported type for agent_response: {type(agent_response)}")
 
@@ -40,9 +40,9 @@ def load_agent_response(agent_response: AgentRunResponse | dict[str, Any] | None
 def ensure_response_format(
     response_format: type[BaseModel] | None,
     correlation_id: str,
-    response: AgentRunResponse,
+    response: AgentResponse,
 ) -> None:
-    """Ensure the AgentRunResponse value is parsed into the expected response_format.
+    """Ensure the AgentResponse value is parsed into the expected response_format.
 
     This function modifies the response in-place by parsing its value attribute
     into the specified Pydantic model format.
@@ -50,7 +50,7 @@ def ensure_response_format(
     Args:
         response_format: Optional Pydantic model class to parse the response value into
         correlation_id: Correlation ID for logging purposes
-        response: The AgentRunResponse object to validate and parse
+        response: The AgentResponse object to validate and parse
 
     Raises:
         ValueError: If response_format is specified but response.value cannot be parsed
@@ -66,7 +66,7 @@ def ensure_response_format(
             )
 
         logger.debug(
-            "[ensure_response_format] Loaded AgentRunResponse.value for correlation_id %s with type: %s",
+            "[ensure_response_format] Loaded AgentResponse.value for correlation_id %s with type: %s",
             correlation_id,
             type(response.value).__name__,
         )

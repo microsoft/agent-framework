@@ -11,9 +11,9 @@ import pytest
 
 from agent_framework import (
     AgentExecutor,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunEvent,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
@@ -831,9 +831,9 @@ class _StreamingTestAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Non-streaming run - returns complete response."""
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
     async def run_stream(
         self,
@@ -841,11 +841,11 @@ class _StreamingTestAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Streaming run - yields incremental updates."""
         # Simulate streaming by yielding character by character
         for char in self._reply_text:
-            yield AgentRunResponseUpdate(contents=[TextContent(text=char)])
+            yield AgentResponseUpdate(contents=[TextContent(text=char)])
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:

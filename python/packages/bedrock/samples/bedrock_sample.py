@@ -5,13 +5,12 @@ import logging
 from collections.abc import Sequence
 
 from agent_framework import (
-    AgentRunResponse,
+    AgentResponse,
     ChatAgent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
     TextContent,
-    ToolMode,
     ai_function,
 )
 
@@ -31,7 +30,7 @@ async def main() -> None:
         chat_client=BedrockChatClient(),
         instructions="You are a concise travel assistant.",
         name="BedrockWeatherAgent",
-        tool_choice=ToolMode.AUTO,
+        tool_choice="auto",
         tools=[get_weather],
     )
 
@@ -40,7 +39,7 @@ async def main() -> None:
     _log_response(response)
 
 
-def _log_response(response: AgentRunResponse) -> None:
+def _log_response(response: AgentResponse) -> None:
     logging.info("\nConversation transcript:")
     for idx, message in enumerate(response.messages, start=1):
         tag = f"{idx}. {message.role.value if isinstance(message.role, Role) else message.role}"

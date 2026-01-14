@@ -63,10 +63,10 @@ class PreCompletedTask(TaskBase):
 
 
 class AgentTask(_TypedCompoundTask):
-    """A custom Task that wraps entity calls and provides typed AgentRunResponse results.
+    """A custom Task that wraps entity calls and provides typed AgentResponse results.
 
     This task wraps the underlying entity call task and intercepts its completion
-    to convert the raw result into a typed AgentRunResponse object.
+    to convert the raw result into a typed AgentResponse object.
     """
 
     def __init__(
@@ -97,7 +97,7 @@ class AgentTask(_TypedCompoundTask):
         self.id = entity_task.id
 
     def try_set_value(self, child: TaskBase) -> None:
-        """Transition the AgentTask to a terminal state and set its value to `AgentRunResponse`.
+        """Transition the AgentTask to a terminal state and set its value to `AgentResponse`.
 
         Parameters
         ----------
@@ -124,7 +124,7 @@ class AgentTask(_TypedCompoundTask):
                             response,
                         )
 
-                    # Set the typed AgentRunResponse as this task's result
+                    # Set the typed AgentResponse as this task's result
                     self.set_value(is_error=False, value=response)
                 except Exception as e:
                     logger.exception(

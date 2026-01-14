@@ -296,10 +296,10 @@ public sealed class PurviewWrapperTests : IDisposable
             new(ChatRole.User, "Test message")
         };
         var mockAgent = new Mock<AIAgent>();
-        var innerResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Sensitive response"));
+        var innerResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Sensitive response"));
 
         mockAgent.Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread>(),
                 ItExpr.IsAny<AgentRunOptions>(),
@@ -335,10 +335,10 @@ public sealed class PurviewWrapperTests : IDisposable
             new(ChatRole.User, "Test message")
         };
         var mockAgent = new Mock<AIAgent>();
-        var innerResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Safe response"));
+        var innerResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Safe response"));
 
         mockAgent.Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread>(),
                 ItExpr.IsAny<AgentRunOptions>(),
@@ -378,10 +378,10 @@ public sealed class PurviewWrapperTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response from inner agent"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response from inner agent"));
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread>(),
                 ItExpr.IsAny<AgentRunOptions>(),
@@ -445,10 +445,10 @@ public sealed class PurviewWrapperTests : IDisposable
             }
         };
 
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response"));
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread>(),
                 ItExpr.IsAny<AgentRunOptions>(),
@@ -487,10 +487,10 @@ public sealed class PurviewWrapperTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response"));
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread>(),
                 ItExpr.IsAny<AgentRunOptions>(),
@@ -527,10 +527,10 @@ public sealed class PurviewWrapperTests : IDisposable
             new(ChatRole.User, "Test message")
         };
         var mockAgent = new Mock<AIAgent>();
-        var innerResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response"));
+        var innerResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response"));
 
         mockAgent.Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread>(),
                 ItExpr.IsAny<AgentRunOptions>(),

@@ -30,7 +30,7 @@ JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web)
 };
 StatefulAgent<AgentState> agent = new(baseAgent, jsonOptions, new AgentState());
 
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 List<ChatMessage> messages =
 [
     new(ChatRole.System, "You are a helpful recipe assistant.")
@@ -70,7 +70,7 @@ try
 
         Console.WriteLine();
 
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
 

@@ -9,8 +9,8 @@ from typing_extensions import Never
 from agent_framework import (
     AgentExecutor,
     AgentExecutorResponse,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -39,8 +39,8 @@ class _SimpleAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+    ) -> AgentResponse:
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -48,9 +48,9 @@ class _SimpleAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         # This agent does not support streaming; yield a single complete response
-        yield AgentRunResponseUpdate(contents=[TextContent(text=self._reply_text)])
+        yield AgentResponseUpdate(contents=[TextContent(text=self._reply_text)])
 
 
 class _CaptureFullConversation(Executor):
@@ -108,7 +108,7 @@ class _CaptureAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         # Normalize and record messages for verification when running non-streaming
         norm: list[ChatMessage] = []
         if messages:
@@ -118,7 +118,7 @@ class _CaptureAgent(BaseAgent):
                 elif isinstance(m, str):
                     norm.append(ChatMessage(role=Role.USER, text=m))
         self._last_messages = norm
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -126,7 +126,7 @@ class _CaptureAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         # Normalize and record messages for verification when running streaming
         norm: list[ChatMessage] = []
         if messages:
@@ -136,7 +136,7 @@ class _CaptureAgent(BaseAgent):
                 elif isinstance(m, str):
                     norm.append(ChatMessage(role=Role.USER, text=m))
         self._last_messages = norm
-        yield AgentRunResponseUpdate(contents=[TextContent(text=self._reply_text)])
+        yield AgentResponseUpdate(contents=[TextContent(text=self._reply_text)])
 
 
 async def test_sequential_adapter_uses_full_conversation() -> None:

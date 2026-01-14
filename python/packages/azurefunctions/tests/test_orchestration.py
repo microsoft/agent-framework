@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage, Role
+from agent_framework import AgentResponse, ChatMessage, Role
 from agent_framework_durabletask import DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
@@ -136,7 +136,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -144,9 +144,9 @@ class TestAgentResponseHelpers:
         # Call try_set_value
         task.try_set_value(entity_task)
 
-        # Verify task completed successfully with AgentRunResponse
+        # Verify task completed successfully with AgentResponse
         assert task.state == TaskState.SUCCEEDED
-        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result, AgentResponse)
         assert task.result.text == "Test response"
 
     def test_try_set_value_failure(self) -> None:
@@ -178,9 +178,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentRunResponse(
-            messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]
-        ).to_dict()
+        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -190,7 +188,7 @@ class TestAgentResponseHelpers:
 
         # Verify task completed and value was parsed
         assert task.state == TaskState.SUCCEEDED
-        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result, AgentResponse)
         assert isinstance(task.result.value, TestSchema)
         assert task.result.value.answer == "42"
 

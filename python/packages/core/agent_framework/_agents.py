@@ -7,7 +7,16 @@ from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from itertools import chain
-from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Protocol,
+    TypedDict,
+    cast,
+    runtime_checkable,
+)
 from uuid import uuid4
 
 from mcp import types
@@ -18,36 +27,82 @@ from pydantic import BaseModel, Field, create_model
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
-from ._memory import AggregateContextProvider, Context, ContextProvider
+from ._memory import Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Role,
-    ToolMode,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
+
+if TYPE_CHECKING:
+    from ._types import ChatOptions
+
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
 
+
 logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    covariant=True,
+)
+
+
+def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Merge two options dicts, with override values taking precedence.
+
+    Args:
+        base: The base options dict.
+        override: The override options dict (values take precedence).
+
+    Returns:
+        A new merged options dict.
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if value is None:
+            continue
+        if key == "tools" and result.get("tools"):
+            # Combine tool lists
+            result["tools"] = list(result["tools"]) + list(value)
+        elif key == "logit_bias" and result.get("logit_bias"):
+            # Merge logit_bias dicts
+            result["logit_bias"] = {**result["logit_bias"], **value}
+        elif key == "metadata" and result.get("metadata"):
+            # Merge metadata dicts
+            result["metadata"] = {**result["metadata"], **value}
+        elif key == "instructions" and result.get("instructions"):
+            # Concatenate instructions
+            result["instructions"] = f"{result['instructions']}\n{value}"
+        else:
+            result[key] = value
+    return result
 
 
 def _sanitize_agent_name(agent_name: str | None) -> str | None:
@@ -116,37 +171,22 @@ class AgentProtocol(Protocol):
             # No need to inherit from AgentProtocol or use any framework classes
             class CustomAgent:
                 def __init__(self):
-                    self._id = "custom-agent-001"
-                    self._name = "Custom Agent"
-
-                @property
-                def id(self) -> str:
-                    return self._id
-
-                @property
-                def name(self) -> str | None:
-                    return self._name
-
-                @property
-                def display_name(self) -> str:
-                    return self.name or self.id
-
-                @property
-                def description(self) -> str | None:
-                    return "A fully custom agent implementation"
+                    self.id = "custom-agent-001"
+                    self.name = "Custom Agent"
+                    self.description = "A fully custom agent implementation"
 
                 async def run(self, messages=None, *, thread=None, **kwargs):
                     # Your custom implementation
-                    from agent_framework import AgentRunResponse
+                    from agent_framework import AgentResponse
 
-                    return AgentRunResponse(messages=[], response_id="custom-response")
+                    return AgentResponse(messages=[], response_id="custom-response")
 
                 def run_stream(self, messages=None, *, thread=None, **kwargs):
                     # Your custom streaming implementation
                     async def _stream():
-                        from agent_framework import AgentRunResponseUpdate
+                        from agent_framework import AgentResponseUpdate
 
-                        yield AgentRunResponseUpdate()
+                        yield AgentResponseUpdate()
 
                     return _stream()
 
@@ -160,41 +200,25 @@ class AgentProtocol(Protocol):
             assert isinstance(instance, AgentProtocol)
     """
 
-    @property
-    def id(self) -> str:
-        """Returns the ID of the agent."""
-        ...
-
-    @property
-    def name(self) -> str | None:
-        """Returns the name of the agent."""
-        ...
-
-    @property
-    def display_name(self) -> str:
-        """Returns the display name of the agent."""
-        ...
-
-    @property
-    def description(self) -> str | None:
-        """Returns the description of the agent."""
-        ...
+    id: str
+    name: str | None
+    description: str | None
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentRunResponse object. The caller is blocked until
+        as a single AgentResponse object. The caller is blocked until
         the final result is available.
 
         Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of AgentRunResponseUpdate
+        intermediate steps and the final result as a stream of AgentResponseUpdate
         objects. Streaming only the final result is not feasible because the timing of
         the final result's availability is unknown, and blocking the caller until then
         is undesirable in streaming scenarios.
@@ -213,17 +237,17 @@ class AgentProtocol(Protocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Run the agent as a stream.
 
         This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+        agent's execution as a stream of AgentResponseUpdate objects to the caller.
 
-        Note: An AgentRunResponseUpdate object contains a chunk of a message.
+        Note: An AgentResponseUpdate object contains a chunk of a message.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -259,19 +283,19 @@ class BaseAgent(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseAgent, AgentThread, AgentRunResponse
+            from agent_framework import BaseAgent, AgentThread, AgentResponse
 
 
             # Create a concrete subclass that implements the protocol
             class SimpleAgent(BaseAgent):
                 async def run(self, messages=None, *, thread=None, **kwargs):
                     # Custom implementation
-                    return AgentRunResponse(messages=[], response_id="simple-response")
+                    return AgentResponse(messages=[], response_id="simple-response")
 
                 def run_stream(self, messages=None, *, thread=None, **kwargs):
                     async def _stream():
                         # Custom streaming implementation
-                        yield AgentRunResponseUpdate()
+                        yield AgentResponseUpdate()
 
                     return _stream()
 
@@ -289,7 +313,6 @@ class BaseAgent(SerializationMixin):
 
             # Access agent properties
             print(agent.id)  # Custom or auto-generated UUID
-            print(agent.display_name)  # Returns name or id
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
@@ -300,8 +323,8 @@ class BaseAgent(SerializationMixin):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: ContextProvider | Sequence[ContextProvider] | None = None,
-        middleware: Middleware | Sequence[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -312,8 +335,8 @@ class BaseAgent(SerializationMixin):
                 a new UUID will be generated.
             name: The name of the agent, can be None.
             description: The description of the agent.
-            context_providers: The collection of multiple context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: The context provider to include during agent invocation.
+            middleware: List of middleware.
             additional_properties: Additional properties set on the agent.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
@@ -322,11 +345,10 @@ class BaseAgent(SerializationMixin):
         self.id = id
         self.name = name
         self.description = description
-        self.context_provider = self._prepare_context_providers(context_providers)
-        if middleware is None or isinstance(middleware, Sequence):
-            self.middleware: list[Middleware] | None = cast(list[Middleware], middleware) if middleware else None
-        else:
-            self.middleware = [middleware]
+        self.context_provider = context_provider
+        self.middleware: list[Middleware] | None = (
+            cast(list[Middleware], middleware) if middleware is not None else None
+        )
 
         # Merge kwargs into additional_properties
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
@@ -355,14 +377,6 @@ class BaseAgent(SerializationMixin):
             await thread.on_new_messages(response_messages)
         if thread.context_provider:
             await thread.context_provider.invoked(input_messages, response_messages, **kwargs)
-
-    @property
-    def display_name(self) -> str:
-        """Returns the display name of the agent.
-
-        This is the name if present, otherwise the id.
-        """
-        return self.name or self.id
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         """Return a new AgentThread instance that is compatible with the agent.
@@ -398,8 +412,8 @@ class BaseAgent(SerializationMixin):
         description: str | None = None,
         arg_name: str = "task",
         arg_description: str | None = None,
-        stream_callback: Callable[[AgentRunResponseUpdate], None]
-        | Callable[[AgentRunResponseUpdate], Awaitable[None]]
+        stream_callback: Callable[[AgentResponseUpdate], None]
+        | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
     ) -> AIFunction[BaseModel, str]:
         """Create an AIFunction tool that wraps this agent.
@@ -464,7 +478,7 @@ class BaseAgent(SerializationMixin):
                 return (await self.run(input_text, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
-            response_updates: list[AgentRunResponseUpdate] = []
+            response_updates: list[AgentResponseUpdate] = []
             async for update in self.run_stream(input_text, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
@@ -473,7 +487,7 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentRunResponse.from_agent_run_response_updates(response_updates).text
+            return AgentResponse.from_agent_run_response_updates(response_updates).text
 
         agent_tool: AIFunction[BaseModel, str] = AIFunction(
             name=tool_name,
@@ -486,7 +500,7 @@ class BaseAgent(SerializationMixin):
 
     def _normalize_messages(
         self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
     ) -> list[ChatMessage]:
         if messages is None:
             return []
@@ -499,30 +513,21 @@ class BaseAgent(SerializationMixin):
 
         return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
-    def _prepare_context_providers(
-        self,
-        context_providers: ContextProvider | Sequence[ContextProvider] | None = None,
-    ) -> AggregateContextProvider | None:
-        if not context_providers:
-            return None
-
-        if isinstance(context_providers, AggregateContextProvider):
-            return context_providers
-
-        return AggregateContextProvider(context_providers)
-
 
 # region ChatAgent
 
 
 @use_agent_middleware
 @use_agent_instrumentation(capture_usage=False)  # type: ignore[arg-type,misc]
-class ChatAgent(BaseAgent):  # type: ignore[misc]
+class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     """A Chat Client Agent.
 
     This is the primary agent implementation that uses a chat client to interact
     with language models. It supports tools, context providers, middleware, and
     both streaming and non-streaming responses.
+
+    The generic type parameter TOptions specifies which options TypedDict this agent
+    accepts. This enables IDE autocomplete and type checking for provider-specific options.
 
     Examples:
         Basic usage:
@@ -530,7 +535,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         .. code-block:: python
 
             from agent_framework import ChatAgent
-            from agent_framework.clients import OpenAIChatClient
+            from agent_framework.openai import OpenAIChatClient
 
             # Create a basic chat agent
             client = OpenAIChatClient(model_id="gpt-4")
@@ -562,71 +567,54 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             async for update in agent.run_stream("What's the weather in Paris?"):
                 print(update.text, end="")
 
-        With additional provider specific options:
+        With typed options for IDE autocomplete:
 
         .. code-block:: python
 
-            agent = ChatAgent(
+            from agent_framework import ChatAgent
+            from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
+
+            client = OpenAIChatClient(model_id="gpt-4o")
+            agent: ChatAgent[OpenAIChatOptions] = ChatAgent(
                 chat_client=client,
                 name="reasoning-agent",
                 instructions="You are a reasoning assistant.",
-                model_id="gpt-5",
-                temperature=0.7,
-                max_tokens=500,
-                additional_chat_options={
-                    "reasoning": {"effort": "high", "summary": "concise"}
-                },  # OpenAI Responses specific.
+                options={
+                    "temperature": 0.7,
+                    "max_tokens": 500,
+                    "reasoning_effort": "high",  # OpenAI-specific, IDE will autocomplete!
+                },
             )
 
-            # Use streaming responses
-            async for update in agent.run_stream("How do you prove the pythagorean theorem?"):
-                print(update.text, end="")
+            # Or pass options at runtime
+            response = await agent.run(
+                "What is 25 * 47?",
+                options={"temperature": 0.0, "logprobs": True},
+            )
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
 
     def __init__(
         self,
-        chat_client: ChatClientProtocol,
+        chat_client: ChatClientProtocol[TOptions_co],
         instructions: str | None = None,
         *,
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
-        # chat options
-        allow_multiple_tool_calls: bool | None = None,
-        conversation_id: str | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model_id: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_chat_options: dict[str, Any] | None = None,
+        default_options: TOptions_co | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ChatAgent instance.
-
-        Note:
-            The set of parameters from frequency_penalty to request_kwargs are used to
-            call the chat client. They can also be passed to both run methods.
-            When both are set, the ones passed to the run methods take precedence.
 
         Args:
             chat_client: The chat client to use for the agent.
@@ -639,35 +627,24 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             description: A brief description of the agent's purpose.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            context_providers: The collection of multiple context providers to include during agent invocation.
+            context_provider: The context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
-            conversation_id: The conversation ID for service-managed threads.
-                Cannot be used together with chat_message_store_factory.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model_id: The model_id to use for the agent.
-                This overrides the model_id set in the chat client if it contains one.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
+            default_options: A TypedDict containing chat options. When using a typed agent like
+                ``ChatAgent[OpenAIChatOptions]``, this enables IDE autocomplete for
+                provider-specific options including temperature, max_tokens, model_id,
+                tool_choice, and provider-specific options like reasoning_effort.
+                You can also create your own TypedDict for custom chat clients.
+                These can be overridden at runtime via the ``options`` parameter of ``run()`` and ``run_stream()``.
             tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_chat_options: A dictionary of other values that will be passed through
-                to the chat_client ``get_response`` and ``get_streaming_response`` methods.
-                This can be used to pass provider specific parameters.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Raises:
             AgentInitializationError: If both conversation_id and chat_message_store_factory are provided.
         """
+        # Extract conversation_id from options for validation
+        opts = dict(default_options) if default_options else {}
+        conversation_id = opts.get("conversation_id")
+
         if conversation_id is not None and chat_message_store_factory is not None:
             raise AgentInitializationError(
                 "Cannot specify both conversation_id and chat_message_store_factory. "
@@ -683,41 +660,51 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             id=id,
             name=name,
             description=description,
-            context_providers=context_providers,
+            context_provider=context_provider,
             middleware=middleware,
             **kwargs,
         )
-        self.chat_client = chat_client
+        self.chat_client: ChatClientProtocol[TOptions_co] = chat_client
         self.chat_message_store_factory = chat_message_store_factory
+
+        # Get tools from options or named parameter (named param takes precedence)
+        tools_ = tools if tools is not None else opts.pop("tools", None)
+
+        # Handle instructions - named parameter takes precedence over options
+        instructions_ = instructions if instructions is not None else opts.pop("instructions", None)
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if tools is None else tools if isinstance(tools, list) else [tools]  # type: ignore[list-item]
+            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
         )
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
-        self.chat_options = ChatOptions(
-            model_id=model_id or (str(chat_client.model_id) if hasattr(chat_client, "model_id") else None),
-            allow_multiple_tool_calls=allow_multiple_tool_calls,
-            conversation_id=conversation_id,
-            frequency_penalty=frequency_penalty,
-            instructions=instructions,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=agent_tools,
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_chat_options or {},  # type: ignore
-        )
+
+        # Build chat options dict
+        self.default_options: dict[str, Any] = {
+            "model_id": opts.pop("model_id", None) or (getattr(self.chat_client, "model_id", None)),
+            "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
+            "conversation_id": conversation_id,
+            "frequency_penalty": opts.pop("frequency_penalty", None),
+            "instructions": instructions_,
+            "logit_bias": opts.pop("logit_bias", None),
+            "max_tokens": opts.pop("max_tokens", None),
+            "metadata": opts.pop("metadata", None),
+            "presence_penalty": opts.pop("presence_penalty", None),
+            "response_format": opts.pop("response_format", None),
+            "seed": opts.pop("seed", None),
+            "stop": opts.pop("stop", None),
+            "store": opts.pop("store", None),
+            "temperature": opts.pop("temperature", None),
+            "tool_choice": opts.pop("tool_choice", "auto"),
+            "tools": agent_tools,
+            "top_p": opts.pop("top_p", None),
+            "user": opts.pop("user", None),
+            **opts,  # Remaining options are provider-specific
+        }
+        # Remove None values from chat_options
+        self.default_options = {k: v for k, v in self.default_options.items() if v is not None}
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name_and_description()
 
@@ -769,32 +756,17 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        allow_multiple_tool_calls: bool | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model_id: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_chat_options: dict[str, Any] | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Run the agent with the given messages and options.
 
         Note:
@@ -808,36 +780,29 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
 
         Keyword Args:
             thread: The thread to use for the agent.
-            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model_id: The model_id to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_chat_options: Additional properties to include in the request.
-                Use this field for provider-specific parameters.
+            tools: The tools to use for this specific run (merged with default tools).
+            options: A TypedDict containing chat options. When using a typed agent like
+                ``ChatAgent[OpenAIChatOptions]``, this enables IDE autocomplete for
+                provider-specific options including temperature, max_tokens, model_id,
+                tool_choice, and provider-specific options like reasoning_effort.
             kwargs: Additional keyword arguments for the agent.
                 Will only be passed to functions that are called.
 
         Returns:
-            An AgentRunResponse containing the agent's response.
+            An AgentResponse containing the agent's response.
         """
+        # Build options dict from provided options
+        opts = dict(options) if options else {}
+
+        # Get tools from options or named parameter (named param takes precedence)
+        tools_ = tools if tools is not None else opts.pop("tools", None)
+
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread, input_messages=input_messages
+            thread=thread, input_messages=input_messages, **kwargs
         )
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if tools is None else tools if isinstance(tools, list) else [tools]
+            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         agent_name = self._get_agent_name()
 
@@ -857,27 +822,30 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
-        merged_additional_options = additional_chat_options or {}
-        co = run_chat_options & ChatOptions(
-            model_id=model_id,
-            conversation_id=thread.service_thread_id,
-            allow_multiple_tool_calls=allow_multiple_tool_calls,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=final_tools,
-            top_p=top_p,
-            user=user,
-            additional_properties=merged_additional_options,  # type: ignore[arg-type]
-        )
+        # Build options dict from run() options merged with provided options
+        run_opts: dict[str, Any] = {
+            "model_id": opts.pop("model_id", None),
+            "conversation_id": thread.service_thread_id,
+            "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
+            "frequency_penalty": opts.pop("frequency_penalty", None),
+            "logit_bias": opts.pop("logit_bias", None),
+            "max_tokens": opts.pop("max_tokens", None),
+            "metadata": opts.pop("metadata", None),
+            "presence_penalty": opts.pop("presence_penalty", None),
+            "response_format": opts.pop("response_format", None),
+            "seed": opts.pop("seed", None),
+            "stop": opts.pop("stop", None),
+            "store": opts.pop("store", None),
+            "temperature": opts.pop("temperature", None),
+            "tool_choice": opts.pop("tool_choice", None),
+            "tools": final_tools,
+            "top_p": opts.pop("top_p", None),
+            "user": opts.pop("user", None),
+            **opts,  # Remaining options are provider-specific
+        }
+        # Remove None values and merge with chat_options
+        run_opts = {k: v for k, v in run_opts.items() if v is not None}
+        co = _merge_options(run_chat_options, run_opts)
 
         # Ensure thread is forwarded in kwargs for tool invocation
         kwargs["thread"] = thread
@@ -885,7 +853,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response = await self.chat_client.get_response(
             messages=thread_messages,
-            chat_options=co,
+            options=co,  # type: ignore[arg-type]
             **filtered_kwargs,
         )
 
@@ -904,7 +872,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             response.messages,
             **{k: v for k, v in kwargs.items() if k != "thread"},
         )
-        return AgentRunResponse(
+        return AgentResponse(
             messages=response.messages,
             response_id=response.response_id,
             created_at=response.created_at,
@@ -916,32 +884,17 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        allow_multiple_tool_calls: bool | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model_id: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_chat_options: dict[str, Any] | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Stream the agent with the given messages and options.
 
         Note:
@@ -955,30 +908,23 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
 
         Keyword Args:
             thread: The thread to use for the agent.
-            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model_id: The model_id to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_chat_options: Additional properties to include in the request.
-                Use this field for provider-specific parameters.
-            kwargs: Any additional keyword arguments.
+            tools: The tools to use for this specific run (merged with agent-level tools).
+            options: A TypedDict containing chat options. When using a typed agent like
+                ``ChatAgent[OpenAIChatOptions]``, this enables IDE autocomplete for
+                provider-specific options including temperature, max_tokens, model_id,
+                tool_choice, and provider-specific options like reasoning_effort.
+            kwargs: Additional keyword arguments for the agent.
                 Will only be passed to functions that are called.
 
         Yields:
-            AgentRunResponseUpdate objects containing chunks of the agent's response.
+            AgentResponseUpdate objects containing chunks of the agent's response.
         """
+        # Build options dict from provided options
+        opts = dict(options) if options else {}
+
+        # Get tools from options or named parameter (named param takes precedence)
+        tools_ = tools if tools is not None else opts.pop("tools", None)
+
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
@@ -987,7 +933,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         # Resolve final tool list (runtime provided tools + local MCP server tools)
         final_tools: list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]] = []
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
-            [] if tools is None else tools if isinstance(tools, list) else [tools]
+            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         # Normalize tools argument to a list without mutating the original parameter
         for tool in normalized_tools:
@@ -1003,27 +949,30 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
-        merged_additional_options = additional_chat_options or {}
-        co = run_chat_options & ChatOptions(
-            conversation_id=thread.service_thread_id,
-            allow_multiple_tool_calls=allow_multiple_tool_calls,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            model_id=model_id,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=final_tools,
-            top_p=top_p,
-            user=user,
-            additional_properties=merged_additional_options,  # type: ignore[arg-type]
-        )
+        # Build options dict from run_stream() options merged with provided options
+        run_opts: dict[str, Any] = {
+            "model_id": opts.pop("model_id", None),
+            "conversation_id": thread.service_thread_id,
+            "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
+            "frequency_penalty": opts.pop("frequency_penalty", None),
+            "logit_bias": opts.pop("logit_bias", None),
+            "max_tokens": opts.pop("max_tokens", None),
+            "metadata": opts.pop("metadata", None),
+            "presence_penalty": opts.pop("presence_penalty", None),
+            "response_format": opts.pop("response_format", None),
+            "seed": opts.pop("seed", None),
+            "stop": opts.pop("stop", None),
+            "store": opts.pop("store", None),
+            "temperature": opts.pop("temperature", None),
+            "tool_choice": opts.pop("tool_choice", None),
+            "tools": final_tools,
+            "top_p": opts.pop("top_p", None),
+            "user": opts.pop("user", None),
+            **opts,  # Remaining options are provider-specific
+        }
+        # Remove None values and merge with chat_options
+        run_opts = {k: v for k, v in run_opts.items() if v is not None}
+        co = _merge_options(run_chat_options, run_opts)
 
         # Ensure thread is forwarded in kwargs for tool invocation
         kwargs["thread"] = thread
@@ -1032,7 +981,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         response_updates: list[ChatResponseUpdate] = []
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,
-            chat_options=co,
+            options=co,  # type: ignore[arg-type]
             **filtered_kwargs,
         ):
             response_updates.append(update)
@@ -1040,7 +989,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
             if update.author_name is None:
                 update.author_name = agent_name
 
-            yield AgentRunResponseUpdate(
+            yield AgentResponseUpdate(
                 contents=update.contents,
                 role=update.role,
                 author_name=update.author_name,
@@ -1051,7 +1000,9 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
                 raw_representation=update,
             )
 
-        response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
+        response = ChatResponse.from_chat_response_updates(
+            response_updates, output_format_type=co.get("response_format")
+        )
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
         await self._notify_thread_of_new_messages(
@@ -1096,9 +1047,9 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
                 service_thread_id=service_thread_id,
                 context_provider=self.context_provider,
             )
-        if self.chat_options.conversation_id is not None:
+        if self.default_options.get("conversation_id") is not None:
             return AgentThread(
-                service_thread_id=self.chat_options.conversation_id,
+                service_thread_id=self.default_options["conversation_id"],
                 context_provider=self.context_provider,
             )
         if self.chat_message_store_factory is not None:
@@ -1255,7 +1206,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
         **kwargs: Any,
-    ) -> tuple[AgentThread, ChatOptions, list[ChatMessage]]:
+    ) -> tuple[AgentThread, dict[str, Any], list[ChatMessage]]:
         """Prepare the thread and messages for agent execution.
 
         This method prepares the conversation thread, merges context provider data,
@@ -1275,7 +1226,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         Raises:
             AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
-        chat_options = deepcopy(self.chat_options) if self.chat_options else ChatOptions()
+        chat_options = deepcopy(self.default_options) if self.default_options else {}
         thread = thread or self.get_new_thread()
         if thread.service_thread_id and thread.context_provider:
             await thread.context_provider.thread_created(thread.service_thread_id)
@@ -1292,21 +1243,21 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
                 if context.messages:
                     thread_messages.extend(context.messages)
                 if context.tools:
-                    if chat_options.tools is not None:
-                        chat_options.tools.extend(context.tools)
+                    if chat_options.get("tools") is not None:
+                        chat_options["tools"].extend(context.tools)
                     else:
-                        chat_options.tools = list(context.tools)
+                        chat_options["tools"] = list(context.tools)
                 if context.instructions:
-                    chat_options.instructions = (
+                    chat_options["instructions"] = (
                         context.instructions
-                        if not chat_options.instructions
-                        else f"{chat_options.instructions}\n{context.instructions}"
+                        if not chat_options.get("instructions")
+                        else f"{chat_options['instructions']}\n{context.instructions}"
                     )
         thread_messages.extend(input_messages or [])
         if (
             thread.service_thread_id
-            and chat_options.conversation_id
-            and thread.service_thread_id != chat_options.conversation_id
+            and chat_options.get("conversation_id")
+            and thread.service_thread_id != chat_options["conversation_id"]
         ):
             raise AgentExecutionException(
                 "The conversation_id set on the agent is different from the one set on the thread, "

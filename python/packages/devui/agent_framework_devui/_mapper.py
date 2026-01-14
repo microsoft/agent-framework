@@ -145,7 +145,7 @@ class MessageMapper:
         """Convert a single Agent Framework event to OpenAI events.
 
         Args:
-            raw_event: Agent Framework event (AgentRunResponseUpdate, WorkflowEvent, etc.)
+            raw_event: Agent Framework event (AgentResponseUpdate, WorkflowEvent, etc.)
             request: Original request for context
 
         Returns:
@@ -178,26 +178,26 @@ class MessageMapper:
 
         # Import Agent Framework types for proper isinstance checks
         try:
-            from agent_framework import AgentRunResponse, AgentRunResponseUpdate, WorkflowEvent
+            from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
             from agent_framework._workflows._events import AgentRunUpdateEvent
 
-            # Handle AgentRunUpdateEvent - workflow event wrapping AgentRunResponseUpdate
+            # Handle AgentRunUpdateEvent - workflow event wrapping AgentResponseUpdate
             # This must be checked BEFORE generic WorkflowEvent check
             if isinstance(raw_event, AgentRunUpdateEvent):
-                # Extract the AgentRunResponseUpdate from the event's data attribute
-                if raw_event.data and isinstance(raw_event.data, AgentRunResponseUpdate):
+                # Extract the AgentResponseUpdate from the event's data attribute
+                if raw_event.data and isinstance(raw_event.data, AgentResponseUpdate):
                     # Preserve executor_id in context for proper output routing
                     context["current_executor_id"] = raw_event.executor_id
                     return await self._convert_agent_update(raw_event.data, context)
                 # If no data, treat as generic workflow event
                 return await self._convert_workflow_event(raw_event, context)
 
-            # Handle complete agent response (AgentRunResponse) - for non-streaming agent execution
-            if isinstance(raw_event, AgentRunResponse):
+            # Handle complete agent response (AgentResponse) - for non-streaming agent execution
+            if isinstance(raw_event, AgentResponse):
                 return await self._convert_agent_response(raw_event, context)
 
-            # Handle agent updates (AgentRunResponseUpdate) - for direct agent execution
-            if isinstance(raw_event, AgentRunResponseUpdate):
+            # Handle agent updates (AgentResponseUpdate) - for direct agent execution
+            if isinstance(raw_event, AgentResponseUpdate):
                 return await self._convert_agent_update(raw_event, context)
 
             # Handle workflow events (any class that inherits from WorkflowEvent)
@@ -686,13 +686,13 @@ class MessageMapper:
         return events
 
     async def _convert_agent_response(self, response: Any, context: dict[str, Any]) -> Sequence[Any]:
-        """Convert complete AgentRunResponse to OpenAI events.
+        """Convert complete AgentResponse to OpenAI events.
 
         This handles non-streaming agent execution where agent.run() returns
-        a complete AgentRunResponse instead of streaming AgentRunResponseUpdate objects.
+        a complete AgentResponse instead of streaming AgentResponseUpdate objects.
 
         Args:
-            response: Agent run response (AgentRunResponse)
+            response: Agent run response (AgentResponse)
             context: Conversion context
 
         Returns:
@@ -1047,7 +1047,7 @@ class MessageMapper:
                 # Create ExecutorActionItem with completed status
                 # ExecutorCompletedEvent uses 'data' field, not 'result'
                 # Serialize the result data to ensure it's JSON-serializable
-                # (AgentExecutorResponse contains AgentRunResponse/ChatMessage which are SerializationMixin)
+                # (AgentExecutorResponse contains AgentResponse/ChatMessage which are SerializationMixin)
                 raw_result = getattr(event, "data", None)
                 serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
                 executor_item = ExecutorActionItem(

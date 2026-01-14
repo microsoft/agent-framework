@@ -319,7 +319,7 @@ class DefaultOrchestrator(Orchestrator):
 
         response_format = None
         if isinstance(context.agent, ChatAgent):
-            response_format = context.agent.chat_options.response_format
+            response_format = context.agent.default_options.get("response_format")
         skip_text_content = response_format is not None
 
         client_tools = convert_agui_tools_to_agent_framework(context.input_data.get("tools"))
@@ -434,10 +434,131 @@ class DefaultOrchestrator(Orchestrator):
         run_kwargs: dict[str, Any] = {
             "thread": thread,
             "tools": tools_param,
-            "metadata": safe_metadata,
+            "options": {"metadata": safe_metadata},
         }
         if safe_metadata:
-            run_kwargs["store"] = True
+            run_kwargs["options"]["store"] = True
+
+        async def _resolve_approval_responses(
+            messages: list[Any],
+            tools_for_execution: list[Any],
+        ) -> None:
+            fcc_todo = _collect_approval_responses(messages)
+            if not fcc_todo:
+                return
+
+            approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+            approved_function_results: list[Any] = []
+            if approved_responses and tools_for_execution:
+                chat_client = getattr(context.agent, "chat_client", None)
+                config = (
+                    getattr(chat_client, "function_invocation_configuration", None) or FunctionInvocationConfiguration()
+                )
+                middleware_pipeline = extract_and_merge_function_middleware(chat_client, run_kwargs)
+                try:
+                    results, _ = await _try_execute_function_calls(
+                        custom_args=run_kwargs,
+                        attempt_idx=0,
+                        function_calls=approved_responses,
+                        tools=tools_for_execution,
+                        middleware_pipeline=middleware_pipeline,
+                        config=config,
+                    )
+                    approved_function_results = list(results)
+                except Exception:
+                    logger.error("Failed to execute approved tool calls; injecting error results.")
+                    approved_function_results = []
+
+            normalized_results: list[FunctionResultContent] = []
+            for idx, approval in enumerate(approved_responses):
+                if idx < len(approved_function_results) and isinstance(
+                    approved_function_results[idx], FunctionResultContent
+                ):
+                    normalized_results.append(approved_function_results[idx])
+                    continue
+                call_id = approval.function_call.call_id or approval.id
+                normalized_results.append(
+                    FunctionResultContent(call_id=call_id, result="Error: Tool call invocation failed.")
+                )
+
+            _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore
+
+        def _should_emit_tool_snapshot(tool_name: str | None) -> bool:
+            if not pending_tool_calls or not tool_results:
+                return False
+            if tool_name and context.config.predict_state_config and not context.config.require_confirmation:
+                for config in context.config.predict_state_config.values():
+                    if config["tool"] == tool_name:
+                        logger.info(
+                            f"Skipping intermediate MessagesSnapshotEvent for predictive tool '{tool_name}' "
+                            " - delaying until summary"
+                        )
+                        return False
+            return True
+
+        def _build_messages_snapshot(tool_message_id: str | None = None) -> MessagesSnapshotEvent:
+            has_text_content = bool(accumulated_text_content)
+            all_messages = snapshot_messages.copy()
+
+            if pending_tool_calls:
+                if tool_message_id and not has_text_content:
+                    tool_call_message_id = tool_message_id
+                else:
+                    tool_call_message_id = (
+                        active_message_id if not has_text_content and active_message_id else generate_event_id()
+                    )
+                tool_call_message = {
+                    "id": tool_call_message_id,
+                    "role": "assistant",
+                    "tool_calls": pending_tool_calls.copy(),
+                }
+                all_messages.append(tool_call_message)
+
+            all_messages.extend(tool_results)
+
+            if has_text_content and active_message_id:
+                assistant_text_message = {
+                    "id": active_message_id,
+                    "role": "assistant",
+                    "content": accumulated_text_content,
+                }
+                all_messages.append(assistant_text_message)
+
+            return MessagesSnapshotEvent(
+                messages=all_messages,  # type: ignore[arg-type]
+            )
+
+        # Use tools_param if available (includes client tools), otherwise fall back to server_tools
+        # This ensures both server tools AND client tools can be executed after approval
+        tools_for_approval = tools_param if tools_param is not None else server_tools
+        latest_approval = latest_approval_response(messages_to_run)
+        await _resolve_approval_responses(messages_to_run, tools_for_approval)
+
+        if latest_approval and is_step_based_approval(latest_approval, context.config.predict_state_config):
+            from ._confirmation_strategies import DefaultConfirmationStrategy
+
+            strategy = context.confirmation_strategy
+            if strategy is None:
+                strategy = DefaultConfirmationStrategy()
+
+            steps = approval_steps(latest_approval)
+            if steps:
+                if latest_approval.approved:
+                    confirmation_message = strategy.on_approval_accepted(steps)
+                else:
+                    confirmation_message = strategy.on_approval_rejected(steps)
+            else:
+                if latest_approval.approved:
+                    confirmation_message = strategy.on_state_confirmed()
+                else:
+                    confirmation_message = strategy.on_state_rejected()
+
+            message_id = generate_event_id()
+            yield TextMessageStartEvent(message_id=message_id, role="assistant")
+            yield TextMessageContentEvent(message_id=message_id, delta=confirmation_message)
+            yield TextMessageEndEvent(message_id=message_id)
+            yield event_bridge.create_run_finished_event()
+            return
 
         async def _resolve_approval_responses(
             messages: list[Any],
@@ -646,11 +767,11 @@ class DefaultOrchestrator(Orchestrator):
                         yield end_event
 
         if response_format and all_updates:
-            from agent_framework import AgentRunResponse
+            from agent_framework import AgentResponse
             from pydantic import BaseModel
 
             logger.info(f"Processing structured output, update count: {len(all_updates)}")
-            final_response = AgentRunResponse.from_agent_run_response_updates(
+            final_response = AgentResponse.from_agent_run_response_updates(
                 all_updates, output_format_type=response_format
             )
 

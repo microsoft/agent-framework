@@ -32,22 +32,32 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         "instructions": None,
         "model": None,
         "chat_client_type": None,
-        "context_providers": None,
+        "context_provider": None,
         "middleware": None,
     }
 
     # Try to get instructions
-    if hasattr(entity_object, "chat_options") and hasattr(entity_object.chat_options, "instructions"):
-        metadata["instructions"] = entity_object.chat_options.instructions
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        if isinstance(chat_opts, dict):
+            if "instructions" in chat_opts:
+                metadata["instructions"] = chat_opts.get("instructions")
+        elif hasattr(chat_opts, "instructions"):
+            metadata["instructions"] = chat_opts.instructions
 
-    # Try to get model - check both chat_options and chat_client
+    # Try to get model - check both default_options and chat_client
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        if isinstance(chat_opts, dict):
+            if chat_opts.get("model_id"):
+                metadata["model"] = chat_opts.get("model_id")
+        elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
+            metadata["model"] = chat_opts.model_id
     if (
-        hasattr(entity_object, "chat_options")
-        and hasattr(entity_object.chat_options, "model_id")
-        and entity_object.chat_options.model_id
+        metadata["model"] is None
+        and hasattr(entity_object, "chat_client")
+        and hasattr(entity_object.chat_client, "model_id")
     ):
-        metadata["model"] = entity_object.chat_options.model_id
-    elif hasattr(entity_object, "chat_client") and hasattr(entity_object.chat_client, "model_id"):
         metadata["model"] = entity_object.chat_client.model_id
 
     # Try to get chat client type
@@ -60,20 +70,20 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         and entity_object.context_provider
         and hasattr(entity_object.context_provider, "__class__")
     ):
-        metadata["context_providers"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
+        metadata["context_provider"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
 
     # Try to get middleware
     if hasattr(entity_object, "middleware") and entity_object.middleware:
-        middleware_list: list[str] = []
+        middlewares_list: list[str] = []
         for m in entity_object.middleware:
             # Try multiple ways to get a good name for middleware
             if hasattr(m, "__name__"):  # Function or callable
-                middleware_list.append(m.__name__)
+                middlewares_list.append(m.__name__)
             elif hasattr(m, "__class__"):  # Class instance
-                middleware_list.append(m.__class__.__name__)
+                middlewares_list.append(m.__class__.__name__)
             else:
-                middleware_list.append(str(m))
-        metadata["middleware"] = middleware_list  # type: ignore
+                middlewares_list.append(str(m))
+        metadata["middleware"] = middlewares_list  # type: ignore
 
     return metadata
 

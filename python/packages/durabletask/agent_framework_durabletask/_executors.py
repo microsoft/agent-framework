@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentRunResponse, AgentThread, ChatMessage, ErrorContent, Role, TextContent, get_logger
+from agent_framework import AgentResponse, AgentThread, ChatMessage, ErrorContent, Role, TextContent, get_logger
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
 from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
@@ -33,14 +33,14 @@ logger = get_logger("agent_framework.durabletask.executors")
 TaskT = TypeVar("TaskT")
 
 
-class DurableAgentTask(CompositeTask[AgentRunResponse], CompletableTask[AgentRunResponse]):
-    """A custom Task that wraps entity calls and provides typed AgentRunResponse results.
+class DurableAgentTask(CompositeTask[AgentResponse], CompletableTask[AgentResponse]):
+    """A custom Task that wraps entity calls and provides typed AgentResponse results.
 
     This task wraps the underlying entity call task and intercepts its completion
-    to convert the raw result into a typed AgentRunResponse object.
+    to convert the raw result into a typed AgentResponse object.
 
-    When yielded in an orchestration, this task returns an AgentRunResponse:
-        response: AgentRunResponse = yield durable_agent_task
+    When yielded in an orchestration, this task returns an AgentResponse:
+        response: AgentResponse = yield durable_agent_task
     """
 
     def __init__(
@@ -93,7 +93,7 @@ class DurableAgentTask(CompositeTask[AgentRunResponse], CompletableTask[AgentRun
                     response,
                 )
 
-            # Set the typed AgentRunResponse as this task's result
+            # Set the typed AgentResponse as this task's result
             self.complete(response)
 
         except Exception as ex:
@@ -161,14 +161,14 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
             correlation_id=correlation_id,
         )
 
-    def _create_acceptance_response(self, correlation_id: str) -> AgentRunResponse:
+    def _create_acceptance_response(self, correlation_id: str) -> AgentResponse:
         """Create an acceptance response for fire-and-forget mode.
 
         Args:
             correlation_id: Correlation ID for tracking the request
 
         Returns:
-            AgentRunResponse: Acceptance response with correlation ID
+            AgentResponse: Acceptance response with correlation ID
         """
         acceptance_message = ChatMessage(
             role=Role.SYSTEM,
@@ -180,16 +180,16 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
                 )
             ],
         )
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[acceptance_message],
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
 
-class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
+class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
     """Execution strategy for external clients.
 
-    Note: Returns AgentRunResponse directly since the execution
+    Note: Returns AgentResponse directly since the execution
     is blocking until response is available via polling
     as per the design of TaskHubGrpcClient.
     """
@@ -209,7 +209,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
         agent_name: str,
         run_request: RunRequest,
         thread: AgentThread | None = None,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Execute the agent via the durabletask client.
 
         Signals the agent entity with a message request, then polls the entity
@@ -225,7 +225,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
             thread: Optional conversation thread (creates new if not provided)
 
         Returns:
-            AgentRunResponse: The agent's response after execution completes, or an immediate
+            AgentResponse: The agent's response after execution completes, or an immediate
                             acknowledgement if wait_for_response is False
         """
         # Signal the entity with the request
@@ -284,7 +284,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
         self,
         entity_id: EntityInstanceId,
         correlation_id: str,
-    ) -> AgentRunResponse | None:
+    ) -> AgentResponse | None:
         """Poll the entity for a response with retries.
 
         Args:
@@ -319,10 +319,10 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
 
     def _handle_agent_response(
         self,
-        agent_response: AgentRunResponse | None,
+        agent_response: AgentResponse | None,
         response_format: type[BaseModel] | None,
         correlation_id: str,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Handle the agent response or create an error response.
 
         Args:
@@ -331,7 +331,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
             correlation_id: Correlation ID for logging
 
         Returns:
-            AgentRunResponse with either the agent's response or an error message
+            AgentResponse with either the agent's response or an error message
         """
         if agent_response is not None:
             try:
@@ -375,7 +375,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
                 ],
             )
 
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[error_message],
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -384,7 +384,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
         self,
         entity_id: EntityInstanceId,
         correlation_id: str,
-    ) -> AgentRunResponse | None:
+    ) -> AgentResponse | None:
         """Poll the entity state for a response matching the correlation ID.
 
         Args:
@@ -392,7 +392,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
             correlation_id: Correlation ID to search for
 
         Returns:
-            Response AgentRunResponse, None otherwise
+            Response AgentResponse, None otherwise
         """
         try:
             entity_metadata = self._client.get_entity(entity_id, include_state=True)
@@ -466,7 +466,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
             thread: Optional conversation thread (creates new if not provided)
 
         Returns:
-            DurableAgentTask: A task wrapping the entity call that yields AgentRunResponse
+            DurableAgentTask: A task wrapping the entity call that yields AgentResponse
         """
         # Resolve session
         session_id = self._create_session_id(agent_name, thread)
@@ -495,7 +495,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
 
             # Create a pre-completed task with acceptance response
             acceptance_response = self._create_acceptance_response(run_request.correlation_id)
-            entity_task: CompletableTask[AgentRunResponse] = CompletableTask()
+            entity_task: CompletableTask[AgentResponse] = CompletableTask()
             entity_task.complete(acceptance_response)
         else:
             # Blocking mode: call entity and wait for response

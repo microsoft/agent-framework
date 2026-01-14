@@ -227,3 +227,4 @@ local.settings.json
 
 # Database files
 *.db
+python/dotnet-ref
