@@ -17,7 +17,10 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     HostedCodeInterpreterTool,
+    HostedFileContent,
+    HostedFileSearchTool,
     HostedMCPTool,
+    HostedVectorStoreContent,
     HostedWebSearchTool,
     Role,
     TextContent,
@@ -25,7 +28,13 @@ from agent_framework import (
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    ApproximateLocation,
+    CodeInterpreterTool,
+    CodeInterpreterToolAuto,
+    FileSearchTool,
+    MCPTool,
     ResponseTextFormatConfigurationJsonSchema,
+    WebSearchPreviewTool,
 )
 from azure.identity.aio import AzureCliCredential
 from openai.types.responses.parsed_response import ParsedResponse
@@ -34,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pytest import fixture, param
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
+from agent_framework_azure_ai._shared import from_azure_ai_tools
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -962,6 +972,58 @@ def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
     assert result == "resp_parsed_12345"
 
 
+def test_from_azure_ai_tools() -> None:
+    """Test from_azure_ai_tools."""
+    # Test MCP tool
+    mcp_tool = MCPTool(server_label="test_server", server_url="http://localhost:8080")
+    parsed_tools = from_azure_ai_tools([mcp_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedMCPTool)
+    assert parsed_tools[0].name == "test server"
+    assert str(parsed_tools[0].url).rstrip("/") == "http://localhost:8080"
+
+    # Test Code Interpreter tool
+    ci_tool = CodeInterpreterTool(container=CodeInterpreterToolAuto(file_ids=["file-1"]))
+    parsed_tools = from_azure_ai_tools([ci_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedCodeInterpreterTool)
+    assert parsed_tools[0].inputs is not None
+    assert len(parsed_tools[0].inputs) == 1
+
+    tool_input = parsed_tools[0].inputs[0]
+
+    assert tool_input and isinstance(tool_input, HostedFileContent) and tool_input.file_id == "file-1"
+
+    # Test File Search tool
+    fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
+    parsed_tools = from_azure_ai_tools([fs_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedFileSearchTool)
+    assert parsed_tools[0].inputs is not None
+    assert len(parsed_tools[0].inputs) == 1
+
+    tool_input = parsed_tools[0].inputs[0]
+
+    assert tool_input and isinstance(tool_input, HostedVectorStoreContent) and tool_input.vector_store_id == "vs-1"
+    assert parsed_tools[0].max_results == 5
+
+    # Test Web Search tool
+    ws_tool = WebSearchPreviewTool(
+        user_location=ApproximateLocation(city="Seattle", country="US", region="WA", timezone="PST")
+    )
+    parsed_tools = from_azure_ai_tools([ws_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedWebSearchTool)
+    assert parsed_tools[0].additional_properties
+
+    user_location = parsed_tools[0].additional_properties["user_location"]
+
+    assert user_location["city"] == "Seattle"
+    assert user_location["country"] == "US"
+    assert user_location["region"] == "WA"
+    assert user_location["timezone"] == "PST"
+
+
 # region Integration Tests
 
 
@@ -993,6 +1055,7 @@ async def client() -> AsyncGenerator[AzureAIClient, None]:
             agent_name=agent_name,
         )
         try:
+            assert client.function_invocation_configuration
             client.function_invocation_configuration.max_iterations = 1
             yield client
         finally:

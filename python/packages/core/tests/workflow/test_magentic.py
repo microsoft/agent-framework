@@ -31,6 +31,7 @@ from agent_framework import (
     TextContent,
     Workflow,
     WorkflowCheckpoint,
+    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
     WorkflowOutputEvent,
@@ -341,7 +342,8 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
         events.append(ev)
 
     idle_status = next(
-        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE),
+        None,
     )
     assert idle_status is not None
     # Check that we got workflow output via WorkflowOutputEvent
@@ -584,7 +586,9 @@ async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[Cha
         if isinstance(ev, AgentRunUpdateEvent):
             captured.append(
                 ChatMessage(
-                    role=ev.data.role or Role.ASSISTANT, text=ev.data.text or "", author_name=ev.data.author_name
+                    role=ev.data.role or Role.ASSISTANT,
+                    text=ev.data.text or "",
+                    author_name=ev.data.author_name,
                 )
             )
 
@@ -604,7 +608,9 @@ async def test_agent_executor_invoke_with_assistants_client_messages():
     assert any((m.author_name == agent.name and "ok" in (m.text or "")) for m in captured)
 
 
-async def _collect_checkpoints(storage: InMemoryCheckpointStorage) -> list[WorkflowCheckpoint]:
+async def _collect_checkpoints(
+    storage: InMemoryCheckpointStorage,
+) -> list[WorkflowCheckpoint]:
     checkpoints = await storage.list_checkpoints()
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
@@ -719,7 +725,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
         .build()
     )
 
-    with pytest.raises(ValueError, match="Workflow graph has changed"):
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
         async for _ in renamed_workflow.run_stream(
             checkpoint_id=target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
         ):
@@ -760,7 +766,8 @@ async def test_magentic_stall_and_reset_reach_limits():
         events.append(ev)
 
     idle_status = next(
-        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE),
+        None,
     )
     assert idle_status is not None
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
@@ -799,7 +806,10 @@ async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
     """Test that runtime checkpoint storage overrides build-time configuration."""
     import tempfile
 
-    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+    with (
+        tempfile.TemporaryDirectory() as temp_dir1,
+        tempfile.TemporaryDirectory() as temp_dir2,
+    ):
         from agent_framework._workflows._checkpoint import FileCheckpointStorage
 
         buildtime_storage = FileCheckpointStorage(temp_dir1)
