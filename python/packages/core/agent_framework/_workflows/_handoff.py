@@ -1037,7 +1037,7 @@ class HandoffBuilder:
         if not self._participants and not self._participant_factories:
             raise ValueError(
                 "No participants or participant_factories have been configured. "
-                "Call participants() or participant_factories() first."
+                "Call participants() or register_participants() first."
             )
 
         if self._start_id is None:
