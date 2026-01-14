@@ -5,7 +5,6 @@ using Microsoft.Azure.Functions.Worker.Context.Features;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.Functions.Worker.Invocation;
-using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
@@ -26,17 +25,9 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         IFunctionInputBindingFeature? functionInputBindingFeature = context.Features.Get<IFunctionInputBindingFeature>() ??
             throw new InvalidOperationException("Function input binding feature is not available on the current context.");
 
-        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint)
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint)
         {
-            var triggerBinding = context.FunctionDefinition.InputBindings.Values.FirstOrDefault(b => b.Type == "orchestrationTrigger");
-            var taskOrechstrationContextBinding = context.BindInputAsync<TaskOrchestrationContext>(triggerBinding!);
-
-            if (taskOrechstrationContextBinding.IsCompletedSuccessfully)
-            {
-                var t = taskOrechstrationContextBinding.Result.Value;
-                context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestratorAsync("todo", context);
-            }
-
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeWorkflowActivityAsync("aa", context);
             return;
         }
 

@@ -12,10 +12,11 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
     private readonly ILogger<DurableWorkflowFunctionMetadataTransformer> _logger;
     private readonly DurableWorkflowOptions _options;
 
-    public DurableWorkflowFunctionMetadataTransformer(ILogger<DurableWorkflowFunctionMetadataTransformer> logger, DurableWorkflowOptions durableWorkflowOptions)
+    public DurableWorkflowFunctionMetadataTransformer(ILogger<DurableWorkflowFunctionMetadataTransformer> logger, DurableOptions durableOptions)
     {
         this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        this._options = durableWorkflowOptions ?? throw new ArgumentNullException(nameof(durableWorkflowOptions));
+        ArgumentNullException.ThrowIfNull(durableOptions);
+        this._options = durableOptions.Workflows;
     }
 
     public string Name => nameof(DurableWorkflowFunctionMetadataTransformer);
@@ -28,7 +29,7 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         {
             this._logger.LogAddingWorkflowFunction(workflow.Key);
 
-            original.Add(CreateOrchestrationTrigger(workflow.Key));
+            //original.Add(CreateOrchestrationTrigger(workflow.Key));
 
             // We also want to create an HTTP trigger for this orchestration so users can start it via HTTP.
             this._logger.LogAddingHttpTrigger(workflow.Key);
@@ -57,7 +58,8 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
             {
                 if (executorInfos.TryGetValue(executorId, out ExecutorInfo? executorInfo))
                 {
-                    string functionName = $"{AgentSessionId.ToEntityName(workflow.Key)}_{executorId}";
+                    // string functionName = $"{AgentSessionId.ToEntityName(workflow.Key)}-{executorId}"; //.Split("_")[0]
+                    string functionName = $"{AgentSessionId.ToEntityName(workflow.Key)}-{executorId.Split("_")[0]}"; //.Split("_")[0]
 
                     // Check if the executor type is an agent-related type
                     if (IsAgentExecutorType(executorInfo.ExecutorType))
@@ -106,22 +108,22 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         };
     }
 
-    private static DefaultFunctionMetadata CreateOrchestrationTrigger(string name)
-    {
-        return new DefaultFunctionMetadata()
-        {
-            Name = AgentSessionId.ToEntityName(name),
-            Language = "dotnet-isolated",
-            RawBindings =
-            [
-               // """{"name":"context","type":"orchestrationTrigger","direction":"In"}""",
-                """{"name":"taskOrchestrationContext","type":"orchestrationTrigger","direction":"In"}""",
+    //private static DefaultFunctionMetadata CreateOrchestrationTrigger(string name)
+    //{
+    //    return new DefaultFunctionMetadata()
+    //    {
+    //        Name = AgentSessionId.ToEntityName(name),
+    //        Language = "dotnet-isolated",
+    //        RawBindings =
+    //        [
+    //           // """{"name":"context","type":"orchestrationTrigger","direction":"In"}""",
+    //            """{"name":"taskOrchestrationContext","type":"orchestrationTrigger","direction":"In"}""",
 
-            ],
-            EntryPoint = BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint,
-            ScriptFile = BuiltInFunctions.ScriptFile,
-        };
-    }
+    //        ],
+    //        EntryPoint = BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint,
+    //        ScriptFile = BuiltInFunctions.ScriptFile,
+    //    };
+    //}
 
     private static DefaultFunctionMetadata CreateActivityTrigger(string functionName)
     {

@@ -41,16 +41,16 @@ builder.AddEdge(agent2, reverse).WithOutputFrom(agent2);
 
 var workflow = builder.WithName("MyTestWorkflow").Build();
 
-// Configure the function app to host the AI agent.
-// This will automatically generate HTTP API endpoints for the agent.
+// Configure the function app to host AI agents and workflows in a unified way.
+// This will automatically generate HTTP API endpoints for agents and workflows.
 using IHost app = FunctionsApplication
     .CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableAgents(options => options.AddAIAgent(agent, timeToLive: TimeSpan.FromHours(1)))
-    .AddDurableWorkflows(options =>
+    //.ConfigureDurableAgents(op => op.AddAIAgent(agent, timeToLive: TimeSpan.FromHours(1)))
+    .ConfigureDurableOptions(options =>
     {
-        // Configure durable workflow options here if needed.
-        options.AddWorkflow(workflow);
+        // Configure workflows - agents referenced in workflows are automatically registered!
+        options.Workflows.AddWorkflow(workflow);
     })
     .Build();
 app.Run();

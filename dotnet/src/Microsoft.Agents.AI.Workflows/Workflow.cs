@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -203,5 +203,25 @@ public class Workflow
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
         return startExecutor.DescribeProtocol();
+    }
+
+    /// <summary>
+    /// Enumerates all AIAgent instances that are directly bound in this workflow.
+    /// </summary>
+    /// <remarks>
+    /// This method only returns agents that are directly bound as executor values.
+    /// It does not include agents created by factory functions, as those require
+    /// an IServiceProvider to instantiate.
+    /// </remarks>
+    /// <returns>An enumerable collection of AIAgent instances found in the workflow.</returns>
+    public IEnumerable<AIAgent> EnumerateAgentExecutors()
+    {
+        foreach (ExecutorBinding binding in this.ExecutorBindings.Values)
+        {
+            if (binding.RawValue is AIAgent agent)
+            {
+                yield return agent;
+            }
+        }
     }
 }

@@ -4,7 +4,7 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- CA2007: This rule should generally be suppressed in Durable Task libraries. Also, this is not library code. -->
-    <NoWarn>$(NoWarn);CA2007</NoWarn>
+    <NoWarn>$(NoWarn);CA2007;AD0001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

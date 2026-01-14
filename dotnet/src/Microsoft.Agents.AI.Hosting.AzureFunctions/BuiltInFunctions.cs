@@ -36,25 +36,17 @@ internal static class BuiltInFunctions
         [ActivityTrigger] string input,
         FunctionContext functionContext)
     {
-        return Task.FromResult($"Hello from activity with input: {input}");
+        string activityFunctionName = functionContext.FunctionDefinition.Name;
+
+        DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
+        return runner.ExecuteActivityAsync(activityFunctionName, input, functionContext);
     }
-
-    //[Function("my-Orchestration")]
-    //public static async Task<List<string>> RunOrchestrator1Async(
-    //[OrchestrationTrigger] TaskOrchestrationContext context)
-    //{
-    //    ILogger logger = context.CreateReplaySafeLogger(nameof(Function));
-    //    logger.LogInformation("Saying hello.");
-
-    //    // returns ["Hello Tokyo!", "Hello Seattle!", "Hello London!"]
-    //    return new List<string>();
-    //}
 
     public static async Task<List<string>> RunWorkflowOrchestratorAsync(string taskOrchestrationContext, FunctionContext functionsContext)
     {
         var logger = functionsContext.GetLogger("BuiltInFunctions");
         var outputs = new List<string>();
-        const string WorkflowName = "MyTestWorkflow"; // to do: get from TaskOrchestrtionContext
+        const string WorkflowName = "MyTestWorkflow"; // to do: get from TaskOrchestrationContext
         if (logger.IsEnabled(LogLevel.Information))
         {
             logger.LogInformation("Orchestrator {WorkflowName} is executing. Input: {Input}", WorkflowName, taskOrchestrationContext);
@@ -95,10 +87,10 @@ internal static class BuiltInFunctions
         FunctionContext context)
     {
         // to do: Retrieve the workflow and execute it.
-        var workflowName = context.FunctionDefinition.Name.Replace("http", "dafx");
-
+        var workflowName = context.FunctionDefinition.Name.Replace("http-", "");
+        var inputMessage = await req.ReadAsStringAsync();
         //string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("dafx-MyTestWorkflow");
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("dafx-MyTestWorkflow"); //OrchFunction"); // dafx-MyTestWorkflow");
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("WorkflowRunnerOrchestration", new DuableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}.{instanceId}");
@@ -239,6 +231,26 @@ internal static class BuiltInFunctions
 
         return agentResponse.Text;
     }
+
+#pragma warning disable DURTASK001 // Durable analyzer complained
+    public static Task<List<string>> WorkflowRunnerOrchestrationAsync(TaskOrchestrationContext context, DuableWorkflowRunRequest input)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        ILogger logger = context.CreateReplaySafeLogger("BuiltInFunctions");
+        logger.LogInformation("WorkflowRunnerOrchestrationAsync function called.");
+
+        FunctionContext? functionContext = context.GetFunctionContext();
+        if (functionContext == null)
+        {
+            throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
+        }
+
+        var workFlowName = input.WorkflowName;
+
+        return Task.FromResult(new List<string>() { workFlowName });
+    }
+#pragma warning restore DURTASK001
 
     /// <summary>
     /// Creates an error response with the specified status code and error message.
