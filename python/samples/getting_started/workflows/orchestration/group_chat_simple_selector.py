@@ -84,7 +84,7 @@ async def main() -> None:
     workflow = (
         GroupChatBuilder()
         .participants([expert, verifier, clarifier, skeptic])
-        .with_select_speaker_func(round_robin_selector)
+        .with_orchestrator(selection_func=round_robin_selector)
         # Set a hard termination condition: stop after 6 messages (user task + one full rounds + 1)
         # One round is expert -> verifier -> clarifier -> skeptic, after which the expert gets to respond again.
         # This will end the conversation after the expert has spoken 2 times (one iteration loop)

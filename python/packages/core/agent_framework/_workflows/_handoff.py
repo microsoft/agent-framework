@@ -599,7 +599,7 @@ class HandoffBuilder:
         self._participant_factories: dict[str, Callable[[], AgentProtocol]] = {}
         self._start_id: str | None = None
         if participant_factories:
-            self.participant_factories(participant_factories)
+            self.register_participants(participant_factories)
 
         if participants:
             self.participants(participants)
@@ -619,7 +619,7 @@ class HandoffBuilder:
         # Termination related members
         self._termination_condition: Callable[[list[ChatMessage]], bool | Awaitable[bool]] | None = None
 
-    def participant_factories(
+    def register_participants(
         self, participant_factories: Mapping[str, Callable[[], AgentProtocol]]
     ) -> "HandoffBuilder":
         """Register factories that produce agents for the handoff workflow.
@@ -637,7 +637,7 @@ class HandoffBuilder:
             Self for method chaining.
 
         Raises:
-            ValueError: If participant_factories is empty or `.participants(...)`  or `.participant_factories(...)`
+            ValueError: If participant_factories is empty or `.participants(...)`  or `.register_participants(...)`
                         has already been called.
 
         Example:
@@ -666,17 +666,14 @@ class HandoffBuilder:
 
             # Handoff will be created automatically unless specified otherwise
             # The default creates a mesh topology where all agents can handoff to all others
-            builder = HandoffBuilder().participant_factories(factories)
+            builder = HandoffBuilder().register_participants(factories)
             builder.with_start_agent("triage")
         """
         if self._participants:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .participant_factories() in the same builder instance."
-            )
+            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
 
         if self._participant_factories:
-            raise ValueError("participant_factories() has already been called on this builder instance.")
-
+            raise ValueError("register_participants() has already been called on this builder instance.")
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
@@ -694,8 +691,8 @@ class HandoffBuilder:
             Self for method chaining.
 
         Raises:
-            ValueError: If participants is empty, contains duplicates, or `.participants(...)` or
-                        `.participant_factories(...)` has already been called.
+            ValueError: If participants is empty, contains duplicates, or `.participants()` or
+                        `.register_participants()` has already been called.
             TypeError: If participants are not AgentProtocol instances.
 
         Example:
@@ -714,9 +711,7 @@ class HandoffBuilder:
             builder.with_start_agent(triage)
         """
         if self._participant_factories:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .participant_factories() in the same builder instance."
-            )
+            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
 
         if self._participants:
             raise ValueError("participants have already been assigned")
@@ -1042,7 +1037,7 @@ class HandoffBuilder:
         if not self._participants and not self._participant_factories:
             raise ValueError(
                 "No participants or participant_factories have been configured. "
-                "Call participants(...) or participant_factories(...) first."
+                "Call participants() or participant_factories() first."
             )
 
         if self._start_id is None:

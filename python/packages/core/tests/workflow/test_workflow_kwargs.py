@@ -187,7 +187,7 @@ async def test_groupchat_kwargs_flow_to_agents() -> None:
     workflow = (
         GroupChatBuilder()
         .participants([agent1, agent2])
-        .with_select_speaker_func(simple_selector)
+        .with_orchestrator(selection_func=simple_selector)
         .with_max_rounds(2)  # Limit rounds to prevent infinite loop
         .build()
     )
