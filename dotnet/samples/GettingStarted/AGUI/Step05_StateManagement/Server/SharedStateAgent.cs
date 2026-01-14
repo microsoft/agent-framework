@@ -17,17 +17,17 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    protected override Task<AgentRunResponse> RunCoreAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -91,7 +91,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         var firstRunMessages = messages.Append(stateUpdateMessage);
 
         // Collect all updates from first run
-        var allUpdates = new List<AgentRunResponseUpdate>();
+        var allUpdates = new List<AgentResponseUpdate>();
         await foreach (var update in this.InnerAgent.RunStreamingAsync(firstRunMessages, thread, firstRunOptions, cancellationToken).ConfigureAwait(false))
         {
             allUpdates.Add(update);
@@ -104,7 +104,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             }
         }
 
-        var response = allUpdates.ToAgentRunResponse();
+        var response = allUpdates.ToAgentResponse();
 
         // Try to deserialize the structured state response
         if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))
@@ -113,7 +113,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
                 stateSnapshot,
                 this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new DataContent(stateBytes, "application/json")]
             };

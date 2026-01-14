@@ -352,7 +352,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                     this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
                     break;
 

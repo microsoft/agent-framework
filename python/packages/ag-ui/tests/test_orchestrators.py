@@ -6,8 +6,7 @@ from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
 
-from agent_framework import AgentRunResponseUpdate, TextContent, ai_function
-from agent_framework._tools import FunctionInvocationConfiguration
+from agent_framework import AgentResponseUpdate, FunctionInvocationConfiguration, TextContent, ai_function
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, ExecutionContext
@@ -23,7 +22,7 @@ class DummyAgent:
     """Minimal agent stub to capture run_stream parameters."""
 
     def __init__(self) -> None:
-        self.chat_options = SimpleNamespace(tools=[server_tool], response_format=None)
+        self.default_options: dict[str, Any] = {"tools": [server_tool], "response_format": None}
         self.tools = [server_tool]
         self.chat_client = SimpleNamespace(
             function_invocation_configuration=FunctionInvocationConfiguration(),
@@ -37,9 +36,9 @@ class DummyAgent:
         thread: Any,
         tools: list[Any] | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+    ) -> AsyncGenerator[AgentResponseUpdate, None]:
         self.seen_tools = tools
-        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+        yield AgentResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
 
 
 class RecordingAgent:
@@ -60,9 +59,9 @@ class RecordingAgent:
         thread: Any,
         tools: list[Any] | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+    ) -> AsyncGenerator[AgentResponseUpdate, None]:
         self.seen_messages = messages
-        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+        yield AgentResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
 
 
 async def test_default_orchestrator_merges_client_tools() -> None:

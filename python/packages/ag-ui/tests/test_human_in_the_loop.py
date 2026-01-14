@@ -2,8 +2,7 @@
 
 """Tests for human in the loop (function approval requests)."""
 
-from agent_framework import FunctionApprovalRequestContent, FunctionCallContent
-from agent_framework._types import AgentRunResponseUpdate
+from agent_framework import AgentResponseUpdate, FunctionApprovalRequestContent, FunctionCallContent
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
@@ -28,7 +27,7 @@ async def test_function_approval_request_emission():
         function_call=func_call,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_request])
+    update = AgentResponseUpdate(contents=[approval_request])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit ToolCallEndEvent + CustomEvent for approval request
@@ -67,7 +66,7 @@ async def test_function_approval_request_with_confirm_changes():
         function_call=func_call,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_request])
+    update = AgentResponseUpdate(contents=[approval_request])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit: ToolCallEndEvent, CustomEvent, and confirm_changes (Start, Args, End) = 5 events
@@ -130,7 +129,7 @@ async def test_multiple_approval_requests():
         function_call=func_call_2,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_1, approval_2])
+    update = AgentResponseUpdate(contents=[approval_1, approval_2])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit ToolCallEndEvent + CustomEvent for each approval (4 events total)
@@ -175,7 +174,7 @@ async def test_function_approval_request_sets_stop_flag():
         function_call=func_call,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_request])
+    update = AgentResponseUpdate(contents=[approval_request])
     await bridge.from_agent_run_update(update)
 
     assert bridge.should_stop_after_confirm is True

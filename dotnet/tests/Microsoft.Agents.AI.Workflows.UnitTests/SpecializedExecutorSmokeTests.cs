@@ -62,21 +62,21 @@ public class SpecializedExecutorSmokeTests
 
         public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
-        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new AgentRunResponse(this.Messages)
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AgentResponse(this.Messages)
             {
                 AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N")
             });
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             string responseId = Guid.NewGuid().ToString("N");
             foreach (ChatMessage message in this.Messages)
             {
                 foreach (AIContent content in message.Contents)
                 {
-                    yield return new AgentRunResponseUpdate()
+                    yield return new AgentResponseUpdate()
                     {
                         AgentId = this.Id,
                         MessageId = message.MessageId,

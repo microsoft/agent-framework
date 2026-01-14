@@ -259,7 +259,7 @@ class SerializationMixin:
 
 
             agent = CustomAgent(
-                context_providers=[...],
+                context_provider=[...],
                 middleware=[...]
             )
 

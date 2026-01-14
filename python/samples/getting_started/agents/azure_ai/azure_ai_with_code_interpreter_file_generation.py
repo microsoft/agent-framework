@@ -3,19 +3,19 @@
 import asyncio
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
 )
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI V2 Code Interpreter File Generation Sample
 
-This sample demonstrates how the V2 AzureAIClient handles file annotations
+This sample demonstrates how the AzureAIProjectAgentProvider handles file annotations
 when code interpreter generates text files. It shows both non-streaming
 and streaming approaches to verify file ID extraction.
 """
@@ -32,12 +32,14 @@ async def non_streaming_example() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
 
         result = await agent.run(QUERY)
@@ -45,7 +47,7 @@ async def non_streaming_example() -> None:
 
         # Check for annotations in the response
         annotations_found: list[str] = []
-        # AgentRunResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
                 if isinstance(content, TextContent) and content.annotations:
@@ -66,19 +68,21 @@ async def streaming_example() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
         annotations_found: list[str] = []
         text_chunks: list[str] = []
         file_ids_found: list[str] = []
 
         async for update in agent.run_stream(QUERY):
-            if isinstance(update, AgentRunResponseUpdate):
+            if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
                     if isinstance(content, TextContent):
                         if content.text:

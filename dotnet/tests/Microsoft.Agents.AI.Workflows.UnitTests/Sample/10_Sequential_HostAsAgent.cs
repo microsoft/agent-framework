@@ -24,7 +24,7 @@ internal static class Step10EntryPoint
         AgentThread thread = await hostAgent.GetNewThreadAsync();
         foreach (string input in inputs)
         {
-            AgentRunResponse response;
+            AgentResponse response;
             ResponseContinuationToken? continuationToken = null;
             do
             {

@@ -8,8 +8,8 @@ import pytest
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
     ChatMessage,
@@ -52,7 +52,7 @@ class SimpleExecutor(Executor):
         response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
 
         # Emit update event.
-        streaming_update = AgentRunResponseUpdate(
+        streaming_update = AgentResponseUpdate(
             contents=[TextContent(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
@@ -74,7 +74,7 @@ class RequestingExecutor(Executor):
         self, original_request: str, response: str, ctx: WorkflowContext[ChatMessage]
     ) -> None:
         # Handle the response and emit completion response
-        update = AgentRunResponseUpdate(
+        update = AgentResponseUpdate(
             contents=[TextContent(text="Request completed successfully")],
             role=Role.ASSISTANT,
             message_id=str(uuid.uuid4()),
@@ -100,7 +100,7 @@ class ConversationHistoryCapturingExecutor(Executor):
 
         response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
 
-        streaming_update = AgentRunResponseUpdate(
+        streaming_update = AgentResponseUpdate(
             contents=[TextContent(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
@@ -124,7 +124,7 @@ class TestWorkflowAgent:
         result = await agent.run("Hello World")
 
         # Verify we got responses from both executors
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) >= 2, f"Expected at least 2 messages, got {len(result.messages)}"
 
         # Find messages from each executor
@@ -162,7 +162,7 @@ class TestWorkflowAgent:
         agent = WorkflowAgent(workflow=workflow, name="Streaming Test Agent")
 
         # Execute workflow streaming to capture streaming events
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test input"):
             updates.append(update)
 
@@ -191,13 +191,13 @@ class TestWorkflowAgent:
         agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
 
         # Execute workflow streaming to get request info event
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Start request"):
             updates.append(update)
         # Should have received an approval request for the request info
         assert len(updates) > 0
 
-        approval_update: AgentRunResponseUpdate | None = None
+        approval_update: AgentResponseUpdate | None = None
         for update in updates:
             if any(isinstance(content, FunctionApprovalRequestContent) for content in update.contents):
                 approval_update = update
@@ -248,7 +248,7 @@ class TestWorkflowAgent:
         continuation_result = await agent.run(response_message)
 
         # Should complete successfully
-        assert isinstance(continuation_result, AgentRunResponse)
+        assert isinstance(continuation_result, AgentResponse)
 
         # Verify cleanup - pending requests should be cleared after function response handling
         assert len(agent.pending_requests) == 0
@@ -293,7 +293,7 @@ class TestWorkflowAgent:
         """Test that ctx.yield_output() in a workflow executor surfaces as agent output when using .as_agent().
 
         This validates the fix for issue #2813: WorkflowOutputEvent should be converted to
-        AgentRunResponseUpdate when the workflow is wrapped via .as_agent().
+        AgentResponseUpdate when the workflow is wrapped via .as_agent().
         """
 
         @executor
@@ -314,12 +314,12 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("test-agent")
         agent_result = await agent.run("hello")
 
-        assert isinstance(agent_result, AgentRunResponse)
+        assert isinstance(agent_result, AgentResponse)
         assert len(agent_result.messages) == 1
         assert agent_result.messages[0].text == "processed: hello"
 
     async def test_workflow_as_agent_yield_output_surfaces_in_run_stream(self) -> None:
-        """Test that ctx.yield_output() surfaces as AgentRunResponseUpdate when streaming."""
+        """Test that ctx.yield_output() surfaces as AgentResponseUpdate when streaming."""
 
         @executor
         async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
@@ -329,7 +329,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
         agent = workflow.as_agent("test-agent")
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("hello"):
             updates.append(update)
 
@@ -353,7 +353,7 @@ class TestWorkflowAgent:
 
         result = await agent.run("test")
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 3
 
         # Verify each content type is preserved
@@ -410,7 +410,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder().set_start_executor(raw_yielding_executor).build()
         agent = workflow.as_agent("raw-test-agent")
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("test"):
             updates.append(update)
 
@@ -448,7 +448,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("list-msg-agent")
 
         # Verify streaming returns the update with all 4 contents before coalescing
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("test"):
             updates.append(update)
 
@@ -460,7 +460,7 @@ class TestWorkflowAgent:
         # Verify run() coalesces text contents (expected behavior)
         result = await agent.run("test")
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         # TextContent items are coalesced into one
         assert len(result.messages[0].contents) == 1
@@ -587,17 +587,17 @@ class TestWorkflowAgent:
             def get_new_thread(self) -> AgentThread:
                 return AgentThread()
 
-            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentRunResponse:
-                return AgentRunResponse(
+            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
+                return AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
                     text=self._response_text,
                 )
 
             async def run_stream(
                 self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
-            ) -> AsyncIterable[AgentRunResponseUpdate]:
+            ) -> AsyncIterable[AgentResponseUpdate]:
                 for word in self._response_text.split():
-                    yield AgentRunResponseUpdate(
+                    yield AgentResponseUpdate(
                         contents=[TextContent(text=word + " ")],
                         role=Role.ASSISTANT,
                         author_name=self._name,
@@ -661,16 +661,16 @@ class TestWorkflowAgent:
             def get_new_thread(self) -> AgentThread:
                 return AgentThread()
 
-            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentRunResponse:
-                return AgentRunResponse(
+            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
+                return AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
                     text=self._response_text,
                 )
 
             async def run_stream(
                 self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
-            ) -> AsyncIterable[AgentRunResponseUpdate]:
-                yield AgentRunResponseUpdate(
+            ) -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
                     contents=[TextContent(text=self._response_text)],
                     role=Role.ASSISTANT,
                     author_name=self._name,
@@ -717,7 +717,7 @@ class TestWorkflowAgentAuthorName:
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
 
         # Collect streaming updates
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Hello"):
             updates.append(update)
 
@@ -736,7 +736,7 @@ class TestWorkflowAgentAuthorName:
             @handler
             async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
                 # Emit update with explicit author_name
-                update = AgentRunResponseUpdate(
+                update = AgentResponseUpdate(
                     contents=[TextContent(text="Response with author")],
                     role=Role.ASSISTANT,
                     author_name="custom_author_name",  # Explicitly set
@@ -749,7 +749,7 @@ class TestWorkflowAgentAuthorName:
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
 
         # Collect streaming updates
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Hello"):
             updates.append(update)
 
@@ -767,7 +767,7 @@ class TestWorkflowAgentAuthorName:
         agent = WorkflowAgent(workflow=workflow, name="Multi-Executor Agent")
 
         # Collect streaming updates
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Hello"):
             updates.append(update)
 
@@ -788,7 +788,7 @@ class TestWorkflowAgentMergeUpdates:
         # Create updates with different response_ids and message_ids in non-chronological order
         updates = [
             # Response B, Message 2 (latest in resp B)
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[TextContent(text="RespB-Msg2")],
                 role=Role.ASSISTANT,
                 response_id="resp-b",
@@ -796,7 +796,7 @@ class TestWorkflowAgentMergeUpdates:
                 created_at="2024-01-01T12:02:00Z",
             ),
             # Response A, Message 1 (earliest overall)
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[TextContent(text="RespA-Msg1")],
                 role=Role.ASSISTANT,
                 response_id="resp-a",
@@ -804,7 +804,7 @@ class TestWorkflowAgentMergeUpdates:
                 created_at="2024-01-01T12:00:00Z",
             ),
             # Response B, Message 1 (earlier in resp B)
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[TextContent(text="RespB-Msg1")],
                 role=Role.ASSISTANT,
                 response_id="resp-b",
@@ -812,7 +812,7 @@ class TestWorkflowAgentMergeUpdates:
                 created_at="2024-01-01T12:01:00Z",
             ),
             # Response A, Message 2 (later in resp A)
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[TextContent(text="RespA-Msg2")],
                 role=Role.ASSISTANT,
                 response_id="resp-a",
@@ -820,7 +820,7 @@ class TestWorkflowAgentMergeUpdates:
                 created_at="2024-01-01T12:00:30Z",
             ),
             # Global dangling update (no response_id) - should go at end
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[TextContent(text="Global-Dangling")],
                 role=Role.ASSISTANT,
                 response_id=None,
@@ -891,7 +891,7 @@ class TestWorkflowAgentMergeUpdates:
         """Test that merge_updates correctly aggregates usage details, timestamps, and additional properties."""
         # Create updates with various metadata including usage details
         updates = [
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[
                     TextContent(text="First"),
                     UsageContent(
@@ -904,7 +904,7 @@ class TestWorkflowAgentMergeUpdates:
                 created_at="2024-01-01T12:00:00Z",
                 additional_properties={"source": "executor1", "priority": "high"},
             ),
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[
                     TextContent(text="Second"),
                     UsageContent(
@@ -917,7 +917,7 @@ class TestWorkflowAgentMergeUpdates:
                 created_at="2024-01-01T12:01:00Z",  # Later timestamp
                 additional_properties={"source": "executor2", "category": "analysis"},
             ),
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[
                     TextContent(text="Third"),
                     UsageContent(details=UsageDetails(input_token_count=5, output_token_count=3, total_token_count=8)),

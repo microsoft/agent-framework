@@ -76,10 +76,10 @@ public static partial class AgentAbstractionsJsonUtilities
 
     // Agent abstraction types
     [JsonSerializable(typeof(AgentRunOptions))]
-    [JsonSerializable(typeof(AgentRunResponse))]
-    [JsonSerializable(typeof(AgentRunResponse[]))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate[]))]
+    [JsonSerializable(typeof(AgentResponse))]
+    [JsonSerializable(typeof(AgentResponse[]))]
+    [JsonSerializable(typeof(AgentResponseUpdate))]
+    [JsonSerializable(typeof(AgentResponseUpdate[]))]
     [JsonSerializable(typeof(ServiceIdAgentThread.ServiceIdAgentThreadState))]
     [JsonSerializable(typeof(InMemoryAgentThread.InMemoryAgentThreadState))]
     [JsonSerializable(typeof(InMemoryChatMessageStore.StoreState))]

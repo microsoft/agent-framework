@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatClientProtocol,
     ChatMessage,
@@ -161,7 +161,7 @@ class Worker(Executor):
 
             # Emit approved result to external consumer via AgentRunUpdateEvent.
             await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=Role.ASSISTANT))
+                AgentRunUpdateEvent(self.id, data=AgentResponseUpdate(contents=contents, role=Role.ASSISTANT))
             )
             return
 

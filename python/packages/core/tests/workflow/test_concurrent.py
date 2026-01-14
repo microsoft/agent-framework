@@ -8,7 +8,7 @@ from typing_extensions import Never
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     ChatMessage,
     ConcurrentBuilder,
     Executor,
@@ -36,7 +36,7 @@ class _FakeAgentExec(Executor):
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
-        response = AgentRunResponse(messages=ChatMessage(Role.ASSISTANT, text=self._reply_text))
+        response = AgentResponse(messages=ChatMessage(Role.ASSISTANT, text=self._reply_text))
         full_conversation = list(request.messages) + list(response.messages)
         await ctx.send_message(AgentExecutorResponse(self.id, response, full_conversation=full_conversation))
 
@@ -142,7 +142,7 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
     async def summarize(results: list[AgentExecutorResponse]) -> str:
         texts: list[str] = []
         for r in results:
-            msgs: list[ChatMessage] = r.agent_run_response.messages
+            msgs: list[ChatMessage] = r.agent_response.messages
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
@@ -173,7 +173,7 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     def summarize_sync(results: list[AgentExecutorResponse], _ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
         texts: list[str] = []
         for r in results:
-            msgs: list[ChatMessage] = r.agent_run_response.messages
+            msgs: list[ChatMessage] = r.agent_response.messages
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
@@ -217,7 +217,7 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
         async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
             texts: list[str] = []
             for r in results:
-                msgs: list[ChatMessage] = r.agent_run_response.messages
+                msgs: list[ChatMessage] = r.agent_response.messages
                 texts.append(msgs[-1].text if msgs else "")
             await ctx.yield_output(" & ".join(sorted(texts)))
 
@@ -251,7 +251,7 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
         async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
             texts: list[str] = []
             for r in results:
-                msgs: list[ChatMessage] = r.agent_run_response.messages
+                msgs: list[ChatMessage] = r.agent_response.messages
                 texts.append(msgs[-1].text if msgs else "")
             await ctx.yield_output(" | ".join(sorted(texts)))
 
@@ -292,7 +292,7 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
         async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
             texts: list[str] = []
             for r in results:
-                msgs: list[ChatMessage] = r.agent_run_response.messages
+                msgs: list[ChatMessage] = r.agent_response.messages
                 texts.append(msgs[-1].text if msgs else "")
             await ctx.yield_output(" | ".join(sorted(texts)))
 

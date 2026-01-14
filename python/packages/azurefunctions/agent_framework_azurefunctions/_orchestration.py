@@ -6,13 +6,13 @@ This module provides support for using agents inside Durable Function orchestrat
 """
 
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatMessage,
     get_logger,
@@ -46,10 +46,10 @@ else:
 
 
 class AgentTask(_TypedCompoundTask):
-    """A custom Task that wraps entity calls and provides typed AgentRunResponse results.
+    """A custom Task that wraps entity calls and provides typed AgentResponse results.
 
     This task wraps the underlying entity call task and intercepts its completion
-    to convert the raw result into a typed AgentRunResponse object.
+    to convert the raw result into a typed AgentResponse object.
     """
 
     def __init__(
@@ -77,7 +77,7 @@ class AgentTask(_TypedCompoundTask):
         self.id = entity_task.id
 
     def try_set_value(self, child: TaskBase) -> None:
-        """Transition the AgentTask to a terminal state and set its value to `AgentRunResponse`.
+        """Transition the AgentTask to a terminal state and set its value to `AgentResponse`.
 
         Parameters
         ----------
@@ -104,7 +104,7 @@ class AgentTask(_TypedCompoundTask):
                             response,
                         )
 
-                    # Set the typed AgentRunResponse as this task's result
+                    # Set the typed AgentResponse as this task's result
                     self.set_value(is_error=False, value=response)
                 except Exception as e:
                     logger.exception(
@@ -118,18 +118,18 @@ class AgentTask(_TypedCompoundTask):
                 self._first_error = child.result
                 self.set_value(is_error=True, value=self._first_error)
 
-    def _load_agent_response(self, agent_response: AgentRunResponse | dict[str, Any] | None) -> AgentRunResponse:
-        """Convert raw payloads into AgentRunResponse instance."""
+    def _load_agent_response(self, agent_response: AgentResponse | dict[str, Any] | None) -> AgentResponse:
+        """Convert raw payloads into AgentResponse instance."""
         if agent_response is None:
             raise ValueError("agent_response cannot be None")
 
         logger.debug("[load_agent_response] Loading agent response of type: %s", type(agent_response))
 
-        if isinstance(agent_response, AgentRunResponse):
+        if isinstance(agent_response, AgentResponse):
             return agent_response
         if isinstance(agent_response, dict):
-            logger.debug("[load_agent_response] Converting dict payload using AgentRunResponse.from_dict")
-            return AgentRunResponse.from_dict(agent_response)
+            logger.debug("[load_agent_response] Converting dict payload using AgentResponse.from_dict")
+            return AgentResponse.from_dict(agent_response)
 
         raise TypeError(f"Unsupported type for agent_response: {type(agent_response)}")
 
@@ -137,14 +137,14 @@ class AgentTask(_TypedCompoundTask):
         self,
         response_format: type[BaseModel] | None,
         correlation_id: str,
-        response: AgentRunResponse,
+        response: AgentResponse,
     ) -> None:
-        """Ensure the AgentRunResponse value is parsed into the expected response_format."""
+        """Ensure the AgentResponse value is parsed into the expected response_format."""
         if response_format is not None and not isinstance(response.value, response_format):
             response.try_parse_value(response_format)
 
             logger.debug(
-                "[DurableAIAgent] Loaded AgentRunResponse.value for correlation_id %s with type: %s",
+                "[DurableAIAgent] Loaded AgentResponse.value for correlation_id %s with type: %s",
                 correlation_id,
                 type(response.value).__name__,
             )
@@ -182,39 +182,18 @@ class DurableAIAgent(AgentProtocol):
         """
         self.context = context
         self.agent_name = agent_name
-        self._id = str(uuid.uuid4())
-        self._name = agent_name
-        self._display_name = agent_name
-        self._description = f"Durable agent proxy for {agent_name}"
+        self.id = str(uuid.uuid4())
+        self.name = agent_name
+        self.description = f"Durable agent proxy for {agent_name}"
         logger.debug("[DurableAIAgent] Initialized for agent: %s", agent_name)
-
-    @property
-    def id(self) -> str:
-        """Get the unique identifier for this agent."""
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        """Get the name of the agent."""
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        """Get the display name of the agent."""
-        return self._display_name
-
-    @property
-    def description(self) -> str | None:
-        """Get the description of the agent."""
-        return self._description
 
     # We return an AgentTask here which is a TaskBase subclass.
     # This is an intentional deviation from AgentProtocol which defines run() as async.
     # The AgentTask can be yielded in Durable Functions orchestrations and will provide
-    # a typed AgentRunResponse result.
+    # a typed AgentResponse result.
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
@@ -224,7 +203,7 @@ class DurableAIAgent(AgentProtocol):
 
         This method implements AgentProtocol and returns an AgentTask (subclass of TaskBase)
         that can be yielded in Durable Functions orchestrations. The task's result will be
-        a typed AgentRunResponse.
+        a typed AgentResponse.
 
         Args:
             messages: The message(s) to send to the agent
@@ -233,7 +212,7 @@ class DurableAIAgent(AgentProtocol):
             **kwargs: Additional arguments (enable_tool_calls)
 
         Returns:
-            An AgentTask that resolves to an AgentRunResponse when yielded
+            An AgentTask that resolves to an AgentResponse when yielded
 
         Example:
             @app.orchestration_trigger(context_name="context")
@@ -241,7 +220,7 @@ class DurableAIAgent(AgentProtocol):
                 agent = app.get_agent(context, "MyAgent")
                 thread = agent.get_new_thread()
                 response = yield agent.run("Hello", thread=thread)
-                # response is typed as AgentRunResponse
+                # response is typed as AgentResponse
         """
         message_str = self._normalize_messages(messages)
 
@@ -287,7 +266,7 @@ class DurableAIAgent(AgentProtocol):
         # Call the entity to get the underlying task
         entity_task = self.context.call_entity(entity_id, "run", run_request.to_dict())
 
-        # Wrap it in an AgentTask that will convert the result to AgentRunResponse
+        # Wrap it in an AgentTask that will convert the result to AgentResponse
         agent_task = AgentTask(
             entity_task=entity_task,
             response_format=response_format,
@@ -303,11 +282,11 @@ class DurableAIAgent(AgentProtocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[AgentRunResponseUpdate]:
+    ) -> AsyncIterator[AgentResponseUpdate]:
         """Run the agent with streaming (not supported for durable agents).
 
         Raises:
@@ -348,7 +327,7 @@ class DurableAIAgent(AgentProtocol):
         """
         return "\n".join([msg.text or "" for msg in messages])
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def _normalize_messages(self, messages: str | ChatMessage | Sequence[str | ChatMessage] | None) -> str:
         """Convert supported message inputs to a single string."""
         if messages is None:
             return ""

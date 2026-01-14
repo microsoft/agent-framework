@@ -4,7 +4,7 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- CA2007: This rule should generally be suppressed in Durable Task libraries -->
-    <!-- MEAI001: UserInputRequestContent is experimental but used in source-generated code for AgentRunResponse -->
+    <!-- MEAI001: UserInputRequestContent is experimental but used in source-generated code for AgentResponse -->
     <NoWarn>$(NoWarn);CA2007;MEAI001</NoWarn>
   </PropertyGroup>
 

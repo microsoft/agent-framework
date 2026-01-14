@@ -35,8 +35,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import (
-        AgentRunResponse,
-        AgentRunResponseUpdate,
+        AgentResponse,
+        AgentResponseUpdate,
         ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
@@ -59,7 +59,7 @@ __all__ = [
 
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
+TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 
 
 logger = get_logger()
@@ -1063,6 +1063,8 @@ def _trace_get_response(
         async def trace_get_response(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> "ChatResponse":
             global OBSERVABILITY_SETTINGS
@@ -1071,18 +1073,15 @@ def _trace_get_response(
                 return await func(
                     self,
                     messages=messages,
+                    options=options,
                     **kwargs,
                 )
             if "token_usage_histogram" not in self.additional_properties:
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
-            model_id = (
-                kwargs.get("model_id")
-                or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
-                or getattr(self, "model_id", None)
-                or "unknown"
-            )
+            options = options or {}
+            model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -1101,7 +1100,7 @@ def _trace_get_response(
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
                 try:
-                    response = await func(self, messages=messages, **kwargs)
+                    response = await func(self, messages=messages, options=options, **kwargs)
                     end_time_stamp = perf_counter()
                 except Exception as exception:
                     end_time_stamp = perf_counter()
@@ -1152,12 +1151,16 @@ def _trace_get_streaming_response(
 
         @wraps(func)
         async def trace_get_streaming_response(
-            self: "ChatClientProtocol", messages: "str | ChatMessage | list[str] | list[ChatMessage]", **kwargs: Any
+            self: "ChatClientProtocol",
+            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
+            **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
             global OBSERVABILITY_SETTINGS
             if not OBSERVABILITY_SETTINGS.ENABLED:
                 # If model diagnostics are not enabled, just return the completion
-                async for update in func(self, messages=messages, **kwargs):
+                async for update in func(self, messages=messages, options=options, **kwargs):
                     yield update
                 return
             if "token_usage_histogram" not in self.additional_properties:
@@ -1165,12 +1168,8 @@ def _trace_get_streaming_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
-            model_id = (
-                kwargs.get("model_id")
-                or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
-                or getattr(self, "model_id", None)
-                or "unknown"
-            )
+            options = options or {}
+            model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -1194,7 +1193,7 @@ def _trace_get_streaming_response(
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
                 try:
-                    async for update in func(self, messages=messages, **kwargs):
+                    async for update in func(self, messages=messages, options=options, **kwargs):
                         all_updates.append(update)
                         yield update
                     end_time_stamp = perf_counter()
@@ -1316,10 +1315,10 @@ def use_instrumentation(
 
 
 def _trace_agent_run(
-    run_func: Callable[..., Awaitable["AgentRunResponse"]],
+    run_func: Callable[..., Awaitable["AgentResponse"]],
     provider_name: str,
     capture_usage: bool = True,
-) -> Callable[..., Awaitable["AgentRunResponse"]]:
+) -> Callable[..., Awaitable["AgentResponse"]]:
     """Decorator to trace chat completion activities.
 
     Args:
@@ -1335,22 +1334,26 @@ def _trace_agent_run(
         *,
         thread: "AgentThread | None" = None,
         **kwargs: Any,
-    ) -> "AgentRunResponse":
+    ) -> "AgentResponse":
         global OBSERVABILITY_SETTINGS
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+
+        from ._types import merge_chat_options
+
+        default_options = getattr(self, "default_options", {})
+        options = merge_chat_options(default_options, kwargs.get("options", {}))
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
             agent_id=self.id,
-            agent_name=self.display_name,
+            agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            chat_options=getattr(self, "chat_options", None),
-            **filtered_kwargs,
+            all_options=options,
+            **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1358,7 +1361,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
+                    system_instructions=_get_instructions_from_options(options),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1381,10 +1384,10 @@ def _trace_agent_run(
 
 
 def _trace_agent_run_stream(
-    run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
+    run_streaming_func: Callable[..., AsyncIterable["AgentResponseUpdate"]],
     provider_name: str,
     capture_usage: bool,
-) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
+) -> Callable[..., AsyncIterable["AgentResponseUpdate"]]:
     """Decorator to trace streaming agent run activities.
 
     Args:
@@ -1400,7 +1403,7 @@ def _trace_agent_run_stream(
         *,
         thread: "AgentThread | None" = None,
         **kwargs: Any,
-    ) -> AsyncIterable["AgentRunResponseUpdate"]:
+    ) -> AsyncIterable["AgentResponseUpdate"]:
         global OBSERVABILITY_SETTINGS
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
@@ -1409,20 +1412,21 @@ def _trace_agent_run_stream(
                 yield streaming_agent_response
             return
 
-        from ._types import AgentRunResponse
+        from ._types import AgentResponse, merge_chat_options
 
-        all_updates: list["AgentRunResponseUpdate"] = []
+        all_updates: list["AgentResponseUpdate"] = []
 
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+        default_options = getattr(self, "default_options", {})
+        options = merge_chat_options(default_options, kwargs.get("options", {}))
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
             agent_id=self.id,
-            agent_name=self.display_name,
+            agent_name=self.name or self.id,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
-            chat_options=getattr(self, "chat_options", None),
-            **filtered_kwargs,
+            all_options=options,
+            **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1430,7 +1434,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
+                    system_instructions=_get_instructions_from_options(options),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1440,7 +1444,7 @@ def _trace_agent_run_stream(
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             else:
-                response = AgentRunResponse.from_agent_run_response_updates(all_updates)
+                response = AgentResponse.from_agent_run_response_updates(all_updates)
                 attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                 _capture_response(span=span, attributes=attributes)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
@@ -1586,7 +1590,9 @@ def _get_span(
 
     Note: `attributes` must contain the `span_name_attribute` key.
     """
-    span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
+    operation = attributes.get(OtelAttr.OPERATION, "operation")
+    span_name = attributes.get(span_name_attribute, "unknown")
+    span = get_tracer().start_span(f"{operation} {span_name}")
     span.set_attributes(attributes)
     with trace.use_span(
         span=span,
@@ -1597,65 +1603,96 @@ def _get_span(
         yield current_span
 
 
+def _get_instructions_from_options(options: Any) -> str | None:
+    """Extract instructions from options dict."""
+    if options is None:
+        return None
+    if isinstance(options, dict):
+        return options.get("instructions")
+    return None
+
+
+# Mapping configuration for extracting span attributes
+# Each entry: source_keys -> (otel_attribute_key, transform_func, check_options_first, default_value)
+# - source_keys: single key or list of keys to check (first non-None value wins)
+# - otel_attribute_key: target OTEL attribute name
+# - transform_func: optional transformation function, can return None to skip attribute
+# - check_options_first: whether to check options dict before kwargs
+# - default_value: optional default value if key is not found (use None to skip)
+OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | None, bool, Any]] = {
+    "choice_count": (OtelAttr.CHOICE_COUNT, None, False, 1),
+    "operation_name": (OtelAttr.OPERATION, None, False, None),
+    "system_name": (SpanAttributes.LLM_SYSTEM, None, False, None),
+    "provider_name": (OtelAttr.PROVIDER_NAME, None, False, None),
+    "service_url": (OtelAttr.ADDRESS, None, False, None),
+    "conversation_id": (OtelAttr.CONVERSATION_ID, None, True, None),
+    "seed": (OtelAttr.SEED, None, True, None),
+    "frequency_penalty": (OtelAttr.FREQUENCY_PENALTY, None, True, None),
+    "max_tokens": (SpanAttributes.LLM_REQUEST_MAX_TOKENS, None, True, None),
+    "stop": (OtelAttr.STOP_SEQUENCES, None, True, None),
+    "temperature": (SpanAttributes.LLM_REQUEST_TEMPERATURE, None, True, None),
+    "top_p": (SpanAttributes.LLM_REQUEST_TOP_P, None, True, None),
+    "presence_penalty": (OtelAttr.PRESENCE_PENALTY, None, True, None),
+    "top_k": (OtelAttr.TOP_K, None, True, None),
+    "encoding_formats": (
+        OtelAttr.ENCODING_FORMATS,
+        lambda v: json.dumps(v if isinstance(v, list) else [v]),
+        True,
+        None,
+    ),
+    "agent_id": (OtelAttr.AGENT_ID, None, False, None),
+    "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
+    "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
+    # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
+    ("model_id", "model"): (SpanAttributes.LLM_REQUEST_MODEL, None, True, None),
+    # Tools with validation - returns None if no valid tools
+    "tools": (
+        OtelAttr.TOOL_DEFINITIONS,
+        lambda tools: (
+            json.dumps(tools_dict)
+            if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
+            else None
+        ),
+        True,
+        None,
+    ),
+    # Error type extraction
+    "error": (OtelAttr.ERROR_TYPE, lambda e: type(e).__name__, False, None),
+    # thread_id overrides conversation_id - processed after conversation_id due to dict ordering
+    "thread_id": (OtelAttr.CONVERSATION_ID, None, False, None),
+}
+
+
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
-    from ._tools import _tools_to_dict
-    from ._types import ChatOptions
-
     attributes: dict[str, Any] = {}
-    chat_options: ChatOptions | None = kwargs.get("chat_options")
-    if chat_options is None:
-        chat_options = ChatOptions()
-    if operation_name := kwargs.get("operation_name"):
-        attributes[OtelAttr.OPERATION] = operation_name
-    if choice_count := kwargs.get("choice_count", 1):
-        attributes[OtelAttr.CHOICE_COUNT] = choice_count
-    if system_name := kwargs.get("system_name"):
-        attributes[SpanAttributes.LLM_SYSTEM] = system_name
-    if provider_name := kwargs.get("provider_name"):
-        attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    if model_id := kwargs.get("model", chat_options.model_id):
-        attributes[SpanAttributes.LLM_REQUEST_MODEL] = model_id
-    if service_url := kwargs.get("service_url"):
-        attributes[OtelAttr.ADDRESS] = service_url
-    if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):
-        attributes[OtelAttr.CONVERSATION_ID] = conversation_id
-    if seed := kwargs.get("seed", chat_options.seed):
-        attributes[OtelAttr.SEED] = seed
-    if frequency_penalty := kwargs.get("frequency_penalty", chat_options.frequency_penalty):
-        attributes[OtelAttr.FREQUENCY_PENALTY] = frequency_penalty
-    if max_tokens := kwargs.get("max_tokens", chat_options.max_tokens):
-        attributes[SpanAttributes.LLM_REQUEST_MAX_TOKENS] = max_tokens
-    if stop := kwargs.get("stop", chat_options.stop):
-        attributes[OtelAttr.STOP_SEQUENCES] = stop
-    if temperature := kwargs.get("temperature", chat_options.temperature):
-        attributes[SpanAttributes.LLM_REQUEST_TEMPERATURE] = temperature
-    if top_p := kwargs.get("top_p", chat_options.top_p):
-        attributes[SpanAttributes.LLM_REQUEST_TOP_P] = top_p
-    if presence_penalty := kwargs.get("presence_penalty", chat_options.presence_penalty):
-        attributes[OtelAttr.PRESENCE_PENALTY] = presence_penalty
-    if top_k := kwargs.get("top_k"):
-        attributes[OtelAttr.TOP_K] = top_k
-    if encoding_formats := kwargs.get("encoding_formats"):
-        attributes[OtelAttr.ENCODING_FORMATS] = json.dumps(
-            encoding_formats if isinstance(encoding_formats, list) else [encoding_formats]
-        )
-    if tools := kwargs.get("tools", chat_options.tools):
-        tools_as_json_list = _tools_to_dict(tools)
-        if tools_as_json_list:
-            attributes[OtelAttr.TOOL_DEFINITIONS] = json.dumps(tools_as_json_list)
-    if error := kwargs.get("error"):
-        attributes[OtelAttr.ERROR_TYPE] = type(error).__name__
-    # agent attributes
-    if agent_id := kwargs.get("agent_id"):
-        attributes[OtelAttr.AGENT_ID] = agent_id
-    if agent_name := kwargs.get("agent_name"):
-        attributes[OtelAttr.AGENT_NAME] = agent_name
-    if agent_description := kwargs.get("agent_description"):
-        attributes[OtelAttr.AGENT_DESCRIPTION] = agent_description
-    if thread_id := kwargs.get("thread_id"):
-        # override if thread is set
-        attributes[OtelAttr.CONVERSATION_ID] = thread_id
+    options = kwargs.get("all_options", kwargs.get("options"))
+    if options is not None and not isinstance(options, dict):
+        options = None
+
+    for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
+        # Normalize to tuple of keys
+        keys = (source_keys,) if isinstance(source_keys, str) else source_keys
+
+        value = None
+        for key in keys:
+            if check_options and options is not None:
+                value = options.get(key)
+            if value is None:
+                value = kwargs.get(key)
+            if value is not None:
+                break
+
+        # Apply default value if no value found
+        if value is None and default_value is not None:
+            value = default_value
+
+        if value is not None:
+            result = transform_func(value) if transform_func else value
+            # Allow transform_func to return None to skip attribute
+            if result is not None:
+                attributes[otel_key] = result
+
     return attributes
 
 
@@ -1747,7 +1784,7 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
 
 def _get_response_attributes(
     attributes: dict[str, Any],
-    response: "ChatResponse | AgentRunResponse",
+    response: "ChatResponse | AgentResponse",
     duration: float | None = None,
     *,
     capture_usage: bool = True,

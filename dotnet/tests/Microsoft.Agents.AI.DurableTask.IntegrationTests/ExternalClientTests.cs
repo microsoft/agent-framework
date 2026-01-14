@@ -57,7 +57,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
             thread,
             cancellationToken: this.TestTimeoutToken);
 
-        AgentRunResponse response = await simpleAgentProxy.RunAsync(
+        AgentResponse response = await simpleAgentProxy.RunAsync(
             message: "Repeat what you just said but say it like a pirate",
             thread,
             cancellationToken: this.TestTimeoutToken);
@@ -105,7 +105,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent tripPlanningAgentProxy = tripPlanningAgent.AsDurableAgentProxy(testHelper.Services);
 
         // Act: send a prompt to the agent
-        AgentRunResponse response = await tripPlanningAgentProxy.RunAsync(
+        AgentResponse response = await tripPlanningAgentProxy.RunAsync(
             message: "Help me figure out what to pack for my Seattle trip next Sunday",
             cancellationToken: this.TestTimeoutToken);
 
@@ -162,7 +162,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
             await agent.RunAsync($"My name is {name}.", thread);
 
             // 3. Call the agent again with the same thread (ask it to tell me my name)
-            AgentRunResponse response = await agent.RunAsync("What is my name?", thread);
+            AgentResponse response = await agent.RunAsync("What is my name?", thread);
 
             return response.Text;
         }
@@ -201,7 +201,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
             cancellationToken: this.TestTimeoutToken);
 
         // Act: prompt it again to wait for the workflow to complete
-        AgentRunResponse response = await workflowManagerAgentProxy.RunAsync(
+        AgentResponse response = await workflowManagerAgentProxy.RunAsync(
             message: "Wait for the workflow to complete and tell me the result.",
             thread,
             cancellationToken: this.TestTimeoutToken);

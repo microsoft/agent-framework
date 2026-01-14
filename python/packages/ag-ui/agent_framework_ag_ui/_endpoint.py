@@ -4,11 +4,13 @@
 
 import copy
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from ag_ui.encoder import EventEncoder
 from agent_framework import AgentProtocol
 from fastapi import FastAPI
+from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
 
 from ._agent import AgentFrameworkAgent
@@ -26,6 +28,7 @@ def add_agent_framework_fastapi_endpoint(
     allow_origins: list[str] | None = None,
     default_state: dict[str, Any] | None = None,
     tags: list[str] | None = None,
+    dependencies: Sequence[Depends] | None = None,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -39,6 +42,10 @@ def add_agent_framework_fastapi_endpoint(
         allow_origins: CORS origins (not yet implemented)
         default_state: Optional initial state to seed when the client does not provide state keys
         tags: OpenAPI tags for endpoint categorization (defaults to ["AG-UI"])
+        dependencies: Optional FastAPI dependencies for authentication/authorization.
+            These dependencies run before the endpoint handler. Use this to add
+            authentication checks, rate limiting, or other middleware-like behavior.
+            Example: `dependencies=[Depends(verify_api_key)]`
     """
     if isinstance(agent, AgentProtocol):
         wrapped_agent = AgentFrameworkAgent(
@@ -49,7 +56,7 @@ def add_agent_framework_fastapi_endpoint(
     else:
         wrapped_agent = agent
 
-    @app.post(path, tags=tags or ["AG-UI"])  # type: ignore[arg-type]
+    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies)  # type: ignore[arg-type]
     async def agent_endpoint(request_body: AGUIRequest):  # type: ignore[misc]
         """Handle AG-UI agent requests.
 

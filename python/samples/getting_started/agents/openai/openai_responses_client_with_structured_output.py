@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponse
+from agent_framework import AgentResponse
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import BaseModel
 
@@ -60,9 +60,9 @@ async def streaming_example() -> None:
     query = "Tell me about Tokyo, Japan"
     print(f"User: {query}")
 
-    # Get structured response from streaming agent using AgentRunResponse.from_agent_response_generator
-    # This method collects all streaming updates and combines them into a single AgentRunResponse
-    result = await AgentRunResponse.from_agent_response_generator(
+    # Get structured response from streaming agent using AgentResponse.from_agent_response_generator
+    # This method collects all streaming updates and combines them into a single AgentResponse
+    result = await AgentResponse.from_agent_response_generator(
         agent.run_stream(query, response_format=OutputStruct),
         output_format_type=OutputStruct,
     )
@@ -70,7 +70,7 @@ async def streaming_example() -> None:
     # Access the structured output directly from the response value
     if result.value:
         structured_data: OutputStruct = result.value  # type: ignore
-        print("Structured Output (from streaming with AgentRunResponse.from_agent_response_generator):")
+        print("Structured Output (from streaming with AgentResponse.from_agent_response_generator):")
         print(f"City: {structured_data.city}")
         print(f"Description: {structured_data.description}")
     else:
