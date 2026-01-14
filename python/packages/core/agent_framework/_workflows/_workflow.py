@@ -419,10 +419,7 @@ class Workflow(DictConvertible):
                     "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
                 )
 
-            restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
-
-            if not restored:
-                raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+            await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
         # Handle initial message
         elif message is not None:
