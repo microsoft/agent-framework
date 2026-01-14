@@ -2,15 +2,17 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import Any
+from typing import Any, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AIFunction,
     ChatAgent,
-    ChatOptions,
+    ContextProvider,
+    Middleware,
     ToolProtocol,
     get_logger,
+    normalize_tools,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
@@ -27,16 +29,25 @@ from pydantic import BaseModel, ValidationError
 from ._client import AzureAIClient
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import Self, TypeVar  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypeVar  # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
 
 
-class AzureAIProjectAgentProvider:
+# Type variable for options - allows typed ChatAgent[TOptions] returns
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default=TypedDict,  # type: ignore[valid-type]
+    covariant=True,
+)
+
+
+class AzureAIProjectAgentProvider(Generic[TOptions_co]):
     """Provider for Azure AI Agent Service (Responses API).
 
     This provider allows you to create, retrieve, and manage Azure AI agents
@@ -150,7 +161,10 @@ class AzureAIProjectAgentProvider:
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-    ) -> ChatAgent:
+        default_options: TOptions_co | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+    ) -> "ChatAgent[TOptions_co]":
         """Create a new agent on the Azure AI service and return a local ChatAgent wrapper.
 
         Args:
@@ -164,6 +178,10 @@ class AzureAIProjectAgentProvider:
             response_format: The format of the response. Can be a Pydantic model for structured
                 output, or a dict with JSON schema configuration.
             tools: Tools to make available to the agent.
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
+            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: Context provider to include during agent invocation.
 
         Returns:
             ChatAgent: A ChatAgent instance configured with the created agent.
@@ -189,8 +207,10 @@ class AzureAIProjectAgentProvider:
             args["top_p"] = top_p
         if response_format:
             args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
-        if tools:
-            normalized_tools = ChatOptions(tools=tools).tools or []
+
+        # Normalize tools once and reuse for both Azure AI API and ChatAgent
+        normalized_tools = normalize_tools(tools)
+        if normalized_tools:
             args["tools"] = to_azure_ai_tools(normalized_tools)
 
         created_agent = await self._project_client.agents.create_version(
@@ -199,9 +219,6 @@ class AzureAIProjectAgentProvider:
             description=description,
         )
 
-        # Pass the user-provided tools for function invocation
-        chat_agent_tools = ChatOptions(tools=tools).tools if tools else None
-
         # Only pass Pydantic models to ChatAgent for response parsing
         # Dict schemas are used by Azure AI for formatting, but can't be used for local parsing
         pydantic_response_format = (
@@ -209,7 +226,12 @@ class AzureAIProjectAgentProvider:
         )
 
         return self._create_chat_agent_from_details(
-            created_agent, chat_agent_tools, response_format=pydantic_response_format
+            created_agent,
+            normalized_tools,
+            response_format=pydantic_response_format,
+            default_options=default_options,
+            middleware=middleware,
+            context_provider=context_provider,
         )
 
     async def get_agent(
@@ -222,7 +244,10 @@ class AzureAIProjectAgentProvider:
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-    ) -> ChatAgent:
+        default_options: TOptions_co | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+    ) -> "ChatAgent[TOptions_co]":
         """Retrieve an existing agent from the Azure AI service and return a local ChatAgent wrapper.
 
         You must provide either name or reference. Use `as_agent()` if you already have
@@ -232,6 +257,10 @@ class AzureAIProjectAgentProvider:
             name: The name of the agent to retrieve (fetches latest version).
             reference: Reference containing the agent's name and optionally a specific version.
             tools: Tools to make available to the agent. Required if the agent has function tools.
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
+            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: Context provider to include during agent invocation.
 
         Returns:
             ChatAgent: A ChatAgent instance configured with the retrieved agent.
@@ -259,9 +288,13 @@ class AzureAIProjectAgentProvider:
         # Validate that required function tools are provided
         self._validate_function_tools(existing_agent.definition.tools, tools)
 
-        # Pass user-provided tools for function invocation
-        normalized_tools = ChatOptions(tools=tools).tools if tools else None
-        return self._create_chat_agent_from_details(existing_agent, normalized_tools)
+        return self._create_chat_agent_from_details(
+            existing_agent,
+            normalize_tools(tools),
+            default_options=default_options,
+            middleware=middleware,
+            context_provider=context_provider,
+        )
 
     def as_agent(
         self,
@@ -271,7 +304,10 @@ class AzureAIProjectAgentProvider:
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-    ) -> ChatAgent:
+        default_options: TOptions_co | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+    ) -> "ChatAgent[TOptions_co]":
         """Wrap an SDK agent version object into a ChatAgent without making HTTP calls.
 
         Use this when you already have an AgentVersionDetails from a previous API call.
@@ -279,6 +315,10 @@ class AzureAIProjectAgentProvider:
         Args:
             details: The AgentVersionDetails to wrap.
             tools: Tools to make available to the agent. Required if the agent has function tools.
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
+            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: Context provider to include during agent invocation.
 
         Returns:
             ChatAgent: A ChatAgent instance configured with the agent version.
@@ -292,16 +332,23 @@ class AzureAIProjectAgentProvider:
         # Validate that required function tools are provided
         self._validate_function_tools(details.definition.tools, tools)
 
-        # Pass user-provided tools for function invocation
-        normalized_tools = ChatOptions(tools=tools).tools if tools else None
-        return self._create_chat_agent_from_details(details, normalized_tools)
+        return self._create_chat_agent_from_details(
+            details,
+            normalize_tools(tools),
+            default_options=default_options,
+            middleware=middleware,
+            context_provider=context_provider,
+        )
 
     def _create_chat_agent_from_details(
         self,
         details: AgentVersionDetails,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
         response_format: type[BaseModel] | None = None,
-    ) -> ChatAgent:
+        default_options: TOptions_co | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        context_provider: ContextProvider | None = None,
+    ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent from an AgentVersionDetails.
 
         Args:
@@ -309,6 +356,10 @@ class AzureAIProjectAgentProvider:
             provided_tools: User-provided tools (including function implementations).
                 These are merged with hosted tools from the definition.
             response_format: The Pydantic model type for structured output parsing.
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
+            middleware: List of middleware to intercept agent and function invocations.
+            context_provider: Context provider to include during agent invocation.
         """
         if not isinstance(details.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
@@ -325,7 +376,7 @@ class AzureAIProjectAgentProvider:
         # but function tools need the actual implementations from provided_tools
         merged_tools = self._merge_tools(details.definition.tools, provided_tools)
 
-        return ChatAgent(
+        return ChatAgent(  # type: ignore[return-value]
             chat_client=client,
             id=details.id,
             name=details.name,
@@ -336,6 +387,9 @@ class AzureAIProjectAgentProvider:
             top_p=details.definition.top_p,
             tools=merged_tools,
             response_format=response_format,
+            default_options=default_options,  # type: ignore[arg-type]
+            middleware=middleware,
+            context_provider=context_provider,
         )
 
     def _merge_tools(
@@ -382,7 +436,7 @@ class AzureAIProjectAgentProvider:
     ) -> None:
         """Validate that required function tools are provided."""
         # Normalize and validate function tools
-        normalized_tools = ChatOptions(tools=provided_tools).tools or []
+        normalized_tools = normalize_tools(provided_tools)
         tool_names = {tool.name for tool in normalized_tools if isinstance(tool, AIFunction)}
 
         # If function tools exist in agent definition but were not provided,

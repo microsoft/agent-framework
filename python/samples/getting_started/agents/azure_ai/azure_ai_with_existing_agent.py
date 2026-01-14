@@ -3,7 +3,6 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
@@ -39,13 +38,12 @@ async def using_provider_get_agent() -> None:
         try:
             # Get newly created agent as ChatAgent by using provider.get_agent()
             provider = AzureAIProjectAgentProvider(project_client=project_client)
-            agent: ChatAgent = await provider.get_agent(name=azure_ai_agent.name)
+            agent = await provider.get_agent(name=azure_ai_agent.name)
 
             # Verify agent properties
             print(f"Agent ID: {agent.id}")
             print(f"Agent name: {agent.name}")
             print(f"Agent description: {agent.description}")
-            print(f"Agent instructions: {agent.chat_options.instructions}")
 
             query = "How are you?"
             print(f"User: {query}")

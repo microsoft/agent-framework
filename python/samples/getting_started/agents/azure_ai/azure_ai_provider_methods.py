@@ -5,7 +5,6 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import AgentReference, PromptAgentDefinition
@@ -49,7 +48,7 @@ async def create_agent_example() -> None:
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
         # Create a new agent with custom configuration
-        agent: ChatAgent = await provider.create_agent(
+        agent = await provider.create_agent(
             name="WeatherAssistant",
             instructions="You are a helpful weather assistant. Always be concise.",
             description="An agent that provides weather information.",
@@ -91,10 +90,9 @@ async def get_agent_by_name_example() -> None:
         try:
             # Get the agent using the provider by name (fetches latest version)
             provider = AzureAIProjectAgentProvider(project_client=project_client)
-            agent: ChatAgent = await provider.get_agent(name=created_agent.name)
+            agent = await provider.get_agent(name=created_agent.name)
 
             print(f"Retrieved agent: {agent.name}")
-            print(f"Agent instructions: {agent.chat_options.instructions}")
 
             query = "Hello!"
             print(f"User: {query}")
@@ -133,10 +131,9 @@ async def get_agent_by_reference_example() -> None:
             # Get the agent using an AgentReference with specific version
             provider = AzureAIProjectAgentProvider(project_client=project_client)
             reference = AgentReference(name=created_agent.name, version=created_agent.version)
-            agent: ChatAgent = await provider.get_agent(reference=reference)
+            agent = await provider.get_agent(reference=reference)
 
             print(f"Retrieved agent: {agent.name} (version via reference)")
-            print(f"Agent instructions: {agent.chat_options.instructions}")
 
             query = "Say hello"
             print(f"User: {query}")
@@ -175,12 +172,11 @@ async def get_agent_by_details_example() -> None:
             # Fetch AgentDetails separately (simulating a previous API call)
             agent_details = await project_client.agents.get(agent_name=created_agent.name)
 
-            # Get the agent using the pre-fetched details
+            # Get the agent using the pre-fetched details (sync - no HTTP call)
             provider = AzureAIProjectAgentProvider(project_client=project_client)
-            agent: ChatAgent = await provider.get_agent(details=agent_details)
+            agent = provider.as_agent(agent_details.versions.latest)
 
             print(f"Retrieved agent: {agent.name} (from pre-fetched details)")
-            print(f"Agent instructions: {agent.chat_options.instructions}")
 
             query = "How are you today?"
             print(f"User: {query}")
@@ -267,11 +263,10 @@ async def as_agent_example() -> None:
         try:
             # Wrap the SDK object directly without any HTTP calls
             provider = AzureAIProjectAgentProvider(project_client=project_client)
-            agent: ChatAgent = provider.as_agent(details=agent_version_details)
+            agent = provider.as_agent(agent_version_details)
 
             print(f"Wrapped agent: {agent.name} (no HTTP call needed)")
             print(f"Agent version: {agent_version_details.version}")
-            print(f"Agent instructions: {agent.chat_options.instructions}")
 
             query = "What can you do?"
             print(f"User: {query}")
@@ -287,19 +282,12 @@ async def as_agent_example() -> None:
 async def main() -> None:
     print("=== Azure AI Project Agent Provider Methods Example ===\n")
 
-    # create_agent() - Create a new agent
     await create_agent_example()
-
-    # Multiple agents from single provider
-    await multiple_agents_example()
-
-    # get_agent() - Retrieve existing agents (three ways)
     await get_agent_by_name_example()
     await get_agent_by_reference_example()
     await get_agent_by_details_example()
-
-    # as_agent() - Wrap SDK objects without HTTP calls
     await as_agent_example()
+    await multiple_agents_example()
 
 
 if __name__ == "__main__":
