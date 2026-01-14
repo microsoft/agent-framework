@@ -70,7 +70,7 @@ public static class WorkflowProvider
             bool autoSend = true;
             IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
     
-            AgentRunResponse agentResponse =
+            AgentResponse agentResponse =
                 await InvokeAgentAsync(
                     context,
                     agentName,
@@ -81,7 +81,7 @@ public static class WorkflowProvider
     
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
     
             return default;

@@ -84,7 +84,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         WorkflowEvents workflowEvents = await harness.RunWorkflowAsync(inputMessage).ConfigureAwait(false);
         ConversationUpdateEvent conversationEvent = Assert.Single(workflowEvents.ConversationEvents);
         this.Output.WriteLine("CONVERSATION: " + conversationEvent.ConversationId);
-        AgentRunResponseEvent agentResponseEvent = Assert.Single(workflowEvents.AgentResponseEvents);
+        AgentResponseEvent agentResponseEvent = Assert.Single(workflowEvents.AgentResponseEvents);
         this.Output.WriteLine("RESPONSE: " + agentResponseEvent.Response.Text);
         Assert.NotEmpty(agentResponseEvent.Response.Text);
     }

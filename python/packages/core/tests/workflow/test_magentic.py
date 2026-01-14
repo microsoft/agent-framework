@@ -9,8 +9,8 @@ import pytest
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
@@ -158,9 +158,9 @@ class StubAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
-        return AgentRunResponse(messages=[response])
+        return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
         self,
@@ -168,9 +168,9 @@ class StubAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _stream() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
                 contents=[TextContent(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
@@ -424,8 +424,8 @@ class StubManagerAgent(BaseAgent):
         *,
         thread: Any = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
+    ) -> AgentResponse:
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
     def run_stream(
         self,
@@ -433,9 +433,9 @@ class StubManagerAgent(BaseAgent):
         *,
         thread: Any = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _gen() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _gen() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
         return _gen()
 
@@ -538,14 +538,14 @@ class StubThreadAgent(BaseAgent):
         super().__init__(name=name or "agentA")
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="thread-ok")],
             author_name=self.name,
             role=Role.ASSISTANT,
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="thread-ok", author_name=self.name)])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="thread-ok", author_name=self.name)])
 
 
 class StubAssistantsClient:
@@ -560,16 +560,14 @@ class StubAssistantsAgent(BaseAgent):
         self.chat_client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="assistants-ok")],
             author_name=self.name,
             role=Role.ASSISTANT,
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentRunResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, text="assistants-ok", author_name=self.name)]
-        )
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="assistants-ok", author_name=self.name)])
 
 
 async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[ChatMessage]:

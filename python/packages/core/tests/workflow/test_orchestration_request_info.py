@@ -10,8 +10,8 @@ import pytest
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatMessage,
     Role,
@@ -114,10 +114,10 @@ class TestAgentRequestInfoExecutor:
         """Test that request_info handler calls ctx.request_info."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_run_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")])
+        agent_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")])
         agent_response = AgentExecutorResponse(
             executor_id="test_agent",
-            agent_run_response=agent_run_response,
+            agent_response=agent_response,
         )
 
         ctx = MagicMock(spec=WorkflowContext)
@@ -132,10 +132,10 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user provides additional messages."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_run_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Original")])
+        agent_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Original")])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
-            agent_run_response=agent_run_response,
+            agent_response=agent_response,
         )
 
         response = AgentRequestInfoResponse.from_strings(["Additional input"])
@@ -158,10 +158,10 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user approves (no additional messages)."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_run_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Original")])
+        agent_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Original")])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
-            agent_run_response=agent_run_response,
+            agent_response=agent_response,
         )
 
         response = AgentRequestInfoResponse.approve()
@@ -205,9 +205,9 @@ class _TestAgent:
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Dummy run method."""
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")])
 
     def run_stream(
         self,
@@ -215,11 +215,11 @@ class _TestAgent:
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Dummy run_stream method."""
 
         async def generator():
-            yield AgentRunResponseUpdate(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response stream")])
+            yield AgentResponseUpdate(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response stream")])
 
         return generator()
 

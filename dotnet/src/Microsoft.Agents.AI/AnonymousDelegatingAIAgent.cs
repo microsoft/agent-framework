@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI;
 internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
 {
     /// <summary>The delegate to use as the implementation of <see cref="RunCoreAsync"/>.</summary>
-    private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>>? _runFunc;
+    private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentResponse>>? _runFunc;
 
     /// <summary>The delegate to use as the implementation of <see cref="RunCoreStreamingAsync"/>.</summary>
     /// <remarks>
@@ -26,7 +26,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     /// will be invoked with the same arguments as the method itself.
     /// When <see langword="null"/>, <see cref="RunCoreStreamingAsync"/> will delegate directly to the inner agent.
     /// </remarks>
-    private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentRunResponseUpdate>>? _runStreamingFunc;
+    private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentResponseUpdate>>? _runStreamingFunc;
 
     /// <summary>The delegate to use as the implementation of both <see cref="RunCoreAsync"/> and <see cref="RunCoreStreamingAsync"/>.</summary>
     private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>? _sharedFunc;
@@ -74,8 +74,8 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     /// <exception cref="ArgumentNullException">Both <paramref name="runFunc"/> and <paramref name="runStreamingFunc"/> are <see langword="null"/>.</exception>
     public AnonymousDelegatingAIAgent(
         AIAgent innerAgent,
-        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>>? runFunc,
-        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentRunResponseUpdate>>? runStreamingFunc)
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentResponse>>? runFunc,
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentResponseUpdate>>? runStreamingFunc)
         : base(innerAgent)
     {
         ThrowIfBothDelegatesNull(runFunc, runStreamingFunc);
@@ -85,7 +85,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    protected override Task<AgentRunResponse> RunCoreAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -97,10 +97,10 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
         {
             return GetRunViaSharedAsync(messages, thread, options, cancellationToken);
 
-            async Task<AgentRunResponse> GetRunViaSharedAsync(
+            async Task<AgentResponse> GetRunViaSharedAsync(
                 IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, CancellationToken cancellationToken)
             {
-                AgentRunResponse? response = null;
+                AgentResponse? response = null;
 
                 await this._sharedFunc(
                     messages,
@@ -113,7 +113,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
 
                 if (response is null)
                 {
-                    Throw.InvalidOperationException("The shared delegate completed successfully without producing an AgentRunResponse.");
+                    Throw.InvalidOperationException("The shared delegate completed successfully without producing an AgentResponse.");
                 }
 
                 return response;
@@ -127,12 +127,12 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
         {
             Debug.Assert(this._runStreamingFunc is not null, "Expected non-null streaming delegate.");
             return this._runStreamingFunc!(messages, thread, options, this.InnerAgent, cancellationToken)
-                .ToAgentRunResponseAsync(cancellationToken);
+                .ToAgentResponseAsync(cancellationToken);
         }
     }
 
     /// <inheritdoc/>
-    protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -142,7 +142,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
 
         if (this._sharedFunc is not null)
         {
-            var updates = Channel.CreateBounded<AgentRunResponseUpdate>(1);
+            var updates = Channel.CreateBounded<AgentResponseUpdate>(1);
 
             _ = ProcessAsync();
             async Task ProcessAsync()
@@ -180,10 +180,10 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
             Debug.Assert(this._runFunc is not null, "Expected non-null non-streaming delegate.");
             return GetStreamingRunAsyncViaRunAsync(this._runFunc!(messages, thread, options, this.InnerAgent, cancellationToken));
 
-            static async IAsyncEnumerable<AgentRunResponseUpdate> GetStreamingRunAsyncViaRunAsync(Task<AgentRunResponse> task)
+            static async IAsyncEnumerable<AgentResponseUpdate> GetStreamingRunAsyncViaRunAsync(Task<AgentResponse> task)
             {
-                AgentRunResponse response = await task.ConfigureAwait(false);
-                foreach (var update in response.ToAgentRunResponseUpdates())
+                AgentResponse response = await task.ConfigureAwait(false);
+                foreach (var update in response.ToAgentResponseUpdates())
                 {
                     yield return update;
                 }

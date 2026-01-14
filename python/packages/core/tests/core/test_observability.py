@@ -13,7 +13,7 @@ from opentelemetry.trace import StatusCode
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
-    AgentRunResponse,
+    AgentResponse,
     AgentThread,
     BaseChatClient,
     ChatMessage,
@@ -407,7 +407,7 @@ def mock_chat_agent():
             self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
@@ -415,10 +415,10 @@ def mock_chat_agent():
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            from agent_framework import AgentRunResponseUpdate
+            from agent_framework import AgentResponseUpdate
 
-            yield AgentRunResponseUpdate(text="Hello", role=Role.ASSISTANT)
-            yield AgentRunResponseUpdate(text=" from agent", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text=" from agent", role=Role.ASSISTANT)
 
     return MockChatClientAgent
 

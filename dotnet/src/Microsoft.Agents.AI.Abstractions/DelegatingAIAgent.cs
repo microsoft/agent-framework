@@ -81,7 +81,7 @@ public abstract class DelegatingAIAgent : AIAgent
         => this.InnerAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> RunCoreAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -89,7 +89,7 @@ public abstract class DelegatingAIAgent : AIAgent
         => this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
 
     /// <inheritdoc />
-    protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

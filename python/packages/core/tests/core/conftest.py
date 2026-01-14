@@ -13,8 +13,8 @@ from pytest import fixture
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
     ChatMessage,
@@ -231,9 +231,9 @@ class MockAgent(AgentProtocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
 
     async def run_stream(
         self,
@@ -241,9 +241,9 @@ class MockAgent(AgentProtocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         logger.debug(f"Running mock agent stream, with: {messages=}, {thread=}, {kwargs=}")
-        yield AgentRunResponseUpdate(contents=[TextContent("Response")])
+        yield AgentResponseUpdate(contents=[TextContent("Response")])
 
     def get_new_thread(self) -> AgentThread:
         return MockAgentThread()

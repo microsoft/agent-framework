@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ChatAgent,
     ChatContext,
     ChatMessage,
@@ -372,7 +372,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 
@@ -878,7 +878,7 @@ class TestMiddlewareDynamicRebuild:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
 
         # First streaming execution
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test stream message 1"):
             updates.append(update)
 
@@ -1085,7 +1085,7 @@ class TestRunLevelMiddleware:
         run_middleware = StreamingTrackingMiddleware("run_stream")
 
         # Execute streaming with run middleware
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
             updates.append(update)
 
@@ -1711,7 +1711,7 @@ class TestChatAgentChatMiddleware:
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 

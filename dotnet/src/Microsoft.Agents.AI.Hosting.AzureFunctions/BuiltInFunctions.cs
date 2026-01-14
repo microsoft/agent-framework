@@ -119,7 +119,7 @@ internal static class BuiltInFunctions
 
         if (waitForResponse)
         {
-            AgentRunResponse agentResponse = await agentProxy.RunAsync(
+            AgentResponse agentResponse = await agentProxy.RunAsync(
                 message: new ChatMessage(ChatRole.User, message),
                 thread: new DurableAgentThread(sessionId),
                 options: options,
@@ -170,7 +170,7 @@ internal static class BuiltInFunctions
 
         AIAgent agentProxy = client.AsDurableAgentProxy(functionContext, agentName);
 
-        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+        AgentResponse agentResponse = await agentProxy.RunAsync(
             message: new ChatMessage(ChatRole.User, query),
             thread: new DurableAgentThread(sessionId),
             options: null);
@@ -224,7 +224,7 @@ internal static class BuiltInFunctions
         FunctionContext context,
         HttpStatusCode statusCode,
         string threadId,
-        AgentRunResponse agentResponse)
+        AgentResponse agentResponse)
     {
         HttpResponseData response = req.CreateResponse(statusCode);
         response.Headers.Add("x-ms-thread-id", threadId);
@@ -321,7 +321,7 @@ internal static class BuiltInFunctions
     private sealed record AgentRunSuccessResponse(
         [property: JsonPropertyName("status")] int Status,
         [property: JsonPropertyName("thread_id")] string ThreadId,
-        [property: JsonPropertyName("response")] AgentRunResponse Response);
+        [property: JsonPropertyName("response")] AgentResponse Response);
 
     /// <summary>
     /// Represents an accepted (fire-and-forget) agent run response.

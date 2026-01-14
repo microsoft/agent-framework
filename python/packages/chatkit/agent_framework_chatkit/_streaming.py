@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 
-from agent_framework import AgentRunResponseUpdate, TextContent
+from agent_framework import AgentResponseUpdate, TextContent
 from chatkit.types import (
     AssistantMessageContent,
     AssistantMessageContentPartTextDelta,
@@ -19,13 +19,13 @@ from chatkit.types import (
 
 
 async def stream_agent_response(
-    response_stream: AsyncIterable[AgentRunResponseUpdate],
+    response_stream: AsyncIterable[AgentResponseUpdate],
     thread_id: str,
     generate_id: Callable[[str], str] | None = None,
 ) -> AsyncIterator[ThreadStreamEvent]:
-    """Convert a streamed AgentRunResponseUpdate from Agent Framework to ChatKit events.
+    """Convert a streamed AgentResponseUpdate from Agent Framework to ChatKit events.
 
-    This helper function takes a stream of AgentRunResponseUpdate objects from
+    This helper function takes a stream of AgentResponseUpdate objects from
     a Microsoft Agent Framework agent and converts them to ChatKit ThreadStreamEvent
     objects that can be consumed by the ChatKit UI.
 
@@ -34,7 +34,7 @@ async def stream_agent_response(
     text chunk as it arrives from the agent.
 
     Args:
-        response_stream: An async iterable of AgentRunResponseUpdate objects
+        response_stream: An async iterable of AgentResponseUpdate objects
                         from an Agent Framework agent.
         thread_id: The ChatKit thread ID for the conversation.
         generate_id: Optional function to generate IDs for ChatKit items.

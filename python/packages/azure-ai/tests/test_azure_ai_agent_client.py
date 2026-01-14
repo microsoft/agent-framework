@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     AIFunction,
     ChatAgent,
@@ -1544,7 +1544,7 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
         assert "Hello World" in response.text
@@ -1561,7 +1561,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
         full_message: str = ""
         async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
             assert chunk is not None
-            assert isinstance(chunk, AgentRunResponseUpdate)
+            assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_message += chunk.text
 
@@ -1585,14 +1585,14 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
         first_response = await agent.run(
             "Remember this number: 42. What number did I just tell you to remember?", thread=thread
         )
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert "42" in first_response.text
 
         # Second message - test conversation memory
         second_response = await agent.run(
             "What number did I tell you to remember in my previous message?", thread=thread
         )
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert "42" in second_response.text
 
 
@@ -1609,7 +1609,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
 
         # Validate first response
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # The thread ID is set after the first response
@@ -1628,7 +1628,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         response2 = await second_agent.run("What is my name?", thread=thread)
 
         # Validate that the agent remembers the previous conversation
-        assert isinstance(response2, AgentRunResponse)
+        assert isinstance(response2, AgentResponse)
         assert response2.text is not None
         # Should reference Alice from the previous conversation
         assert "alice" in response2.text.lower()
@@ -1648,7 +1648,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
         response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         # Factorial of 5 is 120
         assert "120" in response.text or "factorial" in response.text.lower()
@@ -1683,7 +1683,7 @@ async def test_azure_ai_chat_client_agent_file_search():
             response = await agent.run("Who is the youngest employee in the files?")
 
             # Validate response
-            assert isinstance(response, AgentRunResponse)
+            assert isinstance(response, AgentResponse)
             assert response.text is not None
             # Should find information about Alice Johnson (age 24) being the youngest
             assert any(term in response.text.lower() for term in ["alice", "johnson", "24"])
@@ -1723,7 +1723,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
             options={"max_tokens": 200},
         )
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
 
@@ -1748,7 +1748,7 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
         # First run - agent-level tool should be available
         first_response = await agent.run("What's the weather like in Chicago?")
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
         assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "25"])
@@ -1756,7 +1756,7 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
@@ -1781,7 +1781,7 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
             },
         )
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
 
@@ -1805,7 +1805,7 @@ async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
             "Provide a brief, helpful response.",
         )
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
 

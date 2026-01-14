@@ -43,7 +43,7 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread)
 
 // Invoke the agent with streaming support.
 thread = await agent.GetNewThreadAsync();
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
     Console.WriteLine(update);
 }

@@ -5,7 +5,7 @@ import logging
 from typing import cast
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatAgent,
     ChatMessage,
@@ -82,7 +82,7 @@ last_response_id: str | None = None
 def _display_event(event: WorkflowEvent) -> None:
     """Print the final conversation snapshot from workflow output events."""
     if isinstance(event, AgentRunUpdateEvent) and event.data:
-        update: AgentRunResponseUpdate = event.data
+        update: AgentResponseUpdate = event.data
         if not update.text:
             return
         global last_response_id

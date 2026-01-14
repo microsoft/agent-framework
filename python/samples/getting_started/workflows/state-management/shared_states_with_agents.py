@@ -117,7 +117,7 @@ async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowCont
     2) Retrieve the current email_id from shared state.
     3) Send a typed DetectionResult for conditional routing.
     """
-    parsed = DetectionResultAgent.model_validate_json(response.agent_run_response.text)
+    parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(is_spam=parsed.is_spam, reason=parsed.reason, email_id=email_id))
 
@@ -142,7 +142,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     """Validate the drafted reply and yield the final output."""
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 

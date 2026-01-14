@@ -16,7 +16,7 @@ from typing_extensions import Never
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
+    AgentResponse,
     ChatMessage,
     Role,
 )
@@ -594,7 +594,7 @@ class StandardMagenticManager(MagenticManagerBase):
         The agent's run method is called which applies the agent's configured options
         (temperature, seed, instructions, etc.).
         """
-        response: AgentRunResponse = await self._agent.run(messages)
+        response: AgentResponse = await self._agent.run(messages)
         if not response.messages:
             raise RuntimeError("Agent returned no messages in response.")
         if len(response.messages) > 1:

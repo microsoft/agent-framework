@@ -7,7 +7,7 @@ import pytest
 
 from agent_framework import (
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     Executor,
     WorkflowContext,
     WorkflowEvent,
@@ -158,7 +158,7 @@ async def test_runner_emits_runner_completion_for_agent_response_without_targets
 
     await ctx.send_message(
         Message(
-            data=AgentExecutorResponse("agent", AgentRunResponse()),
+            data=AgentExecutorResponse("agent", AgentResponse()),
             source_id="agent",
         )
     )

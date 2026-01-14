@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 from agent_framework import get_logger
-from agent_framework._types import AgentRunResponse, ChatMessage
+from agent_framework._types import AgentResponse, ChatMessage
 
 from ._handlers import (
     ActionContext,
@@ -348,7 +348,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
                         tool_calls.extend(chunk.tool_calls)
 
                 # Build consolidated response from updates
-                response = AgentRunResponse.from_agent_run_response_updates(updates)
+                response = AgentResponse.from_agent_run_response_updates(updates)
                 text = response.text
                 response_messages = response.messages
 
@@ -581,7 +581,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
                     )
 
             # Build consolidated response from updates
-            response = AgentRunResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_agent_run_response_updates(updates)
             text = response.text
             response_messages = response.messages
 

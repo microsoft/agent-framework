@@ -48,10 +48,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the server function");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -96,10 +96,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "What's the weather and time?");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -137,10 +137,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the client function");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -185,10 +185,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Calculate 5 + 3 and format 'hello'");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -236,10 +236,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get both server and client data");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
             this._output.WriteLine($"Update: {update.Contents.Count} contents");
@@ -301,10 +301,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the test function");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -345,10 +345,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call both functions in parallel");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -431,10 +431,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get server forecast for Seattle for 5 days");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -477,10 +477,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get client forecast for Portland with hourly data");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
