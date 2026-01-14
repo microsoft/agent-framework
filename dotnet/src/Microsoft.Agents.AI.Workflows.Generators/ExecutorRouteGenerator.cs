@@ -42,7 +42,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
                     .Select(group => SemanticAnalyzer.CombineMethodResults(group));
             });
 
-        // Step 3: Generate source for valid executors using the associted AnalysisResult.
+        // Step 3: Generate source for valid executors using the associated AnalysisResult.
         context.RegisterSourceOutput(
             groupedByClass.Where(static r => r.ExecutorInfo is not null),
             static (ctx, result) =>
