@@ -53,7 +53,6 @@ async def create_agent_example() -> None:
             instructions="You are a helpful weather assistant. Always be concise.",
             description="An agent that provides weather information.",
             tools=get_weather,
-            temperature=0.7,
         )
 
         print(f"Created agent: {agent.name}")

@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import Any, Generic, TypedDict
+from typing import TYPE_CHECKING, Any, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -29,6 +29,9 @@ from pydantic import BaseModel, ValidationError
 from ._client import AzureAIClient
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
+if TYPE_CHECKING:
+    from agent_framework.openai import OpenAIResponsesOptions
+
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # pragma: no cover
 else:
@@ -39,10 +42,11 @@ logger = get_logger("agent_framework.azure")
 
 
 # Type variable for options - allows typed ChatAgent[TOptions] returns
+# Default matches AzureAIClient's default options type
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
     covariant=True,
 )
 
@@ -145,7 +149,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             self._should_close_client = True
 
         self._project_client = project_client
-        self._credential = credential
 
     async def create_agent(
         self,
@@ -153,8 +156,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
         response_format: type[BaseModel] | MutableMapping[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
@@ -173,8 +174,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 environment variable if not provided.
             instructions: Instructions for the agent.
             description: A description of the agent.
-            temperature: The sampling temperature to use.
-            top_p: The nucleus sampling probability to use.
             response_format: The format of the response. Can be a Pydantic model for structured
                 output, or a dict with JSON schema configuration.
             tools: Tools to make available to the agent.
@@ -201,10 +200,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
 
         if instructions:
             args["instructions"] = instructions
-        if temperature is not None:
-            args["temperature"] = temperature
-        if top_p is not None:
-            args["top_p"] = top_p
         if response_format:
             args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
@@ -219,16 +214,10 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             description=description,
         )
 
-        # Only pass Pydantic models to ChatAgent for response parsing
-        # Dict schemas are used by Azure AI for formatting, but can't be used for local parsing
-        pydantic_response_format = (
-            response_format if isinstance(response_format, type) and issubclass(response_format, BaseModel) else None
-        )
-
-        return self._create_chat_agent_from_details(
+        return self._to_chat_agent_from_details(
             created_agent,
             normalized_tools,
-            response_format=pydantic_response_format,
+            response_format=response_format,
             default_options=default_options,
             middleware=middleware,
             context_provider=context_provider,
@@ -288,7 +277,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         # Validate that required function tools are provided
         self._validate_function_tools(existing_agent.definition.tools, tools)
 
-        return self._create_chat_agent_from_details(
+        return self._to_chat_agent_from_details(
             existing_agent,
             normalize_tools(tools),
             default_options=default_options,
@@ -332,7 +321,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         # Validate that required function tools are provided
         self._validate_function_tools(details.definition.tools, tools)
 
-        return self._create_chat_agent_from_details(
+        return self._to_chat_agent_from_details(
             details,
             normalize_tools(tools),
             default_options=default_options,
@@ -340,11 +329,11 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             context_provider=context_provider,
         )
 
-    def _create_chat_agent_from_details(
+    def _to_chat_agent_from_details(
         self,
         details: AgentVersionDetails,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: type[BaseModel] | MutableMapping[str, Any] | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
@@ -355,7 +344,8 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             details: The AgentVersionDetails containing the agent definition.
             provided_tools: User-provided tools (including function implementations).
                 These are merged with hosted tools from the definition.
-            response_format: The Pydantic model type for structured output parsing.
+            response_format: The response format. Can be a Pydantic model for structured
+                output parsing, or a dict with JSON schema for service-side formatting.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
@@ -383,8 +373,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             description=details.description,
             instructions=details.definition.instructions,
             model_id=details.definition.model,
-            temperature=details.definition.temperature,
-            top_p=details.definition.top_p,
             tools=merged_tools,
             response_format=response_format,
             default_options=default_options,  # type: ignore[arg-type]

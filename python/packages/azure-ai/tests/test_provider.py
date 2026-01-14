@@ -153,8 +153,6 @@ async def test_provider_create_agent(
             model="gpt-4",
             instructions="Test instructions",
             description="Test Agent",
-            temperature=0.7,
-            top_p=0.9,
         )
 
         assert isinstance(agent, ChatAgent)
