@@ -19,8 +19,8 @@ public class AIAgentTests
 {
     private readonly Mock<AIAgent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
-    private readonly AgentRunResponse _invokeResponse;
-    private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
+    private readonly AgentResponse _invokeResponse;
+    private readonly List<AgentResponseUpdate> _invokeStreamingResponses = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIAgentTests"/> class.
@@ -29,13 +29,13 @@ public class AIAgentTests
     {
         this._agentThreadMock = new Mock<AgentThread>(MockBehavior.Strict);
 
-        this._invokeResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
-        this._invokeStreamingResponses.Add(new AgentRunResponseUpdate(ChatRole.Assistant, "Hi"));
+        this._invokeResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
+        this._invokeStreamingResponses.Add(new AgentResponseUpdate(ChatRole.Assistant, "Hi"));
 
         this._agentMock = new Mock<AIAgent> { CallBase = true };
         this._agentMock
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
                 ItExpr.IsAny<AgentRunOptions?>(),
@@ -43,7 +43,7 @@ public class AIAgentTests
             .ReturnsAsync(this._invokeResponse);
         this._agentMock
             .Protected()
-            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
                 ItExpr.IsAny<AgentRunOptions?>(),
@@ -69,7 +69,7 @@ public class AIAgentTests
         // Verify that the mocked method was called with the expected parameters
         this._agentMock
             .Protected()
-            .Verify<Task<AgentRunResponse>>("RunCoreAsync",
+            .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => !messages.Any()),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
@@ -96,7 +96,7 @@ public class AIAgentTests
         // Verify that the mocked method was called with the expected parameters
         this._agentMock
             .Protected()
-            .Verify<Task<AgentRunResponse>>("RunCoreAsync",
+            .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First().Text == Message),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
@@ -123,7 +123,7 @@ public class AIAgentTests
         // Verify that the mocked method was called with the expected parameters
         this._agentMock
             .Protected()
-            .Verify<Task<AgentRunResponse>>("RunCoreAsync",
+            .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First() == message),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
@@ -152,7 +152,7 @@ public class AIAgentTests
         // Verify that the mocked method was called with the expected parameters
         this._agentMock
             .Protected()
-            .Verify<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => !messages.Any()),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
@@ -182,7 +182,7 @@ public class AIAgentTests
         // Verify that the mocked method was called with the expected parameters
         this._agentMock
             .Protected()
-            .Verify<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First().Text == Message),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
@@ -212,7 +212,7 @@ public class AIAgentTests
         // Verify that the mocked method was called with the expected parameters
         this._agentMock
             .Protected()
-            .Verify<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First() == message),
                 ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
@@ -384,14 +384,14 @@ public class AIAgentTests
         public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        protected override Task<AgentRunResponse> RunCoreAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,

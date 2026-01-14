@@ -6,9 +6,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunContext,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
     ChatMessage,
     Role,
     TextContent,
@@ -64,15 +64,15 @@ async def weather_override_middleware(
 
         if context.is_streaming:
             # For streaming: create an async generator that yields chunks
-            async def override_stream() -> AsyncIterable[AgentRunResponseUpdate]:
+            async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
                 for chunk in chunks:
-                    yield AgentRunResponseUpdate(contents=[TextContent(text=chunk)])
+                    yield AgentResponseUpdate(contents=[TextContent(text=chunk)])
 
             context.result = override_stream()
         else:
             # For non-streaming: just replace with the string message
             custom_message = "".join(chunks)
-            context.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
+            context.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
 
 
 async def main() -> None:

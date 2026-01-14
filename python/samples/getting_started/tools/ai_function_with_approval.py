@@ -4,7 +4,7 @@ import asyncio
 from random import randrange
 from typing import TYPE_CHECKING, Annotated, Any
 
-from agent_framework import AgentRunResponse, ChatAgent, ChatMessage, ai_function
+from agent_framework import AgentResponse, ChatAgent, ChatMessage, ai_function
 from agent_framework.openai import OpenAIResponsesClient
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ def get_weather_detail(location: Annotated[str, "The city and state, e.g. San Fr
     )
 
 
-async def handle_approvals(query: str, agent: "AgentProtocol") -> AgentRunResponse:
+async def handle_approvals(query: str, agent: "AgentProtocol") -> AgentResponse:
     """Handle function call approvals.
 
     When we don't have a thread, we need to ensure we include the original query,

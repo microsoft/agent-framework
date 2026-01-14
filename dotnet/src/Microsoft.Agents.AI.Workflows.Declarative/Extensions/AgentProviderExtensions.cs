@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
-    public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
+    public static async ValueTask<AgentResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
         string executorId,
         IWorkflowContext context,
@@ -20,15 +20,15 @@ internal static class AgentProviderExtensions
         IDictionary<string, object?>? inputArguments = null,
         CancellationToken cancellationToken = default)
     {
-        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
         autoSend |= isWorkflowConversation;
 
         // Process the agent response updates.
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
             await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
 
@@ -40,7 +40,7 @@ internal static class AgentProviderExtensions
             }
         }
 
-        AgentRunResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
 
         if (autoSend)
         {

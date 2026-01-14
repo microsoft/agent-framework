@@ -14,7 +14,7 @@ public class AgentRunResponseEvent : ExecutorEvent
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
     /// <param name="response">The agent run response.</param>
-    public AgentRunResponseEvent(string executorId, AgentRunResponse response) : base(executorId, data: response)
+    public AgentRunResponseEvent(string executorId, AgentResponse response) : base(executorId, data: response)
     {
         this.Response = Throw.IfNull(response);
     }
@@ -22,5 +22,5 @@ public class AgentRunResponseEvent : ExecutorEvent
     /// <summary>
     /// Gets the agent run response.
     /// </summary>
-    public AgentRunResponse Response { get; }
+    public AgentResponse Response { get; }
 }

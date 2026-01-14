@@ -26,9 +26,9 @@ public static class FunctionsTriggers
         DurableAIAgent chemist = context.GetAgent("ChemistAgent");
 
         // Start both agent runs concurrently
-        Task<AgentRunResponse<TextResponse>> physicistTask = physicist.RunAsync<TextResponse>(prompt);
+        Task<AgentResponse<TextResponse>> physicistTask = physicist.RunAsync<TextResponse>(prompt);
 
-        Task<AgentRunResponse<TextResponse>> chemistTask = chemist.RunAsync<TextResponse>(prompt);
+        Task<AgentResponse<TextResponse>> chemistTask = chemist.RunAsync<TextResponse>(prompt);
 
         // Wait for both tasks to complete using Task.WhenAll
         await Task.WhenAll(physicistTask, chemistTask);

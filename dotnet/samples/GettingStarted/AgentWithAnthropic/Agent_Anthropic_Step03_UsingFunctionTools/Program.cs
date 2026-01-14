@@ -31,7 +31,7 @@ Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?",
 
 // Streaming agent interaction with function tools.
 thread = await agent.GetNewThreadAsync();
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
 {
     Console.WriteLine(update);
 }

@@ -91,8 +91,8 @@ public abstract class WorkflowAgentProvider
     /// <param name="messages">The messages to include in the invocation.</param>
     /// <param name="inputArguments">Optional input arguments for agents that provide support.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
-    /// <returns>Asynchronous set of <see cref="AgentRunResponseUpdate"/>.</returns>
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+    /// <returns>Asynchronous set of <see cref="AgentResponseUpdate"/>.</returns>
+    public abstract IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
         string agentId,
         string? agentVersion,
         string? conversationId,

@@ -149,7 +149,7 @@ public class InProcessExecutionTests
         public override ValueTask<AgentThread> DeserializeThreadAsync(System.Text.Json.JsonElement serializedThread,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentThread());
 
-        protected override Task<AgentRunResponse> RunCoreAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -157,10 +157,10 @@ public class InProcessExecutionTests
         {
             var lastMessage = messages.LastOrDefault();
             var responseMessage = new ChatMessage(ChatRole.Assistant, $"Echo: {lastMessage?.Text ?? "no message"}");
-            return Task.FromResult(new AgentRunResponse(responseMessage));
+            return Task.FromResult(new AgentResponse(responseMessage));
         }
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -174,14 +174,14 @@ public class InProcessExecutionTests
             string messageId = Guid.NewGuid().ToString("N");
 
             // Yield role first
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name)
             {
                 AuthorName = this.Name,
                 MessageId = messageId
             };
 
             // Then yield content
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, responseText)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, responseText)
             {
                 AuthorName = this.Name,
                 MessageId = messageId

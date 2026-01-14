@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
@@ -47,7 +47,7 @@ async def test_non_streaming() -> None:
 
         # Check for annotations in the response
         annotations_found: list[str] = []
-        # AgentRunResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
                 if isinstance(content, TextContent) and content.annotations:
@@ -82,7 +82,7 @@ async def test_streaming() -> None:
         file_ids_found: list[str] = []
 
         async for update in agent.run_stream(QUERY):
-            if isinstance(update, AgentRunResponseUpdate):
+            if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
                     if isinstance(content, TextContent):
                         if content.text:

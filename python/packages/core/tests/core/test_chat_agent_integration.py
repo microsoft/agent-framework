@@ -8,8 +8,8 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatAgent,
     HostedCodeInterpreterTool,
@@ -46,7 +46,7 @@ async def test_openai_responses_client_agent_basic_run_streaming():
         # Test streaming run
         full_text = ""
         async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
-            assert isinstance(chunk, AgentRunResponseUpdate)
+            assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
 
@@ -68,13 +68,13 @@ async def test_openai_responses_client_agent_thread_persistence():
         # First interaction
         first_response = await agent.run("My favorite programming language is Python. Remember this.", thread=thread)
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # Second interaction - test memory
         second_response = await agent.run("What is my favorite programming language?", thread=thread)
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
 
 
@@ -100,7 +100,7 @@ async def test_openai_responses_client_agent_thread_storage_with_store_true():
         )
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
 
@@ -125,7 +125,7 @@ async def test_openai_responses_client_agent_existing_thread():
         thread = first_agent.get_new_thread()
         first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread)
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # Preserve the thread for reuse
@@ -140,7 +140,7 @@ async def test_openai_responses_client_agent_existing_thread():
             # Reuse the preserved thread
             second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
 
-            assert isinstance(second_response, AgentRunResponse)
+            assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()
 
@@ -157,7 +157,7 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
         # Test code interpreter functionality
         response = await agent.run("Calculate the sum of numbers from 1 to 10 using Python code.")
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
         # Should contain calculation result (sum of 1-10 = 55) or code execution content
@@ -179,7 +179,7 @@ async def test_openai_responses_client_agent_image_generation_tool():
         # Test image generation functionality
         response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.messages
 
         # Verify we got image content - look for ImageGenerationToolResultContent
@@ -209,7 +209,7 @@ async def test_openai_responses_client_agent_level_tool_persistence():
         # First run - agent-level tool should be available
         first_response = await agent.run("What's the weather like in Chicago?")
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
         assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
@@ -217,7 +217,7 @@ async def test_openai_responses_client_agent_level_tool_persistence():
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
@@ -249,7 +249,7 @@ async def test_openai_responses_client_run_level_tool_isolation():
             tools=[get_weather_with_counter],  # Run-level tool
         )
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the run-level weather tool (call count should be 1)
         assert call_count == 1
@@ -258,7 +258,7 @@ async def test_openai_responses_client_run_level_tool_isolation():
         # Second run - run-level tool should NOT persist (key isolation test)
         second_response = await agent.run("What's the weather like in Miami?")
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should NOT use the weather tool since it was only run-level in previous call
         # Call count should still be 1 (no additional calls)
@@ -286,7 +286,7 @@ async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
             "Provide a brief, helpful response.",
         )
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
 
@@ -312,7 +312,7 @@ async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
             options={"max_tokens": 5000},
         )
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text
         # Should contain Azure-related content since it's asking about Azure CLI
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
@@ -338,7 +338,7 @@ async def test_openai_responses_client_agent_local_mcp_tool() -> None:
             options={"max_tokens": 200},
         )
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
         # Should contain Azure-related content since it's asking about Azure CLI
@@ -375,7 +375,7 @@ async def test_openai_responses_client_agent_with_response_format_pydantic() -> 
         )
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.value is not None
         assert isinstance(response.value, ReleaseBrief)
 
@@ -422,7 +422,7 @@ async def test_openai_responses_client_agent_with_runtime_json_schema() -> None:
         )
 
         # Validate response
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
 
         # Parse JSON and validate structure

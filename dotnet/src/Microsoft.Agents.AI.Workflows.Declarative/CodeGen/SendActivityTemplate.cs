@@ -71,7 +71,7 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
 
     } 
      
-            this.Write("\n            );\n        AgentRunResponse response = new([new ChatMessage(ChatRole" +
+            this.Write("\n            );\n        AgentResponse response = new([new ChatMessage(ChatRole" +
                     ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRunRes" +
                     "ponseEvent(this.Id, response)).ConfigureAwait(false);");
 

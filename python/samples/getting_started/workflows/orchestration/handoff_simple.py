@@ -4,8 +4,8 @@ import asyncio
 from typing import Annotated, cast
 
 from agent_framework import (
+    AgentResponse,
     AgentRunEvent,
-    AgentRunResponse,
     ChatAgent,
     ChatMessage,
     HandoffAgentUserRequest,
@@ -158,14 +158,14 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
     return requests
 
 
-def _print_handoff_agent_user_request(response: AgentRunResponse) -> None:
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
     """Display the agent's response messages when requesting user input.
 
     This will happen when an agent generates a response that doesn't trigger
     a handoff, i.e., the agent is asking the user for more information.
 
     Args:
-        response: The AgentRunResponse from the agent requesting user input
+        response: The AgentResponse from the agent requesting user input
     """
     if not response.messages:
         raise RuntimeError("Cannot print agent responses: response has no messages.")

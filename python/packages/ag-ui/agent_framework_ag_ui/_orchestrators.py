@@ -646,11 +646,11 @@ class DefaultOrchestrator(Orchestrator):
                         yield end_event
 
         if response_format and all_updates:
-            from agent_framework import AgentRunResponse
+            from agent_framework import AgentResponse
             from pydantic import BaseModel
 
             logger.info(f"Processing structured output, update count: {len(all_updates)}")
-            final_response = AgentRunResponse.from_agent_run_response_updates(
+            final_response = AgentResponse.from_agent_run_response_updates(
                 all_updates, output_format_type=response_format
             )
 
