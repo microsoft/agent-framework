@@ -358,7 +358,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         self._yielded_outputs.append(copy.deepcopy(output))
 
         with _framework_event_origin():
-            event = WorkflowOutputEvent(data=output, source_executor_id=self._executor_id)
+            event = WorkflowOutputEvent(data=output, executor_id=self._executor_id)
         await self._runner_context.add_event(event)
 
     async def add_event(self, event: WorkflowEvent) -> None:

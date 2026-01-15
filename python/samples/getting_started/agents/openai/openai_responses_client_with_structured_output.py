@@ -35,7 +35,7 @@ async def non_streaming_example() -> None:
     print(f"User: {query}")
 
     # Get structured response from the agent using response_format parameter
-    result = await agent.run(query, response_format=OutputStruct)
+    result = await agent.run(query, options={"response_format": OutputStruct})
 
     # Access the structured output directly from the response value
     if result.value:
@@ -63,7 +63,7 @@ async def streaming_example() -> None:
     # Get structured response from streaming agent using AgentResponse.from_agent_response_generator
     # This method collects all streaming updates and combines them into a single AgentResponse
     result = await AgentResponse.from_agent_response_generator(
-        agent.run_stream(query, response_format=OutputStruct),
+        agent.run_stream(query, options={"response_format": OutputStruct}),
         output_format_type=OutputStruct,
     )
 

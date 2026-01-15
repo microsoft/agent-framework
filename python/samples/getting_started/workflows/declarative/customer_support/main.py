@@ -171,28 +171,28 @@ async def main() -> None:
     self_service_agent = chat_client.create_agent(
         name="SelfServiceAgent",
         instructions=SELF_SERVICE_INSTRUCTIONS,
-        response_format=SelfServiceResponse,
+        default_options={"response_format": SelfServiceResponse},
     )
 
     ticketing_agent = chat_client.create_agent(
         name="TicketingAgent",
         instructions=TICKETING_INSTRUCTIONS,
         tools=plugin.get_functions(),
-        response_format=TicketingResponse,
+        default_options={"response_format": TicketingResponse},
     )
 
     routing_agent = chat_client.create_agent(
         name="TicketRoutingAgent",
         instructions=TICKET_ROUTING_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        response_format=RoutingResponse,
+        default_options={"response_format": RoutingResponse},
     )
 
     windows_support_agent = chat_client.create_agent(
         name="WindowsSupportAgent",
         instructions=WINDOWS_SUPPORT_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        response_format=SupportResponse,
+        default_options={"response_format": SupportResponse},
     )
 
     resolution_agent = chat_client.create_agent(
@@ -205,7 +205,7 @@ async def main() -> None:
         name="TicketEscalationAgent",
         instructions=ESCALATION_INSTRUCTIONS,
         tools=[plugin.get_ticket, plugin.send_notification],
-        response_format=EscalationResponse,
+        default_options={"response_format": EscalationResponse},
     )
 
     # Agent registry for lookup

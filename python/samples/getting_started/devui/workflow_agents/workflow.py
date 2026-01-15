@@ -86,7 +86,7 @@ reviewer = chat_client.create_agent(
         "- feedback: concise, actionable feedback\n"
         "- clarity, completeness, accuracy, structure: individual scores (0-100)"
     ),
-    response_format=ReviewResult,
+    default_options={"response_format": ReviewResult},
 )
 
 # Create Editor agent - improves content based on feedback
