@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict
 """
 Azure AI Agent Provider Response Format Example
 
-This sample demonstrates using AzureAIAgentsProvider with response_format
-for structured outputs.
+This sample demonstrates using AzureAIAgentsProvider with default_options
+containing response_format for structured outputs.
 """
 
 
@@ -25,7 +25,7 @@ class WeatherInfo(BaseModel):
 
 
 async def main() -> None:
-    """Example of using response_format with AzureAIAgentsProvider."""
+    """Example of using default_options with response_format in AzureAIAgentsProvider."""
 
     async with (
         AzureCliCredential() as credential,
@@ -34,7 +34,7 @@ async def main() -> None:
         agent = await provider.create_agent(
             name="WeatherReporter",
             instructions="You provide weather reports in structured JSON format.",
-            response_format=WeatherInfo,
+            default_options={"response_format": WeatherInfo},
         )
 
         query = "What's the weather like in Paris today?"

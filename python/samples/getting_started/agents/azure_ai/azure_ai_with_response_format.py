@@ -34,7 +34,7 @@ async def main() -> None:
             name="ProductMarketerAgent",
             instructions="Return launch briefs as structured JSON.",
             # Specify type to use as response
-            options={"response_format": ReleaseBrief},
+            default_options={"response_format": ReleaseBrief},
         )
 
         query = "Draft a launch brief for the Contoso Note app."

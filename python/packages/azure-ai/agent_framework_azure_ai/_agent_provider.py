@@ -165,7 +165,6 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        response_format: type[BaseModel] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -188,10 +187,10 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
                 AZURE_AI_MODEL_DEPLOYMENT_NAME environment variable if not provided.
             instructions: Instructions for the agent's behavior.
             description: A description of the agent's purpose.
-            response_format: Pydantic model for structured outputs with automatic parsing.
             tools: Tools to make available to the agent.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
+                Include ``response_format`` here for structured output responses.
             middleware: List of middleware to intercept agent and function invocations.
             context_provider: Context provider to include during agent invocation.
 
@@ -217,6 +216,10 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
 
+        # Extract response_format from default_options if present
+        opts = dict(default_options) if default_options else {}
+        response_format = opts.get("response_format")
+
         args: dict[str, Any] = {
             "model": resolved_model,
             "name": name,
@@ -228,7 +231,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
             args["instructions"] = instructions
 
         # Handle response format
-        if response_format:
+        if response_format and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             args["response_format"] = self._create_response_format_config(response_format)
 
         # Normalize and convert tools
@@ -251,7 +254,6 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         return self._to_chat_agent_from_agent(
             created_agent,
             normalized_tools,
-            response_format=response_format,
             default_options=default_options,
             middleware=middleware,
             context_provider=context_provider,
@@ -375,7 +377,6 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         self,
         agent: Agent,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
-        response_format: type[BaseModel] | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
@@ -385,9 +386,9 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         Args:
             agent: The Agent SDK object.
             provided_tools: User-provided tools (including function implementations).
-            response_format: Pydantic model for structured output parsing.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
+                May include ``response_format`` for structured output parsing.
             middleware: List of middleware to intercept agent and function invocations.
             context_provider: Context provider to include during agent invocation.
         """
@@ -403,11 +404,6 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         # Merge tools: convert agent's hosted tools + user-provided function tools
         merged_tools = self._merge_tools(agent.tools, provided_tools)
 
-        # Build options dict
-        agent_options: dict[str, Any] = dict(default_options) if default_options else {}
-        if response_format:
-            agent_options["response_format"] = response_format
-
         return ChatAgent(  # type: ignore[return-value]
             chat_client=client,
             id=agent.id,
@@ -416,7 +412,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
             instructions=agent.instructions,
             model_id=agent.model,
             tools=merged_tools,
-            default_options=agent_options,  # type: ignore[arg-type]
+            default_options=default_options,  # type: ignore[arg-type]
             middleware=middleware,
             context_provider=context_provider,
         )

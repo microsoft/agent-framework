@@ -238,7 +238,7 @@ async def test_create_agent_with_response_format(
     azure_ai_unit_test_env: dict[str, str],
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test creating an agent with structured response format."""
+    """Test creating an agent with structured response format via default_options."""
 
     class WeatherResponse(BaseModel):
         temperature: float
@@ -259,7 +259,7 @@ async def test_create_agent_with_response_format(
 
     await provider.create_agent(
         name="TestAgent",
-        response_format=WeatherResponse,
+        default_options={"response_format": WeatherResponse},
     )
 
     call_kwargs = mock_agents_client.create_agent.call_args.kwargs
