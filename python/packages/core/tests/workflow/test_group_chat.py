@@ -298,10 +298,7 @@ class TestGroupChatBuilder:
 
         with pytest.raises(
             ValueError,
-            match=(
-                r"No participants or participant_factories have been configured\. "
-                r"Call participants\(\) or participant_factories\(\) first"
-            ),
+            match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\.",
         ):
             builder.build()
 
@@ -905,7 +902,7 @@ def test_group_chat_builder_rejects_empty_participant_factories():
 
     with pytest.raises(
         ValueError,
-        match=r"No participants or participant_factories have been configured",
+        match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\.",
     ):
         GroupChatBuilder().with_orchestrator(selection_func=selector).build()
 

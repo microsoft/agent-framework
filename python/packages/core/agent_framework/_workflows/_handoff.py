@@ -891,7 +891,7 @@ class HandoffBuilder:
                 if agent not in self._participant_factories:
                     raise ValueError(f"Start agent factory name '{agent}' is not in the participant_factories list")
             else:
-                raise ValueError("Call participant_factories(...) before with_start_agent(...)")
+                raise ValueError("Call register_participants(...) before with_start_agent(...)")
             self._start_id = agent
         elif isinstance(agent, AgentProtocol):
             resolved_id = self._resolve_to_id(agent)
@@ -1034,15 +1034,6 @@ class HandoffBuilder:
             ValueError: If participants or coordinator were not configured, or if
                        required configuration is invalid.
         """
-        if not self._participants and not self._participant_factories:
-            raise ValueError(
-                "No participants or participant_factories have been configured. "
-                "Call participants() or register_participants() first."
-            )
-
-        if self._start_id is None:
-            raise ValueError("Must call with_start_agent(...) before building the workflow.")
-
         # Resolve agents (either from instances or factories)
         # The returned map keys are either executor IDs or factory names, which is need to resolve handoff configs
         resolved_agents = self._resolve_agents()
@@ -1053,6 +1044,8 @@ class HandoffBuilder:
         executors = self._resolve_executors(resolved_agents, resolved_handoffs)
 
         # Build the workflow graph
+        if self._start_id is None:
+            raise ValueError("Must call with_start_agent(...) before building the workflow.")
         start_executor = executors[self._resolve_to_id(resolved_agents[self._start_id])]
         builder = WorkflowBuilder(
             name=self._name,
@@ -1091,8 +1084,9 @@ class HandoffBuilder:
         Returns:
             Map of executor IDs or factory names to `AgentProtocol` instances
         """
-        if self._participants and self._participant_factories:
-            raise ValueError("Cannot have both executors and participant_factories configured")
+        if not self._participants and not self._participant_factories:
+            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
+        # We don't need to check if both are set since that is handled in the respective methods
 
         if self._participants:
             return self._participants

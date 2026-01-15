@@ -494,6 +494,10 @@ class ConcurrentBuilder:
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
+        if not self._participants and not self._participant_factories:
+            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
+        # We don't need to check if both are set since that is handled in the respective methods
+
         participants: list[Executor | AgentProtocol] = []
         if self._participant_factories:
             # Resolve the participant factories now. This doesn't break the factory pattern
@@ -545,9 +549,6 @@ class ConcurrentBuilder:
 
             workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
         """
-        if not self._participants and not self._participant_factories:
-            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
-
         # Internal nodes
         dispatcher = _DispatchToAllParticipants(id="dispatcher")
         aggregator = (

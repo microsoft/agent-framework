@@ -569,7 +569,8 @@ class GroupChatBuilder:
                                   BaseGroupChatOrchestrator when invoked.
             orchestrator_name: Optional display name for the orchestrator in the workflow if
                                using a selection function. If not provided, defaults to
-                               `GroupChatBuilder.DEFAULT_ORCHESTRATOR_ID`.
+                               `GroupChatBuilder.DEFAULT_ORCHESTRATOR_ID`. This parameter is
+                               ignored if using an agent or custom orchestrator.
 
         Returns:
             Self for fluent chaining.
@@ -880,10 +881,7 @@ class GroupChatBuilder:
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
         if not self._participants and not self._participant_factories:
-            raise ValueError(
-                "No participants or participant_factories have been configured. "
-                "Call participants() or participant_factories() first."
-            )
+            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
 
         participants: list[Executor | AgentProtocol] = []

@@ -923,7 +923,7 @@ def test_magentic_builder_rejects_empty_participant_factories():
 
     with pytest.raises(
         ValueError,
-        match=r"No participants or participant_factories have been configured",
+        match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\.",
     ):
         MagenticBuilder().with_manager(FakeManager()).build()
 

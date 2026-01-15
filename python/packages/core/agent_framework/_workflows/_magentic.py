@@ -1716,8 +1716,28 @@ class MagenticBuilder:
         if sum(x is not None for x in [manager, agent, manager_factory, agent_factory]) != 1:
             raise ValueError("Exactly one of manager, agent, manager_factory, or agent_factory must be provided.")
 
+        def _log_warning_if_constructor_args_provided() -> None:
+            if any(
+                arg is not None
+                for arg in [
+                    task_ledger,
+                    task_ledger_facts_prompt,
+                    task_ledger_plan_prompt,
+                    task_ledger_full_prompt,
+                    task_ledger_facts_update_prompt,
+                    task_ledger_plan_update_prompt,
+                    progress_ledger_prompt,
+                    final_answer_prompt,
+                    max_stall_count,
+                    max_reset_count,
+                    max_round_count,
+                ]
+            ):
+                logger.warning("Customer manager provided; all other with_manager() arguments will be ignored.")
+
         if manager is not None:
             self._manager = manager
+            _log_warning_if_constructor_args_provided()
         elif agent is not None:
             self._manager = StandardMagenticManager(
                 agent=agent,
@@ -1735,6 +1755,7 @@ class MagenticBuilder:
             )
         elif manager_factory is not None:
             self._manager_factory = manager_factory
+            _log_warning_if_constructor_args_provided()
         elif agent_factory is not None:
             self._manager_agent_factory = agent_factory
             self._standard_manager_options = {
@@ -1786,11 +1807,9 @@ class MagenticBuilder:
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
         if not self._participants and not self._participant_factories:
-            raise ValueError(
-                "No participants or participant_factories have been configured. "
-                "Call participants() or participant_factories() first."
-            )
+            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
+
         participants: list[Executor | AgentProtocol] = []
         if self._participant_factories:
             for factory in self._participant_factories:

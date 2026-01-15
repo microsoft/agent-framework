@@ -208,7 +208,9 @@ def test_build_fails_without_start_agent():
 
 def test_build_fails_without_participants():
     """Verify that build() raises ValueError when no participants are provided."""
-    with pytest.raises(ValueError, match="No participants or participant_factories have been configured."):
+    with pytest.raises(
+        ValueError, match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first."
+    ):
         HandoffBuilder().build()
 
 
@@ -294,7 +296,9 @@ def test_handoff_builder_rejects_empty_participant_factories():
     with pytest.raises(ValueError, match=r"participant_factories cannot be empty"):
         HandoffBuilder().register_participants({})
 
-    with pytest.raises(ValueError, match=r"No participants or participant_factories have been configured"):
+    with pytest.raises(
+        ValueError, match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\."
+    ):
         HandoffBuilder(participant_factories={}).build()
 
 
@@ -387,7 +391,7 @@ def test_handoff_builder_rejects_factory_name_coordinator_with_instances():
     triage = MockHandoffAgent(name="triage")
     specialist = MockHandoffAgent(name="specialist")
 
-    with pytest.raises(ValueError, match="Call participant_factories.*before with_start_agent"):
+    with pytest.raises(ValueError, match=r"Call register_participants\(...\) before with_start_agent\(...\)"):
         (
             HandoffBuilder(participants=[triage, specialist]).with_start_agent(
                 "triage"
