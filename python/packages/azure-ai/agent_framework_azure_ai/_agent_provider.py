@@ -190,7 +190,6 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
             tools: Tools to make available to the agent.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
-                Include ``response_format`` here for structured output responses.
             middleware: List of middleware to intercept agent and function invocations.
             context_provider: Context provider to include during agent invocation.
 
@@ -388,7 +387,6 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
             provided_tools: User-provided tools (including function implementations).
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
-                May include ``response_format`` for structured output parsing.
             middleware: List of middleware to intercept agent and function invocations.
             context_provider: Context provider to include during agent invocation.
         """
