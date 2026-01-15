@@ -16,7 +16,7 @@ from ._confirmation_strategies import (
 from ._endpoint import add_agent_framework_fastapi_endpoint
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
-from ._types import AGUIRequest
+from ._types import AgentState, AGUIChatOptions, AGUIRequest, PredictStateConfig, RunMetadata
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -30,11 +30,15 @@ __all__ = [
     "AgentFrameworkAgent",
     "add_agent_framework_fastapi_endpoint",
     "AGUIChatClient",
+    "AGUIChatOptions",
     "AGUIEventConverter",
     "AGUIHttpService",
     "AGUIRequest",
+    "AgentState",
     "ConfirmationStrategy",
     "DefaultConfirmationStrategy",
+    "PredictStateConfig",
+    "RunMetadata",
     "TaskPlannerConfirmationStrategy",
     "RecipeConfirmationStrategy",
     "DocumentWriterConfirmationStrategy",

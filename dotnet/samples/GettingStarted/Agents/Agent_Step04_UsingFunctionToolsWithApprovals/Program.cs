@@ -64,4 +64,4 @@ while (userInputRequests.Count > 0)
 Console.WriteLine($"\nAgent: {response}");
 
 // For streaming use:
-// Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
+// Console.WriteLine($"\nAgent: {updates.ToAgentResponse()}");

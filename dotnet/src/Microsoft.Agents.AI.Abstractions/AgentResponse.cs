@@ -24,30 +24,30 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="AgentRunResponse"/> provides one or more response messages and metadata about the response.
+/// <see cref="AgentResponse"/> provides one or more response messages and metadata about the response.
 /// A typical response will contain a single message, however a response may contain multiple messages
 /// in a variety of scenarios. For example, if the agent internally invokes functions or tools, performs
 /// RAG retrievals or has other complex logic, a single run by the agent may produce many messages showing
 /// the intermediate progress that the agent made towards producing the agent result.
 /// </para>
 /// <para>
-/// To get the text result of the response, use the <see cref="Text"/> property or simply call <see cref="ToString()"/> on the <see cref="AgentRunResponse"/>.
+/// To get the text result of the response, use the <see cref="Text"/> property or simply call <see cref="ToString()"/> on the <see cref="AgentResponse"/>.
 /// </para>
 /// </remarks>
-public class AgentRunResponse
+public class AgentResponse
 {
     /// <summary>The response messages.</summary>
     private IList<ChatMessage>? _messages;
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
-    public AgentRunResponse()
+    /// <summary>Initializes a new instance of the <see cref="AgentResponse"/> class.</summary>
+    public AgentResponse()
     {
     }
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
+    /// <summary>Initializes a new instance of the <see cref="AgentResponse"/> class.</summary>
     /// <param name="message">The response message to include in this response.</param>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
-    public AgentRunResponse(ChatMessage message)
+    public AgentResponse(ChatMessage message)
     {
         _ = Throw.IfNull(message);
 
@@ -55,16 +55,16 @@ public class AgentRunResponse
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRunResponse"/> class from an existing <see cref="ChatResponse"/>.
+    /// Initializes a new instance of the <see cref="AgentResponse"/> class from an existing <see cref="ChatResponse"/>.
     /// </summary>
-    /// <param name="response">The <see cref="ChatResponse"/> from which to populate this <see cref="AgentRunResponse"/>.</param>
+    /// <param name="response">The <see cref="ChatResponse"/> from which to populate this <see cref="AgentResponse"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// This constructor creates an agent response that wraps an existing <see cref="ChatResponse"/>, preserving all
     /// metadata and storing the original response in <see cref="RawRepresentation"/> for access to
     /// the underlying implementation details.
     /// </remarks>
-    public AgentRunResponse(ChatResponse response)
+    public AgentResponse(ChatResponse response)
     {
         _ = Throw.IfNull(response);
 
@@ -78,10 +78,10 @@ public class AgentRunResponse
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRunResponse"/> class with the specified collection of messages.
+    /// Initializes a new instance of the <see cref="AgentResponse"/> class with the specified collection of messages.
     /// </summary>
     /// <param name="messages">The collection of response messages, or <see langword="null"/> to create an empty response.</param>
-    public AgentRunResponse(IList<ChatMessage>? messages)
+    public AgentResponse(IList<ChatMessage>? messages)
     {
         this._messages = messages;
     }
@@ -201,7 +201,7 @@ public class AgentRunResponse
 
     /// <summary>Gets or sets the raw representation of the run response from an underlying implementation.</summary>
     /// <remarks>
-    /// If a <see cref="AgentRunResponse"/> is created to represent some underlying object from another object
+    /// If a <see cref="AgentResponse"/> is created to represent some underlying object from another object
     /// model, this property can be used to store that original object. This can be useful for debugging or
     /// for enabling a consumer to access the underlying object model if needed.
     /// </remarks>
@@ -226,11 +226,11 @@ public class AgentRunResponse
     public override string ToString() => this.Text;
 
     /// <summary>
-    /// Converts this <see cref="AgentRunResponse"/> into a collection of <see cref="AgentRunResponseUpdate"/> instances
+    /// Converts this <see cref="AgentResponse"/> into a collection of <see cref="AgentResponseUpdate"/> instances
     /// suitable for streaming scenarios.
     /// </summary>
     /// <returns>
-    /// An array of <see cref="AgentRunResponseUpdate"/> instances that collectively represent
+    /// An array of <see cref="AgentResponseUpdate"/> instances that collectively represent
     /// the same information as this response.
     /// </returns>
     /// <remarks>
@@ -245,12 +245,12 @@ public class AgentRunResponse
     /// original message sequence.
     /// </para>
     /// </remarks>
-    public AgentRunResponseUpdate[] ToAgentRunResponseUpdates()
+    public AgentResponseUpdate[] ToAgentResponseUpdates()
     {
-        AgentRunResponseUpdate? extra = null;
+        AgentResponseUpdate? extra = null;
         if (this.AdditionalProperties is not null || this.Usage is not null)
         {
-            extra = new AgentRunResponseUpdate
+            extra = new AgentResponseUpdate
             {
                 AdditionalProperties = this.AdditionalProperties,
             };
@@ -262,13 +262,13 @@ public class AgentRunResponse
         }
 
         int messageCount = this._messages?.Count ?? 0;
-        var updates = new AgentRunResponseUpdate[messageCount + (extra is not null ? 1 : 0)];
+        var updates = new AgentResponseUpdate[messageCount + (extra is not null ? 1 : 0)];
 
         int i;
         for (i = 0; i < messageCount; i++)
         {
             ChatMessage message = this._messages![i];
-            updates[i] = new AgentRunResponseUpdate
+            updates[i] = new AgentResponseUpdate
             {
                 AdditionalProperties = message.AdditionalProperties,
                 AuthorName = message.AuthorName,

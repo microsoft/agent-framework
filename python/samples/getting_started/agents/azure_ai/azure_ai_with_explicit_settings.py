@@ -5,8 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -27,22 +26,22 @@ def get_weather(
 
 
 async def main() -> None:
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIClient(
-                project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-                model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-                credential=credential,
-                agent_name="WeatherAgent",
-            ),
+        AzureAIProjectAgentProvider(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=credential,
+        ) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         query = "What's the weather like in New York?"
         print(f"User: {query}")
         result = await agent.run(query)

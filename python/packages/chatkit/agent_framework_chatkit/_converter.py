@@ -6,11 +6,6 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 
-if sys.version_info >= (3, 11):
-    from typing import assert_never
-else:
-    from typing_extensions import assert_never
-
 from agent_framework import (
     ChatMessage,
     DataContent,
@@ -37,6 +32,11 @@ from chatkit.types import (
     WidgetItem,
     WorkflowItem,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import assert_never
+else:
+    from typing_extensions import assert_never
 
 logger = logging.getLogger(__name__)
 

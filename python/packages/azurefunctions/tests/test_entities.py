@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, ErrorContent, Role
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, ErrorContent, Role
 from pydantic import BaseModel
 
 from agent_framework_azurefunctions._durable_agent_state import (
@@ -37,12 +37,12 @@ def _role_value(chat_message: DurableAgentStateMessage) -> str:
     return str(role_value)
 
 
-def _agent_response(text: str | None) -> AgentRunResponse:
-    """Create an AgentRunResponse with a single assistant message."""
+def _agent_response(text: str | None) -> AgentResponse:
+    """Create an AgentResponse with a single assistant message."""
     message = (
         ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", contents=[])
     )
-    return AgentRunResponse(messages=[message])
+    return AgentResponse(messages=[message])
 
 
 class RecordingCallback:
@@ -54,12 +54,12 @@ class RecordingCallback:
 
     async def on_streaming_response_update(
         self,
-        update: AgentRunResponseUpdate,
+        update: AgentResponseUpdate,
         context: Any,
     ) -> None:
         await self.stream_mock(update, context)
 
-    async def on_agent_response(self, response: AgentRunResponse, context: Any) -> None:
+    async def on_agent_response(self, response: AgentResponse, context: Any) -> None:
         await self.response_mock(response, context)
 
 
@@ -132,7 +132,7 @@ class TestAgentEntityRunAgent:
         assert getattr(sent_message.role, "value", sent_message.role) == "user"
 
         # Verify result
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Test response"
 
     async def test_run_agent_executes_agent(self) -> None:
@@ -159,18 +159,18 @@ class TestAgentEntityRunAgent:
         assert getattr(sent_message.role, "value", sent_message.role) == "user"
 
         # Verify result
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Test response"
 
     async def test_run_agent_streaming_callbacks_invoked(self) -> None:
         """Ensure streaming updates trigger callbacks and run() is not used."""
 
         updates = [
-            AgentRunResponseUpdate(text="Hello"),
-            AgentRunResponseUpdate(text=" world"),
+            AgentResponseUpdate(text="Hello"),
+            AgentResponseUpdate(text=" world"),
         ]
 
-        async def update_generator() -> AsyncIterator[AgentRunResponseUpdate]:
+        async def update_generator() -> AsyncIterator[AgentResponseUpdate]:
             for update in updates:
                 yield update
 
@@ -192,7 +192,7 @@ class TestAgentEntityRunAgent:
             },
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert "Hello" in result.text
         assert callback.stream_mock.await_count == len(updates)
         assert callback.response_mock.await_count == 1
@@ -239,7 +239,7 @@ class TestAgentEntityRunAgent:
             },
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Final response"
         assert callback.stream_mock.await_count == 0
         assert callback.response_mock.await_count == 1
@@ -605,7 +605,7 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-1"}
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
         assert isinstance(content, ErrorContent)
@@ -624,7 +624,7 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-2"}
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
         assert isinstance(content, ErrorContent)
@@ -643,7 +643,7 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-3"}
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
         assert isinstance(content, ErrorContent)
@@ -682,7 +682,7 @@ class TestErrorHandling:
         )
 
         # Even on error, message info should be preserved
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
         assert isinstance(content, ErrorContent)
@@ -793,7 +793,7 @@ class TestRunRequestSupport:
 
         result = await entity.run(mock_context, request)
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Response"
 
     async def test_run_agent_with_dict_request(self) -> None:
@@ -814,7 +814,7 @@ class TestRunRequestSupport:
 
         result = await entity.run(mock_context, request_dict)
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Response"
 
     async def test_run_agent_with_string_raises_without_correlation(self) -> None:
@@ -869,7 +869,7 @@ class TestRunRequestSupport:
 
         result = await entity.run(mock_context, request)
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == '{"answer": 42}'
         assert result.value is None
 
@@ -887,7 +887,7 @@ class TestRunRequestSupport:
 
         result = await entity.run(mock_context, request)
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         # Agent should have been called (tool disabling is framework-dependent)
         mock_agent.run.assert_called_once()
 

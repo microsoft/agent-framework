@@ -83,11 +83,11 @@ internal sealed class WorkflowThread : AgentThread
         return marshaller.Marshal(info);
     }
 
-    public AgentRunResponseUpdate CreateUpdate(string responseId, object raw, params AIContent[] parts)
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, params AIContent[] parts)
     {
         Throw.IfNullOrEmpty(parts);
 
-        AgentRunResponseUpdate update = new(ChatRole.Assistant, parts)
+        AgentResponseUpdate update = new(ChatRole.Assistant, parts)
         {
             CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
@@ -130,7 +130,7 @@ internal sealed class WorkflowThread : AgentThread
     }
 
     internal async
-    IAsyncEnumerable<AgentRunResponseUpdate> InvokeStageAsync(
+    IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         try
@@ -151,13 +151,13 @@ internal sealed class WorkflowThread : AgentThread
             {
                 switch (evt)
                 {
-                    case AgentRunUpdateEvent agentUpdate:
+                    case AgentResponseUpdateEvent agentUpdate:
                         yield return agentUpdate.Update;
                         break;
 
                     case RequestInfoEvent requestInfo:
                         FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
-                        AgentRunResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, fcContent);
+                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, fcContent);
                         yield return update;
                         break;
 
@@ -186,7 +186,7 @@ internal sealed class WorkflowThread : AgentThread
 
                     default:
                         // Emit all other workflow events for observability (DevUI, logging, etc.)
-                        yield return new AgentRunResponseUpdate(ChatRole.Assistant, [])
+                        yield return new AgentResponseUpdate(ChatRole.Assistant, [])
                         {
                             CreatedAt = DateTimeOffset.UtcNow,
                             MessageId = Guid.NewGuid().ToString("N"),

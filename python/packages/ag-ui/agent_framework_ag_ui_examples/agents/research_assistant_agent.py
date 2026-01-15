@@ -3,6 +3,7 @@
 """Example agent demonstrating agentic generative UI with custom events during execution."""
 
 import asyncio
+from typing import Any
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework.ag_ui import AgentFrameworkAgent
@@ -87,8 +88,8 @@ _RESEARCH_ASSISTANT_INSTRUCTIONS = (
 )
 
 
-def research_assistant_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
-    """Create a research assistant agent with progress events.
+def research_assistant_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+    """Create a research assistant agent.
 
     Args:
         chat_client: The chat client to use for the agent

@@ -319,7 +319,7 @@ class DefaultOrchestrator(Orchestrator):
 
         response_format = None
         if isinstance(context.agent, ChatAgent):
-            response_format = context.agent.chat_options.response_format
+            response_format = context.agent.default_options.get("response_format")
         skip_text_content = response_format is not None
 
         client_tools = convert_agui_tools_to_agent_framework(context.input_data.get("tools"))
@@ -434,10 +434,10 @@ class DefaultOrchestrator(Orchestrator):
         run_kwargs: dict[str, Any] = {
             "thread": thread,
             "tools": tools_param,
-            "metadata": safe_metadata,
+            "options": {"metadata": safe_metadata},
         }
         if safe_metadata:
-            run_kwargs["store"] = True
+            run_kwargs["options"]["store"] = True
 
         async def _resolve_approval_responses(
             messages: list[Any],
@@ -646,11 +646,11 @@ class DefaultOrchestrator(Orchestrator):
                         yield end_event
 
         if response_format and all_updates:
-            from agent_framework import AgentRunResponse
+            from agent_framework import AgentResponse
             from pydantic import BaseModel
 
             logger.info(f"Processing structured output, update count: {len(all_updates)}")
-            final_response = AgentRunResponse.from_agent_run_response_updates(
+            final_response = AgentResponse.from_agent_run_response_updates(
                 all_updates, output_format_type=response_format
             )
 

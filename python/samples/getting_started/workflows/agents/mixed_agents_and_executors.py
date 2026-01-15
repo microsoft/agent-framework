@@ -66,8 +66,8 @@ class Evaluator(Executor):
             ctx: Workflow context for yielding the final output string
         """
         target_text = "1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89"
-        correctness = target_text in message.agent_run_response.text
-        consumption = message.agent_run_response.usage_details
+        correctness = target_text in message.agent_response.text
+        consumption = message.agent_response.usage_details
         await ctx.yield_output(f"Correctness: {correctness}, Consumption: {consumption}")
 
 

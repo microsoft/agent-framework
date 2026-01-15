@@ -29,7 +29,7 @@ public readonly record struct StreamChunk(string EntryId, string? Text, bool IsD
 /// </para>
 /// <para>
 /// Each agent session gets its own Redis Stream, keyed by session ID. The stream entries
-/// contain text chunks extracted from <see cref="AgentRunResponseUpdate"/> objects.
+/// contain text chunks extracted from <see cref="AgentResponseUpdate"/> objects.
 /// </para>
 /// </remarks>
 public sealed class RedisStreamResponseHandler : IAgentResponseHandler
@@ -53,7 +53,7 @@ public sealed class RedisStreamResponseHandler : IAgentResponseHandler
 
     /// <inheritdoc/>
     public async ValueTask OnStreamingResponseUpdateAsync(
-        IAsyncEnumerable<AgentRunResponseUpdate> messageStream,
+        IAsyncEnumerable<AgentResponseUpdate> messageStream,
         CancellationToken cancellationToken)
     {
         // Get the current session ID from the DurableAgentContext
@@ -73,7 +73,7 @@ public sealed class RedisStreamResponseHandler : IAgentResponseHandler
         IDatabase db = this._redis.GetDatabase();
         int sequenceNumber = 0;
 
-        await foreach (AgentRunResponseUpdate update in messageStream.WithCancellation(cancellationToken))
+        await foreach (AgentResponseUpdate update in messageStream.WithCancellation(cancellationToken))
         {
             // Extract just the text content - this avoids serialization round-trip issues
             string text = update.Text;
@@ -112,7 +112,7 @@ public sealed class RedisStreamResponseHandler : IAgentResponseHandler
     }
 
     /// <inheritdoc/>
-    public ValueTask OnAgentResponseAsync(AgentRunResponse message, CancellationToken cancellationToken)
+    public ValueTask OnAgentResponseAsync(AgentResponse message, CancellationToken cancellationToken)
     {
         // This handler is optimized for streaming responses.
         // For non-streaming responses, we don't need to store in Redis since

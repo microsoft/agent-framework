@@ -35,7 +35,7 @@ AgentRunOptions options = new() { AllowBackgroundResponses = true };
 AgentThread thread = await agent.GetNewThreadAsync();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
 
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)

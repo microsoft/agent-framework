@@ -22,17 +22,17 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    protected override Task<AgentRunResponse> RunCoreAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -172,8 +172,8 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         return result ?? messages;
     }
 
-    private static AgentRunResponseUpdate ProcessOutgoingApprovalRequests(
-        AgentRunResponseUpdate update,
+    private static AgentResponseUpdate ProcessOutgoingApprovalRequests(
+        AgentResponseUpdate update,
         JsonSerializerOptions jsonSerializerOptions)
     {
         IList<AIContent>? updatedContents = null;
@@ -207,7 +207,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         {
             var chatUpdate = update.AsChatResponseUpdate();
             // Yield a tool call update that represents the approval request
-            return new AgentRunResponseUpdate(new ChatResponseUpdate()
+            return new AgentResponseUpdate(new ChatResponseUpdate()
             {
                 Role = chatUpdate.Role,
                 Contents = updatedContents,
