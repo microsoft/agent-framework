@@ -1,15 +1,15 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CA1812</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
-    <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
     <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
     <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>
@@ -23,15 +23,9 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
-
+  
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\..\workflow-samples\MathChat.yaml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
+    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.OpenAI\Microsoft.Agents.AI.Workflows.Declarative.OpenAI.csproj" />
   </ItemGroup>
 
 </Project>
