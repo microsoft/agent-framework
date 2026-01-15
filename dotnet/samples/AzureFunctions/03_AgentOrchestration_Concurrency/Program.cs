@@ -28,8 +28,8 @@ const string PhysicistInstructions = "You are an expert in physics. You answer q
 const string ChemistName = "ChemistAgent";
 const string ChemistInstructions = "You are an expert in chemistry. You answer questions from a chemistry perspective.";
 
-AIAgent physicistAgent = client.GetChatClient(deploymentName).CreateAIAgent(PhysicistInstructions, PhysicistName);
-AIAgent chemistAgent = client.GetChatClient(deploymentName).CreateAIAgent(ChemistInstructions, ChemistName);
+AIAgent physicistAgent = client.GetChatClient(deploymentName).AsAIAgent(PhysicistInstructions, PhysicistName);
+AIAgent chemistAgent = client.GetChatClient(deploymentName).AsAIAgent(ChemistInstructions, ChemistName);
 
 using IHost app = FunctionsApplication
     .CreateBuilder(args)

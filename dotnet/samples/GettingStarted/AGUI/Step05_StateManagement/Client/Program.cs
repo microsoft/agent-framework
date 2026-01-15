@@ -19,7 +19,7 @@ using HttpClient httpClient = new()
 
 AGUIChatClient chatClient = new(httpClient, serverUrl);
 
-AIAgent baseAgent = chatClient.CreateAIAgent(
+AIAgent baseAgent = chatClient.AsAIAgent(
     name: "recipe-client",
     description: "AG-UI Recipe Client Agent");
 
