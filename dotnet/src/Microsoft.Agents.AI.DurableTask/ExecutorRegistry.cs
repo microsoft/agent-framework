@@ -7,13 +7,25 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <summary>
 /// Provides a registry for storing and retrieving executor bindings independently from workflows.
 /// </summary>
-/// <remarks>
-/// This registry allows executors to be looked up by name without needing to search through all workflows,
-/// which is useful for activity function execution where only the executor name is known.
-/// </remarks>
 internal sealed class ExecutorRegistry
 {
     private readonly Dictionary<string, ExecutorRegistration> _executors = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the number of registered executors.
+    /// </summary>
+    public int Count => this._executors.Count;
+
+    /// <summary>
+    /// Attempts to get an executor registration by name.
+    /// </summary>
+    /// <param name="executorName">The executor name to look up.</param>
+    /// <param name="registration">When this method returns, contains the registration if found; otherwise, null.</param>
+    /// <returns><see langword="true"/> if the executor was found; otherwise, <see langword="false"/>.</returns>
+    public bool TryGetExecutor(string executorName, out ExecutorRegistration? registration)
+    {
+        return this._executors.TryGetValue(executorName, out registration);
+    }
 
     /// <summary>
     /// Registers an executor binding from a workflow.
@@ -21,38 +33,14 @@ internal sealed class ExecutorRegistry
     /// <param name="executorName">The executor name (without GUID suffix).</param>
     /// <param name="executorId">The full executor ID (may include GUID suffix).</param>
     /// <param name="workflow">The workflow containing the executor.</param>
-    /// <remarks>
-    /// If an executor with the same name is already registered, it will be skipped.
-    /// This is expected behavior when the same executor is used across multiple workflows.
-    /// </remarks>
     internal void Register(string executorName, string executorId, Workflow workflow)
     {
         ArgumentException.ThrowIfNullOrEmpty(executorName);
         ArgumentException.ThrowIfNullOrEmpty(executorId);
         ArgumentNullException.ThrowIfNull(workflow);
 
-        // Only register if not already present (first registration wins)
-        if (!this._executors.ContainsKey(executorName))
-        {
-            this._executors[executorName] = new ExecutorRegistration(executorId, workflow);
-        }
+        this._executors.TryAdd(executorName, new ExecutorRegistration(executorId, workflow));
     }
-
-    /// <summary>
-    /// Attempts to get an executor registration by name.
-    /// </summary>
-    /// <param name="executorName">The executor name to look up.</param>
-    /// <param name="registration">When this method returns, contains the registration if found; otherwise, null.</param>
-    /// <returns><c>true</c> if the executor was found; otherwise, <c>false</c>.</returns>
-    public bool TryGetExecutor(string executorName, out ExecutorRegistration? registration)
-    {
-        return this._executors.TryGetValue(executorName, out registration);
-    }
-
-    /// <summary>
-    /// Gets the number of registered executors.
-    /// </summary>
-    public int Count => this._executors.Count;
 }
 
 /// <summary>

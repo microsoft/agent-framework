@@ -23,12 +23,12 @@ internal sealed partial class SurveyResponseParserExecutor() : Executor<string, 
 
     public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        SurveyResponse response = this.ParseSurveyResponse(message);
+        SurveyResponse response = ParseSurveyResponse(message);
         string jsonResult = JsonSerializer.Serialize(response, s_jsonOptions);
         return ValueTask.FromResult(jsonResult);
     }
 
-    private SurveyResponse ParseSurveyResponse(string message)
+    private static SurveyResponse ParseSurveyResponse(string message)
     {
         // Parse the message to extract rating and comment
         int? rating = null;

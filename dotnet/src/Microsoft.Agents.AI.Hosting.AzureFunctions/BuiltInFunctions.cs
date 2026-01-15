@@ -35,6 +35,9 @@ internal static class BuiltInFunctions
         [ActivityTrigger] string input,
         FunctionContext functionContext)
     {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(functionContext);
+
         string activityFunctionName = functionContext.FunctionDefinition.Name;
 
         DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();

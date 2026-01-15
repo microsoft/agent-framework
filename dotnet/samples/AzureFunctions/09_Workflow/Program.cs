@@ -26,7 +26,7 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
 // Set up an AI agent following the standard Microsoft Agent Framework pattern.
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
-const string AnalysisInstructions = """
+const string FeedbackAnalysisInstructions = """
 You are a Customer Feedback Analyzer. Your task is to analyze customer survey responses and categorize them accurately.
 
 INPUT: You will receive customer feedback text that may include a rating and comments.
@@ -44,31 +44,44 @@ CATEGORIZATION RULES:
 - "Support Incident Status": Follow-ups on existing tickets, status inquiries about previous issues
 
 RESPONSE FORMAT: Return only the category name exactly as shown above, with no additional text or explanation.
-
-Examples:
-- "The app crashes when I try to export" → Bug Report
-- "Love the new design! Great work" → General Feedback
-- "Why was I charged twice this month?" → Billing Question
-- "What's the status of ticket #12345?" → Support Incident Status
 """;
-AIAgent agent = client.GetChatClient(deploymentName).CreateAIAgent(JokerInstructions, JokerName);
-AIAgent surveyFeedbackAgent = client.GetChatClient(deploymentName).CreateAIAgent(AnalysisInstructions, "FeedbackAnalysisBot");
 
+AIAgent agent = client.GetChatClient(deploymentName).CreateAIAgent(JokerInstructions, JokerName);
+
+// 3 Executors usd by the workflow.
+// 1. Class based executor to parse survey response.
 SurveyResponseParserExecutor surveyResponseParserExecutor = new();
-ResponseRouterExecutor responseRouterExecutor = new();
+
+// 2. AI Agent to analyze feedback and categorize it.
+AIAgent surveyFeedbackAgent = client.GetChatClient(deploymentName).CreateAIAgent(FeedbackAnalysisInstructions, "FeedbackAnalyzerAgent");
+
+// 3. Function delegate executor to route response based on category.
+Func<string, string> responseHandlingExecutorFunc = input => input switch
+{
+    var s when s.Contains("billing", StringComparison.OrdinalIgnoreCase)
+        => "Will notify Billing Team",
+
+    var s when s.Contains("Bug Report", StringComparison.OrdinalIgnoreCase)
+        => "Will notify Technical Support Team",
+
+    _ => "Will notify General Support Team"
+};
+var responseRouterExecutor = responseHandlingExecutorFunc.BindAsExecutor("ResponseRouterExecutor");
 
 WorkflowBuilder builder = new(surveyResponseParserExecutor);
 builder.AddEdge(surveyResponseParserExecutor, surveyFeedbackAgent);
 builder.AddEdge(surveyFeedbackAgent, responseRouterExecutor).WithOutputFrom(responseRouterExecutor);
-
 var workflow = builder.WithName("HandleSurveyResponse").Build();
 
-// Configure the function app to host AI agents and workflows in a unified way.
-// This will automatically generate HTTP API endpoints for agents and workflows.
-var functionBuilder = FunctionsApplication.CreateBuilder(args);
-functionBuilder.ConfigureFunctionsWebApplication().ConfigureDurableOptions(options =>
-{
-    // Configure workflows
-    options.Workflows.AddWorkflow(workflow);
-});
-functionBuilder.Build().Run();
+FunctionsApplication.CreateBuilder(args)
+    .ConfigureFunctionsWebApplication()
+    //.ConfigureDurableAgents(options => options.AddAIAgent(agent))
+    .ConfigureDurableOptions(options =>
+    {
+        // Configure workflows
+        options.Workflows.AddWorkflow(workflow);
+
+        // Optional - Configure AI agents
+        // options.Agents.AddAIAgent(agent);
+    })
+    .Build().Run();
