@@ -1,0 +1,11 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: ollama
+spec:
+  type: conversation.ollama
+  metadata:
+    - name : model
+      value: llama3.2
+    - name: cacheTTL
+      value: 10m
