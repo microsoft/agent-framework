@@ -44,7 +44,6 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         string? encodedEntityRequest = null;
         DurableTaskClient? durableTaskClient = null;
         ToolInvocationContext? mcpToolInvocationContext = null;
-        //string? encodedTaskOrchestrationContext = null;
 
         foreach (var binding in values)
         {
@@ -62,9 +61,6 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 case ToolInvocationContext toolContext:
                     mcpToolInvocationContext = toolContext;
                     break;
-                    //case string orchestrationContext:
-                    //    encodedTaskOrchestrationContext = orchestrationContext;
-                    //    break;
             }
         }
 
@@ -84,7 +80,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
 
             context.GetInvocationResult().Value = await BuiltInFunctions.RunAgentHttpAsync(
                    httpRequestData,
-                   durableTaskClient!,
+                   durableTaskClient,
                    context);
             return;
         }
@@ -97,7 +93,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             }
 
             context.GetInvocationResult().Value = await BuiltInFunctions.InvokeAgentAsync(
-                durableTaskClient!,
+                durableTaskClient,
                 encodedEntityRequest,
                 context);
             return;
@@ -111,7 +107,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             }
 
             context.GetInvocationResult().Value =
-                await BuiltInFunctions.RunMcpToolAsync(mcpToolInvocationContext, durableTaskClient!, context);
+                await BuiltInFunctions.RunMcpToolAsync(mcpToolInvocationContext, durableTaskClient, context);
             return;
         }
 
@@ -124,7 +120,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
 
             context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrechstrtationHttpTriggerAsync(
                    httpRequestData,
-                   durableTaskClient!,
+                   durableTaskClient,
                    context);
             return;
         }

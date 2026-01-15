@@ -98,6 +98,9 @@ public static class DurableOptionsExtensions
 
     private static void ConfigureWorkflowOrchestration(FunctionsApplicationBuilder builder)
     {
+        // Registering a single orchestration function to handle all workflow runs.
+        // This is due to a gap in durable extension today and can be replace with dynamic orchestration registration in future, per workflow.
+
         builder.ConfigureDurableWorker().AddTasks(tasks =>
             tasks.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(
                 "WorkflowRunnerOrchestration",

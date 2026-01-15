@@ -171,9 +171,19 @@ public sealed class DurableAgentsOptions
     /// Determines whether an agent is configured as workflow-only (no HTTP triggers).
     /// </summary>
     /// <param name="agentName">The name of the agent.</param>
-    /// <returns>True if the agent is workflow-only; otherwise, false.</returns>
+    /// <returns><see langword="true"/> if the agent is workflow-only; otherwise, <see langword="false"/>.</returns>
     internal bool IsWorkflowOnly(string agentName)
     {
         return this._workflowOnlyAgents.Contains(agentName);
+    }
+
+    /// <summary>
+    /// Determines whether an agent with the specified name is already registered.
+    /// </summary>
+    /// <param name="agentName">The name of the agent.</param>
+    /// <returns><see langword="true"/> if an agent with the name is registered; otherwise, <see langword="false"/>.</returns>
+    internal bool ContainsAgent(string agentName)
+    {
+        return this._agentFactories.ContainsKey(agentName);
     }
 }

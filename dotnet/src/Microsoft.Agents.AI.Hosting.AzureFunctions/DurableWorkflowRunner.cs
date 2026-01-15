@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Workflows;
@@ -113,7 +114,7 @@ internal sealed class DurableWorkflowRunner
             {
                 WorkflowExecutorInfo executorInfo = level.Executors[0];
                 string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                results[executorInfo.ExecutorId] = await this.ExecuteExecutorAsync(context, workflow, executorInfo, input, logger).ConfigureAwait(true);
+                results[executorInfo.ExecutorId] = await this.ExecuteExecutorAsync(context, executorInfo, input, logger).ConfigureAwait(true);
             }
             else
             {
@@ -121,7 +122,7 @@ internal sealed class DurableWorkflowRunner
                 foreach (WorkflowExecutorInfo executorInfo in level.Executors)
                 {
                     string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                    tasks.Add(this.ExecuteExecutorWithIdAsync(context, workflow, executorInfo, input, logger));
+                    tasks.Add(this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger));
                 }
 
                 foreach ((string id, string result) in await Task.WhenAll(tasks).ConfigureAwait(true))
@@ -136,18 +137,16 @@ internal sealed class DurableWorkflowRunner
 
     private async Task<(string Id, string Result)> ExecuteExecutorWithIdAsync(
         TaskOrchestrationContext context,
-        Workflow workflow,
         WorkflowExecutorInfo executorInfo,
         string input,
         ILogger logger)
     {
-        string result = await this.ExecuteExecutorAsync(context, workflow, executorInfo, input, logger).ConfigureAwait(true);
+        string result = await this.ExecuteExecutorAsync(context, executorInfo, input, logger).ConfigureAwait(true);
         return (executorInfo.ExecutorId, result);
     }
 
     private async Task<string> ExecuteExecutorAsync(
         TaskOrchestrationContext context,
-        Workflow workflow,
         WorkflowExecutorInfo executorInfo,
         string input,
         ILogger logger)
@@ -158,10 +157,10 @@ internal sealed class DurableWorkflowRunner
             return await context.CallActivityAsync<string>(triggerName, input).ConfigureAwait(true);
         }
 
-        return await this.ExecuteAgentAsync(context, executorInfo, input, logger).ConfigureAwait(true);
+        return await ExecuteAgentAsync(context, executorInfo, input, logger).ConfigureAwait(true);
     }
 
-    private async Task<string> ExecuteAgentAsync(
+    private static async Task<string> ExecuteAgentAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         string input,
@@ -259,15 +258,15 @@ internal sealed class DurableWorkflowRunner
         return underscoreIndex > 0 ? executorId[..underscoreIndex] : executorId;
     }
 
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing known types.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing known types.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing known types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing known types.")]
     private static string SerializeToJson(List<string> values)
     {
         return JsonSerializer.Serialize(values);
     }
 
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing workflow types registered at startup.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing workflow types registered at startup.")]
     private static string SerializeResult(object? result)
     {
         if (result is null)
@@ -289,8 +288,8 @@ internal sealed class DurableWorkflowRunner
         return JsonSerializer.Serialize(result, resultType);
     }
 
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
     private static object DeserializeInput(string input, Type targetType)
     {
         if (targetType == typeof(string))

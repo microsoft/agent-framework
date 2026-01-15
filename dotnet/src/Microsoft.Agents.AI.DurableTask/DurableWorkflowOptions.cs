@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
@@ -25,13 +26,10 @@ public sealed class DurableWorkflowOptions
     /// <summary>
     /// Gets the collection of workflows available in the current context, keyed by their unique names.
     /// </summary>
-    /// <remarks>The returned dictionary is read-only and reflects the current set of registered workflows.
-    /// Changes to the underlying workflow collection are immediately visible through this property. Accessing a
-    /// workflow by name that does not exist will result in a KeyNotFoundException.</remarks>
     public IReadOnlyDictionary<string, Workflow> Workflows => this._workflows;
 
     /// <summary>
-    /// Gets the executor registry.
+    /// Gets the executor registry for direct executor lookup.
     /// </summary>
     internal ExecutorRegistry Executors { get; }
 
@@ -41,8 +39,10 @@ public sealed class DurableWorkflowOptions
     /// <param name="workflow">The workflow instance to add. Cannot be null.</param>
     /// <remarks>
     /// When a workflow is added, any AI agent executors in the workflow will be automatically
-    /// registered with the DurableAgentsOptions if it was provided during construction.
+    /// registered with the <see cref="DurableAgentsOptions"/> if it was provided during construction.
     /// </remarks>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="workflow"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when the workflow does not have a valid name.</exception>
     public void AddWorkflow(Workflow workflow)
     {
         ArgumentNullException.ThrowIfNull(workflow);
@@ -54,48 +54,33 @@ public sealed class DurableWorkflowOptions
 
         this._workflows[workflow.Name] = workflow;
 
-        // Register executors in the registry for direct lookup
         RegisterExecutors(workflow, this.Executors);
 
-        // Register any agentic executors with DurableAgentsOptions if available through parent
-        DurableAgentsOptions? agentOptions = this.TryGetAgentOptions();
+        DurableAgentsOptions? agentOptions = this._parentOptions?.Agents;
         if (agentOptions is not null)
         {
             RegisterAgenticExecutors(workflow, agentOptions);
         }
     }
 
-    private DurableAgentsOptions? TryGetAgentOptions()
+    private static void RegisterExecutors(Workflow workflow, ExecutorRegistry registry)
     {
-        return this._parentOptions?.Agents;
+        foreach (KeyValuePair<string, ExecutorInfo> executor in workflow.ReflectExecutors())
+        {
+            int underscoreIndex = executor.Key.IndexOf('_');
+            string executorName = underscoreIndex > 0 ? executor.Key[..underscoreIndex] : executor.Key;
+            registry.Register(executorName, executor.Key, workflow);
+        }
     }
 
     private static void RegisterAgenticExecutors(Workflow workflow, DurableAgentsOptions agentOptions)
     {
-        // Use the public EnumerateAgentExecutors method to get all AIAgent instances
         foreach (AIAgent agent in workflow.EnumerateAgentExecutors())
         {
-            try
+            if (agent.Name is not null && !agentOptions.ContainsAgent(agent.Name))
             {
-                // Register the agent as workflow-only (no HTTP trigger)
                 agentOptions.AddAIAgent(agent, workflowOnly: true);
             }
-            catch (ArgumentException)
-            {
-                // Agent with this name is already registered, skip it
-                // This is expected behavior when multiple workflows use the same agent
-            }
-        }
-    }
-
-    private static void RegisterExecutors(Workflow workflow, ExecutorRegistry registry)
-    {
-        // Register all executors from the workflow in the registry
-        foreach (KeyValuePair<string, Workflows.Checkpointing.ExecutorInfo> executor in workflow.ReflectExecutors())
-        {
-            // Extract the executor name (without GUID suffix)
-            string executorName = executor.Key.Split('_')[0];
-            registry.Register(executorName, executor.Key, workflow);
         }
     }
 }
