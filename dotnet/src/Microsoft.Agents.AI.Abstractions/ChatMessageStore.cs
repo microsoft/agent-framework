@@ -32,8 +32,9 @@ namespace Microsoft.Agents.AI;
 public abstract class ChatMessageStore
 {
     /// <summary>
-    /// Asynchronously retrieves all messages from the store that should be provided as context for the next agent invocation.
+    /// Called at the start of agent invocation to retrieve all messages from the store that should be provided as context for the next agent invocation.
     /// </summary>
+    /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>
     /// A task that represents the asynchronous operation. The task result contains a collection of <see cref="ChatMessage"/>
@@ -59,20 +60,19 @@ public abstract class ChatMessageStore
     /// and context management.
     /// </para>
     /// </remarks>
-    public abstract Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously adds new messages to the store.
+    /// Called at the end of the agent invocation to add new messages to the store.
     /// </summary>
-    /// <param name="messages">The collection of chat messages to add to the store.</param>
+    /// <param name="context">Contains the invocation context including request messages, response messages, and any exception that occurred.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous add operation.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="messages"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// <para>
     /// Messages should be added in the order they were generated to maintain proper chronological sequence.
     /// The store is responsible for preserving message ordering and ensuring that subsequent calls to
-    /// <see cref="GetMessagesAsync"/> return messages in the correct chronological order.
+    /// <see cref="InvokingAsync"/> return messages in the correct chronological order.
     /// </para>
     /// <para>
     /// Implementations may perform additional processing during message addition, such as:
@@ -83,8 +83,12 @@ public abstract class ChatMessageStore
     /// <item><description>Updating indices or search capabilities</description></item>
     /// </list>
     /// </para>
+    /// <para>
+    /// This method is called regardless of whether the invocation succeeded or failed.
+    /// To check if the invocation was successful, inspect the <see cref="InvokedContext.InvokeException"/> property.
+    /// </para>
     /// </remarks>
-    public abstract Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default);
+    public abstract ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -121,4 +125,100 @@ public abstract class ChatMessageStore
     /// </remarks>
     public TService? GetService<TService>(object? serviceKey = null)
         => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
+
+    /// <summary>
+    /// Contains the context information provided to <see cref="InvokingAsync(InvokingContext, CancellationToken)"/>.
+    /// </summary>
+    /// <remarks>
+    /// This class provides context about the invocation before the messages are retrieved from the store,
+    /// including the new messages that will be used. Stores can use this information to determine what
+    /// messages should be retrieved for the invocation.
+    /// </remarks>
+    public sealed class InvokingContext
+    {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="InvokingContext"/> class with the specified request messages.
+        /// </summary>
+        /// <param name="requestMessages">The new messages to be used by the agent for this invocation.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
+        public InvokingContext(IEnumerable<ChatMessage> requestMessages)
+        {
+            this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+        }
+
+        /// <summary>
+        /// Gets the caller provided messages that will be used by the agent for this invocation.
+        /// </summary>
+        /// <value>
+        /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
+        /// </value>
+        public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
+    }
+
+    /// <summary>
+    /// Contains the context information provided to <see cref="InvokedAsync(InvokedContext, CancellationToken)"/>.
+    /// </summary>
+    /// <remarks>
+    /// This class provides context about a completed agent invocation, including both the
+    /// request messages that were used and the response messages that were generated. It also indicates
+    /// whether the invocation succeeded or failed.
+    /// </remarks>
+    public sealed class InvokedContext
+    {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.
+        /// </summary>
+        /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
+        /// <param name="chatMessageStoreMessages">The messages retrieved from the <see cref="ChatMessageStore"/> for this invocation.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
+        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage> chatMessageStoreMessages)
+        {
+            this.RequestMessages = Throw.IfNull(requestMessages);
+            this.ChatMessageStoreMessages = Throw.IfNull(chatMessageStoreMessages);
+        }
+
+        /// <summary>
+        /// Gets the caller provided messages that were used by the agent for this invocation.
+        /// </summary>
+        /// <value>
+        /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
+        /// This does not include any <see cref="ChatMessageStore"/> supplied messages.
+        /// </value>
+        public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
+
+        /// <summary>
+        /// Gets the messages retrieved from the <see cref="ChatMessageStore"/> for this invocation, if any.
+        /// </summary>
+        /// <value>
+        /// A collection of <see cref="ChatMessage"/> instances that were retrieved from the <see cref="ChatMessageStore"/>,
+        /// and were used by the agent as part of the invocation.
+        /// </value>
+        public IEnumerable<ChatMessage> ChatMessageStoreMessages { get; set { field = Throw.IfNull(value); } }
+
+        /// <summary>
+        /// Gets or sets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.
+        /// </summary>
+        /// <value>
+        /// A collection of <see cref="ChatMessage"/> instances that were provided by the <see cref="AIContextProvider"/>,
+        /// and were used by the agent as part of the invocation.
+        /// </value>
+        public IEnumerable<ChatMessage>? AIContextProviderMessages { get; set; }
+
+        /// <summary>
+        /// Gets the collection of response messages generated during this invocation if the invocation succeeded.
+        /// </summary>
+        /// <value>
+        /// A collection of <see cref="ChatMessage"/> instances representing the response,
+        /// or <see langword="null"/> if the invocation failed or did not produce response messages.
+        /// </value>
+        public IEnumerable<ChatMessage>? ResponseMessages { get; set; }
+
+        /// <summary>
+        /// Gets the <see cref="Exception"/> that was thrown during the invocation, if the invocation failed.
+        /// </summary>
+        /// <value>
+        /// The exception that caused the invocation to fail, or <see langword="null"/> if the invocation succeeded.
+        /// </value>
+        public Exception? InvokeException { get; set; }
+    }
 }

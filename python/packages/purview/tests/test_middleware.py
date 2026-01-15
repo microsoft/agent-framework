@@ -5,7 +5,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentRunContext, AgentRunResponse, ChatMessage, Role
+from agent_framework import AgentResponse, AgentRunContext, ChatMessage, Role
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
@@ -57,7 +57,7 @@ class TestPurviewPolicyMiddleware:
             async def mock_next(ctx: AgentRunContext) -> None:
                 nonlocal next_called
                 next_called = True
-                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="I'm good, thanks!")])
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="I'm good, thanks!")])
 
             await middleware.process(context, mock_next)
 
@@ -104,7 +104,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentRunResponse(
+                ctx.result = AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text="Here's some sensitive information")]
                 )
 
@@ -145,7 +145,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_process:
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
 
             await middleware.process(context, mock_next)
 
@@ -167,7 +167,7 @@ class TestPurviewPolicyMiddleware:
         ) as mock_process:
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
 
             await middleware.process(context, mock_next)
 
@@ -199,7 +199,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
 
             await middleware.process(context, mock_next)
 
@@ -225,7 +225,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx):
-                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
 
             # Should not raise, just log
             await middleware.process(context, mock_next)

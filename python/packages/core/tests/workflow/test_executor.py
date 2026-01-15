@@ -3,13 +3,16 @@
 import pytest
 
 from agent_framework import (
+    ChatMessage,
     Executor,
     ExecutorCompletedEvent,
     ExecutorInvokedEvent,
     Message,
     WorkflowBuilder,
     WorkflowContext,
+    executor,
     handler,
+    response_handler,
 )
 
 
@@ -182,8 +185,8 @@ async def test_executor_completed_event_contains_sent_messages():
         assert collector_completed.data is None
 
 
-async def test_executor_completed_event_none_when_no_messages_sent():
-    """Test that ExecutorCompletedEvent.data is None when no messages are sent."""
+async def test_executor_completed_event_includes_yielded_outputs():
+    """Test that ExecutorCompletedEvent.data includes yielded outputs."""
     from typing_extensions import Never
 
     from agent_framework import WorkflowOutputEvent
@@ -201,9 +204,10 @@ async def test_executor_completed_event_none_when_no_messages_sent():
 
     assert len(completed_events) == 1
     assert completed_events[0].executor_id == "yielder"
-    assert completed_events[0].data is None
+    # Yielded outputs are now included in ExecutorCompletedEvent.data
+    assert completed_events[0].data == ["TEST"]
 
-    # Verify the output was still yielded correctly
+    # Verify the output was also yielded as WorkflowOutputEvent
     output_events = [e for e in events if isinstance(e, WorkflowOutputEvent)]
     assert len(output_events) == 1
     assert output_events[0].data == "TEST"
@@ -261,3 +265,276 @@ async def test_executor_events_with_complex_message_types():
     collector_invoked = next(e for e in invoked_events if e.executor_id == "collector")
     assert isinstance(collector_invoked.data, Response)
     assert collector_invoked.data.results == ["HELLO", "HELLO", "HELLO"]
+
+
+def test_executor_output_types_property():
+    """Test that the output_types property correctly identifies message output types."""
+
+    # Test executor with no output types
+    class NoOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext) -> None:
+            pass
+
+    executor = NoOutputExecutor(id="no_output")
+    assert executor.output_types == []
+
+    # Test executor with single output type
+    class SingleOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+    executor = SingleOutputExecutor(id="single_output")
+    assert int in executor.output_types
+    assert len(executor.output_types) == 1
+
+    # Test executor with union output types
+    class UnionOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int | str]) -> None:
+            pass
+
+    executor = UnionOutputExecutor(id="union_output")
+    assert int in executor.output_types
+    assert str in executor.output_types
+    assert len(executor.output_types) == 2
+
+    # Test executor with multiple handlers having different output types
+    class MultiHandlerExecutor(Executor):
+        @handler
+        async def handle_string(self, text: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        @handler
+        async def handle_number(self, num: int, ctx: WorkflowContext[bool]) -> None:
+            pass
+
+    executor = MultiHandlerExecutor(id="multi_handler")
+    assert int in executor.output_types
+    assert bool in executor.output_types
+    assert len(executor.output_types) == 2
+
+
+def test_executor_workflow_output_types_property():
+    """Test that the workflow_output_types property correctly identifies workflow output types."""
+    from typing_extensions import Never
+
+    # Test executor with no workflow output types
+    class NoWorkflowOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+    executor = NoWorkflowOutputExecutor(id="no_workflow_output")
+    assert executor.workflow_output_types == []
+
+    # Test executor with workflow output type (second type parameter)
+    class WorkflowOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int, str]) -> None:
+            pass
+
+    executor = WorkflowOutputExecutor(id="workflow_output")
+    assert str in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 1
+
+    # Test executor with union workflow output types
+    class UnionWorkflowOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int, str | bool]) -> None:
+            pass
+
+    executor = UnionWorkflowOutputExecutor(id="union_workflow_output")
+    assert str in executor.workflow_output_types
+    assert bool in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 2
+
+    # Test executor with multiple handlers having different workflow output types
+    class MultiHandlerWorkflowExecutor(Executor):
+        @handler
+        async def handle_string(self, text: str, ctx: WorkflowContext[int, str]) -> None:
+            pass
+
+        @handler
+        async def handle_number(self, num: int, ctx: WorkflowContext[bool, float]) -> None:
+            pass
+
+    executor = MultiHandlerWorkflowExecutor(id="multi_workflow")
+    assert str in executor.workflow_output_types
+    assert float in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 2
+
+    # Test executor with Never for message output (only workflow output)
+    class YieldOnlyExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+            pass
+
+    executor = YieldOnlyExecutor(id="yield_only")
+    assert str in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 1
+    # Should have no message output types
+    assert executor.output_types == []
+
+
+def test_executor_output_and_workflow_output_types_combined():
+    """Test executor with both message and workflow output types."""
+
+    class DualOutputExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int, str]) -> None:
+            pass
+
+    executor = DualOutputExecutor(id="dual")
+
+    # Should have int as message output type
+    assert int in executor.output_types
+    assert len(executor.output_types) == 1
+
+    # Should have str as workflow output type
+    assert str in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 1
+
+    # They should be distinct
+    assert int not in executor.workflow_output_types
+    assert str not in executor.output_types
+
+
+def test_executor_output_types_includes_response_handlers():
+    """Test that output_types includes types from response handlers."""
+    from agent_framework import response_handler
+
+    class RequestResponseExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        @response_handler
+        async def handle_response(self, original_request: str, response: bool, ctx: WorkflowContext[float]) -> None:
+            pass
+
+    executor = RequestResponseExecutor(id="request_response")
+
+    # Should include output types from both handler and response_handler
+    assert int in executor.output_types
+    assert float in executor.output_types
+    assert len(executor.output_types) == 2
+
+
+def test_executor_workflow_output_types_includes_response_handlers():
+    """Test that workflow_output_types includes types from response handlers."""
+    from agent_framework import response_handler
+
+    class RequestResponseWorkflowExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int, str]) -> None:
+            pass
+
+        @response_handler
+        async def handle_response(
+            self, original_request: str, response: bool, ctx: WorkflowContext[float, bool]
+        ) -> None:
+            pass
+
+    executor = RequestResponseWorkflowExecutor(id="request_response_workflow")
+
+    # Should include workflow output types from both handler and response_handler
+    assert str in executor.workflow_output_types
+    assert bool in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 2
+
+    # Verify message output types are separate
+    assert int in executor.output_types
+    assert float in executor.output_types
+    assert len(executor.output_types) == 2
+
+
+def test_executor_multiple_response_handlers_output_types():
+    """Test that multiple response handlers contribute their output types."""
+
+    class MultiResponseHandlerExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        @response_handler
+        async def handle_string_bool_response(
+            self, original_request: str, response: bool, ctx: WorkflowContext[float]
+        ) -> None:
+            pass
+
+        @response_handler
+        async def handle_int_bool_response(
+            self, original_request: int, response: bool, ctx: WorkflowContext[bool]
+        ) -> None:
+            pass
+
+    executor = MultiResponseHandlerExecutor(id="multi_response")
+
+    # Should include output types from all handlers and response handlers
+    assert int in executor.output_types
+    assert float in executor.output_types
+    assert bool in executor.output_types
+    assert len(executor.output_types) == 3
+
+
+def test_executor_response_handler_union_output_types():
+    """Test that response handlers with union output types contribute all types."""
+    from agent_framework import response_handler
+
+    class UnionResponseHandlerExecutor(Executor):
+        @handler
+        async def handle(self, text: str, ctx: WorkflowContext) -> None:
+            pass
+
+        @response_handler
+        async def handle_response(
+            self, original_request: str, response: bool, ctx: WorkflowContext[int | str | float, bool | int]
+        ) -> None:
+            pass
+
+    executor = UnionResponseHandlerExecutor(id="union_response")
+
+    # Should include all output types from the union
+    assert int in executor.output_types
+    assert str in executor.output_types
+    assert float in executor.output_types
+    assert len(executor.output_types) == 3
+
+    # Should include all workflow output types from the union
+    assert bool in executor.workflow_output_types
+    assert int in executor.workflow_output_types
+    assert len(executor.workflow_output_types) == 2
+
+
+async def test_executor_invoked_event_data_not_mutated_by_handler():
+    """Test that ExecutorInvokedEvent.data captures original input, not mutated input."""
+
+    @executor(id="Mutator")
+    async def mutator(messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        # The handler mutates the input list by appending new messages
+        original_len = len(messages)
+        messages.append(ChatMessage(role="assistant", text="Added by executor"))
+        await ctx.send_message(messages)
+        # Verify mutation happened
+        assert len(messages) == original_len + 1
+
+    workflow = WorkflowBuilder().set_start_executor(mutator).build()
+
+    # Run with a single user message
+    input_messages = [ChatMessage(role="user", text="hello")]
+    events = await workflow.run(input_messages)
+
+    # Find the invoked event for the Mutator executor
+    invoked_events = [e for e in events if isinstance(e, ExecutorInvokedEvent)]
+    assert len(invoked_events) == 1
+    mutator_invoked = invoked_events[0]
+
+    # The event data should contain ONLY the original input (1 user message)
+    assert mutator_invoked.executor_id == "Mutator"
+    assert len(mutator_invoked.data) == 1, (
+        f"Expected 1 message (original input), got {len(mutator_invoked.data)}: "
+        f"{[m.text for m in mutator_invoked.data]}"
+    )
+    assert mutator_invoked.data[0].text == "hello"

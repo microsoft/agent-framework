@@ -9,13 +9,13 @@ from typing import Any
 from agent_framework import (
     ChatMessage,
     ChatOptions,
+    ChatResponse,
     ChatResponseUpdate,
     FunctionCallContent,
     Role,
     TextContent,
     ai_function,
 )
-from agent_framework._types import ChatResponse
 from pytest import MonkeyPatch
 
 from agent_framework_ag_ui._client import AGUIChatClient, ServerFunctionCallContent
@@ -40,22 +40,22 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose message conversion helper."""
         return self._convert_messages_to_agui_format(messages)
 
-    def get_thread_id(self, chat_options: ChatOptions) -> str:
+    def get_thread_id(self, options: dict[str, Any]) -> str:
         """Expose thread id helper."""
-        return self._get_thread_id(chat_options)
+        return self._get_thread_id(options)
 
     async def inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Proxy to protected streaming call."""
-        async for update in self._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in self._inner_get_streaming_response(messages=messages, options=options):
             yield update
 
     async def inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
     ) -> ChatResponse:
         """Proxy to protected response call."""
-        return await self._inner_get_response(messages=messages, chat_options=chat_options)
+        return await self._inner_get_response(messages=messages, options=options)
 
 
 class TestAGUIChatClient:
@@ -191,7 +191,7 @@ class TestAGUIChatClient:
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in client.inner_get_streaming_response(messages=messages, options=chat_options):
             updates.append(update)
 
         assert len(updates) == 4
@@ -221,9 +221,9 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test message")]
-        chat_options = ChatOptions()
+        chat_options = {}
 
-        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None
         assert len(response.messages) > 0
@@ -266,7 +266,7 @@ class TestAGUIChatClient:
         messages = [ChatMessage(role="user", text="Test with tools")]
         chat_options = ChatOptions(tools=[test_tool])
 
-        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None
 
@@ -288,10 +288,9 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
-        chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.get_streaming_response(messages, chat_options=chat_options):
+        async for update in client.get_streaming_response(messages):
             updates.append(update)
 
         function_calls = [
@@ -332,9 +331,8 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
-        chat_options = ChatOptions(tool_choice="auto", tools=[client_tool])
 
-        async for _ in client.get_streaming_response(messages, chat_options=chat_options):
+        async for _ in client.get_streaming_response(messages, options={"tool_choice": "auto", "tools": [client_tool]}):
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
@@ -370,6 +368,6 @@ class TestAGUIChatClient:
 
         chat_options = ChatOptions()
 
-        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None

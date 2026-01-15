@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ChatAgent,
     ChatContext,
     ChatMessage,
@@ -372,7 +372,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 
@@ -418,7 +418,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
     """Test cases for multiple middleware execution order with ChatAgent."""
 
     async def test_multiple_agent_middleware_execution_order(self, chat_client: "MockChatClient") -> None:
-        """Test that multiple agent middlewares execute in correct order with ChatAgent."""
+        """Test that multiple agent middleware execute in correct order with ChatAgent."""
         execution_order: list[str] = []
 
         class OrderedMiddleware(AgentMiddleware):
@@ -432,12 +432,12 @@ class TestChatAgentMultipleMiddlewareOrdering:
                 await next(context)
                 execution_order.append(f"{self.name}_after")
 
-        # Create multiple middlewares
+        # Create multiple middleware
         middleware1 = OrderedMiddleware("first")
         middleware2 = OrderedMiddleware("second")
         middleware3 = OrderedMiddleware("third")
 
-        # Create ChatAgent with multiple middlewares
+        # Create ChatAgent with multiple middleware
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2, middleware3])
 
         # Execute the agent
@@ -453,7 +453,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert execution_order == expected_order
 
     async def test_mixed_middleware_types_with_chat_agent(self, chat_client: "MockChatClient") -> None:
-        """Test mixed class and function-based middlewares with ChatAgent."""
+        """Test mixed class and function-based middleware with ChatAgent."""
         execution_order: list[str] = []
 
         class ClassAgentMiddleware(AgentMiddleware):
@@ -507,8 +507,8 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert response is not None
         assert chat_client.call_count == 1
 
-        # Verify that agent middlewares were executed in correct order
-        # (Function middlewares won't execute since no functions are called)
+        # Verify that agent middleware were executed in correct order
+        # (Function middleware won't execute since no functions are called)
         expected_order = ["class_agent_before", "function_agent_before", "function_agent_after", "class_agent_after"]
         assert execution_order == expected_order
 
@@ -734,7 +734,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
     async def test_function_middleware_can_access_and_override_custom_kwargs(
         self, chat_client: "MockChatClient"
     ) -> None:
-        """Test that function middleware can access and override custom parameters like temperature."""
+        """Test that function middleware can access and override custom parameters."""
         captured_kwargs: dict[str, Any] = {}
         modified_kwargs: dict[str, Any] = {}
         middleware_called = False
@@ -747,37 +747,19 @@ class TestChatAgentFunctionMiddlewareWithTools:
             middleware_called = True
 
             # Capture the original kwargs
-            captured_kwargs["has_chat_options"] = "chat_options" in context.kwargs
             captured_kwargs["has_custom_param"] = "custom_param" in context.kwargs
             captured_kwargs["custom_param"] = context.kwargs.get("custom_param")
-
-            # Capture original chat_options values if present
-            if "chat_options" in context.kwargs:
-                chat_options = context.kwargs["chat_options"]
-                captured_kwargs["original_temperature"] = getattr(chat_options, "temperature", None)
-                captured_kwargs["original_max_tokens"] = getattr(chat_options, "max_tokens", None)
 
             # Modify some kwargs
             context.kwargs["temperature"] = 0.9
             context.kwargs["max_tokens"] = 500
             context.kwargs["new_param"] = "added_by_middleware"
 
-            # Also modify chat_options if present
-            if "chat_options" in context.kwargs:
-                context.kwargs["chat_options"].temperature = 0.9
-                context.kwargs["chat_options"].max_tokens = 500
-
             # Store modified kwargs for verification
             modified_kwargs["temperature"] = context.kwargs.get("temperature")
             modified_kwargs["max_tokens"] = context.kwargs.get("max_tokens")
             modified_kwargs["new_param"] = context.kwargs.get("new_param")
             modified_kwargs["custom_param"] = context.kwargs.get("custom_param")
-
-            # Capture modified chat_options values if present
-            if "chat_options" in context.kwargs:
-                chat_options = context.kwargs["chat_options"]
-                modified_kwargs["chat_options_temperature"] = getattr(chat_options, "temperature", None)
-                modified_kwargs["chat_options_max_tokens"] = getattr(chat_options, "max_tokens", None)
 
             await next(context)
 
@@ -800,9 +782,9 @@ class TestChatAgentFunctionMiddlewareWithTools:
         # Create ChatAgent with function middleware
         agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware], tools=[sample_tool_function])
 
-        # Execute the agent with custom parameters
+        # Execute the agent with custom parameters passed as kwargs
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
+        response = await agent.run(messages, custom_param="test_value")
 
         # Verify response
         assert response is not None
@@ -812,19 +794,14 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert middleware_called, "Function middleware was not called"
 
         # Verify middleware captured the original kwargs
-        assert captured_kwargs["has_chat_options"] is True
         assert captured_kwargs["has_custom_param"] is True
         assert captured_kwargs["custom_param"] == "test_value"
-        assert captured_kwargs["original_temperature"] == 0.7
-        assert captured_kwargs["original_max_tokens"] == 100
 
         # Verify middleware could modify the kwargs
         assert modified_kwargs["temperature"] == 0.9
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"
-        assert modified_kwargs["chat_options_temperature"] == 0.9
-        assert modified_kwargs["chat_options_max_tokens"] == 500
 
 
 class TestMiddlewareDynamicRebuild:
@@ -901,7 +878,7 @@ class TestMiddlewareDynamicRebuild:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
 
         # First streaming execution
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test stream message 1"):
             updates.append(update)
 
@@ -999,7 +976,7 @@ class TestRunLevelMiddleware:
         # Clear execution log
         execution_log.clear()
 
-        # Fourth run with both run middlewares - should see both
+        # Fourth run with both run middleware - should see both
         await agent.run("Test message 4", middleware=[run_middleware1, run_middleware2])
         assert execution_log == ["run1_start", "run2_start", "run2_end", "run1_end"]
 
@@ -1108,7 +1085,7 @@ class TestRunLevelMiddleware:
         run_middleware = StreamingTrackingMiddleware("run_stream")
 
         # Execute streaming with run middleware
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
             updates.append(update)
 
@@ -1734,7 +1711,7 @@ class TestChatAgentChatMiddleware:
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 

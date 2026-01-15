@@ -16,6 +16,7 @@ from agent_framework import (
     TextContent,
     TextReasoningContent,
     UriContent,
+    ai_function,
     chat_middleware,
 )
 from agent_framework.exceptions import (
@@ -113,6 +114,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
     )
 
 
+@ai_function
 def hello_world(arg1: str) -> str:
     return "Hello World"
 
@@ -197,19 +199,6 @@ async def test_empty_messages() -> None:
     )
     with pytest.raises(ServiceInvalidRequestError):
         await ollama_chat_client.get_response(messages=[])
-
-
-async def test_function_choice_required_argument() -> None:
-    ollama_chat_client = OllamaChatClient(
-        host="http://localhost:12345",
-        model_id="test-model",
-    )
-    with pytest.raises(ServiceInvalidRequestError):
-        await ollama_chat_client.get_response(
-            messages=[ChatMessage(text="hello world", role="user")],
-            tool_choice="required",
-            tools=[hello_world],
-        )
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
@@ -337,7 +326,7 @@ async def test_cmc_streaming_with_tool_call(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history, tools=[hello_world])
+    result = ollama_client.get_streaming_response(messages=chat_history, options={"tools": [hello_world]})
 
     chunks: list[ChatResponseUpdate] = []
     async for chunk in result:
@@ -373,7 +362,9 @@ async def test_cmc_with_hosted_tool_call(
         ollama_client = OllamaChatClient()
         await ollama_client.get_response(
             messages=chat_history,
-            tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+            options={
+                "tools": HostedWebSearchTool(additional_properties=additional_properties),
+            },
         )
 
 
@@ -450,7 +441,7 @@ async def test_cmc_integration_with_tool_call(
     chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = await ollama_client.get_response(messages=chat_history, tools=[hello_world])
+    result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
 
     assert "hello" in result.text.lower() and "world" in result.text.lower()
     assert isinstance(result.messages[-2].contents[0], FunctionResultContent)
@@ -478,7 +469,7 @@ async def test_cmc_streaming_integration_with_tool_call(
 
     ollama_client = OllamaChatClient()
     result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(
-        messages=chat_history, tools=[hello_world]
+        messages=chat_history, options={"tools": [hello_world]}
     )
 
     chunks: list[ChatResponseUpdate] = []

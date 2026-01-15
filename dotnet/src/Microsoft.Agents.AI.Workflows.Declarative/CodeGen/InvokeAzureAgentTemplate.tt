@@ -21,7 +21,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");#>
         
-        AgentRunResponse agentResponse =
+        AgentResponse agentResponse =
             await InvokeAgentAsync(
                 context,
                 agentName,
@@ -32,7 +32,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
         <#
         AssignVariable(this.Messages, "agentResponse.Messages"); #>

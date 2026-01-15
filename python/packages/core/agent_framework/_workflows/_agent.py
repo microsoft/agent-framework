@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     BaseContent,
@@ -126,7 +126,7 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Get a response from the workflow agent (non-streaming).
 
         This method collects all streaming updates and merges them into a single response.
@@ -146,10 +146,10 @@ class WorkflowAgent(BaseAgent):
                 and ai_function tools.
 
         Returns:
-            The final workflow response as an AgentRunResponse.
+            The final workflow response as an AgentResponse.
         """
         # Collect all streaming updates
-        response_updates: list[AgentRunResponseUpdate] = []
+        response_updates: list[AgentResponseUpdate] = []
         input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
@@ -175,7 +175,7 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Stream response updates from the workflow agent.
 
         Args:
@@ -193,11 +193,11 @@ class WorkflowAgent(BaseAgent):
                 and ai_function tools.
 
         Yields:
-            AgentRunResponseUpdate objects representing the workflow execution progress.
+            AgentResponseUpdate objects representing the workflow execution progress.
         """
         input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
-        response_updates: list[AgentRunResponseUpdate] = []
+        response_updates: list[AgentResponseUpdate] = []
         response_id = str(uuid.uuid4())
 
         async for update in self._run_stream_impl(
@@ -220,7 +220,7 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal implementation of streaming execution.
 
         Args:
@@ -233,7 +233,7 @@ class WorkflowAgent(BaseAgent):
                 workflow and ai_function tools.
 
         Yields:
-            AgentRunResponseUpdate objects representing the workflow execution progress.
+            AgentResponseUpdate objects representing the workflow execution progress.
         """
         # Determine the event stream based on whether we have function responses
         if bool(self.pending_requests):
@@ -289,8 +289,8 @@ class WorkflowAgent(BaseAgent):
         self,
         response_id: str,
         event: WorkflowEvent,
-    ) -> AgentRunResponseUpdate | None:
-        """Convert a workflow event to an AgentRunResponseUpdate.
+    ) -> AgentResponseUpdate | None:
+        """Convert a workflow event to an AgentResponseUpdate.
 
         AgentRunUpdateEvent, RequestInfoEvent, and WorkflowOutputEvent are processed.
         Other workflow events are ignored as they are workflow-internal.
@@ -309,27 +309,30 @@ class WorkflowAgent(BaseAgent):
                 if isinstance(executor, AgentExecutor) and not executor.output_response:
                     return None
                 if update:
+                    # Enrich with executor identity if author_name is not already set
+                    if not update.author_name:
+                        update.author_name = executor_id
                     return update
                 return None
 
-            case WorkflowOutputEvent(data=data, source_executor_id=source_executor_id):
+            case WorkflowOutputEvent(data=data, executor_id=executor_id):
                 # Convert workflow output to an agent response update.
                 # Handle different data types appropriately.
 
-                # Skip AgentRunResponse from AgentExecutor with output_response=True
+                # Skip AgentResponse from AgentExecutor with output_response=True
                 # since streaming events already surfaced the content.
-                if isinstance(data, AgentRunResponse):
-                    executor = self.workflow.executors.get(source_executor_id)
+                if isinstance(data, AgentResponse):
+                    executor = self.workflow.executors.get(executor_id)
                     if isinstance(executor, AgentExecutor) and executor.output_response:
                         return None
 
-                if isinstance(data, AgentRunResponseUpdate):
+                if isinstance(data, AgentResponseUpdate):
                     return data
                 if isinstance(data, ChatMessage):
-                    return AgentRunResponseUpdate(
+                    return AgentResponseUpdate(
                         contents=list(data.contents),
                         role=data.role,
-                        author_name=data.author_name or source_executor_id,
+                        author_name=data.author_name or executor_id,
                         response_id=response_id,
                         message_id=str(uuid.uuid4()),
                         created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -338,10 +341,10 @@ class WorkflowAgent(BaseAgent):
                 contents = self._extract_contents(data)
                 if not contents:
                     return None
-                return AgentRunResponseUpdate(
+                return AgentResponseUpdate(
                     contents=contents,
                     role=Role.ASSISTANT,
-                    author_name=source_executor_id,
+                    author_name=executor_id,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
                     created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -364,7 +367,7 @@ class WorkflowAgent(BaseAgent):
                     function_call=function_call,
                     additional_properties={"request_id": request_id},
                 )
-                return AgentRunResponseUpdate(
+                return AgentResponseUpdate(
                     contents=[function_call, approval_request],
                     role=Role.ASSISTANT,
                     author_name=self.name,
@@ -438,34 +441,52 @@ class WorkflowAgent(BaseAgent):
     class _ResponseState(TypedDict):
         """State for grouping response updates by message_id."""
 
-        by_msg: dict[str, list[AgentRunResponseUpdate]]
-        dangling: list[AgentRunResponseUpdate]
+        by_msg: dict[str, list[AgentResponseUpdate]]
+        dangling: list[AgentResponseUpdate]
 
     @staticmethod
-    def merge_updates(updates: list[AgentRunResponseUpdate], response_id: str) -> AgentRunResponse:
-        """Merge streaming updates into a single AgentRunResponse.
+    def merge_updates(updates: list[AgentResponseUpdate], response_id: str) -> AgentResponse:
+        """Merge streaming updates into a single AgentResponse.
 
         Behavior:
         - Group updates by response_id; within each response_id, group by message_id and keep a dangling bucket for
           updates without message_id.
-        - Convert each group (per message and dangling) into an intermediate AgentRunResponse via
-          AgentRunResponse.from_agent_run_response_updates, then sort by created_at and merge.
+        - Convert each group (per message and dangling) into an intermediate AgentResponse via
+          AgentResponse.from_agent_run_response_updates, then sort by created_at and merge.
         - Append messages from updates without any response_id at the end (global dangling), while aggregating metadata.
 
         Args:
-            updates: The list of AgentRunResponseUpdate objects to merge.
-            response_id: The response identifier to set on the returned AgentRunResponse.
+            updates: The list of AgentResponseUpdate objects to merge.
+            response_id: The response identifier to set on the returned AgentResponse.
 
         Returns:
-            An AgentRunResponse with messages in processing order and aggregated metadata.
+            An AgentResponse with messages in processing order and aggregated metadata.
         """
         # PHASE 1: GROUP UPDATES BY RESPONSE_ID AND MESSAGE_ID
-        states: dict[str, WorkflowAgent._ResponseState] = {}
-        global_dangling: list[AgentRunResponseUpdate] = []
-
+        # First pass: build call_id -> response_id map from FunctionCallContent updates
+        call_id_to_response_id: dict[str, str] = {}
         for u in updates:
             if u.response_id:
-                state = states.setdefault(u.response_id, {"by_msg": {}, "dangling": []})
+                for content in u.contents:
+                    if isinstance(content, FunctionCallContent) and content.call_id:
+                        call_id_to_response_id[content.call_id] = u.response_id
+
+        # Second pass: group updates, associating FunctionResultContent with their calls
+        states: dict[str, WorkflowAgent._ResponseState] = {}
+        global_dangling: list[AgentResponseUpdate] = []
+
+        for u in updates:
+            effective_response_id = u.response_id
+            # If no response_id, check if this is a FunctionResultContent that matches a call
+            if not effective_response_id:
+                for content in u.contents:
+                    if isinstance(content, FunctionResultContent) and content.call_id:
+                        effective_response_id = call_id_to_response_id.get(content.call_id)
+                        if effective_response_id:
+                            break
+
+            if effective_response_id:
+                state = states.setdefault(effective_response_id, {"by_msg": {}, "dangling": []})
                 by_msg = state["by_msg"]
                 dangling = state["dangling"]
                 if u.message_id:
@@ -494,7 +515,7 @@ class WorkflowAgent(BaseAgent):
                 return a
             return a + b
 
-        def _merge_responses(current: AgentRunResponse | None, incoming: AgentRunResponse) -> AgentRunResponse:
+        def _merge_responses(current: AgentResponse | None, incoming: AgentResponse) -> AgentResponse:
             if current is None:
                 return incoming
             raw_list: list[object] = []
@@ -509,7 +530,7 @@ class WorkflowAgent(BaseAgent):
                 _add_raw(current.raw_representation)
             if incoming.raw_representation is not None:
                 _add_raw(incoming.raw_representation)
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=(current.messages or []) + (incoming.messages or []),
                 response_id=current.response_id or incoming.response_id,
                 created_at=incoming.created_at or current.created_at,
@@ -530,16 +551,16 @@ class WorkflowAgent(BaseAgent):
             by_msg = state["by_msg"]
             dangling = state["dangling"]
 
-            per_message_responses: list[AgentRunResponse] = []
+            per_message_responses: list[AgentResponse] = []
             for _, msg_updates in by_msg.items():
                 if msg_updates:
-                    per_message_responses.append(AgentRunResponse.from_agent_run_response_updates(msg_updates))
+                    per_message_responses.append(AgentResponse.from_agent_run_response_updates(msg_updates))
             if dangling:
-                per_message_responses.append(AgentRunResponse.from_agent_run_response_updates(dangling))
+                per_message_responses.append(AgentResponse.from_agent_run_response_updates(dangling))
 
             per_message_responses.sort(key=lambda r: _parse_dt(r.created_at))
 
-            aggregated: AgentRunResponse | None = None
+            aggregated: AgentResponse | None = None
             for resp in per_message_responses:
                 if resp.response_id and grouped_response_id and resp.response_id != grouped_response_id:
                     resp.response_id = grouped_response_id
@@ -566,8 +587,10 @@ class WorkflowAgent(BaseAgent):
                         raw_representations.append(cast_value)
 
         # PHASE 3: HANDLE GLOBAL DANGLING UPDATES (NO RESPONSE_ID)
+        # These are updates that couldn't be associated with any response_id
+        # (e.g., orphan FunctionResultContent with no matching FunctionCallContent)
         if global_dangling:
-            flattened = AgentRunResponse.from_agent_run_response_updates(global_dangling)
+            flattened = AgentResponse.from_agent_run_response_updates(global_dangling)
             final_messages.extend(flattened.messages)
             if flattened.usage_details:
                 merged_usage = _sum_usage(merged_usage, flattened.usage_details)
@@ -588,7 +611,7 @@ class WorkflowAgent(BaseAgent):
                     raw_representations.append(cast_flat)
 
         # PHASE 4: CONSTRUCT FINAL RESPONSE WITH INPUT RESPONSE_ID
-        return AgentRunResponse(
+        return AgentResponse(
             messages=final_messages,
             response_id=response_id,
             created_at=latest_created_at,

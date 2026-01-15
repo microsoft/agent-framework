@@ -39,7 +39,7 @@ public class InProcessExecutionTests
         run.OutgoingEvents.Should().NotBeEmpty("workflow should produce events during execution");
 
         // Check that we have an agent execution event
-        var agentEvents = run.OutgoingEvents.OfType<AgentRunUpdateEvent>().ToList();
+        var agentEvents = run.OutgoingEvents.OfType<AgentResponseUpdateEvent>().ToList();
         agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
 
         // Check that we have output events
@@ -79,7 +79,7 @@ public class InProcessExecutionTests
         events.Should().NotBeEmpty("workflow should produce events during execution");
 
         // Check that we have agent execution events
-        var agentEvents = events.OfType<AgentRunUpdateEvent>().ToList();
+        var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
         agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
 
         // Check that we have output events
@@ -125,8 +125,8 @@ public class InProcessExecutionTests
         nonStreamingEvents.Should().NotBeEmpty("non-streaming version should also produce events");
 
         // Both should have similar types of events
-        var streamingAgentEvents = streamingEvents.OfType<AgentRunUpdateEvent>().Count();
-        var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentRunUpdateEvent>().Count();
+        var streamingAgentEvents = streamingEvents.OfType<AgentResponseUpdateEvent>().Count();
+        var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentResponseUpdateEvent>().Count();
 
         nonStreamingAgentEvents.Should().Be(streamingAgentEvents,
             "both versions should produce the same number of agent events");
@@ -144,12 +144,12 @@ public class InProcessExecutionTests
 
         public override string Name { get; }
 
-        public override AgentThread GetNewThread() => new SimpleTestAgentThread();
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentThread());
 
-        public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) => new SimpleTestAgentThread();
+        public override ValueTask<AgentThread> DeserializeThreadAsync(System.Text.Json.JsonElement serializedThread,
+            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentThread());
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -157,10 +157,10 @@ public class InProcessExecutionTests
         {
             var lastMessage = messages.LastOrDefault();
             var responseMessage = new ChatMessage(ChatRole.Assistant, $"Echo: {lastMessage?.Text ?? "no message"}");
-            return Task.FromResult(new AgentRunResponse(responseMessage));
+            return Task.FromResult(new AgentResponse(responseMessage));
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -174,14 +174,14 @@ public class InProcessExecutionTests
             string messageId = Guid.NewGuid().ToString("N");
 
             // Yield role first
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name)
             {
                 AuthorName = this.Name,
                 MessageId = messageId
             };
 
             // Then yield content
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, responseText)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, responseText)
             {
                 AuthorName = this.Name,
                 MessageId = messageId
