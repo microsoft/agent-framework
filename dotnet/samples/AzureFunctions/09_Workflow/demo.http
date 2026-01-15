@@ -1,14 +1,14 @@
 # Default endpoint address for local testing
 @authority=http://localhost:7071
 
-### Prompt the agent
+### Start the workflow
 POST {{authority}}/api/workflows/HandleSurveyResponse/run
 Content-Type: text/plain
 
 Rating: 10. Why was I charged $99 when my plan should be $49? I need a refund for the overcharge
 
-
+### Start the workflow with another bug report input.
 POST {{authority}}/api/workflows/HandleSurveyResponse/run
 Content-Type: text/plain
 
-Rating: 10. Why was I charged $99 when my plan should be $49? I need a refund for the overcharge
+Rating: 3. The app throws an InvalidOperationException when starting up.

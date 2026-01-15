@@ -15,7 +15,7 @@ using SingleAgent;
 
 // Create the executors with different input/output types
 OrderIdParserExecutor orderIdParser = new();      // string → int
-OrderLookupExecutor orderLookup = new();          // int → OrderDetails
+OrderLookupExecutor orderLookup = new();          // int → OrderDetails POCO
 OrderSummaryExecutor orderSummary = new();        // OrderDetails → string
 
 // Build the workflow: Parse → Lookup → Summarize
