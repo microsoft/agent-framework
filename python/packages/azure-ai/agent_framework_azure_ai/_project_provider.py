@@ -366,6 +366,12 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         # but function tools need the actual implementations from provided_tools
         merged_tools = self._merge_tools(details.definition.tools, provided_tools)
 
+        # Build options dict with response_format included
+        # (ChatAgent expects response_format in default_options, not as a separate kwarg)
+        agent_options: dict[str, Any] = dict(default_options) if default_options else {}
+        if response_format:
+            agent_options["response_format"] = response_format
+
         return ChatAgent(  # type: ignore[return-value]
             chat_client=client,
             id=details.id,
@@ -374,8 +380,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             instructions=details.definition.instructions,
             model_id=details.definition.model,
             tools=merged_tools,
-            response_format=response_format,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=agent_options,  # type: ignore[arg-type]
             middleware=middleware,
             context_provider=context_provider,
         )

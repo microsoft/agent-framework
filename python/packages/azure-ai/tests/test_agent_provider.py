@@ -463,8 +463,8 @@ def test_as_agent_with_hosted_tools(
     agent = provider.as_agent(mock_agent)
 
     assert isinstance(agent, ChatAgent)
-    # Should have HostedCodeInterpreterTool in the chat_options.tools
-    assert any(isinstance(t, HostedCodeInterpreterTool) for t in (agent.chat_options.tools or []))
+    # Should have HostedCodeInterpreterTool in the default_options tools
+    assert any(isinstance(t, HostedCodeInterpreterTool) for t in (agent.default_options.get("tools") or []))
 
 
 # endregion
