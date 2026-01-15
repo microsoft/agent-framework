@@ -162,7 +162,7 @@ def create_spam_detection_agent() -> ChatAgent:
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        response_format=DetectionResultAgent,
+        default_options={"response_format": DetectionResultAgent},
         # response_format enforces structured JSON from each agent.
         name="spam_detection_agent",
     )
@@ -176,7 +176,7 @@ def create_email_assistant_agent() -> ChatAgent:
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         # response_format enforces structured JSON from each agent.
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
         name="email_assistant_agent",
     )
 

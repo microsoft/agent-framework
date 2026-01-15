@@ -154,7 +154,7 @@ def create_guessing_agent() -> ChatAgent:
             "No explanations or additional text."
         ),
         # response_format enforces that the model produces JSON compatible with GuessOutput.
-        response_format=GuessOutput,
+        default_options={"response_format": GuessOutput},
     )
 
 

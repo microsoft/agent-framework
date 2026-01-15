@@ -114,10 +114,10 @@ class AgentFrameworkExecutor:
         Args:
             agent: Agent object that may have MCP tools
         """
-        if not hasattr(agent, "_local_mcp_tools"):
+        if not hasattr(agent, "mcp_tools"):
             return
 
-        for mcp_tool in agent._local_mcp_tools:
+        for mcp_tool in agent.mcp_tools:
             if not getattr(mcp_tool, "is_connected", False):
                 continue
 

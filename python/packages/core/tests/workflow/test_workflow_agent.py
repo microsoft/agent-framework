@@ -19,6 +19,7 @@ from agent_framework import (
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
+    FunctionResultContent,
     Role,
     TextContent,
     UriContent,
@@ -957,3 +958,255 @@ class TestWorkflowAgentMergeUpdates:
             # properties only include final merged result from its own updates
         }
         assert result.additional_properties == expected_properties
+
+    def test_merge_updates_function_result_ordering_github_2977(self):
+        """Test that FunctionResultContent updates are placed after their FunctionCallContent.
+
+        This test reproduces GitHub issue #2977: When using a thread with WorkflowAgent,
+        FunctionResultContent updates without response_id were being added to global_dangling
+        and placed at the end of messages. This caused OpenAI to reject the conversation because
+        "An assistant message with 'tool_calls' must be followed by tool messages responding
+        to each 'tool_call_id'."
+
+        The expected ordering should be:
+        - User Question
+        - FunctionCallContent (assistant)
+        - FunctionResultContent (tool)
+        - Assistant Answer
+
+        NOT:
+        - User Question
+        - FunctionCallContent (assistant)
+        - Assistant Answer
+        - FunctionResultContent (tool)  <-- This was the bug
+        """
+        call_id = "call_F09je20iUue6DlFRDLLh3dGK"
+
+        updates = [
+            # User question
+            AgentResponseUpdate(
+                contents=[TextContent(text="What is the weather?")],
+                role=Role.USER,
+                response_id="resp-1",
+                message_id="msg-1",
+                created_at="2024-01-01T12:00:00Z",
+            ),
+            # Assistant with function call
+            AgentResponseUpdate(
+                contents=[FunctionCallContent(call_id=call_id, name="get_weather", arguments='{"location": "NYC"}')],
+                role=Role.ASSISTANT,
+                response_id="resp-1",
+                message_id="msg-2",
+                created_at="2024-01-01T12:00:01Z",
+            ),
+            # Function result: no response_id previously caused this to go to global_dangling
+            # and be placed at the end (the bug); fix now correctly associates via call_id
+            AgentResponseUpdate(
+                contents=[FunctionResultContent(call_id=call_id, result="Sunny, 72F")],
+                role=Role.TOOL,
+                response_id=None,
+                message_id="msg-3",
+                created_at="2024-01-01T12:00:02Z",
+            ),
+            # Final assistant answer
+            AgentResponseUpdate(
+                contents=[TextContent(text="The weather in NYC is sunny and 72F.")],
+                role=Role.ASSISTANT,
+                response_id="resp-1",
+                message_id="msg-4",
+                created_at="2024-01-01T12:00:03Z",
+            ),
+        ]
+
+        result = WorkflowAgent.merge_updates(updates, "final-response")
+
+        assert len(result.messages) == 4
+
+        # Extract content types for verification
+        content_sequence = []
+        for msg in result.messages:
+            for content in msg.contents:
+                if isinstance(content, TextContent):
+                    content_sequence.append(("text", msg.role))
+                elif isinstance(content, FunctionCallContent):
+                    content_sequence.append(("function_call", msg.role))
+                elif isinstance(content, FunctionResultContent):
+                    content_sequence.append(("function_result", msg.role))
+
+        # Verify correct ordering: user -> function_call -> function_result -> assistant_answer
+        expected_sequence = [
+            ("text", Role.USER),
+            ("function_call", Role.ASSISTANT),
+            ("function_result", Role.TOOL),
+            ("text", Role.ASSISTANT),
+        ]
+
+        assert content_sequence == expected_sequence, (
+            f"FunctionResultContent should come immediately after FunctionCallContent. "
+            f"Got: {content_sequence}, Expected: {expected_sequence}"
+        )
+
+        # Additional check: verify FunctionResultContent call_id matches FunctionCallContent
+        function_call_idx = None
+        function_result_idx = None
+        for i, msg in enumerate(result.messages):
+            for content in msg.contents:
+                if isinstance(content, FunctionCallContent):
+                    function_call_idx = i
+                    assert content.call_id == call_id
+                elif isinstance(content, FunctionResultContent):
+                    function_result_idx = i
+                    assert content.call_id == call_id
+
+        assert function_call_idx is not None
+        assert function_result_idx is not None
+        assert function_result_idx == function_call_idx + 1, (
+            f"FunctionResultContent at index {function_result_idx} should immediately follow "
+            f"FunctionCallContent at index {function_call_idx}"
+        )
+
+    def test_merge_updates_multiple_function_results_ordering_github_2977(self):
+        """Test ordering with multiple FunctionCallContent/FunctionResultContent pairs.
+
+        Validates that multiple tool calls and results appear before the final assistant
+        answer, even when results arrive without response_id and in different order than calls.
+
+        OpenAI requires that tool results appear after their calls and before the next
+        assistant text message, but doesn't require strict interleaving (result_1 immediately
+        after call_1). The key constraint is: calls -> results -> final_answer.
+        """
+        call_id_1 = "call_weather_001"
+        call_id_2 = "call_time_002"
+
+        updates = [
+            # User question
+            AgentResponseUpdate(
+                contents=[TextContent(text="What's the weather and time?")],
+                role=Role.USER,
+                response_id="resp-1",
+                message_id="msg-1",
+                created_at="2024-01-01T12:00:00Z",
+            ),
+            # Assistant with first function call
+            AgentResponseUpdate(
+                contents=[FunctionCallContent(call_id=call_id_1, name="get_weather", arguments='{"location": "NYC"}')],
+                role=Role.ASSISTANT,
+                response_id="resp-1",
+                message_id="msg-2",
+                created_at="2024-01-01T12:00:01Z",
+            ),
+            # Assistant with second function call
+            AgentResponseUpdate(
+                contents=[FunctionCallContent(call_id=call_id_2, name="get_time", arguments='{"timezone": "EST"}')],
+                role=Role.ASSISTANT,
+                response_id="resp-1",
+                message_id="msg-3",
+                created_at="2024-01-01T12:00:02Z",
+            ),
+            # Second function result arrives first (no response_id)
+            AgentResponseUpdate(
+                contents=[FunctionResultContent(call_id=call_id_2, result="3:00 PM EST")],
+                role=Role.TOOL,
+                response_id=None,
+                message_id="msg-4",
+                created_at="2024-01-01T12:00:03Z",
+            ),
+            # First function result arrives second (no response_id)
+            AgentResponseUpdate(
+                contents=[FunctionResultContent(call_id=call_id_1, result="Sunny, 72F")],
+                role=Role.TOOL,
+                response_id=None,
+                message_id="msg-5",
+                created_at="2024-01-01T12:00:04Z",
+            ),
+            # Final assistant answer
+            AgentResponseUpdate(
+                contents=[TextContent(text="It's sunny (72F) and 3 PM in NYC.")],
+                role=Role.ASSISTANT,
+                response_id="resp-1",
+                message_id="msg-6",
+                created_at="2024-01-01T12:00:05Z",
+            ),
+        ]
+
+        result = WorkflowAgent.merge_updates(updates, "final-response")
+
+        assert len(result.messages) == 6
+
+        # Build a sequence of (content_type, call_id_if_applicable)
+        content_sequence = []
+        for msg in result.messages:
+            for content in msg.contents:
+                if isinstance(content, TextContent):
+                    content_sequence.append(("text", None))
+                elif isinstance(content, FunctionCallContent):
+                    content_sequence.append(("function_call", content.call_id))
+                elif isinstance(content, FunctionResultContent):
+                    content_sequence.append(("function_result", content.call_id))
+
+        # Verify all function results appear before the final assistant text
+        # Find indices
+        call_indices = [i for i, (t, _) in enumerate(content_sequence) if t == "function_call"]
+        result_indices = [i for i, (t, _) in enumerate(content_sequence) if t == "function_result"]
+        final_text_idx = len(content_sequence) - 1  # Last item should be final text
+
+        # All calls should have corresponding results
+        call_ids_in_calls = {content_sequence[i][1] for i in call_indices}
+        call_ids_in_results = {content_sequence[i][1] for i in result_indices}
+        assert call_ids_in_calls == call_ids_in_results, "All function calls should have matching results"
+
+        # All results should appear after all calls and before final text
+        assert all(r > max(call_indices) for r in result_indices), (
+            "All function results should appear after all function calls"
+        )
+        assert all(r < final_text_idx for r in result_indices), (
+            "All function results should appear before the final assistant answer"
+        )
+        assert content_sequence[final_text_idx] == ("text", None), "Final message should be assistant text"
+
+    def test_merge_updates_function_result_no_matching_call(self):
+        """Test that FunctionResultContent without matching FunctionCallContent still appears.
+
+        If a FunctionResultContent has a call_id that doesn't match any FunctionCallContent
+        in the messages, it should be appended at the end (fallback behavior).
+        """
+        updates = [
+            AgentResponseUpdate(
+                contents=[TextContent(text="Hello")],
+                role=Role.USER,
+                response_id="resp-1",
+                message_id="msg-1",
+                created_at="2024-01-01T12:00:00Z",
+            ),
+            # Function result with no matching call
+            AgentResponseUpdate(
+                contents=[FunctionResultContent(call_id="orphan_call_id", result="orphan result")],
+                role=Role.TOOL,
+                response_id=None,
+                message_id="msg-2",
+                created_at="2024-01-01T12:00:01Z",
+            ),
+            AgentResponseUpdate(
+                contents=[TextContent(text="Goodbye")],
+                role=Role.ASSISTANT,
+                response_id="resp-1",
+                message_id="msg-3",
+                created_at="2024-01-01T12:00:02Z",
+            ),
+        ]
+
+        result = WorkflowAgent.merge_updates(updates, "final-response")
+
+        assert len(result.messages) == 3
+
+        # Orphan function result should be at the end since it can't be matched
+        content_types = []
+        for msg in result.messages:
+            for content in msg.contents:
+                if isinstance(content, TextContent):
+                    content_types.append("text")
+                elif isinstance(content, FunctionResultContent):
+                    content_types.append("function_result")
+
+        # Order: text (user), text (assistant), function_result (orphan at end)
+        assert content_types == ["text", "text", "function_result"]
