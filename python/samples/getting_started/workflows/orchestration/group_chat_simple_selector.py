@@ -17,7 +17,7 @@ from azure.identity import AzureCliCredential
 Sample: Group Chat with a round-robin speaker selector
 
 What it does:
-- Demonstrates the with_select_speaker_func() API for GroupChat orchestration
+- Demonstrates the with_orchestrator() API for GroupChat orchestration
 - Uses a pure Python function to control speaker selection based on conversation state
 
 Prerequisites:

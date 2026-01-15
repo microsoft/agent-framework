@@ -579,6 +579,12 @@ class GroupChatBuilder:
             ValueError: If an orchestrator has already been set or if none or multiple
                         of the parameters are provided.
 
+        Note:
+            When using a custom orchestrator that implements `BaseGroupChatOrchestrator`, either
+            via the `orchestrator` or `orchestrator_factory` parameters, setting `termination_condition`
+            and `max_rounds` on the builder will have no effect since the orchestrator is already
+            fully defined.
+
         Example:
         .. code-block:: python
 
@@ -675,7 +681,7 @@ class GroupChatBuilder:
 
             workflow = (
                 GroupChatBuilder()
-                .with_select_speaker_func(my_selection_function)
+                .with_orchestrator(selection_func=my_selection_function)
                 .participants([agent1, agent2, custom_executor])
                 .build()
             )
@@ -737,13 +743,13 @@ class GroupChatBuilder:
             specialist_agent = ...
             workflow = (
                 GroupChatBuilder()
-                .with_select_speaker_func(my_selection_function)
+                .with_orchestrator(selection_func=my_selection_function)
                 .participants([agent1, specialist_agent])
                 .with_termination_condition(stop_after_two_calls)
                 .build()
             )
         """
-        if self._orchestrator is not None:
+        if self._orchestrator is not None or self._orchestrator_factory is not None:
             logger.warning(
                 "Orchestrator has already been configured; setting termination condition on builder has no effect."
             )
@@ -763,6 +769,9 @@ class GroupChatBuilder:
         Returns:
             Self for fluent chaining
         """
+        if self._orchestrator is not None or self._orchestrator_factory is not None:
+            logger.warning("Orchestrator has already been configured; setting max rounds on builder has no effect.")
+
         self._max_rounds = max_rounds
         return self
 
@@ -787,7 +796,7 @@ class GroupChatBuilder:
             storage = MemoryCheckpointStorage()
             workflow = (
                 GroupChatBuilder()
-                .with_select_speaker_func(my_selection_function)
+                .with_orchestrator(selection_func=my_selection_function)
                 .participants([agent1, agent2])
                 .with_checkpointing(storage)
                 .build()
