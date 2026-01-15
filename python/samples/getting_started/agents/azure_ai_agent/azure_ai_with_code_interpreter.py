@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import AgentResponse, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterDetailItemObject,
 )
@@ -39,16 +39,16 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential) as chat_client,
+        AzureAIAgentsProvider(credential=credential) as provider,
     ):
-        agent = chat_client.create_agent(
+        agent = await provider.create_agent(
             name="CodingAgent",
             instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
             tools=HostedCodeInterpreterTool(),
         )
         query = "Generate the factorial of 100 using python code, show the code and execute it."
         print(f"User: {query}")
-        response = await AgentResponse.from_agent_response_generator(agent.run_stream(query))
+        response = await agent.run(query)
         print(f"Agent: {response}")
         # To review the code interpreter outputs, you can access
         # them from the response raw_representations, just uncomment the next line:

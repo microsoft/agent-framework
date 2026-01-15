@@ -31,7 +31,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a helpful assistant that helps people find information.",
         name: "Assistant",
         tools: [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()],

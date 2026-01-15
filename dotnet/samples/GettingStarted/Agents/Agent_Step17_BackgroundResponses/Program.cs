@@ -14,7 +14,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetResponsesClient(deploymentName)
-     .CreateAIAgent();
+     .AsAIAgent();
 
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };

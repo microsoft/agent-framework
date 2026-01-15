@@ -13,7 +13,7 @@ var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEP
 
 var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         name: "VisionAgent",
         instructions: "You are a helpful agent that can analyze images");
 

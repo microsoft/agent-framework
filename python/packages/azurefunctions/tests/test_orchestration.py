@@ -364,7 +364,7 @@ class TestDurableAIAgent:
         # Create thread and call
         thread = agent.get_new_thread()
 
-        task = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
+        task = agent.run(messages="Test message", thread=thread, options={"response_format": SampleSchema})
 
         assert isinstance(task, AgentTask)
         assert task.children[0] == entity_task
