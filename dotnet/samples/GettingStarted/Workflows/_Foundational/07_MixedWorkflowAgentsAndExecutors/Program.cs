@@ -5,7 +5,6 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-
 namespace MixedWorkflowWithAgentsAndExecutors;
 
 /// <summary>
@@ -230,14 +229,22 @@ internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(
 /// Executor that synchronizes agent output and prepares it for the next stage.
 /// This demonstrates how executors can process agent outputs and forward to the next agent.
 /// </summary>
-internal sealed class JailbreakSyncExecutor() : Executor<ChatMessage>("JailbreakSync")
+/// Disable RCS1168 to allow different naming from base class
+#pragma warning disable RCS1168
+internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("JailbreakSync")
 {
-    public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(
+        List<ChatMessage> messages,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
     {
+        ChatMessage agentReply = messages.LastOrDefault(m => m.Role == ChatRole.Assistant)
+            ?? throw new InvalidOperationException("Detector returned no assistant message.");
+
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Magenta;
 
-        string fullAgentResponse = message.Text?.Trim() ?? "UNKNOWN";
+        string fullAgentResponse = agentReply.Text?.Trim() ?? "UNKNOWN";
 
         Console.WriteLine($"[{this.Id}] Full Agent Response:");
         Console.WriteLine(fullAgentResponse);
@@ -278,17 +285,22 @@ internal sealed class JailbreakSyncExecutor() : Executor<ChatMessage>("Jailbreak
 /// <summary>
 /// Executor that outputs the final result and marks the end of the workflow.
 /// </summary>
-internal sealed class FinalOutputExecutor() : Executor<ChatMessage, string>("FinalOutput")
+internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string>("FinalOutput")
 {
-    public override ValueTask<string> HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override ValueTask<string> HandleAsync(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Green;
+
+        var assistantOutput = messages.LastOrDefault(m => m.Role == ChatRole.Assistant)
+            ?? throw new InvalidOperationException("Response agent returned no assistant message.");
+
         Console.WriteLine($"\n[{this.Id}] Final Response:");
-        Console.WriteLine($"{message.Text}");
+        Console.WriteLine($"{assistantOutput.Text}");
         Console.WriteLine("\n[End of Workflow]");
         Console.ResetColor();
 
-        return ValueTask.FromResult(message.Text ?? string.Empty);
+        return ValueTask.FromResult(assistantOutput.Text ?? string.Empty);
     }
 }
+#pragma warning restore RCS1168
