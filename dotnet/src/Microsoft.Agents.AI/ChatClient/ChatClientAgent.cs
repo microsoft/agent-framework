@@ -233,8 +233,8 @@ public sealed partial class ChatClientAgent : AIAgent
 
         try
         {
-            // Ensure Activity.Current is set before calling into the chat client
-            // This ensures the activity flows into the chat client's async enumerable execution
+            // Restore Activity.Current before calling chat client to ensure tracing context
+            // flows into the async enumerable returned by GetStreamingResponseAsync
             Activity.Current = capturedActivity;
 
             // Using the enumerator to ensure we consider the case where no updates are returned for notification.
@@ -276,7 +276,8 @@ public sealed partial class ChatClientAgent : AIAgent
 
                 responseUpdates.Add(update);
 
-                // Restore Activity.Current before yielding to ensure consumer code has access to it
+                // Restore Activity.Current before yielding to ensure the calling code
+                // that processes updates (consumer's await foreach) has access to the trace context
                 Activity.Current = capturedActivity;
 
                 yield return new(update)

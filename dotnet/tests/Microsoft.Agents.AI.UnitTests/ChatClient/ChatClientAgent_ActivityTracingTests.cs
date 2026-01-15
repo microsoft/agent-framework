@@ -84,7 +84,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
                 traceIds.Add(Activity.Current?.TraceId.ToString());
 
                 // Simulate async operation like HTTP call
-                await Task.Delay(10, CancellationToken.None);
+                await Task.Delay(10, CancellationToken.None).ConfigureAwait(false);
 
                 executionPoints.Add("AfterAsyncOperation");
                 traceIds.Add(Activity.Current?.TraceId.ToString());
@@ -113,7 +113,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
 
                 // Simulate tool execution (this is where the issue occurs)
                 // In real scenario, FunctionInvokingChatClient would handle this
-                await Task.Delay(10, CancellationToken.None);
+                await Task.Delay(10, CancellationToken.None).ConfigureAwait(false);
 
                 executionPoints.Add("AfterFirstLlmResponse");
                 traceIds.Add(Activity.Current?.TraceId.ToString());
@@ -182,7 +182,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
                     await Task.Yield();
                     yield return new ChatResponseUpdate { Contents = [new TextContent("The weather")] };
 
-                    await Task.Delay(10, CancellationToken.None);
+                    await Task.Delay(10, CancellationToken.None).ConfigureAwait(false);
                     yield return new ChatResponseUpdate { Contents = [new TextContent(" is sunny")] };
 
                     await Task.Yield();
