@@ -801,15 +801,15 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockService.Object, options: new());
 
         // Act
-        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages: [new(ChatRole.User, "Hello")], serializerOptions: JsonContext2.Default.Options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(messages: [new(ChatRole.User, "Hello")], serializerOptions: JsonContext2.Default.Options);
 
         // Assert
-        Assert.Single(agentRunResponse.Messages);
+        Assert.Single(agentResponse.Messages);
 
-        Assert.NotNull(agentRunResponse.Result);
-        Assert.Equal(expectedSO.Id, agentRunResponse.Result.Id);
-        Assert.Equal(expectedSO.FullName, agentRunResponse.Result.FullName);
-        Assert.Equal(expectedSO.Species, agentRunResponse.Result.Species);
+        Assert.NotNull(agentResponse.Result);
+        Assert.Equal(expectedSO.Id, agentResponse.Result.Id);
+        Assert.Equal(expectedSO.FullName, agentResponse.Result.FullName);
+        Assert.Equal(expectedSO.Species, agentResponse.Result.Species);
     }
 
     #endregion
@@ -1972,7 +1972,7 @@ public partial class ChatClientAgentTests
 
         // Act
         var updates = agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")]);
-        List<AgentRunResponseUpdate> result = [];
+        List<AgentResponseUpdate> result = [];
         await foreach (var update in updates)
         {
             result.Add(update);
@@ -2116,7 +2116,7 @@ public partial class ChatClientAgentTests
         // Act
         var thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
         var updates = agent.RunStreamingAsync(requestMessages, thread);
-        _ = await updates.ToAgentRunResponseAsync();
+        _ = await updates.ToAgentResponseAsync();
 
         // Assert
         // Should contain: base instructions, user message, context message, base function, context function
@@ -2186,7 +2186,7 @@ public partial class ChatClientAgentTests
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             var updates = agent.RunStreamingAsync(requestMessages);
-            await updates.ToAgentRunResponseAsync();
+            await updates.ToAgentResponseAsync();
         });
 
         // Assert

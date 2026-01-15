@@ -135,11 +135,11 @@ class MyCustomCache(CacheProvider):
     async def get(self, key: str) -> Any | None:
         # Your implementation
         pass
-    
+
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> None:
         # Your implementation
         pass
-    
+
     async def remove(self, key: str) -> None:
         # Your implementation
         pass
@@ -295,9 +295,9 @@ All exceptions inherit from `PurviewServiceError`. You can catch specific except
 ```python
 from agent_framework.microsoft import (
     PurviewPaymentRequiredError,
-    PurviewAuthenticationError, 
+    PurviewAuthenticationError,
     PurviewRateLimitError,
-    PurviewRequestError, 
+    PurviewRequestError,
     PurviewServiceError
 )
 
@@ -321,5 +321,3 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 - **Error Handling**: Use `ignore_exceptions` and `ignore_payment_required` settings for graceful degradation. When enabled, errors are logged but don't fail the request.
 - **Caching**: Protection scopes responses and 402 errors are cached by default with a 4-hour TTL. Cache is automatically invalidated when protection scope state changes.
 - **Background Processing**: Content Activities and offline Process Content requests are handled asynchronously using background tasks to avoid blocking the main execution flow.
-
-

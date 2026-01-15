@@ -247,7 +247,7 @@ The client allows you to switch between different agent types at runtime. Type `
 
 1. `AGUIAgent` sends HTTP POST request to server
 2. Server responds with SSE stream
-3. Client parses events into `AgentRunResponseUpdate` objects
+3. Client parses events into `AgentResponseUpdate` objects
 4. Updates are displayed based on content type
 5. `ConversationId` maintains conversation context
 

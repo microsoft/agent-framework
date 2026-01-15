@@ -124,7 +124,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             }
         }
 
-        public static void Responses(IReadOnlyList<AgentRunResponseEvent> responseEvents, Testcase testcase)
+        public static void Responses(IReadOnlyList<AgentResponseEvent> responseEvents, Testcase testcase)
         {
             Assert.True(responseEvents.Count >= testcase.Validation.MinResponseCount, $"Response count less than expected: {testcase.Validation.MinResponseCount} (Actual: {responseEvents.Count})");
             if (testcase.Validation.MaxResponseCount != -1)

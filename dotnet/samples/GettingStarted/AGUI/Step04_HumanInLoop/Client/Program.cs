@@ -51,8 +51,8 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
     {
         approvalResponses.Clear();
 
-        List<AgentRunResponseUpdate> chatResponseUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: default))
+        List<AgentResponseUpdate> chatResponseUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: default))
         {
             chatResponseUpdates.Add(update);
             foreach (AIContent content in update.Contents)
@@ -111,7 +111,7 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             }
         }
 
-        AgentRunResponse response = chatResponseUpdates.ToAgentRunResponse();
+        AgentResponse response = chatResponseUpdates.ToAgentResponse();
         messages.AddRange(response.Messages);
         foreach (AIContent approvalResponse in approvalResponses)
         {

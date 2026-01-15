@@ -48,7 +48,7 @@ public class WeatherForecastAgent : DelegatingAIAgent
     {
     }
 
-    protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var response = await base.RunCoreAsync(messages, thread, options, cancellationToken);
 

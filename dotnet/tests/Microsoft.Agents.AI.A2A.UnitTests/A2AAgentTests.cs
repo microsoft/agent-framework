@@ -210,7 +210,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentRunResponseUpdatesAsync()
+    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentResponseUpdatesAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -227,7 +227,7 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync(inputMessages))
         {
             updates.Add(update);
@@ -646,7 +646,7 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Test message"))
         {
             updates.Add(update);
@@ -689,7 +689,7 @@ public sealed class A2AAgentTests : IDisposable
         var thread = await this._agent.GetNewThreadAsync();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Start long-running task", thread))
         {
             updates.Add(update);
@@ -728,7 +728,7 @@ public sealed class A2AAgentTests : IDisposable
         var thread = await this._agent.GetNewThreadAsync();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Check task status", thread))
         {
             updates.Add(update);
@@ -771,7 +771,7 @@ public sealed class A2AAgentTests : IDisposable
         var thread = await this._agent.GetNewThreadAsync();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Process artifact", thread))
         {
             updates.Add(update);

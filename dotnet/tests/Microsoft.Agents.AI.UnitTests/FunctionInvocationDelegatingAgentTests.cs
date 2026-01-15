@@ -717,7 +717,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
 
-        async Task<AgentRunResponse> RunningMiddlewareCallbackAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+        async Task<AgentResponse> RunningMiddlewareCallbackAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
         {
             executionOrder.Add("Running-Pre");
             var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
@@ -800,7 +800,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
-        var responseUpdates = new List<AgentRunResponseUpdate>();
+        var responseUpdates = new List<AgentResponseUpdate>();
         await foreach (var update in middleware.RunStreamingAsync(messages, null, options, CancellationToken.None))
         {
             responseUpdates.Add(update);

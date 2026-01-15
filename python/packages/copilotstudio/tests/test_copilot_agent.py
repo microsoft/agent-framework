@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatMessage,
     Role,
@@ -133,7 +133,7 @@ class TestCopilotStudioAgent:
 
         response = await agent.run("test message")
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         content = response.messages[0].contents[0]
         assert isinstance(content, TextContent)
@@ -153,7 +153,7 @@ class TestCopilotStudioAgent:
         chat_message = ChatMessage(role=Role.USER, contents=[TextContent("test message")])
         response = await agent.run(chat_message)
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         content = response.messages[0].contents[0]
         assert isinstance(content, TextContent)
@@ -173,7 +173,7 @@ class TestCopilotStudioAgent:
 
         response = await agent.run("test message", thread=thread)
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         assert thread.service_thread_id == "test-conversation-id"
 
@@ -204,7 +204,7 @@ class TestCopilotStudioAgent:
 
         response_count = 0
         async for response in agent.run_stream("test message"):
-            assert isinstance(response, AgentRunResponseUpdate)
+            assert isinstance(response, AgentResponseUpdate)
             content = response.contents[0]
             assert isinstance(content, TextContent)
             assert content.text == "Streaming response"
@@ -231,7 +231,7 @@ class TestCopilotStudioAgent:
 
         response_count = 0
         async for response in agent.run_stream("test message", thread=thread):
-            assert isinstance(response, AgentRunResponseUpdate)
+            assert isinstance(response, AgentResponseUpdate)
             content = response.contents[0]
             assert isinstance(content, TextContent)
             assert content.text == "Streaming response"
@@ -285,7 +285,7 @@ class TestCopilotStudioAgent:
 
         response = await agent.run("test message")
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 2
 
     async def test_run_list_of_messages(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
@@ -301,7 +301,7 @@ class TestCopilotStudioAgent:
         messages = ["Hello", "How are you?"]
         response = await agent.run(messages)
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
 
     async def test_run_stream_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:

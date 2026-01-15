@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static class AIAgentsAbstractionsExtensions
 {
-    public static ChatMessage ToChatMessage(this AgentRunResponseUpdate update) =>
+    public static ChatMessage ToChatMessage(this AgentResponseUpdate update) =>
         new()
         {
             AuthorName = update.AuthorName,
