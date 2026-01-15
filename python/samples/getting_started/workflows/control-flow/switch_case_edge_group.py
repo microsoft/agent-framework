@@ -162,7 +162,7 @@ def create_spam_detection_agent() -> ChatAgent:
             "and 'reason' (string)."
         ),
         name="spam_detection_agent",
-        response_format=DetectionResultAgent,
+        default_options={"response_format": DetectionResultAgent},
     )
 
 
@@ -171,7 +171,7 @@ def create_email_assistant_agent() -> ChatAgent:
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 

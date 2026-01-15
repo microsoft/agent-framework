@@ -190,7 +190,7 @@ def create_email_analysis_agent() -> ChatAgent:
             "and 'reason' (string)."
         ),
         name="email_analysis_agent",
-        response_format=AnalysisResultAgent,
+        default_options={"response_format": AnalysisResultAgent},
     )
 
 
@@ -199,7 +199,7 @@ def create_email_assistant_agent() -> ChatAgent:
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 
@@ -208,7 +208,7 @@ def create_email_summary_agent() -> ChatAgent:
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=("You are an assistant that helps users summarize emails."),
         name="email_summary_agent",
-        response_format=EmailSummaryModel,
+        default_options={"response_format": EmailSummaryModel},
     )
 
 
@@ -243,7 +243,8 @@ async def main() -> None:
     )
 
     workflow = (
-        workflow_builder.set_start_executor("store_email")
+        workflow_builder
+        .set_start_executor("store_email")
         .add_edge("store_email", "email_analysis_agent")
         .add_edge("email_analysis_agent", "to_analysis_result")
         .add_multi_selection_edge_group(

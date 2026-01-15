@@ -66,6 +66,7 @@ __all__ = [
     "UsageContent",
     "UsageDetails",
     "merge_chat_options",
+    "normalize_tools",
     "prepare_function_call_results",
     "prepend_instructions_to_messages",
     "validate_chat_options",
@@ -3490,6 +3491,60 @@ async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def normalize_tools(
+    tools: (
+        ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None
+    ),
+) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    """Normalize tools into a list.
+
+    Converts callables to AIFunction objects and ensures all tools are either
+    ToolProtocol instances or MutableMappings.
+
+    Args:
+        tools: Tools to normalize - can be a single tool, callable, or sequence.
+
+    Returns:
+        Normalized list of tools.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import normalize_tools, ai_function
+
+
+            @ai_function
+            def my_tool(x: int) -> int:
+                return x * 2
+
+
+            # Single tool
+            tools = normalize_tools(my_tool)
+
+            # List of tools
+            tools = normalize_tools([my_tool, another_tool])
+    """
+    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+    if not tools:
+        return final_tools
+    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
+        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
+        if not isinstance(tools, (ToolProtocol, MutableMapping)):
+            return [ai_function(tools)]
+        return [tools]
+    for tool in tools:
+        if isinstance(tool, (ToolProtocol, MutableMapping)):
+            final_tools.append(tool)
+        else:
+            # Convert callable to AIFunction
+            final_tools.append(ai_function(tool))
+    return final_tools
+
+
 async def validate_tools(
     tools: (
         ToolProtocol
@@ -3528,16 +3583,12 @@ async def validate_tools(
             # List of tools
             tools = await validate_tools([my_tool, another_tool])
     """
-    # Sequence of tools - convert callables and expand MCP tools
+    # Use normalize_tools for common sync logic (converts callables to AIFunction)
+    normalized = normalize_tools(tools)
+
+    # Handle MCP tool expansion (async-only)
     final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
-    if not tools:
-        return final_tools
-    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
-        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
-        if not isinstance(tools, (ToolProtocol, MutableMapping)):
-            return [ai_function(tools)]
-        return [tools]
-    for tool in tools:
+    for tool in normalized:
         # Import MCPTool here to avoid circular imports
         from ._mcp import MCPTool
 
@@ -3546,11 +3597,9 @@ async def validate_tools(
             if not tool.is_connected:
                 await tool.connect()
             final_tools.extend(tool.functions)  # type: ignore
-        elif isinstance(tool, (ToolProtocol, MutableMapping)):
-            final_tools.append(tool)
         else:
-            # Convert callable to AIFunction
-            final_tools.append(ai_function(tool))
+            final_tools.append(tool)
+
     return final_tools
 
 

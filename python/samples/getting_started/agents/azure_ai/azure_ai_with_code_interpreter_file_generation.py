@@ -3,19 +3,19 @@
 import asyncio
 
 from agent_framework import (
+    AgentResponseUpdate,
     CitationAnnotation,
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
 )
-from agent_framework._agents import AgentResponseUpdate
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI V2 Code Interpreter File Generation Sample
 
-This sample demonstrates how the V2 AzureAIClient handles file annotations
+This sample demonstrates how the AzureAIProjectAgentProvider handles file annotations
 when code interpreter generates text files. It shows both non-streaming
 and streaming approaches to verify file ID extraction.
 """
@@ -26,18 +26,20 @@ QUERY = (
 )
 
 
-async def test_non_streaming() -> None:
-    """Test non-streaming response - should have annotations on TextContent."""
-    print("=== Testing Non-Streaming Response ===")
+async def non_streaming_example() -> None:
+    """Example of extracting file annotations from non-streaming response."""
+    print("=== Non-Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
 
         result = await agent.run(QUERY)
@@ -60,18 +62,20 @@ async def test_non_streaming() -> None:
             print("WARNING: No file annotations found in non-streaming response")
 
 
-async def test_streaming() -> None:
-    """Test streaming response - check if file content is captured via HostedFileContent."""
-    print("\n=== Testing Streaming Response ===")
+async def streaming_example() -> None:
+    """Example of extracting file annotations from streaming response."""
+    print("\n=== Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
             tools=HostedCodeInterpreterTool(),
-        ) as agent,
-    ):
+        )
+
         print(f"User: {QUERY}\n")
         annotations_found: list[str] = []
         text_chunks: list[str] = []
@@ -102,9 +106,9 @@ async def test_streaming() -> None:
 
 
 async def main() -> None:
-    print("AzureAIClient Code Interpreter File Generation Test\n")
-    await test_non_streaming()
-    await test_streaming()
+    print("AzureAIClient Code Interpreter File Generation Sample\n")
+    await non_streaming_example()
+    await streaming_example()
 
 
 if __name__ == "__main__":

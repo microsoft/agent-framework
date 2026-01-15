@@ -119,7 +119,7 @@ The `AGUIServer` uses the `MapAGUI` extension method to expose an agent through 
 ```csharp
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a helpful assistant.",
         name: "AGUIAssistant");
 
@@ -144,7 +144,7 @@ var chatClient = new AGUIChatClient(
     modelId: "agui-client",
     jsonSerializerOptions: null);
 
-AIAgent agent = chatClient.CreateAIAgent(
+AIAgent agent = chatClient.AsAIAgent(
     instructions: null,
     name: "agui-client",
     description: "AG-UI Client Agent",

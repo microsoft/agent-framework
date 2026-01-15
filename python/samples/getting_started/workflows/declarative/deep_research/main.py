@@ -139,7 +139,7 @@ async def main() -> None:
     manager_agent = chat_client.create_agent(
         name="ManagerAgent",
         instructions=MANAGER_INSTRUCTIONS,
-        response_format=ManagerResponse,
+        default_options={"response_format": ManagerResponse},
     )
 
     summary_agent = chat_client.create_agent(
