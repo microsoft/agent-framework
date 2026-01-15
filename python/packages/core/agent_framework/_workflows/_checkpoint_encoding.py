@@ -185,10 +185,10 @@ def decode_checkpoint_value(value: Any) -> Any:
                     if module is None:
                         module = importlib.import_module(module_name)
                     cls_dc: Any = getattr(module, class_name)
-                    # Verify the class is actually a dataclass
-                    if not is_dataclass(cls_dc):
+                    # Verify the class is actually a dataclass type (not an instance)
+                    if not isinstance(cls_dc, type) or not is_dataclass(cls_dc):
                         logger.debug(
-                            f"Class {type_key_dc} is not a dataclass; returning raw value"
+                            f"Class {type_key_dc} is not a dataclass type; returning raw value"
                         )
                         return decoded_raw
                     constructed = _instantiate_checkpoint_dataclass(cls_dc, decoded_raw)
