@@ -23,7 +23,7 @@ var agent = new AzureOpenAIClient(
         new Uri(endpoint),
         new DefaultAzureCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         name: "AGUIAssistant",
         tools: [
             AIFunctionFactory.Create(

@@ -50,7 +50,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
+     .AsAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Get current weather alerts for New York?"));
