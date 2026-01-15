@@ -7,7 +7,7 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
@@ -124,7 +124,7 @@ class TaskRunner:
             f"{'<blue>assistant</blue>' if is_from_agent else '<green>user</green>'}</bold>, "
             f"routing to {'<green>user</green>' if is_from_agent else '<blue>assistant</blue>'}:"
         )
-        log_messages(response.agent_run_response.messages)
+        log_messages(response.agent_response.messages)
 
         if self.step_count >= self.max_steps:
             logger.info(f"Max steps ({self.max_steps}) reached - terminating conversation")
@@ -132,7 +132,7 @@ class TaskRunner:
             # Terminate the workflow
             return False
 
-        response_text = response.agent_run_response.text
+        response_text = response.agent_response.text
         if is_from_agent and self._is_agent_stop(response_text):
             logger.info("Agent requested stop - terminating conversation")
             self.termination_reason = TerminationReason.AGENT_STOP
@@ -144,7 +144,7 @@ class TaskRunner:
             # The final user message won't appear in the assistant's message store,
             # because it will never arrive there.
             # We need to store it because it's needed for evaluation.
-            self._final_user_message = flip_messages(response.agent_run_response.messages)
+            self._final_user_message = flip_messages(response.agent_response.messages)
             return False
 
         return True
@@ -255,7 +255,7 @@ class TaskRunner:
         """
         # Flip message roles for proper conversation flow
         # Assistant messages become user messages and vice versa
-        flipped = flip_messages(response.agent_run_response.messages)
+        flipped = flip_messages(response.agent_response.messages)
 
         # Determine source to route to correct target
         is_from_agent = response.executor_id == ASSISTANT_AGENT_ID
@@ -342,7 +342,7 @@ class TaskRunner:
         first_message = ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)
         initial_greeting = AgentExecutorResponse(
             executor_id=ASSISTANT_AGENT_ID,
-            agent_run_response=AgentRunResponse(messages=[first_message]),
+            agent_response=AgentResponse(messages=[first_message]),
             full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
         )
 

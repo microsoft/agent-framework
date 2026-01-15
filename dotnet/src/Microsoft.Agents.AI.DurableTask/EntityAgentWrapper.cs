@@ -21,13 +21,13 @@ internal sealed class EntityAgentWrapper(
     // The ID of the agent is always the entity ID.
     protected override string? IdCore => this._entityContext.Id.ToString();
 
-    protected override async Task<AgentRunResponse> RunCoreAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        AgentRunResponse response = await base.RunCoreAsync(
+        AgentResponse response = await base.RunCoreAsync(
             messages,
             thread,
             this.GetAgentEntityRunOptions(options),
@@ -37,13 +37,13 @@ internal sealed class EntityAgentWrapper(
         return response;
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (AgentRunResponseUpdate update in base.RunCoreStreamingAsync(
+        await foreach (AgentResponseUpdate update in base.RunCoreStreamingAsync(
             messages,
             thread,
             this.GetAgentEntityRunOptions(options),

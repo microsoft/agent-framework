@@ -127,7 +127,7 @@ class ReviewGateway(Executor):
         await ctx.request_info(
             request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
-                draft=response.agent_run_response.text,
+                draft=response.agent_response.text,
                 iteration=self._iteration,
             ),
             response_type=str,

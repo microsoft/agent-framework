@@ -17,8 +17,8 @@ public class DelegatingAIAgentTests
 {
     private readonly Mock<AIAgent> _innerAgentMock;
     private readonly TestDelegatingAIAgent _delegatingAgent;
-    private readonly AgentRunResponse _testResponse;
-    private readonly List<AgentRunResponseUpdate> _testStreamingResponses;
+    private readonly AgentResponse _testResponse;
+    private readonly List<AgentResponseUpdate> _testStreamingResponses;
     private readonly AgentThread _testThread;
 
     /// <summary>
@@ -27,8 +27,8 @@ public class DelegatingAIAgentTests
     public DelegatingAIAgentTests()
     {
         this._innerAgentMock = new Mock<AIAgent>();
-        this._testResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
-        this._testStreamingResponses = [new AgentRunResponseUpdate(ChatRole.Assistant, "Test streaming response")];
+        this._testResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        this._testStreamingResponses = [new AgentResponseUpdate(ChatRole.Assistant, "Test streaming response")];
         this._testThread = new TestAgentThread();
 
         // Setup inner agent mock
@@ -39,7 +39,7 @@ public class DelegatingAIAgentTests
 
         this._innerAgentMock
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
@@ -48,7 +48,7 @@ public class DelegatingAIAgentTests
 
         this._innerAgentMock
             .Protected()
-            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
@@ -156,13 +156,13 @@ public class DelegatingAIAgentTests
         var expectedThread = new TestAgentThread();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
-        var expectedResult = new TaskCompletionSource<AgentRunResponse>();
-        var expectedResponse = new AgentRunResponse();
+        var expectedResult = new TaskCompletionSource<AgentResponse>();
+        var expectedResponse = new AgentResponse();
 
         var innerAgentMock = new Mock<AIAgent>();
         innerAgentMock
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.Is<IEnumerable<ChatMessage>>(m => m == expectedMessages),
                 ItExpr.Is<AgentThread?>(t => t == expectedThread),
                 ItExpr.Is<AgentRunOptions?>(o => o == expectedOptions),
@@ -192,7 +192,7 @@ public class DelegatingAIAgentTests
         var expectedThread = new TestAgentThread();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
-        AgentRunResponseUpdate[] expectedResults =
+        AgentResponseUpdate[] expectedResults =
         [
             new(ChatRole.Assistant, "Message 1"),
             new(ChatRole.Assistant, "Message 2")
@@ -201,7 +201,7 @@ public class DelegatingAIAgentTests
         var innerAgentMock = new Mock<AIAgent>();
         innerAgentMock
             .Protected()
-            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.Is<IEnumerable<ChatMessage>>(m => m == expectedMessages),
                 ItExpr.Is<AgentThread?>(t => t == expectedThread),
                 ItExpr.Is<AgentRunOptions?>(o => o == expectedOptions),

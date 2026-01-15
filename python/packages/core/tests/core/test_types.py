@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from pytest import fixture, mark, raises
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     BaseContent,
     ChatMessage,
     ChatOptions,
@@ -1026,90 +1026,90 @@ def text_content() -> TextContent:
 
 
 @fixture
-def agent_run_response(chat_message: ChatMessage) -> AgentRunResponse:
-    return AgentRunResponse(messages=chat_message)
+def agent_response(chat_message: ChatMessage) -> AgentResponse:
+    return AgentResponse(messages=chat_message)
 
 
 @fixture
-def agent_run_response_update(text_content: TextContent) -> AgentRunResponseUpdate:
-    return AgentRunResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
+def agent_response_update(text_content: TextContent) -> AgentResponseUpdate:
+    return AgentResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
 
 
-# region AgentRunResponse
+# region AgentResponse
 
 
 def test_agent_run_response_init_single_message(chat_message: ChatMessage) -> None:
-    response = AgentRunResponse(messages=chat_message)
+    response = AgentResponse(messages=chat_message)
     assert response.messages == [chat_message]
 
 
 def test_agent_run_response_init_list_messages(chat_message: ChatMessage) -> None:
-    response = AgentRunResponse(messages=[chat_message, chat_message])
+    response = AgentResponse(messages=[chat_message, chat_message])
     assert len(response.messages) == 2
     assert response.messages[0] == chat_message
 
 
 def test_agent_run_response_init_none_messages() -> None:
-    response = AgentRunResponse()
+    response = AgentResponse()
     assert response.messages == []
 
 
 def test_agent_run_response_text_property(chat_message: ChatMessage) -> None:
-    response = AgentRunResponse(messages=[chat_message, chat_message])
+    response = AgentResponse(messages=[chat_message, chat_message])
     assert response.text == "HelloHello"
 
 
 def test_agent_run_response_text_property_empty() -> None:
-    response = AgentRunResponse()
+    response = AgentResponse()
     assert response.text == ""
 
 
-def test_agent_run_response_from_updates(agent_run_response_update: AgentRunResponseUpdate) -> None:
-    updates = [agent_run_response_update, agent_run_response_update]
-    response = AgentRunResponse.from_agent_run_response_updates(updates)
+def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpdate) -> None:
+    updates = [agent_response_update, agent_response_update]
+    response = AgentResponse.from_agent_run_response_updates(updates)
     assert len(response.messages) > 0
     assert response.text == "Test contentTest content"
 
 
 def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:
-    response = AgentRunResponse(messages=chat_message)
+    response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
 
 
-# region AgentRunResponseUpdate
+# region AgentResponseUpdate
 
 
 def test_agent_run_response_update_init_content_list(text_content: TextContent) -> None:
-    update = AgentRunResponseUpdate(contents=[text_content, text_content])
+    update = AgentResponseUpdate(contents=[text_content, text_content])
     assert len(update.contents) == 2
     assert update.contents[0] == text_content
 
 
 def test_agent_run_response_update_init_none_content() -> None:
-    update = AgentRunResponseUpdate()
+    update = AgentResponseUpdate()
     assert update.contents == []
 
 
 def test_agent_run_response_update_text_property(text_content: TextContent) -> None:
-    update = AgentRunResponseUpdate(contents=[text_content, text_content])
+    update = AgentResponseUpdate(contents=[text_content, text_content])
     assert update.text == "Test contentTest content"
 
 
 def test_agent_run_response_update_text_property_empty() -> None:
-    update = AgentRunResponseUpdate()
+    update = AgentResponseUpdate()
     assert update.text == ""
 
 
 def test_agent_run_response_update_str_method(text_content: TextContent) -> None:
-    update = AgentRunResponseUpdate(contents=[text_content])
+    update = AgentResponseUpdate(contents=[text_content])
     assert str(update) == "Test content"
 
 
 def test_agent_run_response_update_created_at() -> None:
-    """Test that AgentRunResponseUpdate properly handles created_at timestamps."""
+    """Test that AgentResponseUpdate properly handles created_at timestamps."""
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
-    update = AgentRunResponseUpdate(
+    update = AgentResponseUpdate(
         contents=[TextContent(text="test")],
         role=Role.ASSISTANT,
         created_at=utc_timestamp,
@@ -1120,7 +1120,7 @@ def test_agent_run_response_update_created_at() -> None:
     # Verify that we can generate a proper UTC timestamp
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    update_with_now = AgentRunResponseUpdate(
+    update_with_now = AgentResponseUpdate(
         contents=[TextContent(text="test")],
         role=Role.ASSISTANT,
         created_at=formatted_utc,
@@ -1130,10 +1130,10 @@ def test_agent_run_response_update_created_at() -> None:
 
 
 def test_agent_run_response_created_at() -> None:
-    """Test that AgentRunResponse properly handles created_at timestamps."""
+    """Test that AgentResponse properly handles created_at timestamps."""
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
-    response = AgentRunResponse(
+    response = AgentResponse(
         messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
         created_at=utc_timestamp,
     )
@@ -1143,7 +1143,7 @@ def test_agent_run_response_created_at() -> None:
     # Verify that we can generate a proper UTC timestamp
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    response_with_now = AgentRunResponse(
+    response_with_now = AgentResponse(
         messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
         created_at=formatted_utc,
     )
@@ -1285,20 +1285,20 @@ def test_chat_tool_mode_eq_with_string():
     assert {"mode": "auto"} == {"mode": "auto"}
 
 
-# region AgentRunResponse
+# region AgentResponse
 
 
 @fixture
-def agent_run_response_async() -> AgentRunResponse:
-    return AgentRunResponse(messages=[ChatMessage(role="user", text="Hello")])
+def agent_run_response_async() -> AgentResponse:
+    return AgentResponse(messages=[ChatMessage(role="user", text="Hello")])
 
 
 async def test_agent_run_response_from_async_generator():
     async def gen():
-        yield AgentRunResponseUpdate(contents=[TextContent("A")])
-        yield AgentRunResponseUpdate(contents=[TextContent("B")])
+        yield AgentResponseUpdate(contents=[TextContent("A")])
+        yield AgentResponseUpdate(contents=[TextContent("B")])
 
-    r = await AgentRunResponse.from_agent_response_generator(gen())
+    r = await AgentResponse.from_agent_response_generator(gen())
     assert r.text == "AB"
 
 
@@ -1668,7 +1668,7 @@ def test_chat_response_update_all_content_types():
 
 
 def test_agent_run_response_complex_serialization():
-    """Test AgentRunResponse from_dict and to_dict with messages and usage_details."""
+    """Test AgentResponse from_dict and to_dict with messages and usage_details."""
 
     response_data = {
         "messages": [
@@ -1683,7 +1683,7 @@ def test_agent_run_response_complex_serialization():
         },
     }
 
-    response = AgentRunResponse.from_dict(response_data)
+    response = AgentResponse.from_dict(response_data)
     assert len(response.messages) == 2
     assert isinstance(response.messages[0], ChatMessage)
     assert isinstance(response.usage_details, UsageDetails)
@@ -1696,7 +1696,7 @@ def test_agent_run_response_complex_serialization():
 
 
 def test_agent_run_response_update_all_content_types():
-    """Test AgentRunResponseUpdate from_dict with all content types and role handling."""
+    """Test AgentResponseUpdate from_dict with all content types and role handling."""
 
     update_data = {
         "contents": [
@@ -1725,7 +1725,7 @@ def test_agent_run_response_update_all_content_types():
         "role": {"value": "assistant"},  # Test role as dict
     }
 
-    update = AgentRunResponseUpdate.from_dict(update_data)
+    update = AgentResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is logged and ignored
     assert isinstance(update.role, Role)
     assert update.role.value == "assistant"
@@ -1738,7 +1738,7 @@ def test_agent_run_response_update_all_content_types():
     # Test role as string conversion
     update_data_str_role = update_data.copy()
     update_data_str_role["role"] = "user"
-    update_str = AgentRunResponseUpdate.from_dict(update_data_str_role)
+    update_str = AgentResponseUpdate.from_dict(update_data_str_role)
     assert isinstance(update_str.role, Role)
     assert update_str.role.value == "user"
 
@@ -1922,7 +1922,7 @@ def test_agent_run_response_update_all_content_types():
             id="chat_response_update",
         ),
         pytest.param(
-            AgentRunResponse,
+            AgentResponse,
             {
                 "messages": [
                     {
@@ -1942,10 +1942,10 @@ def test_agent_run_response_update_all_content_types():
                     "total_token_count": 8,
                 },
             },
-            id="agent_run_response",
+            id="agent_response",
         ),
         pytest.param(
-            AgentRunResponseUpdate,
+            AgentResponseUpdate,
             {
                 "contents": [
                     {"type": "text", "text": "Streaming"},
@@ -1956,7 +1956,7 @@ def test_agent_run_response_update_all_content_types():
                 "response_id": "run-123",
                 "author_name": "Agent",
             },
-            id="agent_run_response_update",
+            id="agent_response_update",
         ),
     ],
 )

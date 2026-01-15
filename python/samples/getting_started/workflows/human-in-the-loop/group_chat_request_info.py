@@ -27,7 +27,7 @@ import asyncio
 from agent_framework import (
     AgentExecutorResponse,
     AgentRequestInfoResponse,
-    AgentRunResponse,
+    AgentResponse,
     AgentRunUpdateEvent,
     ChatMessage,
     GroupChatBuilder,
@@ -138,8 +138,8 @@ async def main() -> None:
                     print(f"About to call agent: {event.source_executor_id}")
                     print("-" * 40)
                     print("Conversation context:")
-                    agent_run_response: AgentRunResponse = event.data.agent_run_response
-                    messages: list[ChatMessage] = agent_run_response.messages
+                    agent_response: AgentResponse = event.data.agent_response
+                    messages: list[ChatMessage] = agent_response.messages
                     recent: list[ChatMessage] = messages[-3:] if len(messages) > 3 else messages  # type: ignore
                     for msg in recent:
                         name = msg.author_name or "unknown"

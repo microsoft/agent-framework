@@ -10,8 +10,8 @@ from typing_extensions import Never
 from agent_framework import (
     AgentExecutor,
     AgentExecutorResponse,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
@@ -46,9 +46,9 @@ class _ToolCallingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Non-streaming run - not used in this test."""
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
 
     async def run_stream(
         self,
@@ -56,16 +56,16 @@ class _ToolCallingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Simulate streaming with tool calls and results."""
         # First update: some text
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="Let me search for that...")],
             role=Role.ASSISTANT,
         )
 
         # Second update: tool call (no text!)
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[
                 FunctionCallContent(
                     call_id="call_123",
@@ -77,7 +77,7 @@ class _ToolCallingAgent(BaseAgent):
         )
 
         # Third update: tool result (no text!)
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[
                 FunctionResultContent(
                     call_id="call_123",
@@ -88,7 +88,7 @@ class _ToolCallingAgent(BaseAgent):
         )
 
         # Fourth update: final text response
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="The weather is sunny, 72°F.")],
             role=Role.ASSISTANT,
         )
@@ -223,7 +223,7 @@ class MockChatClient:
 
 @executor(id="test_executor")
 async def test_executor(agent_executor_response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
-    await ctx.yield_output(agent_executor_response.agent_run_response.text)
+    await ctx.yield_output(agent_executor_response.agent_response.text)
 
 
 async def test_agent_executor_tool_call_with_approval() -> None:

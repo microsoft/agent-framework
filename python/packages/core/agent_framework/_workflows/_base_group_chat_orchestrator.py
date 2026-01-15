@@ -346,7 +346,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             List of ChatMessages extracted from the response
         """
         if isinstance(response, AgentExecutorResponse):
-            return response.agent_run_response.messages
+            return response.agent_response.messages
         if isinstance(response, GroupChatResponseMessage):
             return [response.message]
         raise TypeError(f"Unsupported response type: {type(response)}")

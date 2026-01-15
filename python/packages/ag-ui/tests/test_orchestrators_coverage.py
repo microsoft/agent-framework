@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ChatMessage,
     TextContent,
     ai_function,
@@ -55,7 +55,7 @@ async def test_human_in_the_loop_json_decode_error() -> None:
 
     agent = StubAgent(
         default_options={"tools": [approval_tool], "response_format": None},
-        updates=[AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")],
+        updates=[AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")],
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -451,7 +451,7 @@ async def test_structured_output_processing() -> None:
     agent = StubAgent(
         default_options=DEFAULT_OPTIONS,
         updates=[
-            AgentRunResponseUpdate(
+            AgentResponseUpdate(
                 contents=[TextContent(text='{"ingredients": ["tomato"], "message": "Added tomato"}')],
                 role="assistant",
             )
@@ -691,7 +691,7 @@ async def test_confirm_changes_closes_active_message_before_finish() -> None:
     from agent_framework import FunctionCallContent, FunctionResultContent
 
     updates = [
-        AgentRunResponseUpdate(
+        AgentResponseUpdate(
             contents=[
                 FunctionCallContent(
                     name="write_document_local",
@@ -700,7 +700,7 @@ async def test_confirm_changes_closes_active_message_before_finish() -> None:
                 )
             ]
         ),
-        AgentRunResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")]),
+        AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")]),
     ]
 
     orchestrator = DefaultOrchestrator()
@@ -792,9 +792,9 @@ async def test_agent_protocol_fallback_paths() -> None:
             thread: Any = None,
             tools: list[Any] | None = None,
             **kwargs: Any,
-        ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+        ) -> AsyncGenerator[AgentResponseUpdate, None]:
             self.messages_received = messages
-            yield AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")
+            yield AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")
 
     from agent_framework import ChatMessage, TextContent
 

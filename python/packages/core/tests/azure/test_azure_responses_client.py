@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework import (
-    AgentRunResponse,
+    AgentResponse,
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
@@ -432,7 +432,7 @@ async def test_integration_client_agent_existing_thread():
         thread = first_agent.get_new_thread()
         first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread, store=True)
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # Preserve the thread for reuse
@@ -447,6 +447,6 @@ async def test_integration_client_agent_existing_thread():
             # Reuse the preserved thread
             second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
 
-            assert isinstance(second_response, AgentRunResponse)
+            assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()

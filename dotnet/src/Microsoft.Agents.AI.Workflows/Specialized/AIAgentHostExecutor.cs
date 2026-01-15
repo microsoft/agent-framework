@@ -54,16 +54,16 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         if (emitEvents ?? this._emitEvents)
         {
             // Run the agent in streaming mode only when agent run update events are to be emitted.
-            IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(
+            IAsyncEnumerable<AgentResponseUpdate> agentStream = this._agent.RunStreamingAsync(
                 messages,
                 await this.EnsureThreadAsync(context, cancellationToken).ConfigureAwait(false),
                 cancellationToken: cancellationToken);
 
-            List<AgentRunResponseUpdate> updates = [];
+            List<AgentResponseUpdate> updates = [];
 
-            await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
+            await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
 
                 // TODO: FunctionCall request handling, and user info request handling.
                 // In some sense: We should just let it be handled as a ChatMessage, though we should consider
@@ -72,12 +72,12 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                 updates.Add(update);
             }
 
-            await context.SendMessageAsync(updates.ToAgentRunResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(updates.ToAgentResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
             // Otherwise, run the agent in non-streaming mode.
-            AgentRunResponse response = await this._agent.RunAsync(
+            AgentResponse response = await this._agent.RunAsync(
                 messages,
                 await this.EnsureThreadAsync(context, cancellationToken).ConfigureAwait(false),
                 cancellationToken: cancellationToken).ConfigureAwait(false);

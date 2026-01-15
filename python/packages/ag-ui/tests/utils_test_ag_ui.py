@@ -9,8 +9,8 @@ from typing import Any, Generic
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
     ChatMessage,
@@ -81,7 +81,7 @@ class StubAgent(AgentProtocol):
 
     def __init__(
         self,
-        updates: list[AgentRunResponseUpdate] | None = None,
+        updates: list[AgentResponseUpdate] | None = None,
         *,
         agent_id: str = "stub-agent",
         agent_name: str | None = "stub-agent",
@@ -91,7 +91,7 @@ class StubAgent(AgentProtocol):
         self.id = agent_id
         self.name = agent_name
         self.description = "stub agent"
-        self.updates = updates or [AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
+        self.updates = updates or [AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
         self.default_options: dict[str, Any] = (
             default_options if isinstance(default_options, dict) else {"tools": None, "response_format": None}
         )
@@ -105,8 +105,8 @@ class StubAgent(AgentProtocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[], response_id="stub-response")
+    ) -> AgentResponse:
+        return AgentResponse(messages=[], response_id="stub-response")
 
     def run_stream(
         self,
@@ -114,8 +114,8 @@ class StubAgent(AgentProtocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _stream() -> AsyncIterator[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
             self.messages_received = [] if messages is None else list(messages)  # type: ignore[arg-type]
             self.tools_received = kwargs.get("tools")
             for update in self.updates:

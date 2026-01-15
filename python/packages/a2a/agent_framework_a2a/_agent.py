@@ -26,8 +26,8 @@ from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
 from a2a.types import Role as A2ARole
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -193,11 +193,11 @@ class A2AAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentRunResponse object. The caller is blocked until
+        as a single AgentResponse object. The caller is blocked until
         the final result is available.
 
         Args:
@@ -212,7 +212,7 @@ class A2AAgent(BaseAgent):
         """
         # Collect all updates and use framework to consolidate updates into response
         updates = [update async for update in self.run_stream(messages, thread=thread, **kwargs)]
-        return AgentRunResponse.from_agent_run_response_updates(updates)
+        return AgentResponse.from_agent_run_response_updates(updates)
 
     async def run_stream(
         self,
@@ -220,11 +220,11 @@ class A2AAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Run the agent as a stream.
 
         This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+        agent's execution as a stream of AgentResponseUpdate objects to the caller.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -245,7 +245,7 @@ class A2AAgent(BaseAgent):
             if isinstance(item, Message):
                 # Process A2A Message
                 contents = self._parse_contents_from_a2a(item.parts)
-                yield AgentRunResponseUpdate(
+                yield AgentResponseUpdate(
                     contents=contents,
                     role=Role.ASSISTANT if item.role == A2ARole.agent else Role.USER,
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
@@ -260,7 +260,7 @@ class A2AAgent(BaseAgent):
                         for message in task_messages:
                             # Use the artifact's ID from raw_representation as message_id for unique identification
                             artifact_id = getattr(message.raw_representation, "artifact_id", None)
-                            yield AgentRunResponseUpdate(
+                            yield AgentResponseUpdate(
                                 contents=message.contents,
                                 role=message.role,
                                 response_id=task.id,
@@ -269,7 +269,7 @@ class A2AAgent(BaseAgent):
                             )
                     else:
                         # Empty task
-                        yield AgentRunResponseUpdate(
+                        yield AgentResponseUpdate(
                             contents=[],
                             role=Role.ASSISTANT,
                             response_id=task.id,

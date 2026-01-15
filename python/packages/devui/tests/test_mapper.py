@@ -13,7 +13,7 @@ import pytest
 
 # Import Agent Framework types
 from agent_framework._types import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ErrorContent,
     FunctionCallContent,
     FunctionResultContent,
@@ -83,11 +83,9 @@ def create_test_content(content_type: str, **kwargs: Any) -> Any:
     raise ValueError(f"Unknown content type: {content_type}")
 
 
-def create_test_agent_update(contents: list[Any]) -> AgentRunResponseUpdate:
-    """Create test AgentRunResponseUpdate."""
-    return AgentRunResponseUpdate(
-        contents=contents, role=Role.ASSISTANT, message_id="test_msg", response_id="test_resp"
-    )
+def create_test_agent_update(contents: list[Any]) -> AgentResponseUpdate:
+    """Create test AgentResponseUpdate."""
+    return AgentResponseUpdate(contents=contents, role=Role.ASSISTANT, message_id="test_msg", response_id="test_resp")
 
 
 # =============================================================================
@@ -105,7 +103,7 @@ async def test_critical_isinstance_bug_detection(mapper: MessageMapper, test_req
     assert not hasattr(update, "response")  # Fake attribute should not exist
 
     # Test isinstance works with real types
-    assert isinstance(update, AgentRunResponseUpdate)
+    assert isinstance(update, AgentResponseUpdate)
 
     # Test mapper conversion - should NOT produce "Unknown event"
     events = await mapper.convert_event(update, test_request)
@@ -264,7 +262,7 @@ async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: Agent
 
 
 async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
-    """Test that mapper handles complete AgentRunResponse (non-streaming)."""
+    """Test that mapper handles complete AgentResponse (non-streaming)."""
     response = create_agent_run_response("Complete response from run()")
 
     events = await mapper.convert_event(response, test_request)
@@ -325,14 +323,14 @@ async def test_executor_completed_event_with_agent_response(
 
     This is a REGRESSION TEST for the serialization bug where
     ExecutorCompletedEvent.data contained AgentExecutorResponse with nested
-    AgentRunResponse and ChatMessage objects (SerializationMixin) that
+    AgentResponse and ChatMessage objects (SerializationMixin) that
     Pydantic couldn't serialize.
     """
     # Create event with realistic nested data - the exact structure that caused the bug
     event = create_executor_completed_event(executor_id="exec_agent", with_agent_response=True)
 
     # Verify the data has the problematic structure
-    assert hasattr(event.data, "agent_run_response")
+    assert hasattr(event.data, "agent_response")
     assert hasattr(event.data, "full_conversation")
 
     # First invoke the executor
@@ -380,7 +378,7 @@ async def test_executor_completed_event_serialization_to_json(
     done_event = events[0]
 
     # This is the critical test - model_dump_json() should NOT raise
-    # "Unable to serialize unknown type: <class 'agent_framework._types.AgentRunResponse'>"
+    # "Unable to serialize unknown type: <class 'agent_framework._types.AgentResponse'>"
     try:
         json_str = done_event.model_dump_json()
         assert json_str is not None
@@ -453,11 +451,11 @@ async def test_magentic_agent_run_update_event_with_agent_delta_metadata(
     This tests the ACTUAL event format Magentic emits - not a fake MagenticAgentDeltaEvent class.
     Magentic uses AgentRunUpdateEvent with additional_properties containing magentic_event_type.
     """
-    from agent_framework._types import AgentRunResponseUpdate, Role, TextContent
+    from agent_framework._types import AgentResponseUpdate, Role, TextContent
     from agent_framework._workflows._events import AgentRunUpdateEvent
 
     # Create the REAL event format that Magentic emits
-    update = AgentRunResponseUpdate(
+    update = AgentResponseUpdate(
         contents=[TextContent(text="Hello from agent")],
         role=Role.ASSISTANT,
         author_name="Writer",
@@ -484,11 +482,11 @@ async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_r
     Magentic emits orchestrator planning/instruction messages using AgentRunUpdateEvent
     with additional_properties containing magentic_event_type='orchestrator_message'.
     """
-    from agent_framework._types import AgentRunResponseUpdate, Role, TextContent
+    from agent_framework._types import AgentResponseUpdate, Role, TextContent
     from agent_framework._workflows._events import AgentRunUpdateEvent
 
     # Create orchestrator message event (REAL format from Magentic)
-    update = AgentRunResponseUpdate(
+    update = AgentResponseUpdate(
         contents=[TextContent(text="Planning: First, the writer will create content...")],
         role=Role.ASSISTANT,
         author_name="Orchestrator",
@@ -520,19 +518,19 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
     additional_properties. Any mapper code checking for 'MagenticAgentDeltaEvent'
     class names is dead code.
     """
-    from agent_framework._types import AgentRunResponseUpdate, Role, TextContent
+    from agent_framework._types import AgentResponseUpdate, Role, TextContent
     from agent_framework._workflows._events import AgentRunUpdateEvent
 
     # Create events the way different workflows do it
     # 1. Regular workflow (no additional_properties)
-    regular_update = AgentRunResponseUpdate(
+    regular_update = AgentResponseUpdate(
         contents=[TextContent(text="Regular workflow response")],
         role=Role.ASSISTANT,
     )
     regular_event = AgentRunUpdateEvent(executor_id="regular_executor", data=regular_update)
 
     # 2. Magentic workflow (with additional_properties)
-    magentic_update = AgentRunResponseUpdate(
+    magentic_update = AgentResponseUpdate(
         contents=[TextContent(text="Magentic workflow response")],
         role=Role.ASSISTANT,
         additional_properties={"magentic_event_type": "agent_delta"},

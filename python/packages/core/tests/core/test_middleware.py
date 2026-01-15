@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -172,9 +172,9 @@ class TestAgentMiddlewarePipeline:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        expected_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+        expected_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             return expected_response
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
@@ -200,9 +200,9 @@ class TestAgentMiddlewarePipeline:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        expected_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+        expected_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             execution_order.append("handler")
             return expected_response
 
@@ -216,11 +216,11 @@ class TestAgentMiddlewarePipeline:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
             updates.append(update)
 
@@ -248,13 +248,13 @@ class TestAgentMiddlewarePipeline:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             execution_order.append("handler_start")
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
             execution_order.append("handler_end")
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
             updates.append(update)
 
@@ -271,10 +271,10 @@ class TestAgentMiddlewarePipeline:
         context = AgentRunContext(agent=mock_agent, messages=messages)
         execution_order: list[str] = []
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             # Handler should not be executed when terminated before next()
             execution_order.append("handler")
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         response = await pipeline.execute(mock_agent, messages, context, final_handler)
         assert response is not None
@@ -291,9 +291,9 @@ class TestAgentMiddlewarePipeline:
         context = AgentRunContext(agent=mock_agent, messages=messages)
         execution_order: list[str] = []
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         response = await pipeline.execute(mock_agent, messages, context, final_handler)
         assert response is not None
@@ -310,14 +310,14 @@ class TestAgentMiddlewarePipeline:
         context = AgentRunContext(agent=mock_agent, messages=messages)
         execution_order: list[str] = []
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             # Handler should not be executed when terminated before next()
             execution_order.append("handler_start")
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
             execution_order.append("handler_end")
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
             updates.append(update)
 
@@ -334,13 +334,13 @@ class TestAgentMiddlewarePipeline:
         context = AgentRunContext(agent=mock_agent, messages=messages)
         execution_order: list[str] = []
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             execution_order.append("handler_start")
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
             execution_order.append("handler_end")
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
             updates.append(update)
 
@@ -370,9 +370,9 @@ class TestAgentMiddlewarePipeline:
         thread = AgentThread()
         context = AgentRunContext(agent=mock_agent, messages=messages, thread=thread)
 
-        expected_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+        expected_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             return expected_response
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
@@ -396,9 +396,9 @@ class TestAgentMiddlewarePipeline:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages, thread=None)
 
-        expected_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+        expected_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             return expected_response
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
@@ -767,9 +767,9 @@ class TestClassBasedMiddleware:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             metadata_updates.append("handler")
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -830,9 +830,9 @@ class TestFunctionBasedMiddleware:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -893,9 +893,9 @@ class TestMixedMiddleware:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -1004,9 +1004,9 @@ class TestMultipleMiddlewareOrdering:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -1142,10 +1142,10 @@ class TestContextContentValidation:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             # Verify metadata was set by middleware
             assert ctx.metadata.get("validated") is True
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
         assert result is not None
@@ -1253,20 +1253,20 @@ class TestStreamingScenarios:
         # Test non-streaming
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             streaming_flags.append(ctx.is_streaming)
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
         await pipeline.execute(mock_agent, messages, context, final_handler)
 
         # Test streaming
         context_stream = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def final_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             streaming_flags.append(ctx.is_streaming)
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk")])
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context_stream, final_stream_handler):
             updates.append(update)
 
@@ -1290,11 +1290,11 @@ class TestStreamingScenarios:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def final_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             chunks_processed.append("stream_start")
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
             chunks_processed.append("chunk1_yielded")
-            yield AgentRunResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
             chunks_processed.append("chunk2_yielded")
             chunks_processed.append("stream_end")
 
@@ -1452,16 +1452,16 @@ class TestMiddlewareExecutionControl:
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="should not execute")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="should not execute")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
-        # Verify no execution happened - should return empty AgentRunResponse
+        # Verify no execution happened - should return empty AgentResponse
         assert result is not None
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.messages == []  # Empty response
         assert not handler_called
         assert context.result is None
@@ -1483,13 +1483,13 @@ class TestMiddlewareExecutionControl:
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             nonlocal handler_called
             handler_called = True
-            yield AgentRunResponseUpdate(contents=[TextContent(text="should not execute")])
+            yield AgentResponseUpdate(contents=[TextContent(text="should not execute")])
 
         # When middleware doesn't call next(), streaming should yield no updates
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
             updates.append(update)
 
@@ -1556,17 +1556,17 @@ class TestMiddlewareExecutionControl:
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="should not execute")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="should not execute")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
         # Verify only first middleware was called and empty response returned
         assert execution_order == ["first"]
         assert result is not None
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.messages == []  # Empty response
         assert not handler_called
 

@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <item><description><see cref="JsonSerializerDefaults.Web"/> baseline defaults.</description></item>
 /// <item><description><see cref="JsonIgnoreCondition.WhenWritingNull"/> for default null-value suppression.</description></item>
 /// <item><description><see cref="JsonNumberHandling.AllowReadingFromString"/> to tolerate numbers encoded as strings.</description></item>
-/// <item><description>Chained type info resolvers from shared agent abstractions to cover cross-package types (e.g. <see cref="ChatMessage"/>, <see cref="AgentRunResponse"/>).</description></item>
+/// <item><description>Chained type info resolvers from shared agent abstractions to cover cross-package types (e.g. <see cref="ChatMessage"/>, <see cref="AgentResponse"/>).</description></item>
 /// </list>
 /// <para>
 /// Keep the list of <c>[JsonSerializable]</c> types in sync with the Durable Agent data model anytime new state or request/response

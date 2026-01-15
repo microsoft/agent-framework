@@ -414,16 +414,7 @@ class InProcRunnerContext:
         self._messages.clear()
         messages_data = checkpoint.messages
         for source_id, message_list in messages_data.items():
-            self._messages[source_id] = [
-                Message(
-                    data=decode_checkpoint_value(msg.get("data")),
-                    source_id=msg.get("source_id", ""),
-                    target_id=msg.get("target_id"),
-                    trace_contexts=msg.get("trace_contexts"),
-                    source_span_ids=msg.get("source_span_ids"),
-                )
-                for msg in message_list
-            ]
+            self._messages[source_id] = [Message.from_dict(msg) for msg in message_list]
 
         # Restore pending request info events
         self._pending_request_info_events.clear()

@@ -8,8 +8,8 @@ import pytest
 from agent_framework import (
     AgentExecutorResponse,
     AgentRequestInfoResponse,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     BaseGroupChatOrchestrator,
@@ -44,9 +44,9 @@ class StubAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
-        return AgentRunResponse(messages=[response])
+        return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
         self,
@@ -54,9 +54,9 @@ class StubAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _stream() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
                 contents=[TextContent(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
@@ -88,12 +88,12 @@ class StubManagerAgent(ChatAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         if self._call_count == 0:
             self._call_count += 1
             # First call: select the agent (using AgentOrchestrationOutput format)
             payload = {"terminate": False, "reason": "Selecting agent", "next_speaker": "agent", "final_message": None}
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=[
                     ChatMessage(
                         role=Role.ASSISTANT,
@@ -114,7 +114,7 @@ class StubManagerAgent(ChatAgent):
             "next_speaker": None,
             "final_message": "agent manager final",
         }
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[
                 ChatMessage(
                     role=Role.ASSISTANT,
@@ -134,12 +134,12 @@ class StubManagerAgent(ChatAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         if self._call_count == 0:
             self._call_count += 1
 
-            async def _stream_initial() -> AsyncIterable[AgentRunResponseUpdate]:
-                yield AgentRunResponseUpdate(
+            async def _stream_initial() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
                     contents=[
                         TextContent(
                             text=(
@@ -154,8 +154,8 @@ class StubManagerAgent(ChatAgent):
 
             return _stream_initial()
 
-        async def _stream_final() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(
+        async def _stream_final() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
                 contents=[
                     TextContent(
                         text=(
@@ -341,14 +341,14 @@ class TestGroupChatBuilder:
             def __init__(self) -> None:
                 super().__init__(name="", description="test")
 
-            async def run(self, messages: Any = None, *, thread: Any = None, **kwargs: Any) -> AgentRunResponse:
-                return AgentRunResponse(messages=[])
+            async def run(self, messages: Any = None, *, thread: Any = None, **kwargs: Any) -> AgentResponse:
+                return AgentResponse(messages=[])
 
             def run_stream(
                 self, messages: Any = None, *, thread: Any = None, **kwargs: Any
-            ) -> AsyncIterable[AgentRunResponseUpdate]:
-                async def _stream() -> AsyncIterable[AgentRunResponseUpdate]:
-                    yield AgentRunResponseUpdate(contents=[])
+            ) -> AsyncIterable[AgentResponseUpdate]:
+                async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(contents=[])
 
                 return _stream()
 
