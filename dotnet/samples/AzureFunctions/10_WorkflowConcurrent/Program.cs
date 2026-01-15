@@ -28,24 +28,22 @@ AIAgent physicist = client.GetChatClient(deploymentName).CreateAIAgent("You are 
 AIAgent chemist = client.GetChatClient(deploymentName).CreateAIAgent("You are an expert in chemistry. You answer questions from a chemistry perspective.", "Chemist");
 
 var startExecutor = new ConcurrentStartExecutor();
-var aggregationExecutor = new ConcurrentAggregationExecutor();
+var aggregationExecutor = new ResultAggregationExecutor();
 
 // Build the workflow by adding executors and connecting them
 var workflow = new WorkflowBuilder(startExecutor)
     .WithName("FanOutWorkflow")
     .AddFanOutEdge(startExecutor, [physicist, chemist])
     .AddFanInEdge([physicist, chemist], aggregationExecutor)
-    .WithOutputFrom(aggregationExecutor)
     .Build();
 
 // Configure the function app to host AI agents and workflows in a unified way.
 // This will automatically generate HTTP API endpoints for agents and workflows.
-var functionBuilder = FunctionsApplication.CreateBuilder(args);
-functionBuilder
+
+FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableOptions(options =>
 {
     // Configure workflows
     options.Workflows.AddWorkflow(workflow);
-});
-functionBuilder.Build().Run();
+}).Build().Run();

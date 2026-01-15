@@ -19,7 +19,7 @@ internal sealed class ConcurrentStartExecutor() : Executor<string, string>("Conc
     }
 }
 
-internal sealed class ConcurrentAggregationExecutor() : Executor<string[], string>("ConcurrentAggregationExecutor")
+internal sealed class ResultAggregationExecutor() : Executor<string[], string>("ResultAggregationExecutor")
 {
     /// <summary>
     /// Handles incoming messages from the agents and aggregates their responses.

@@ -1,7 +1,7 @@
 # Default endpoint address for local testing
 @authority=http://localhost:7071
 
-### Prompt the agent
+### Start the workflow
 POST {{authority}}/api/workflows/FanOutWorkflow/run
 Content-Type: text/plain
 
