@@ -210,27 +210,12 @@ def decode_checkpoint_value(value: Any) -> Any:
     return value
 
 
-def _supports_model_protocol(obj: object) -> bool:
-    """Detect objects that expose dictionary serialization hooks."""
-    try:
-        obj_type: type[Any] = type(obj)
-    except Exception:
-        return False
-
-    has_to_dict = hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None))  # type: ignore[arg-type]
-    has_from_dict = hasattr(obj_type, "from_dict") and callable(getattr(obj_type, "from_dict", None))
-
-    has_to_json = hasattr(obj, "to_json") and callable(getattr(obj, "to_json", None))  # type: ignore[arg-type]
-    has_from_json = hasattr(obj_type, "from_json") and callable(getattr(obj_type, "from_json", None))
-
-    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
-
-
 def _class_supports_model_protocol(cls: type[Any]) -> bool:
     """Check if a class type supports the model serialization protocol.
 
-    This is similar to _supports_model_protocol but works on classes directly,
-    used for validation during deserialization.
+    Checks for pairs of serialization/deserialization methods:
+    - to_dict/from_dict
+    - to_json/from_json
     """
     has_to_dict = hasattr(cls, "to_dict") and callable(getattr(cls, "to_dict", None))
     has_from_dict = hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict", None))
@@ -239,6 +224,16 @@ def _class_supports_model_protocol(cls: type[Any]) -> bool:
     has_from_json = hasattr(cls, "from_json") and callable(getattr(cls, "from_json", None))
 
     return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
+
+
+def _supports_model_protocol(obj: object) -> bool:
+    """Detect objects that expose dictionary serialization hooks."""
+    try:
+        obj_type: type[Any] = type(obj)
+    except Exception:
+        return False
+
+    return _class_supports_model_protocol(obj_type)
 
 
 def _import_qualified_name(qualname: str) -> type[Any] | None:
