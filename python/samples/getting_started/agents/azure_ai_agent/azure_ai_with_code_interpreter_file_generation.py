@@ -3,7 +3,11 @@
 import asyncio
 import os
 
-from agent_framework import AgentRunResponseUpdate, HostedCodeInterpreterTool, HostedFileContent
+from agent_framework import (
+    AgentResponseUpdate,
+    HostedCodeInterpreterTool,
+    HostedFileContent,
+)
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
@@ -57,7 +61,7 @@ async def main() -> None:
         file_ids: list[str] = []
 
         async for chunk in agent.run_stream(query):
-            if not isinstance(chunk, AgentRunResponseUpdate):
+            if not isinstance(chunk, AgentResponseUpdate):
                 continue
 
             for content in chunk.contents:

@@ -7,18 +7,24 @@ import pytest
 
 from agent_framework import (
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     Executor,
     WorkflowContext,
+    WorkflowConvergenceException,
     WorkflowEvent,
     WorkflowOutputEvent,
+    WorkflowRunnerException,
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
 )
 from agent_framework._workflows._edge import SingleEdgeGroup
 from agent_framework._workflows._runner import Runner
-from agent_framework._workflows._runner_context import InProcRunnerContext, Message, RunnerContext
+from agent_framework._workflows._runner_context import (
+    InProcRunnerContext,
+    Message,
+    RunnerContext,
+)
 from agent_framework._workflows._shared_state import SharedState
 
 
@@ -52,7 +58,10 @@ def test_create_runner():
         SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
-    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    executors: dict[str, Executor] = {
+        executor_a.id: executor_a,
+        executor_b.id: executor_b,
+    }
 
     runner = Runner(edge_groups, executors, shared_state=SharedState(), ctx=InProcRunnerContext())
 
@@ -70,7 +79,10 @@ async def test_runner_run_until_convergence():
         SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
-    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    executors: dict[str, Executor] = {
+        executor_a.id: executor_a,
+        executor_b.id: executor_b,
+    }
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
@@ -90,6 +102,9 @@ async def test_runner_run_until_convergence():
 
     assert result is not None and result == 10
 
+    # iteration count shouldn't be reset after convergence
+    assert runner._iteration == 10  # type: ignore
+
 
 async def test_runner_run_until_convergence_not_completed():
     """Test running the runner with a simple workflow."""
@@ -102,7 +117,10 @@ async def test_runner_run_until_convergence_not_completed():
         SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
-    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    executors: dict[str, Executor] = {
+        executor_a.id: executor_a,
+        executor_b.id: executor_b,
+    }
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
@@ -114,7 +132,10 @@ async def test_runner_run_until_convergence_not_completed():
         shared_state,  # shared_state
         ctx,  # runner_context
     )
-    with pytest.raises(RuntimeError, match="Runner did not converge after 5 iterations."):
+    with pytest.raises(
+        WorkflowConvergenceException,
+        match="Runner did not converge after 5 iterations.",
+    ):
         async for event in runner.run_until_convergence():
             assert not isinstance(event, WorkflowStatusEvent) or event.state != WorkflowRunState.IDLE
 
@@ -130,7 +151,10 @@ async def test_runner_already_running():
         SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
 
-    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    executors: dict[str, Executor] = {
+        executor_a.id: executor_a,
+        executor_b.id: executor_b,
+    }
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
@@ -143,7 +167,7 @@ async def test_runner_already_running():
         ctx,  # runner_context
     )
 
-    with pytest.raises(RuntimeError, match="Runner is already running."):
+    with pytest.raises(WorkflowRunnerException, match="Runner is already running."):
 
         async def _run():
             async for _ in runner.run_until_convergence():
@@ -158,7 +182,7 @@ async def test_runner_emits_runner_completion_for_agent_response_without_targets
 
     await ctx.send_message(
         Message(
-            data=AgentExecutorResponse("agent", AgentRunResponse()),
+            data=AgentExecutorResponse("agent", AgentResponse()),
             source_id="agent",
         )
     )

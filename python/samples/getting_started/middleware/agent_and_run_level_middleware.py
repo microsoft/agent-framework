@@ -8,8 +8,8 @@ from typing import Annotated
 
 from agent_framework import (
     AgentMiddleware,
+    AgentResponse,
     AgentRunContext,
-    AgentRunResponse,
     FunctionInvocationContext,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -121,7 +121,7 @@ class CachingMiddleware(AgentMiddleware):
     """Run-level caching middleware for expensive operations."""
 
     def __init__(self) -> None:
-        self.cache: dict[str, AgentRunResponse] = {}
+        self.cache: dict[str, AgentResponse] = {}
 
     async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
         # Create a simple cache key from the last message

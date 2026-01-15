@@ -3,7 +3,14 @@
 import pytest
 from typing_extensions import Never
 
-from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowRunState, WorkflowStatusEvent, handler
+from agent_framework import (
+    WorkflowBuilder,
+    WorkflowCheckpointException,
+    WorkflowContext,
+    WorkflowRunState,
+    WorkflowStatusEvent,
+    handler,
+)
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._executor import Executor
 
@@ -43,7 +50,7 @@ async def test_resume_fails_when_graph_mismatch() -> None:
     # Build a structurally different workflow (different finish executor id)
     mismatched_workflow = build_workflow(storage, finish_id="finish_alt")
 
-    with pytest.raises(ValueError, match="Workflow graph has changed"):
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
         _ = [
             event
             async for event in mismatched_workflow.run_stream(

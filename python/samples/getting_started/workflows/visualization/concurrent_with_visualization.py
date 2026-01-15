@@ -61,8 +61,8 @@ class AggregateInsights(Executor):
         # Map responses to text by executor id for a simple, predictable demo.
         by_id: dict[str, str] = {}
         for r in results:
-            # AgentExecutorResponse.agent_run_response.text contains concatenated assistant text
-            by_id[r.executor_id] = r.agent_run_response.text
+            # AgentExecutorResponse.agent_response.text contains concatenated assistant text
+            by_id[r.executor_id] = r.agent_response.text
 
         research_text = by_id.get("researcher", "")
         marketing_text = by_id.get("marketer", "")

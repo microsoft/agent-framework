@@ -15,7 +15,7 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
     public void VerifySerializationWithText()
     {
         // Arrange
-        ExternalInputRequest source = new(new AgentRunResponse(new ChatMessage(ChatRole.User, "Wassup?")));
+        ExternalInputRequest source = new(new AgentResponse(new ChatMessage(ChatRole.User, "Wassup?")));
 
         // Act
         ExternalInputRequest copy = VerifyEventSerialization(source);
@@ -30,7 +30,7 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
     {
         // Arrange
         ExternalInputRequest source =
-            new(new AgentRunResponse(
+            new(new AgentResponse(
                     new ChatMessage(
                         ChatRole.Assistant,
                         [

@@ -10,7 +10,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage, ErrorContent
+from agent_framework import AgentResponse, ChatMessage, ErrorContent
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
@@ -332,7 +332,7 @@ class TestAgentEntityOperations:
         """Test that entity can run agent operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")])
+            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")])
         )
 
         entity = AgentEntity(mock_agent)
@@ -343,7 +343,7 @@ class TestAgentEntityOperations:
             {"message": "Test message", "thread_id": "test-conv-123", "correlationId": "corr-app-entity-1"},
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Test response"
         assert entity.state.message_count == 2
 
@@ -351,7 +351,7 @@ class TestAgentEntityOperations:
         """Test that the entity stores conversation history."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response 1")])
+            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response 1")])
         )
 
         entity = AgentEntity(mock_agent)
@@ -390,7 +390,7 @@ class TestAgentEntityOperations:
         """Test that the entity increments the message count."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
         )
 
         entity = AgentEntity(mock_agent)
@@ -437,7 +437,7 @@ class TestAgentEntityFactory:
         """Test that the entity function handles the run operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
         )
 
         entity_function = create_agent_entity(mock_agent)
@@ -465,7 +465,7 @@ class TestAgentEntityFactory:
         """Test that the entity function handles the deprecated run_agent operation for backward compatibility."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
         )
 
         entity_function = create_agent_entity(mock_agent)
@@ -619,7 +619,7 @@ class TestErrorHandling:
             mock_context, {"message": "Test message", "thread_id": "conv-1", "correlationId": "corr-app-error-1"}
         )
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
         assert isinstance(content, ErrorContent)

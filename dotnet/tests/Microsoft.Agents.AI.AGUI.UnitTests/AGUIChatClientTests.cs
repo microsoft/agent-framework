@@ -34,7 +34,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages);
+        AgentResponse response = await agent.RunAsync(messages);
 
         // Assert
         Assert.NotNull(response);
@@ -59,7 +59,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages);
+        AgentResponse response = await agent.RunAsync(messages);
 
         // Assert
         Assert.NotNull(response);
@@ -95,7 +95,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages, thread: null);
+        AgentResponse response = await agent.RunAsync(messages, thread: null);
 
         // Assert
         Assert.NotNull(response);
@@ -119,8 +119,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             // Consume the stream
             updates.Add(update);
@@ -166,8 +166,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
         {
             // Consume the stream
             updates.Add(update);
@@ -232,7 +232,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, thread))
         {
             updates.Add(update);
@@ -305,8 +305,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "What's the weather?")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -357,8 +357,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -407,8 +407,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -491,7 +491,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, thread))
         {
             updates.Add(update);

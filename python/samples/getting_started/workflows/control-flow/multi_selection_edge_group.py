@@ -98,7 +98,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
 @executor(id="to_analysis_result")
 async def to_analysis_result(response: AgentExecutorResponse, ctx: WorkflowContext[AnalysisResult]) -> None:
-    parsed = AnalysisResultAgent.model_validate_json(response.agent_run_response.text)
+    parsed = AnalysisResultAgent.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{email_id}")
     await ctx.send_message(
@@ -125,7 +125,7 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -140,7 +140,7 @@ async def summarize_email(analysis: AnalysisResult, ctx: WorkflowContext[AgentEx
 
 @executor(id="merge_summary")
 async def merge_summary(response: AgentExecutorResponse, ctx: WorkflowContext[AnalysisResult]) -> None:
-    summary = EmailSummaryModel.model_validate_json(response.agent_run_response.text)
+    summary = EmailSummaryModel.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{email_id}")
     # Build an AnalysisResult mirroring to_analysis_result but with summary

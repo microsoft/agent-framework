@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponse, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import AgentResponse, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterDetailItemObject,
@@ -17,7 +17,7 @@ for Python code execution and mathematical problem solving.
 """
 
 
-def print_code_interpreter_inputs(response: AgentRunResponse) -> None:
+def print_code_interpreter_inputs(response: AgentResponse) -> None:
     """Helper method to access code interpreter data."""
 
     print("\nCode Interpreter Inputs during the run:")

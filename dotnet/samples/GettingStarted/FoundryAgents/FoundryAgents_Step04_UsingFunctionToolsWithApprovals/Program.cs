@@ -33,7 +33,7 @@ AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, mo
 // Call the agent with approval-required function tools.
 // The agent will request approval before invoking the function.
 AgentThread thread = await agent.GetNewThreadAsync();
-AgentRunResponse response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
+AgentResponse response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
 
 // Check if there are any user input requests (approvals needed).
 List<UserInputRequestContent> userInputRequests = response.UserInputRequests.ToList();

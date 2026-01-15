@@ -114,7 +114,7 @@ public static class Program
                 bool isFirstUpdate = true;
                 string? threadId = null;
                 var updates = new List<ChatResponseUpdate>();
-                await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
+                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
