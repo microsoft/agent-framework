@@ -21,23 +21,23 @@ internal sealed class DurableWorkflowRunner
         this._options = durableOptions.Workflows;
     }
 
-    internal async Task<List<string>> RunWorkflowOrchestrationAsync(TaskOrchestrationContext context, DuableWorkflowRunRequest input)
+    internal async Task<List<string>> RunWorkflowOrchestrationAsync(TaskOrchestrationContext taskOrchestrationContext, DuableWorkflowRunRequest input, ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(taskOrchestrationContext);
         ArgumentNullException.ThrowIfNull(input);
 
         string workflowName = input.WorkflowName;
 
-        this._logger.LogAttemptingToRunWorkflow(workflowName);
+        logger.LogAttemptingToRunWorkflow(workflowName);
 
         if (!this._options.Workflows.TryGetValue(workflowName, out Workflow? wf))
         {
             throw new InvalidOperationException($"Workflow '{workflowName}' not found.");
         }
 
-        this._logger.LogRunningWorkflow(wf.Name);
+        logger.LogRunningWorkflow(wf.Name);
 
-        var result = await this.RunExecutorsInWorkFlowAsync(context, wf, input.Input).ConfigureAwait(false);
+        var result = await this.RunExecutorsInWorkFlowAsync(taskOrchestrationContext, wf, input.Input, logger);
 
         return [result];
     }
@@ -45,16 +45,17 @@ internal sealed class DurableWorkflowRunner
     private async Task<string> RunExecutorsInWorkFlowAsync(
         TaskOrchestrationContext taskOrchestrationContext,
         Workflow workflow,
-        string initialInput)
+        string initialInput,
+        ILogger logger)
     {
         List<string> executorResult = [];
 
-        if (this._logger.IsEnabled(LogLevel.Information))
+        if (logger.IsEnabled(LogLevel.Information))
         {
             foreach (WorkflowExecutorInfo executorInfo in WorkflowHelper.GetExecutorsFromWorkflowInOrder(workflow))
             {
                 string triggerName = this.BuildTriggerName(workflow.Name!, executorInfo.ExecutorId);
-                this._logger.LogInformation(
+                logger.LogInformation(
                     "  Scheduling executor '{ExecutorId}' (IsAgentic: {IsAgentic}) with trigger name '{TriggerName}'",
                     executorInfo.ExecutorId,
                     executorInfo.IsAgenticExecutor,
@@ -69,7 +70,7 @@ internal sealed class DurableWorkflowRunner
                 else
                 {
                     string AgentName = this.GetAgentNameFromExecutorId(workflow.Name!, executorInfo.ExecutorId);
-                    this._logger.LogInformation(
+                    logger.LogInformation(
                         "  Invoking agentic executor '{ExecutorId}'",
                         AgentName);
                     DurableAIAgent agent = taskOrchestrationContext.GetAgent(AgentName);
@@ -78,7 +79,7 @@ internal sealed class DurableWorkflowRunner
                         AgentThread destinationThread = agent.GetNewThread();
                         var agentResponse = await agent.RunAsync(input, destinationThread);
                         executorResult.Add(agentResponse.Text);
-                        this._logger.LogInformation(
+                        logger.LogInformation(
                             "Agentic executor '{ExecutorId}' completed with response: {AgentResponse}",
                             AgentName,
                             agentResponse);
@@ -162,7 +163,7 @@ internal sealed class DurableWorkflowRunner
                 "activity-run",
                 CancellationToken.None).ConfigureAwait(false);
 
-            // Create a minimal workflow context for the executor
+            // Create a minimal workflow taskOrchestrationContext for the executor
             MinimalActivityContext context = new(executorPair.Key);
 
             // Execute the executor with the input

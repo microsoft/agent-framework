@@ -68,7 +68,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             }
         }
 
-        if (durableTaskClient is null && context.FunctionDefinition.EntryPoint != BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint)
+        if (durableTaskClient is null)
         {
             // This is not expected to happen since all built-in functions are
             // expected to have a Durable Task client binding.
@@ -117,11 +117,6 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
 
         if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint)
         {
-            //if (httpRequestData == null)
-            //{
-            //    throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
-            //}
-
             if (httpRequestData == null)
             {
                 throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");

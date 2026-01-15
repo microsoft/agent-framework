@@ -9,6 +9,7 @@ using Microsoft.DurableTask.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
@@ -68,7 +69,6 @@ public static class DurableOptionsExtensions
         builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal));
@@ -85,9 +85,15 @@ public static class DurableOptionsExtensions
                 {
                     throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
                 }
-
+                var logger = tc.CreateReplaySafeLogger("WorkflowRunnerOrchestration");
                 DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
-                return await runner.RunWorkflowOrchestrationAsync(tc, inputBindingData).ConfigureAwait(false);
+                var orchestrationResult = await runner.RunWorkflowOrchestrationAsync(tc, inputBindingData, logger);
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation("Durable workflow orchestration completed. Result:{Result}", string.Join(",", orchestrationResult));
+                }
+
+                return orchestrationResult;
             }));
 
         builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();

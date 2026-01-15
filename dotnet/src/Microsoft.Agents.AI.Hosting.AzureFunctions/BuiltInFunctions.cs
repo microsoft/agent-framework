@@ -23,7 +23,6 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
     internal static readonly string RunWorkflowOrechstrtationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrechstrtationHttpTriggerAsync)}";
-    internal static readonly string RunWorkflowOrechstrtationFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestratorAsync)}";
     internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
 
@@ -40,21 +39,6 @@ internal static class BuiltInFunctions
 
         DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
         return runner.ExecuteActivityAsync(activityFunctionName, input, functionContext);
-    }
-
-    public static async Task<List<string>> RunWorkflowOrchestratorAsync(string taskOrchestrationContext, FunctionContext functionsContext)
-    {
-        var logger = functionsContext.GetLogger("BuiltInFunctions");
-        var outputs = new List<string>();
-        const string WorkflowName = "MyTestWorkflow"; // to do: get from TaskOrchestrationContext
-        if (logger.IsEnabled(LogLevel.Information))
-        {
-            logger.LogInformation("Orchestrator {WorkflowName} is executing. Input: {Input}", WorkflowName, taskOrchestrationContext);
-        }
-
-        //var runner = functionsContext.InstanceServices.GetService<DurableWorkflowRunner>();
-        //await runner!.RunAsync(null, WorkflowName);
-        return outputs;
     }
 
     // Exposed as an entity trigger via AgentFunctionsProvider
@@ -86,14 +70,12 @@ internal static class BuiltInFunctions
         [DurableClient] DurableTaskClient client,
         FunctionContext context)
     {
-        // to do: Retrieve the workflow and execute it.
         var workflowName = context.FunctionDefinition.Name.Replace("http-", "");
         var inputMessage = await req.ReadAsStringAsync();
-        //string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("dafx-MyTestWorkflow");
         string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("WorkflowRunnerOrchestration", new DuableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
 
-        HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}.{instanceId}");
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}. Orchestration instanceId: {instanceId}");
         return response;
     }
 
