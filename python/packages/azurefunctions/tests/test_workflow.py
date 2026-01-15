@@ -5,9 +5,7 @@
 import json
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import Mock, patch
 
-import pytest
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
@@ -278,13 +276,7 @@ class TestExtractMessageContentFromDict:
 
     def test_extract_from_messages_with_contents(self) -> None:
         """Test extracting from messages with contents structure."""
-        msg_dict = {
-            "messages": [
-                {
-                    "contents": [{"type": "text", "text": "Content text"}]
-                }
-            ]
-        }
+        msg_dict = {"messages": [{"contents": [{"type": "text", "text": "Content text"}]}]}
 
         result = _extract_message_content_from_dict(msg_dict)
 
@@ -292,9 +284,7 @@ class TestExtractMessageContentFromDict:
 
     def test_extract_from_messages_with_direct_text(self) -> None:
         """Test extracting from messages with direct text field."""
-        msg_dict = {
-            "messages": [{"text": "Direct text"}]
-        }
+        msg_dict = {"messages": [{"text": "Direct text"}]}
 
         result = _extract_message_content_from_dict(msg_dict)
 
@@ -302,9 +292,7 @@ class TestExtractMessageContentFromDict:
 
     def test_extract_from_agent_run_response(self) -> None:
         """Test extracting from agent_run_response dict."""
-        msg_dict = {
-            "agent_run_response": {"text": "Response text"}
-        }
+        msg_dict = {"agent_run_response": {"text": "Response text"}}
 
         result = _extract_message_content_from_dict(msg_dict)
 
@@ -312,13 +300,7 @@ class TestExtractMessageContentFromDict:
 
     def test_extract_from_agent_run_response_with_messages(self) -> None:
         """Test extracting from agent_run_response with messages."""
-        msg_dict = {
-            "agent_run_response": {
-                "messages": [
-                    {"contents": [{"type": "text", "text": "Nested content"}]}
-                ]
-            }
-        }
+        msg_dict = {"agent_run_response": {"messages": [{"contents": [{"type": "text", "text": "Nested content"}]}]}}
 
         result = _extract_message_content_from_dict(msg_dict)
 

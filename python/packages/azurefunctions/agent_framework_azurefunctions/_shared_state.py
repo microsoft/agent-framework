@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Durable Shared State for Workflow Execution
+"""Durable Shared State for Workflow Execution
 
 This module provides a durable SharedState implementation that allows executors
 in a workflow to share state across the execution lifecycle. Unlike MAF's in-memory
@@ -37,8 +36,7 @@ SHARED_STATE_ENTITY_NAME = "SharedStateEntity"
 
 @dataclass
 class SharedStateData:
-    """
-    The underlying data structure for shared state.
+    """The underlying data structure for shared state.
 
     This is stored as the state of the SharedStateEntity.
     """
@@ -58,8 +56,7 @@ class SharedStateData:
 
 
 class DurableSharedState:
-    """
-    Orchestration-side wrapper for shared state operations.
+    """Orchestration-side wrapper for shared state operations.
 
     This class provides a generator-based API compatible with Durable Functions
     orchestrations. Each operation (get, set, has, delete) returns a generator
@@ -88,8 +85,7 @@ class DurableSharedState:
     """
 
     def __init__(self, context: DurableOrchestrationContext, session_id: str) -> None:
-        """
-        Initialize the shared state wrapper.
+        """Initialize the shared state wrapper.
 
         Args:
             context: The Durable Functions orchestration context
@@ -105,8 +101,7 @@ class DurableSharedState:
         return self._entity_id
 
     def get(self, key: str, default: Any = None) -> Generator[Any, Any, Any]:
-        """
-        Get a value from the shared state.
+        """Get a value from the shared state.
 
         Args:
             key: The key to retrieve
@@ -119,8 +114,7 @@ class DurableSharedState:
         return result
 
     def set(self, key: str, value: Any) -> Generator[Any, Any, None]:
-        """
-        Set a value in the shared state.
+        """Set a value in the shared state.
 
         Args:
             key: The key to set
@@ -129,8 +123,7 @@ class DurableSharedState:
         yield self._context.call_entity(self._entity_id, "set", {"key": key, "value": value})
 
     def has(self, key: str) -> Generator[Any, Any, bool]:
-        """
-        Check if a key exists in the shared state.
+        """Check if a key exists in the shared state.
 
         Args:
             key: The key to check
@@ -142,8 +135,7 @@ class DurableSharedState:
         return result
 
     def delete(self, key: str) -> Generator[Any, Any, bool]:
-        """
-        Delete a key from the shared state.
+        """Delete a key from the shared state.
 
         Args:
             key: The key to delete
@@ -155,8 +147,7 @@ class DurableSharedState:
         return result
 
     def get_all(self) -> Generator[Any, Any, dict[str, Any]]:
-        """
-        Get all shared state as a dictionary.
+        """Get all shared state as a dictionary.
 
         Returns:
             Generator that yields the complete state dictionary
@@ -165,8 +156,7 @@ class DurableSharedState:
         return result if result else {}
 
     def update(self, updates: dict[str, Any]) -> Generator[Any, Any, None]:
-        """
-        Update multiple keys at once.
+        """Update multiple keys at once.
 
         Args:
             updates: Dictionary of key-value pairs to update
@@ -174,15 +164,12 @@ class DurableSharedState:
         yield self._context.call_entity(self._entity_id, "update", {"updates": updates})
 
     def clear(self) -> Generator[Any, Any, None]:
-        """
-        Clear all shared state.
-        """
+        """Clear all shared state."""
         yield self._context.call_entity(self._entity_id, "clear", None)
 
 
 def create_shared_state_entity_function():
-    """
-    Create the entity function for SharedState.
+    """Create the entity function for SharedState.
 
     This function handles all shared state operations:
     - get: Retrieve a value by key

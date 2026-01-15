@@ -99,11 +99,15 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 ### Ollama
 
+The recommended way to use Ollama is via the native `OllamaChatClient` from the `agent-framework-ollama` package.
+
 | File | Description |
 |------|-------------|
-| [`getting_started/agents/ollama/ollama_with_openai_chat_client.py`](./getting_started/agents/ollama/ollama_with_openai_chat_client.py) | Ollama with OpenAI Chat Client Example |
-| [`packages/ollama/getting_started/ollama_agent_basic.py`](../packages/ollama/getting_started/ollama_agent_basic.py) | (Experimental) Ollama Agent with native Ollama Chat Client |
-| [`packages/ollama/getting_started/ollama_agent_reasoning.py`](../packages/ollama/getting_started/ollama_agent_reasoning.py) | (Experimental) Ollama Reasoning Agent with native Ollama Chat Client |
+| [`getting_started/agents/ollama/ollama_agent_basic.py`](./getting_started/agents/ollama/ollama_agent_basic.py) | Basic Ollama Agent with native Ollama Chat Client |
+| [`getting_started/agents/ollama/ollama_agent_reasoning.py`](./getting_started/agents/ollama/ollama_agent_reasoning.py) | Ollama Agent with reasoning capabilities |
+| [`getting_started/agents/ollama/ollama_chat_client.py`](./getting_started/agents/ollama/ollama_chat_client.py) | Direct usage of Ollama Chat Client |
+| [`getting_started/agents/ollama/ollama_chat_multimodal.py`](./getting_started/agents/ollama/ollama_chat_multimodal.py) | Ollama Chat Client with multimodal (image) input |
+| [`getting_started/agents/ollama/ollama_with_openai_chat_client.py`](./getting_started/agents/ollama/ollama_with_openai_chat_client.py) | Alternative: Ollama via OpenAI Chat Client |
 
 ### OpenAI
 
@@ -149,7 +153,6 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/chat_client/openai_assistants_client.py`](./getting_started/chat_client/openai_assistants_client.py) | OpenAI Assistants Client Direct Usage Example |
 | [`getting_started/chat_client/openai_chat_client.py`](./getting_started/chat_client/openai_chat_client.py) | OpenAI Chat Client Direct Usage Example |
 | [`getting_started/chat_client/openai_responses_client.py`](./getting_started/chat_client/openai_responses_client.py) | OpenAI Responses Client Direct Usage Example |
-| [`packages/ollama/getting_started/ollama_chat_client.py`](../packages/ollama/getting_started/ollama_chat_client.py) | (Experimental) Ollama Chat Client with native Ollama Chat Client |
 
 
 ## Context Providers
@@ -225,7 +228,6 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/multimodal_input/azure_chat_multimodal.py`](./getting_started/multimodal_input/azure_chat_multimodal.py) | Azure OpenAI Chat with multimodal (image) input example |
 | [`getting_started/multimodal_input/azure_responses_multimodal.py`](./getting_started/multimodal_input/azure_responses_multimodal.py) | Azure OpenAI Responses with multimodal (image) input example |
 | [`getting_started/multimodal_input/openai_chat_multimodal.py`](./getting_started/multimodal_input/openai_chat_multimodal.py) | OpenAI Chat with multimodal (image) input example |
-| [`packages/ollama/getting_started/ollama_chat_multimodal.py`](../packages/ollama/getting_started/ollama_chat_multimodal.py) | (Experimental) Ollama Chat  with multimodal native Ollama Chat Client |
 
 
 ## Azure Functions
@@ -234,7 +236,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 |--------|-------------|
 | [`getting_started/azure_functions/01_single_agent/`](./getting_started/azure_functions/01_single_agent/) | Host a single agent in Azure Functions with Durable Extension HTTP endpoints and per-session state. |
 | [`getting_started/azure_functions/02_multi_agent/`](./getting_started/azure_functions/02_multi_agent/) | Register multiple agents in one function app with dedicated run routes and a health check endpoint. |
-| [`getting_started/azure_functions/03_callbacks/`](./getting_started/azure_functions/03_callbacks/) | Capture streaming response telemetry via Durable Extension callbacks exposed through HTTP APIs. |
+| [`getting_started/azure_functions/03_reliable_streaming/`](./getting_started/azure_functions/03_reliable_streaming/) | Implement reliable streaming for durable agents using Redis Streams with cursor-based resumption. |
 | [`getting_started/azure_functions/04_single_agent_orchestration_chaining/`](./getting_started/azure_functions/04_single_agent_orchestration_chaining/) | Chain sequential agent executions inside a durable orchestration while preserving the shared thread context. |
 | [`getting_started/azure_functions/05_multi_agent_orchestration_concurrency/`](./getting_started/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
 | [`getting_started/azure_functions/06_multi_agent_orchestration_conditionals/`](./getting_started/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |

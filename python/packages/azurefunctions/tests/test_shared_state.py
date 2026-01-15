@@ -2,7 +2,6 @@
 
 """Unit tests for DurableSharedState and SharedState entity."""
 
-from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -95,7 +94,7 @@ class TestDurableSharedState:
         gen = shared_state.get("my_key", default="default_val")
 
         # The generator should yield the entity call
-        yielded = next(gen)
+        next(gen)
 
         # Verify the call was made with correct parameters
         mock_context.call_entity.assert_called_once_with(
@@ -107,7 +106,7 @@ class TestDurableSharedState:
         gen = shared_state.set("my_key", {"data": "value"})
 
         # Consume the generator
-        yielded = next(gen)
+        next(gen)
 
         mock_context.call_entity.assert_called_once_with(
             shared_state._entity_id, "set", {"key": "my_key", "value": {"data": "value"}}
@@ -117,7 +116,7 @@ class TestDurableSharedState:
         """Test has() yields a call_entity operation."""
         gen = shared_state.has("check_key")
 
-        yielded = next(gen)
+        next(gen)
 
         mock_context.call_entity.assert_called_once_with(shared_state._entity_id, "has", {"key": "check_key"})
 
@@ -125,7 +124,7 @@ class TestDurableSharedState:
         """Test delete() yields a call_entity operation."""
         gen = shared_state.delete("remove_key")
 
-        yielded = next(gen)
+        next(gen)
 
         mock_context.call_entity.assert_called_once_with(shared_state._entity_id, "delete", {"key": "remove_key"})
 
@@ -133,7 +132,7 @@ class TestDurableSharedState:
         """Test get_all() yields a call_entity operation."""
         gen = shared_state.get_all()
 
-        yielded = next(gen)
+        next(gen)
 
         mock_context.call_entity.assert_called_once_with(shared_state._entity_id, "get_all", None)
 
@@ -142,7 +141,7 @@ class TestDurableSharedState:
         updates = {"key1": "val1", "key2": "val2"}
         gen = shared_state.update(updates)
 
-        yielded = next(gen)
+        next(gen)
 
         mock_context.call_entity.assert_called_once_with(shared_state._entity_id, "update", {"updates": updates})
 
@@ -150,7 +149,7 @@ class TestDurableSharedState:
         """Test clear() yields a call_entity operation."""
         gen = shared_state.clear()
 
-        yielded = next(gen)
+        next(gen)
 
         mock_context.call_entity.assert_called_once_with(shared_state._entity_id, "clear", None)
 
@@ -182,9 +181,7 @@ class TestSharedStateEntityFunction:
 
         mock_entity_context.set_result.assert_called_once_with("my_value")
 
-    def test_get_operation_returns_default_when_key_missing(
-        self, entity_function, mock_entity_context: Mock
-    ) -> None:
+    def test_get_operation_returns_default_when_key_missing(self, entity_function, mock_entity_context: Mock) -> None:
         """Test get operation returns default when key doesn't exist."""
         mock_entity_context.get_state.return_value = {"state": {}}
         mock_entity_context.operation_name = "get"
@@ -238,9 +235,7 @@ class TestSharedStateEntityFunction:
         saved_state = mock_entity_context.set_state.call_args[0][0]
         assert "to_delete" not in saved_state["state"]
 
-    def test_delete_operation_returns_false_when_missing(
-        self, entity_function, mock_entity_context: Mock
-    ) -> None:
+    def test_delete_operation_returns_false_when_missing(self, entity_function, mock_entity_context: Mock) -> None:
         """Test delete operation returns False when key doesn't exist."""
         mock_entity_context.get_state.return_value = {"state": {}}
         mock_entity_context.operation_name = "delete"

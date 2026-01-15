@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Workflow Execution for Durable Functions
+"""Workflow Execution for Durable Functions
 
 This module provides the workflow orchestration engine that executes MAF Workflows
 using Azure Durable Functions. It reuses MAF's edge group routing logic while
@@ -34,10 +33,10 @@ from agent_framework._workflows._edge import (
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
 )
+from agent_framework_durabletask import AgentSessionId, DurableAgentThread, DurableAIAgent
 from azure.durable_functions import DurableOrchestrationContext
 
-from ._models import AgentSessionId, DurableAgentThread
-from ._orchestration import DurableAIAgent
+from ._orchestration import AzureFunctionsAgentExecutor
 from ._shared_state import DurableSharedState
 from ._utils import deserialize_value, serialize_message
 
@@ -49,8 +48,7 @@ def route_message_through_edge_groups(
     source_id: str,
     message: Any,
 ) -> list[str]:
-    """
-    Route a message through edge groups to find target executor IDs.
+    """Route a message through edge groups to find target executor IDs.
 
     Delegates to MAF's edge group routing logic instead of manual inspection.
 
@@ -103,8 +101,7 @@ def build_agent_executor_response(
     structured_response: dict[str, Any] | None,
     previous_message: Any,
 ) -> AgentExecutorResponse:
-    """
-    Build an AgentExecutorResponse from entity response data.
+    """Build an AgentExecutorResponse from entity response data.
 
     Shared helper to construct the response object consistently.
 
@@ -149,8 +146,7 @@ def run_workflow_orchestrator(
     initial_message: Any,
     shared_state: DurableSharedState | None = None,
 ):
-    """
-    Traverse and execute the workflow graph using Durable Functions.
+    """Traverse and execute the workflow graph using Durable Functions.
 
     This orchestrator reuses MAF's edge group routing logic while adapting
     execution to the DF generator-based model (yield instead of await).
@@ -218,7 +214,8 @@ def run_workflow_orchestrator(
                     thread = DurableAgentThread(session_id=session_id)
 
                     # Create DurableAIAgent wrapper to call the entity
-                    agent = DurableAIAgent(context, agent_name)
+                    executor = AzureFunctionsAgentExecutor(context)
+                    agent = DurableAIAgent(executor, agent_name)
                     agent_response: AgentRunResponse = yield agent.run(
                         message_content,
                         thread=thread,
@@ -391,13 +388,13 @@ def _extract_message_content_from_dict(message: dict[str, Any]) -> str:
     """Extract text content from serialized message dictionaries."""
     message_content = ""
 
-    if "messages" in message and message["messages"]:
+    if message.get("messages"):
         # AgentExecutorRequest dict - messages is a list of ChatMessage dicts
         last_msg = message["messages"][-1]
         if isinstance(last_msg, dict):
             # ChatMessage serialized via to_dict() has structure:
             # {"type": "chat_message", "contents": [{"type": "text", "text": "..."}], ...}
-            if "contents" in last_msg and last_msg["contents"]:
+            if last_msg.get("contents"):
                 first_content = last_msg["contents"][0]
                 if isinstance(first_content, dict):
                     message_content = first_content.get("text") or ""
@@ -415,7 +412,7 @@ def _extract_message_content_from_dict(message: dict[str, Any]) -> str:
                 last_msg = arr["messages"][-1]
                 if isinstance(last_msg, dict):
                     # Check for contents structure first
-                    if "contents" in last_msg and last_msg["contents"]:
+                    if last_msg.get("contents"):
                         first_content = last_msg["contents"][0]
                         if isinstance(first_content, dict):
                             message_content = first_content.get("text") or ""

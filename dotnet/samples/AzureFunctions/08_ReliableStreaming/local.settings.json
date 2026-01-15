@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+    "AZURE_OPENAI_ENDPOINT": "<AZURE_OPENAI_ENDPOINT>",
+    "AZURE_OPENAI_DEPLOYMENT": "<AZURE_OPENAI_DEPLOYMENT>",
+    "REDIS_CONNECTION_STRING": "localhost:6379",
+    "REDIS_STREAM_TTL_MINUTES": "10"
+  }
+}

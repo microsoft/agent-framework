@@ -102,12 +102,32 @@ agents/
 └── .env                 # Optional: shared environment variables
 ```
 
-## Viewing Telemetry (Otel Traces) in DevUI
+### Importing from External Modules
 
-Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+If your agents import tools or utilities from sibling directories (e.g., `from tools.helpers import my_tool`), you must set `PYTHONPATH` to include the parent directory:
 
 ```bash
-devui ./agents --tracing framework
+# Project structure:
+# backend/
+# ├── agents/
+# │   └── my_agent/
+# │       └── agent.py    # contains: from tools.helpers import my_tool
+# └── tools/
+#     └── helpers.py
+
+# Run from project root with PYTHONPATH
+cd backend
+PYTHONPATH=. devui ./agents --port 8080
+```
+
+Without `PYTHONPATH`, Python cannot find modules in sibling directories and DevUI will report an import error.
+
+## Viewing Telemetry (Otel Traces) in DevUI
+
+Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling instrumentation when starting the server.
+
+```bash
+devui ./agents --instrumentation
 ```
 
 ## OpenAI-Compatible API
@@ -196,11 +216,12 @@ Options:
   --port, -p      Port (default: 8080)
   --host          Host (default: 127.0.0.1)
   --headless      API only, no UI
-  --config        YAML config file
-  --tracing       none|framework|workflow|all
+  --no-open       Don't automatically open browser
+  --instrumentation  Enable OpenTelemetry instrumentation
   --reload        Enable auto-reload
   --mode          developer|user (default: developer)
   --auth          Enable Bearer token authentication
+  --auth-token    Custom authentication token
 ```
 
 ### UI Modes

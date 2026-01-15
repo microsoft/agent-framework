@@ -9,6 +9,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 import asyncio
 import json
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,14 +30,16 @@ from agent_framework_durabletask import (
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
     AgentResponseCallbackProtocol,
+    AgentSessionId,
+    ApiResponseFields,
     DurableAgentState,
+    DurableAIAgent,
     RunRequest,
 )
 
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
-from ._models import AgentSessionId
-from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
+from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
 from ._shared_state import SHARED_STATE_ENTITY_NAME, DurableSharedState, create_shared_state_entity_function
 from ._utils import CapturingRunnerContext, deserialize_value, reconstruct_message_for_handler, serialize_message
 from ._workflow import run_workflow_orchestrator
@@ -280,9 +283,7 @@ class AgentFunctionApp(DFAppBase):
                 shared_state = SharedState()
 
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models
-                deserialized_state = {
-                    k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()
-                }
+                deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
                 original_snapshot = dict(deserialized_state)
                 await shared_state.import_state(deserialized_state)
 
@@ -304,9 +305,7 @@ class AgentFunctionApp(DFAppBase):
 
                 # Updates = keys in current that are new or have different values
                 updates = {
-                    k: v
-                    for k, v in current_state.items()
-                    if k not in original_snapshot or original_snapshot[k] != v
+                    k: v for k, v in current_state.items() if k not in original_snapshot or original_snapshot[k] != v
                 }
 
                 # Drain messages and events from runner context
@@ -321,7 +320,7 @@ class AgentFunctionApp(DFAppBase):
 
                 # Serialize messages for JSON compatibility
                 serialized_sent_messages = []
-                for source_id, msg_list in sent_messages.items():
+                for _source_id, msg_list in sent_messages.items():
                     for msg in msg_list:
                         serialized_sent_messages.append({
                             "message": serialize_message(msg.data),
@@ -350,13 +349,12 @@ class AgentFunctionApp(DFAppBase):
 
     def _setup_workflow_orchestration(self) -> None:
         """Register the workflow orchestration and related HTTP endpoints."""
-
         # Only register the SharedState entity if enabled
         if self.enable_shared_state:
             self._setup_shared_state_entity()
 
         # Capture enable_shared_state for use in nested function
-        _enable_shared_state = self.enable_shared_state
+        enable_shared_state = self.enable_shared_state
 
         @self.orchestration_trigger(context_name="context")
         def workflow_orchestrator(context: df.DurableOrchestrationContext):  # type: ignore[type-arg]
@@ -371,7 +369,7 @@ class AgentFunctionApp(DFAppBase):
 
             # Only create DurableSharedState if enabled to avoid extra entity calls
             shared_state = None
-            if _enable_shared_state:
+            if enable_shared_state:
                 shared_state = DurableSharedState(context, context.instance_id)
 
             outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
@@ -522,7 +520,7 @@ class AgentFunctionApp(DFAppBase):
         self,
         context: AgentOrchestrationContextType,
         agent_name: str,
-    ) -> DurableAIAgent:
+    ) -> DurableAIAgent[AgentTask]:
         """Return a DurableAIAgent proxy for a registered agent.
 
         Args:
@@ -533,14 +531,15 @@ class AgentFunctionApp(DFAppBase):
             ValueError: If the requested agent has not been registered.
 
         Returns:
-            DurableAIAgent wrapper bound to the orchestration context.
+            DurableAIAgent[AgentTask] wrapper bound to the orchestration context.
         """
         normalized_name = str(agent_name)
 
         if normalized_name not in self._agent_metadata:
             raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")
 
-        return DurableAIAgent(context, normalized_name)
+        executor = AzureFunctionsAgentExecutor(context)
+        return DurableAIAgent(executor, normalized_name)
 
     def _setup_agent_functions(
         self,
@@ -603,8 +602,6 @@ class AgentFunctionApp(DFAppBase):
                 "enable_tool_calls": true|false (optional, default: true)
             }
             """
-            logger.debug(f"[HTTP Trigger] Received request on route: /api/agents/{agent_name}/run")
-
             request_response_format: str = REQUEST_RESPONSE_FORMAT_JSON
             thread_id: str | None = None
 
@@ -613,9 +610,9 @@ class AgentFunctionApp(DFAppBase):
                 thread_id = self._resolve_thread_id(req=req, req_body=req_body)
                 wait_for_response = self._should_wait_for_response(req=req, req_body=req_body)
 
-                logger.debug(f"[HTTP Trigger] Message: {message}")
-                logger.debug(f"[HTTP Trigger] Thread ID: {thread_id}")
-                logger.debug(f"[HTTP Trigger] wait_for_response: {wait_for_response}")
+                logger.debug(
+                    f"[HTTP Trigger] Message: {message}, Thread ID: {thread_id}, wait_for_response: {wait_for_response}"
+                )
 
                 if not message:
                     logger.warning("[HTTP Trigger] Request rejected: Missing message")
@@ -629,15 +626,18 @@ class AgentFunctionApp(DFAppBase):
                 session_id = self._create_session_id(agent_name, thread_id)
                 correlation_id = self._generate_unique_id()
 
-                logger.debug(f"[HTTP Trigger] Using session ID: {session_id}")
-                logger.debug(f"[HTTP Trigger] Generated correlation ID: {correlation_id}")
-                logger.debug("[HTTP Trigger] Calling entity to run agent...")
+                logger.debug(
+                    f"[HTTP Trigger] Calling entity to run agent using session ID: {session_id} "
+                    f"and correlation ID: {correlation_id}"
+                )
 
-                entity_instance_id = session_id.to_entity_id()
+                entity_instance_id = df.EntityId(
+                    name=session_id.entity_name,
+                    key=session_id.key,
+                )
                 run_request = self._build_request_data(
                     req_body,
                     message,
-                    thread_id,
                     correlation_id,
                     request_response_format,
                 )
@@ -850,14 +850,16 @@ class AgentFunctionApp(DFAppBase):
             session_id = AgentSessionId.with_random_key(agent_name)
 
         # Build entity instance ID
-        entity_instance_id = session_id.to_entity_id()
+        entity_instance_id = df.EntityId(
+            name=session_id.entity_name,
+            key=session_id.key,
+        )
 
         # Create run request
         correlation_id = self._generate_unique_id()
         run_request = self._build_request_data(
             req_body={"message": query, "role": "user"},
             message=query,
-            thread_id=str(session_id),
             correlation_id=correlation_id,
             request_response_format=REQUEST_RESPONSE_FORMAT_TEXT,
         )
@@ -1009,7 +1011,7 @@ class AgentFunctionApp(DFAppBase):
             agent_response = state.try_get_agent_response(correlation_id)
             if agent_response:
                 result = self._build_success_result(
-                    response_data=agent_response,
+                    response_message=agent_response.text,
                     message=message,
                     thread_id=thread_id,
                     correlation_id=correlation_id,
@@ -1055,23 +1057,22 @@ class AgentFunctionApp(DFAppBase):
         )
 
     def _build_success_result(
-        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: DurableAgentState
+        self, response_message: str, message: str, thread_id: str, correlation_id: str, state: DurableAgentState
     ) -> dict[str, Any]:
         """Build the success result returned to the HTTP caller."""
         return self._build_response_payload(
-            response=response_data.get("content"),
+            response=response_message,
             message=message,
             thread_id=thread_id,
             status="success",
             correlation_id=correlation_id,
-            extra_fields={"message_count": response_data.get("message_count", state.message_count)},
+            extra_fields={ApiResponseFields.MESSAGE_COUNT: state.message_count},
         )
 
     def _build_request_data(
         self,
         req_body: dict[str, Any],
         message: str,
-        thread_id: str,
         correlation_id: str,
         request_response_format: str,
     ) -> dict[str, Any]:
@@ -1085,7 +1086,6 @@ class AgentFunctionApp(DFAppBase):
             request_response_format=request_response_format,
             response_format=req_body.get("response_format"),
             enable_tool_calls=enable_tool_calls,
-            thread_id=thread_id,
             correlation_id=correlation_id,
             created_at=datetime.now(timezone.utc),
         ).to_dict()
@@ -1139,15 +1139,13 @@ class AgentFunctionApp(DFAppBase):
 
     def _generate_unique_id(self) -> str:
         """Generate a new unique identifier."""
-        import uuid
-
         return uuid.uuid4().hex
 
-    def _create_session_id(self, func_name: str, thread_id: str | None) -> AgentSessionId:
+    def _create_session_id(self, agent_name: str, thread_id: str | None) -> AgentSessionId:
         """Create a session identifier using the provided thread id or a random value."""
         if thread_id:
-            return AgentSessionId(name=func_name, key=thread_id)
-        return AgentSessionId.with_random_key(name=func_name)
+            return AgentSessionId(name=agent_name, key=thread_id)
+        return AgentSessionId.with_random_key(name=agent_name)
 
     def _resolve_thread_id(self, req: func.HttpRequest, req_body: dict[str, Any]) -> str:
         """Retrieve the thread identifier from request body or query parameters."""

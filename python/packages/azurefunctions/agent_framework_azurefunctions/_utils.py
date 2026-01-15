@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Utility functions for workflow execution.
+"""Utility functions for workflow execution.
 
 This module provides helper functions for serialization, deserialization, and
 context management used by the workflow orchestrator and executors.
@@ -33,8 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class CapturingRunnerContext(RunnerContext):
-    """
-    A RunnerContext implementation that captures messages and events for Azure Functions activities.
+    """A RunnerContext implementation that captures messages and events for Azure Functions activities.
 
     This context is designed for executing standard Executors within Azure Functions activities.
     It captures all messages and events produced during execution without requiring durable
@@ -233,8 +231,7 @@ def serialize_message(message: Any) -> Any:
 
 
 def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -> Any:
-    """
-    Attempt to deserialize a value using embedded type metadata.
+    """Attempt to deserialize a value using embedded type metadata.
 
     Args:
         data: The serialized data (could be dict with __type__ metadata)
@@ -288,9 +285,7 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
         # Remove metadata before reconstruction
         clean_data = {k: v for k, v in data.items() if not k.startswith("__")}
         try:
-            if is_dataclass(target_type):
-                return target_type(**clean_data)
-            elif issubclass(target_type, BaseModel):
+            if is_dataclass(target_type) or issubclass(target_type, BaseModel):
                 return target_type(**clean_data)
         except Exception:
             # Ignore reconstruction errors (e.g., missing fields, type mismatches)
@@ -333,8 +328,7 @@ def reconstruct_agent_executor_response(data: dict[str, Any]) -> AgentExecutorRe
 
 
 def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> Any:
-    """
-    Attempt to reconstruct a message to match one of the handler's expected types.
+    """Attempt to reconstruct a message to match one of the handler's expected types.
 
     Args:
         data: The serialized message data (could be dict, str, etc.)

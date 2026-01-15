@@ -101,7 +101,7 @@ class ChatClientProtocol(Protocol):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -160,7 +160,7 @@ class ChatClientProtocol(Protocol):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -535,6 +535,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
@@ -629,6 +630,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
@@ -686,12 +688,18 @@ class BaseChatClient(SerializationMixin, ABC):
             chat_options: The chat options to prepare.
         """
         chat_tool_mode = chat_options.tool_choice
-        if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
+        # Explicitly disabled: clear tools and set to NONE
+        if chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
             chat_options.tools = None
             chat_options.tool_choice = ToolMode.NONE
             return
+        # No tools available: set to NONE regardless of requested mode
         if not chat_options.tools:
             chat_options.tool_choice = ToolMode.NONE
+        # Tools available but no explicit mode: default to AUTO
+        elif chat_tool_mode is None:
+            chat_options.tool_choice = ToolMode.AUTO
+        # Tools available with explicit mode: preserve the mode
         else:
             chat_options.tool_choice = chat_tool_mode
 

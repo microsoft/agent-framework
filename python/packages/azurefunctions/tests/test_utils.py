@@ -2,9 +2,7 @@
 
 """Unit tests for workflow utility functions."""
 
-import asyncio
 from dataclasses import dataclass
-from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -360,7 +358,9 @@ class TestReconstructAgentExecutorResponse:
             "executor_id": "my_executor",
             "agent_run_response": {
                 "type": "agent_run_response",
-                "messages": [{"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Response"}]}],
+                "messages": [
+                    {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Response"}]}
+                ],
             },
             "full_conversation": [],
         }
