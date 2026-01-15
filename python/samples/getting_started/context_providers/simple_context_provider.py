@@ -48,7 +48,7 @@ class UserInfoMemory(ContextProvider):
                     messages=request_messages,  # type: ignore
                     instructions="Extract the user's name and age from the message if present. "
                     "If not present return nulls.",
-                    response_format=UserInfo,
+                    options={"response_format": UserInfo},
                 )
 
                 # Update user info with extracted data

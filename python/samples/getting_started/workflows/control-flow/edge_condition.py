@@ -138,7 +138,7 @@ def create_spam_detector_agent() -> ChatAgent:
             "Include the original email content in email_content."
         ),
         name="spam_detection_agent",
-        response_format=DetectionResult,
+        default_options={"response_format": DetectionResult},
     )
 
 
@@ -152,7 +152,7 @@ def create_email_assistant_agent() -> ChatAgent:
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 
