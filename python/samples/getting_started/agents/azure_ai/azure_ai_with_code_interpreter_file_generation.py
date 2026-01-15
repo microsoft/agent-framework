@@ -26,9 +26,9 @@ QUERY = (
 )
 
 
-async def test_non_streaming() -> None:
-    """Test non-streaming response - should have annotations on TextContent."""
-    print("=== Testing Non-Streaming Response ===")
+async def non_streaming_example() -> None:
+    """Example of extracting file annotations from non-streaming response."""
+    print("=== Non-Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
@@ -62,9 +62,9 @@ async def test_non_streaming() -> None:
             print("WARNING: No file annotations found in non-streaming response")
 
 
-async def test_streaming() -> None:
-    """Test streaming response - check if file content is captured via HostedFileContent."""
-    print("\n=== Testing Streaming Response ===")
+async def streaming_example() -> None:
+    """Example of extracting file annotations from streaming response."""
+    print("\n=== Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
@@ -106,9 +106,9 @@ async def test_streaming() -> None:
 
 
 async def main() -> None:
-    print("AzureAIProjectAgentProvider Code Interpreter File Generation Test\n")
-    await test_non_streaming()
-    await test_streaming()
+    print("AzureAIClient Code Interpreter File Generation Sample\n")
+    await non_streaming_example()
+    await streaming_example()
 
 
 if __name__ == "__main__":
