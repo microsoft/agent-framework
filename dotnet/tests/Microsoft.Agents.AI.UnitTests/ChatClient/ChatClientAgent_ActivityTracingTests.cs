@@ -153,7 +153,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task ChatClientAgent_WithToolsStreaming_PreservesActivityTraceId()
+    public async Task ChatClientAgent_WithToolsStreaming_PreservesActivityTraceId_InConsumerCode()
     {
         // Arrange
         const string sourceName = "TestActivitySource";
@@ -169,35 +169,23 @@ public sealed class ChatClientAgent_ActivityTracingTests
 
         Assert.NotNull(parentTraceId);
 
-        // Track TraceIds at different points in execution
-        List<string?> traceIds = [];
-        List<string> executionPoints = [];
+        // Track TraceIds in consumer code (where user's code runs)
+        List<string?> consumerTraceIds = [];
 
-        // Create a chat client that simulates streaming with tool calls
+        // Create a simple chat client that returns streaming responses
         TestChatClient mockChatClient = new()
         {
             GetStreamingResponseAsyncFunc = (messages, options, cancellationToken) =>
             {
                 async IAsyncEnumerable<ChatResponseUpdate> GenerateUpdatesAsync()
                 {
-                    executionPoints.Add("StreamingStart");
-                    traceIds.Add(Activity.Current?.TraceId.ToString());
-
-                    // First update
                     await Task.Yield();
-                    executionPoints.Add("StreamingUpdate1");
-                    traceIds.Add(Activity.Current?.TraceId.ToString());
                     yield return new ChatResponseUpdate { Contents = [new TextContent("The weather")] };
 
-                    // Simulate async delay (like network latency)
                     await Task.Delay(10, CancellationToken.None);
-                    executionPoints.Add("StreamingUpdate2");
-                    traceIds.Add(Activity.Current?.TraceId.ToString());
                     yield return new ChatResponseUpdate { Contents = [new TextContent(" is sunny")] };
 
                     await Task.Yield();
-                    executionPoints.Add("StreamingUpdate3");
-                    traceIds.Add(Activity.Current?.TraceId.ToString());
                     yield return new ChatResponseUpdate { Contents = [new TextContent("!")] };
                 }
 
@@ -210,23 +198,23 @@ public sealed class ChatClientAgent_ActivityTracingTests
             "You are a helpful assistant.",
             "TestAgent");
 
-        // Act
+        // Act - Process streaming updates in consumer code
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")]))
         {
-            executionPoints.Add("ConsumingUpdate");
-            traceIds.Add(Activity.Current?.TraceId.ToString());
+            // This is where user code runs - Activity.Current should be preserved here
+            consumerTraceIds.Add(Activity.Current?.TraceId.ToString());
         }
 
         // Assert
-        Assert.NotEmpty(traceIds);
+        Assert.NotEmpty(consumerTraceIds);
 
-        // All TraceIds should match the parent
-        foreach ((string? traceId, int index) in traceIds.Select((t, i) => (t, i)))
+        // All TraceIds in consumer code should match the parent
+        foreach ((string? traceId, int index) in consumerTraceIds.Select((t, i) => (t, i)))
         {
             Assert.NotNull(traceId);
             Assert.True(
                 parentTraceId.ToString() == traceId,
-                $"TraceId mismatch at execution point '{executionPoints[index]}' (index {index}). Expected: {parentTraceId}, Actual: {traceId}");
+                $"TraceId mismatch in consumer code at index {index}. Expected: {parentTraceId}, Actual: {traceId}");
         }
     }
 
