@@ -3,12 +3,10 @@
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
-using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
@@ -41,23 +39,23 @@ public static class DurableOptionsExtensions
 
         RegisterServices(builder, options);
         ConfigureAgents(builder, options);
-        ConfigureMiddleware(builder);
-        ConfigureWorkflowOrchestration(builder);
+        builder.ConfigureBuiltInFunctionMiddleware();
+
+        if (options.Workflows.Workflows.Count > 0)
+        {
+            builder.RegisterWorkflowServices();
+            ConfigureWorkflowOrchestration(builder);
+        }
 
         return builder;
     }
 
     private static void RegisterServices(FunctionsApplicationBuilder builder, DurableOptions options)
     {
-        builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton(options.Agents);
-        builder.Services.AddSingleton<BuiltInFunctionExecutor>();
-        builder.Services.AddSingleton<DurableWorkflowRunner>();
-        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>();
-        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
+        builder.Services.TryAddSingleton(options);
+        builder.Services.TryAddSingleton(options.Agents); // backward compatibility. can be removed in future.
 
-        builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
-            new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
+        builder.RegisterCoreAgentServices();
     }
 
     private static void ConfigureAgents(FunctionsApplicationBuilder builder, DurableOptions options)
@@ -79,21 +77,6 @@ public static class DurableOptionsExtensions
             agentOpts.DefaultTimeToLive = options.Agents.DefaultTimeToLive;
             agentOpts.MinimumTimeToLiveSignalDelay = options.Agents.MinimumTimeToLiveSignalDelay;
         });
-    }
-
-    private static void ConfigureMiddleware(FunctionsApplicationBuilder builder)
-    {
-        builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
-            IsBuiltInFunction(context.FunctionDefinition.EntryPoint));
-    }
-
-    private static bool IsBuiltInFunction(string? entryPoint)
-    {
-        return string.Equals(entryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal)
-            || string.Equals(entryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal)
-            || string.Equals(entryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
-            || string.Equals(entryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
-            || string.Equals(entryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal);
     }
 
     private static void ConfigureWorkflowOrchestration(FunctionsApplicationBuilder builder)

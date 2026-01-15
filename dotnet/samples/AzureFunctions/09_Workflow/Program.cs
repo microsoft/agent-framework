@@ -75,7 +75,7 @@ var workflow = builder.WithName("HandleSurveyResponse").Build();
 
 FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    //.ConfigureDurableAgents(options => options.AddAIAgent(agent))
+    .ConfigureDurableAgents(options => options.AddAIAgent(agent))
     .ConfigureDurableOptions(options =>
     {
         // Configure workflows
