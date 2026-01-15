@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
@@ -12,18 +12,30 @@ from .._agents import ChatAgent
 from .._memory import ContextProvider
 from .._middleware import Middleware
 from .._tools import AIFunction, ToolProtocol
-from .._types import ChatOptions
+from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
 from ._shared import OpenAISettings, from_assistant_tools, to_assistant_tools
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+if TYPE_CHECKING:
+    from ._assistants_client import OpenAIAssistantsOptions
+
+if sys.version_info >= (3, 13):
+    from typing import Self, TypeVar  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypeVar  # pragma: no cover
 
 
 __all__ = ["OpenAIAssistantProvider"]
+
+# Type variable for options - allows typed ChatAgent[TOptions] returns
+# Default matches OpenAIAssistantsClient's default options type
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIAssistantsOptions",
+    covariant=True,
+)
 
 _ToolsType = (
     ToolProtocol
@@ -33,7 +45,7 @@ _ToolsType = (
 )
 
 
-class OpenAIAssistantProvider:
+class OpenAIAssistantProvider(Generic[TOptions_co]):
     """Provider for creating ChatAgent instances from OpenAI Assistants API.
 
     This provider allows you to create, retrieve, and wrap OpenAI Assistants
@@ -187,15 +199,11 @@ class OpenAIAssistantProvider:
         instructions: str | None = None,
         description: str | None = None,
         tools: _ToolsType | None = None,
-        response_format: type[BaseModel] | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
         metadata: dict[str, str] | None = None,
-        # ChatAgent options
+        default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
-        **kwargs: Any,
-    ) -> ChatAgent:
+    ) -> "ChatAgent[TOptions_co]":
         """Create a new assistant on OpenAI and return a ChatAgent.
 
         This method creates a new assistant on the OpenAI service and wraps it
@@ -211,13 +219,12 @@ class OpenAIAssistantProvider:
                 - HostedCodeInterpreterTool for code execution
                 - HostedFileSearchTool for vector store search
                 - Raw tool dictionaries
-            response_format: A Pydantic model class for structured output responses.
-            temperature: Sampling temperature (0-2).
-            top_p: Nucleus sampling probability.
             metadata: Metadata to attach to the assistant (max 16 key-value pairs).
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
+                Include ``response_format`` here for structured output responses.
             middleware: Middleware for the ChatAgent.
             context_provider: Context provider for the ChatAgent.
-            **kwargs: Additional arguments passed to the ChatAgent.
 
         Returns:
             A ChatAgent instance wrapping the created assistant.
@@ -238,18 +245,20 @@ class OpenAIAssistantProvider:
                     tools=[get_weather],
                 )
 
-                # Create with code interpreter
-                from agent_framework import HostedCodeInterpreterTool
-
+                # Create with structured output
                 agent = await provider.create_agent(
-                    name="CodeHelper",
+                    name="StructuredBot",
                     model="gpt-4",
-                    tools=[HostedCodeInterpreterTool()],
+                    default_options={"response_format": MyPydanticModel},
                 )
         """
-        # Normalize tools using ChatOptions
-        normalized_tools = ChatOptions(tools=tools).tools if tools else None
+        # Normalize tools
+        normalized_tools = normalize_tools(tools)
         api_tools = to_assistant_tools(normalized_tools) if normalized_tools else []
+
+        # Extract response_format from default_options if present
+        opts = dict(default_options) if default_options else {}
+        response_format = opts.get("response_format")
 
         # Build assistant creation parameters
         create_params: dict[str, Any] = {
@@ -263,15 +272,11 @@ class OpenAIAssistantProvider:
             create_params["description"] = description
         if api_tools:
             create_params["tools"] = api_tools
-        if temperature is not None:
-            create_params["temperature"] = temperature
-        if top_p is not None:
-            create_params["top_p"] = top_p
         if metadata is not None:
             create_params["metadata"] = metadata
 
-        # Handle response format
-        if response_format is not None:
+        # Handle response format for OpenAI API
+        if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             create_params["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -287,15 +292,14 @@ class OpenAIAssistantProvider:
 
         assistant = await self._client.beta.assistants.create(**create_params)
 
-        # Create ChatAgent
+        # Create ChatAgent - pass default_options which contains response_format
         return self._create_chat_agent_from_assistant(
             assistant=assistant,
-            tools=list(normalized_tools) if normalized_tools else None,
+            tools=normalized_tools,
             instructions=instructions,
             middleware=middleware,
             context_provider=context_provider,
-            response_format=response_format,
-            **kwargs,
+            default_options=default_options,
         )
 
     async def get_agent(
@@ -304,10 +308,10 @@ class OpenAIAssistantProvider:
         *,
         tools: _ToolsType | None = None,
         instructions: str | None = None,
+        default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
-        **kwargs: Any,
-    ) -> ChatAgent:
+    ) -> "ChatAgent[TOptions_co]":
         """Retrieve an existing assistant by ID and return a ChatAgent.
 
         This method fetches an existing assistant from OpenAI by its ID
@@ -322,9 +326,10 @@ class OpenAIAssistantProvider:
                 implementations here. Hosted tools (code_interpreter, file_search)
                 are automatically included.
             instructions: Override the assistant's instructions (optional).
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
             middleware: Middleware for the ChatAgent.
             context_provider: Context provider for the ChatAgent.
-            **kwargs: Additional arguments passed to the ChatAgent.
 
         Returns:
             A ChatAgent instance wrapping the retrieved assistant.
@@ -358,9 +363,9 @@ class OpenAIAssistantProvider:
             assistant=assistant,
             tools=tools,
             instructions=instructions,
+            default_options=default_options,
             middleware=middleware,
             context_provider=context_provider,
-            **kwargs,
         )
 
     def as_agent(
@@ -369,10 +374,10 @@ class OpenAIAssistantProvider:
         *,
         tools: _ToolsType | None = None,
         instructions: str | None = None,
+        default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
-        **kwargs: Any,
-    ) -> ChatAgent:
+    ) -> "ChatAgent[TOptions_co]":
         """Wrap an existing SDK Assistant object as a ChatAgent.
 
         This method does NOT make any HTTP calls. It simply wraps an already-
@@ -386,9 +391,10 @@ class OpenAIAssistantProvider:
                 function tools defined, you MUST provide matching implementations.
                 Hosted tools (code_interpreter, file_search) are automatically included.
             instructions: Override the assistant's instructions (optional).
+            default_options: A TypedDict containing default chat options for the agent.
+                These options are applied to every run unless overridden.
             middleware: Middleware for the ChatAgent.
             context_provider: Context provider for the ChatAgent.
-            **kwargs: Additional arguments passed to the ChatAgent.
 
         Returns:
             A ChatAgent instance wrapping the assistant.
@@ -423,9 +429,9 @@ class OpenAIAssistantProvider:
             assistant=assistant,
             tools=merged_tools,
             instructions=instructions,
+            default_options=default_options,
             middleware=middleware,
             context_provider=context_provider,
-            **kwargs,
         )
 
     def _validate_function_tools(
@@ -456,20 +462,19 @@ class OpenAIAssistantProvider:
         if not required_functions:
             return  # No function tools required
 
-        # Get provided function names using ChatOptions normalization
+        # Get provided function names using normalize_tools
         provided_functions: set[str] = set()
         if provided_tools is not None:
-            normalized = ChatOptions(tools=provided_tools).tools
-            if normalized:
-                for tool in normalized:
-                    if isinstance(tool, AIFunction):
-                        provided_functions.add(tool.name)
-                    elif isinstance(tool, MutableMapping) and "function" in tool:
-                        func_spec = tool.get("function", {})
-                        if isinstance(func_spec, dict):
-                            func_dict = cast(dict[str, Any], func_spec)
-                            if "name" in func_dict:
-                                provided_functions.add(str(func_dict["name"]))
+            normalized = normalize_tools(provided_tools)
+            for tool in normalized:
+                if isinstance(tool, AIFunction):
+                    provided_functions.add(tool.name)
+                elif isinstance(tool, MutableMapping) and "function" in tool:
+                    func_spec = tool.get("function", {})
+                    if isinstance(func_spec, dict):
+                        func_dict = cast(dict[str, Any], func_spec)
+                        if "name" in func_dict:
+                            provided_functions.add(str(func_dict["name"]))
 
         # Check for missing functions
         missing = required_functions - provided_functions
@@ -500,11 +505,10 @@ class OpenAIAssistantProvider:
         hosted_tools = from_assistant_tools(assistant_tools)
         merged.extend(hosted_tools)
 
-        # Add user-provided tools (normalized via ChatOptions)
+        # Add user-provided tools (normalized)
         if user_tools is not None:
-            normalized_user_tools = ChatOptions(tools=user_tools).tools
-            if normalized_user_tools:
-                merged.extend(normalized_user_tools)
+            normalized_user_tools = normalize_tools(user_tools)
+            merged.extend(normalized_user_tools)
 
         return merged
 
@@ -515,9 +519,9 @@ class OpenAIAssistantProvider:
         instructions: str | None,
         middleware: Sequence[Middleware] | None,
         context_provider: ContextProvider | None,
-        response_format: type[BaseModel] | None = None,
+        default_options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> ChatAgent:
+    ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent from an Assistant.
 
         Args:
@@ -526,8 +530,8 @@ class OpenAIAssistantProvider:
             instructions: Instructions override.
             middleware: Middleware for the agent.
             context_provider: Context provider for the agent.
-            response_format: Response format (Pydantic model for structured output).
-            **kwargs: Additional arguments for ChatAgent.
+            default_options: Default chat options for the agent (may include response_format).
+            **kwargs: Additional arguments passed to ChatAgent.
 
         Returns:
             A configured ChatAgent instance.
@@ -554,6 +558,6 @@ class OpenAIAssistantProvider:
             tools=tools if tools else None,
             middleware=middleware,
             context_provider=context_provider,
-            response_format=response_format,
+            default_options=default_options,  # type: ignore[arg-type]
             **kwargs,
         )

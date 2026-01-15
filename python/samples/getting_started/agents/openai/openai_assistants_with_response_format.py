@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict
 """
 OpenAI Assistant Provider Response Format Example
 
-This sample demonstrates using OpenAIAssistantProvider with response_format
-for structured outputs.
+This sample demonstrates using OpenAIAssistantProvider with default_options
+containing response_format for structured outputs.
 """
 
 
@@ -26,7 +26,7 @@ class WeatherInfo(BaseModel):
 
 
 async def main() -> None:
-    """Example of using response_format with OpenAIAssistantProvider."""
+    """Example of using default_options with response_format in OpenAIAssistantProvider."""
 
     async with (
         AsyncOpenAI() as client,
@@ -36,7 +36,7 @@ async def main() -> None:
             name="WeatherReporter",
             model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
             instructions="You provide weather reports in structured JSON format.",
-            response_format=WeatherInfo,
+            default_options={"response_format": WeatherInfo},
         )
 
         try:

@@ -8,7 +8,7 @@ import pytest
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, Field
 
-from agent_framework import ChatAgent, ChatOptions, HostedCodeInterpreterTool, HostedFileSearchTool, ai_function
+from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedFileSearchTool, ai_function, normalize_tools
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantProvider
 from agent_framework.openai._shared import from_assistant_tools, to_assistant_tools
@@ -315,32 +315,6 @@ class TestOpenAIAssistantProviderCreateAgent:
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
         assert len(call_kwargs["tools"]) == 3
 
-    async def test_create_agent_with_temperature(self, mock_async_openai: MagicMock) -> None:
-        """Test assistant creation with temperature."""
-        provider = OpenAIAssistantProvider(mock_async_openai)
-
-        await provider.create_agent(
-            name="TestAgent",
-            model="gpt-4",
-            temperature=0.7,
-        )
-
-        call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
-        assert call_kwargs["temperature"] == 0.7
-
-    async def test_create_agent_with_top_p(self, mock_async_openai: MagicMock) -> None:
-        """Test assistant creation with top_p."""
-        provider = OpenAIAssistantProvider(mock_async_openai)
-
-        await provider.create_agent(
-            name="TestAgent",
-            model="gpt-4",
-            top_p=0.9,
-        )
-
-        call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
-        assert call_kwargs["top_p"] == 0.9
-
     async def test_create_agent_with_metadata(self, mock_async_openai: MagicMock) -> None:
         """Test assistant creation with metadata."""
         provider = OpenAIAssistantProvider(mock_async_openai)
@@ -355,13 +329,13 @@ class TestOpenAIAssistantProviderCreateAgent:
         assert call_kwargs["metadata"] == {"env": "test", "version": "1.0"}
 
     async def test_create_agent_with_response_format_pydantic(self, mock_async_openai: MagicMock) -> None:
-        """Test assistant creation with Pydantic response format."""
+        """Test assistant creation with Pydantic response format via default_options."""
         provider = OpenAIAssistantProvider(mock_async_openai)
 
         await provider.create_agent(
             name="StructuredAgent",
             model="gpt-4",
-            response_format=WeatherResponse,
+            default_options={"response_format": WeatherResponse},
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -571,8 +545,8 @@ class TestToolConversion:
             """Test function."""
             return x
 
-        # Normalize via ChatOptions first, then convert
-        normalized = ChatOptions(tools=[test_func]).tools
+        # Normalize tools first, then convert
+        normalized = normalize_tools([test_func])
         api_tools = to_assistant_tools(normalized)
 
         assert len(api_tools) == 1
@@ -580,9 +554,9 @@ class TestToolConversion:
         assert api_tools[0]["function"]["name"] == "test_func"
 
     def test_to_assistant_tools_callable(self) -> None:
-        """Test raw callable conversion via ChatOptions normalization."""
-        # ChatOptions converts callables to AIFunction
-        normalized = ChatOptions(tools=[get_weather]).tools
+        """Test raw callable conversion via normalize_tools."""
+        # normalize_tools converts callables to AIFunction
+        normalized = normalize_tools([get_weather])
         api_tools = to_assistant_tools(normalized)
 
         assert len(api_tools) == 1
