@@ -24,6 +24,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private int _runEnded;
     private readonly string _runId;
     private readonly Workflow _workflow;
+    private readonly object? _previousOwnership;
+    private bool _ownsWorkflow;
 
     private readonly EdgeMap _edgeMap;
     private readonly OutputFilter _outputFilter;
@@ -54,7 +56,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         else
         {
             workflow.TakeOwnership(this, existingOwnershipSignoff: existingOwnershipSignoff);
+            this._previousOwnership = existingOwnershipSignoff;
+            this._ownsWorkflow = true;
         }
+
         this._workflow = workflow;
         this._runId = runId;
 
@@ -211,10 +216,27 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
+    private async ValueTask YieldOutputAsync(string sourceId, object output, CancellationToken cancellationToken = default)
+    {
+        this.CheckEnded();
+        Throw.IfNull(output);
+
+        Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
+        if (!sourceExecutor.CanOutput(output.GetType()))
+        {
+            throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
+        }
+
+        if (this._outputFilter.CanOutput(sourceId, output))
+        {
+            await this.AddEventAsync(new WorkflowOutputEvent(output, sourceId), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public IWorkflowContext Bind(string executorId, Dictionary<string, string>? traceContext = null)
     {
         this.CheckEnded();
-        return new BoundContext(this, executorId, this._outputFilter, traceContext);
+        return new BoundContext(this, executorId, traceContext);
     }
 
     public ValueTask PostAsync(ExternalRequest request)
@@ -241,7 +263,6 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private sealed class BoundContext(
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
-        OutputFilter outputFilter,
         Dictionary<string, string>? traceContext) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
@@ -251,21 +272,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             return RunnerContext.SendMessageAsync(ExecutorId, message, targetId, cancellationToken);
         }
 
-        public async ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
+        public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
         {
-            RunnerContext.CheckEnded();
-            Throw.IfNull(output);
-
-            Executor sourceExecutor = await RunnerContext.EnsureExecutorAsync(ExecutorId, tracer: null, cancellationToken).ConfigureAwait(false);
-            if (!sourceExecutor.CanOutput(output.GetType()))
-            {
-                throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
-            }
-
-            if (outputFilter.CanOutput(ExecutorId, output))
-            {
-                await this.AddEventAsync(new WorkflowOutputEvent(output, ExecutorId), cancellationToken).ConfigureAwait(false);
-            }
+            return RunnerContext.YieldOutputAsync(ExecutorId, output, cancellationToken);
         }
 
         public ValueTask RequestHaltAsync() => this.AddEventAsync(new RequestHaltEvent());
@@ -389,7 +398,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         {
             foreach (string executorId in this._executors.Keys)
             {
-                Task<Executor> executor = this._executors[executorId];
+                Task<Executor> executorTask = this._executors[executorId];
+                Executor executor = await executorTask.ConfigureAwait(false);
+
                 if (executor is IAsyncDisposable asyncDisposable)
                 {
                     await asyncDisposable.DisposeAsync().ConfigureAwait(false);
@@ -400,9 +411,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                 }
             }
 
-            if (!this.ConcurrentRunsEnabled)
+            if (this._ownsWorkflow)
             {
-                await this._workflow.ReleaseOwnershipAsync(this).ConfigureAwait(false);
+                await this._workflow.ReleaseOwnershipAsync(this, this._previousOwnership).ConfigureAwait(false);
+                this._ownsWorkflow = false;
             }
         }
     }
@@ -429,4 +441,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     ValueTask ISuperStepJoinContext.SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellationToken)
         => this.SendMessageAsync(senderId, Throw.IfNull(message), cancellationToken: cancellationToken);
+
+    ValueTask ISuperStepJoinContext.YieldOutputAsync<TOutput>(string senderId, [DisallowNull] TOutput output, CancellationToken cancellationToken)
+        => this.YieldOutputAsync(senderId, Throw.IfNull(output), cancellationToken);
 }
