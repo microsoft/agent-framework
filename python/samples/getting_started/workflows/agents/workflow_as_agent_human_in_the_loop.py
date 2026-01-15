@@ -26,8 +26,9 @@ from agent_framework import (  # noqa: E402
     WorkflowContext,
     handler,
     response_handler,
+    InMemoryCheckpointStorage,
 )
-from getting_started.workflows.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
+from workflow_as_agent_reflection_pattern import (  # noqa: E402
     ReviewRequest,
     ReviewResponse,
     Worker,
@@ -124,14 +125,46 @@ async def main() -> None:
     print("Query: 'Write code for parallel reading 1 million files on disk and write to a sorted output file.'")
     print("-" * 50)
 
+    checkpoint_repo = {} # cache for checkpoints
+
+    checkpoint_storage_1 = InMemoryCheckpointStorage()
+    checkpoint_repo["conv1"] = checkpoint_storage_1
+
     # Run the agent with an initial query.
-    response = await agent.run(
-        "Write code for parallel reading 1 million Files on disk and write to a sorted output file."
+    response1 = await agent.run(
+        "Write code for parallel reading 1 million Files on disk and write to a sorted output file.",
+        checkpoint_storage=checkpoint_storage_1,
     )
+    print("\n\nconversation 1 completed, waiting for human in the loop response...\n\n")
+
+    # A new conversation with blank checkpoint storage
+    checkpoint_storage_2 = InMemoryCheckpointStorage()
+    checkpoint_repo["conv2"] = checkpoint_storage_2
+    response2 = await agent.run(
+        "A new conversation after human in the loop",
+        checkpoint_storage=checkpoint_storage_2,
+    ) 
+    
+    """
+    the workflow fails here with the following error:
+    Traceback (most recent call last):
+    .........
+    File "....\site-packages\agent_framework\_workflows\_agent.py", line 157, in run
+        async for update in self._run_stream_impl(
+    File "....\site-packages\agent_framework\_workflows\_agent.py", line 246, in _run_stream_impl
+        function_responses = self._extract_function_responses(input_messages)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "....\site-packages\agent_framework\_workflows\_agent.py", line 426, in _extract_function_responses
+        raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
+    agent_framework.exceptions.AgentExecutionException: Unexpected content type while awaiting request info responses.
+    """
+
+    print("\n\nconversation 2 completed")
+    print(f"📤 Agent Response: {response2}")
 
     # Locate the human review function call in the response messages.
     human_review_function_call: FunctionCallContent | None = None
-    for message in response.messages:
+    for message in response1.messages:
         for content in message.contents:
             if isinstance(content, FunctionCallContent) and content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
                 human_review_function_call = content
@@ -166,8 +199,24 @@ async def main() -> None:
             call_id=human_review_function_call.call_id,
             result=human_response,
         )
+
+        checkpoint_storage = checkpoint_repo.get("conv1")
+        checkpoints = await checkpoint_storage.list_checkpoints()
+        print(f"Available checkpoints: {checkpoints}")
+        last_checkpoint = checkpoints[-1] if checkpoints else None
+
+        if last_checkpoint:
+            # load checkpoint before sending back human review
+            response = await agent.run(
+                checkpoint_id=last_checkpoint.checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+            )
+
         # Send the human review result back to the agent.
-        response = await agent.run(ChatMessage(role=Role.TOOL, contents=[human_review_function_result]))
+        response = await agent.run(
+            ChatMessage(role=Role.TOOL, contents=[human_review_function_result]),
+            checkpoint_storage=checkpoint_storage,
+        )
         print(f"📤 Agent Response: {response.messages[-1].text}")
 
     print("=" * 50)
