@@ -12,12 +12,13 @@ using OpenTelemetry.Trace;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Tests for Activity/TraceId preservation in ChatClientAgent, particularly during tool execution.
+/// Tests for Activity/TraceId preservation in OpenTelemetryAgent.
+/// ChatClientAgent without OpenTelemetryAgent wrapper is telemetry-agnostic and doesn't preserve Activity.
 /// </summary>
 public sealed class ChatClientAgent_ActivityTracingTests
 {
     [Fact]
-    public async Task ChatClientAgent_WithoutTools_PreservesActivityTraceId()
+    public async Task OpenTelemetryAgent_WithoutTools_PreservesActivityTraceId()
     {
         // Arrange
         const string sourceName = "TestActivitySource";
@@ -44,7 +45,8 @@ public sealed class ChatClientAgent_ActivityTracingTests
             }
         };
 
-        ChatClientAgent agent = new(mockChatClient, "You are a helpful assistant.", "TestAgent");
+        ChatClientAgent innerAgent = new(mockChatClient, "You are a helpful assistant.", "TestAgent");
+        using OpenTelemetryAgent agent = new(innerAgent, sourceName);
 
         // Act
         AgentResponse result = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -56,7 +58,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task ChatClientAgent_WithTools_PreservesActivityTraceId()
+    public async Task OpenTelemetryAgent_WithTools_PreservesActivityTraceId()
     {
         // Arrange
         const string sourceName = "TestActivitySource";
@@ -128,11 +130,13 @@ public sealed class ChatClientAgent_ActivityTracingTests
             }
         };
 
-        ChatClientAgent agent = new(
+        ChatClientAgent innerAgent = new(
             mockChatClient,
             "You are a helpful assistant.",
             "TestAgent",
             tools: [weatherTool]);
+
+        using OpenTelemetryAgent agent = new(innerAgent, sourceName);
 
         // Act
         AgentResponse result = await agent.RunAsync([new ChatMessage(ChatRole.User, "What's the weather in Seattle?")]);
@@ -153,7 +157,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task ChatClientAgent_WithToolsStreaming_PreservesActivityTraceId_InConsumerCode()
+    public async Task OpenTelemetryAgent_WithToolsStreaming_PreservesActivityTraceId_InConsumerCode()
     {
         // Arrange
         const string sourceName = "TestActivitySource";
@@ -193,10 +197,12 @@ public sealed class ChatClientAgent_ActivityTracingTests
             }
         };
 
-        ChatClientAgent agent = new(
+        ChatClientAgent innerAgent = new(
             mockChatClient,
             "You are a helpful assistant.",
             "TestAgent");
+
+        using OpenTelemetryAgent agent = new(innerAgent, sourceName);
 
         // Act - Process streaming updates in consumer code
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")]))
@@ -219,7 +225,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task OpenTelemetryAgent_WithTools_PreservesActivityTraceId()
+    public async Task OpenTelemetryAgent_WithTestAIAgent_PreservesActivityTraceId()
     {
         // Arrange
         const string sourceName = "TestOTelSource";

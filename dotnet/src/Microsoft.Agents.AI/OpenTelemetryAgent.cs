@@ -169,8 +169,14 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             // Update the current activity to reflect the agent invocation.
             parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
+            // Capture the activity to preserve it across async boundaries
+            Activity? capturedActivity = fo?.CurrentActivity;
+
             // Invoke the inner agent.
             var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false);
+
+            // Restore Activity.Current after ConfigureAwait(false) to ensure it's available to calling code
+            Activity.Current = capturedActivity;
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
             return response.AsChatResponse();
@@ -184,12 +190,21 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             // Update the current activity to reflect the agent invocation.
             parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
+            // Capture the activity to preserve it across async boundaries
+            Activity? capturedActivity = fo?.CurrentActivity;
+
             // Invoke the inner agent.
             await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
+                // Restore Activity.Current before yielding to ensure calling code has access to the trace context
+                Activity.Current = capturedActivity;
+
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
                 yield return update.AsChatResponseUpdate();
             }
+
+            // Restore Activity.Current after streaming completes
+            Activity.Current = capturedActivity;
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>
