@@ -6,7 +6,11 @@
   },
   "extensions": {
     "durableTask": {
-      "hubName": "%TASKHUB_NAME%"
+      "hubName": "%TASKHUB_NAME%",
+      "storageProvider": {
+        "type": "AzureManaged",
+        "connectionStringName": "DURABLE_TASK_SCHEDULER_CONNECTION_STRING"
+      }
     }
   }
 }
