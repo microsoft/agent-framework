@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI.DurableTask;
-
-namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
+namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
-/// Provides configuration options for durable features in Azure Functions.
+/// Provides configuration options for durable agents and workflows.
 /// </summary>
 public sealed class DurableOptions
 {

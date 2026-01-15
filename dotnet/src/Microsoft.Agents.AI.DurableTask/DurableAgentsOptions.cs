@@ -10,6 +10,7 @@ public sealed class DurableAgentsOptions
     // Agent names are case-insensitive
     private readonly Dictionary<string, Func<IServiceProvider, AIAgent>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TimeSpan?> _agentTimeToLive = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _workflowOnlyAgents = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableAgentsOptions"/> class.
@@ -105,6 +106,22 @@ public sealed class DurableAgentsOptions
     /// </exception>
     public DurableAgentsOptions AddAIAgent(AIAgent agent, TimeSpan? timeToLive = null)
     {
+        return this.AddAIAgent(agent, workflowOnly: false, timeToLive);
+    }
+
+    /// <summary>
+    /// Adds an AI agent to the options with workflow-only configuration.
+    /// </summary>
+    /// <param name="agent">The agent to add.</param>
+    /// <param name="workflowOnly">If true, the agent is only accessible within workflows and won't have HTTP triggers.</param>
+    /// <param name="timeToLive">Optional time-to-live for this agent's entities. If not specified, uses <see cref="DefaultTimeToLive"/>.</param>
+    /// <returns>The options instance.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agent"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="agent.Name"/> is null or whitespace or when an agent with the same name has already been registered.
+    /// </exception>
+    public DurableAgentsOptions AddAIAgent(AIAgent agent, bool workflowOnly, TimeSpan? timeToLive = null)
+    {
         ArgumentNullException.ThrowIfNull(agent);
 
         if (string.IsNullOrWhiteSpace(agent.Name))
@@ -121,6 +138,11 @@ public sealed class DurableAgentsOptions
         if (timeToLive.HasValue)
         {
             this._agentTimeToLive[agent.Name] = timeToLive;
+        }
+
+        if (workflowOnly)
+        {
+            this._workflowOnlyAgents.Add(agent.Name);
         }
 
         return this;
@@ -143,5 +165,15 @@ public sealed class DurableAgentsOptions
     internal TimeSpan? GetTimeToLive(string agentName)
     {
         return this._agentTimeToLive.TryGetValue(agentName, out TimeSpan? ttl) ? ttl : this.DefaultTimeToLive;
+    }
+
+    /// <summary>
+    /// Determines whether an agent is configured as workflow-only (no HTTP triggers).
+    /// </summary>
+    /// <param name="agentName">The name of the agent.</param>
+    /// <returns>True if the agent is workflow-only; otherwise, false.</returns>
+    internal bool IsWorkflowOnly(string agentName)
+    {
+        return this._workflowOnlyAgents.Contains(agentName);
     }
 }

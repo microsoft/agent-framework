@@ -26,78 +26,90 @@ public static class DurableOptionsExtensions
     /// <returns>The Functions application builder for method chaining.</returns>
     /// <remarks>
     /// This method provides a unified configuration point for both durable agents and workflows.
-    /// Agents configured here will be automatically registered when referenced in workflows.
+    /// It automatically generates HTTP API endpoints for agents and workflows, and configures
+    /// the necessary middleware and services for durable execution.
     /// </remarks>
     public static FunctionsApplicationBuilder ConfigureDurableOptions(
         this FunctionsApplicationBuilder builder,
         Action<DurableOptions> configure)
     {
+        ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
         DurableOptions options = new();
         configure(options);
 
-        // Register the unified DurableOptions for components that need both agents and workflows
+        RegisterServices(builder, options);
+        ConfigureAgents(builder, options);
+        ConfigureMiddleware(builder);
+        ConfigureWorkflowOrchestration(builder);
+
+        return builder;
+    }
+
+    private static void RegisterServices(FunctionsApplicationBuilder builder, DurableOptions options)
+    {
         builder.Services.AddSingleton(options);
-
-        // Register AgentsOption for backward compatibility. Can be removed if needed, after syncing with team.
         builder.Services.AddSingleton(options.Agents);
-
-        // Configure agents using the existing infrastructure
-        builder.Services.ConfigureDurableAgents(agentOpts =>
-        {
-            // Copy agent registrations from the unified options to the service-level options
-            foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> agentFactory in options.Agents.GetAgentFactories())
-            {
-                agentOpts.AddAIAgentFactory(
-                    agentFactory.Key,
-                    agentFactory.Value,
-                    options.Agents.GetTimeToLive(agentFactory.Key));
-            }
-
-            // Copy TTL settings
-            agentOpts.DefaultTimeToLive = options.Agents.DefaultTimeToLive;
-            agentOpts.MinimumTimeToLiveSignalDelay = options.Agents.MinimumTimeToLiveSignalDelay;
-        });
+        builder.Services.AddSingleton<BuiltInFunctionExecutor>();
+        builder.Services.AddSingleton<DurableWorkflowRunner>();
+        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>();
+        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
 
         builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
             new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
+    }
 
-        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>();
-
-        // Handling of built-in function execution for Agent HTTP, MCP tool, or Entity invocations.
-        builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal));
-        builder.Services.AddSingleton<BuiltInFunctionExecutor>();
-
-        builder.Services.AddSingleton<DurableWorkflowRunner>();
-
-        builder.ConfigureDurableWorker().AddTasks(t => t.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(
-            "WorkflowRunnerOrchestration",
-            async (tc, inputBindingData) =>
+    private static void ConfigureAgents(FunctionsApplicationBuilder builder, DurableOptions options)
+    {
+        builder.Services.ConfigureDurableAgents(agentOpts =>
+        {
+            foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> agentFactory in options.Agents.GetAgentFactories())
             {
-                FunctionContext? functionContext = tc.GetFunctionContext();
-                if (functionContext == null)
+                bool isWorkflowOnly = options.Agents.IsWorkflowOnly(agentFactory.Key);
+
+                agentOpts.AddAIAgentFactory(
+                    agentFactory.Key,
+                    agentFactory.Value,
+                    enableHttpTrigger: !isWorkflowOnly,
+                    enableMcpToolTrigger: false,
+                    timeToLive: options.Agents.GetTimeToLive(agentFactory.Key));
+            }
+
+            agentOpts.DefaultTimeToLive = options.Agents.DefaultTimeToLive;
+            agentOpts.MinimumTimeToLiveSignalDelay = options.Agents.MinimumTimeToLiveSignalDelay;
+        });
+    }
+
+    private static void ConfigureMiddleware(FunctionsApplicationBuilder builder)
+    {
+        builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
+            IsBuiltInFunction(context.FunctionDefinition.EntryPoint));
+    }
+
+    private static bool IsBuiltInFunction(string? entryPoint)
+    {
+        return string.Equals(entryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal)
+            || string.Equals(entryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal)
+            || string.Equals(entryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
+            || string.Equals(entryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
+            || string.Equals(entryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal);
+    }
+
+    private static void ConfigureWorkflowOrchestration(FunctionsApplicationBuilder builder)
+    {
+        builder.ConfigureDurableWorker().AddTasks(tasks =>
+            tasks.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(
+                "WorkflowRunnerOrchestration",
+                async (orchestrationContext, request) =>
                 {
-                    throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
-                }
-                var logger = tc.CreateReplaySafeLogger("WorkflowRunnerOrchestration");
-                DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
-                var orchestrationResult = await runner.RunWorkflowOrchestrationAsync(tc, inputBindingData, logger);
-                if (logger.IsEnabled(LogLevel.Information))
-                {
-                    logger.LogInformation("Durable workflow orchestration completed. Result:{Result}", string.Join(",", orchestrationResult));
-                }
+                    FunctionContext functionContext = orchestrationContext.GetFunctionContext()
+                        ?? throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
 
-                return orchestrationResult;
-            }));
+                    DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
+                    ILogger logger = orchestrationContext.CreateReplaySafeLogger("WorkflowRunnerOrchestration");
 
-        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
-
-        return builder;
+                    return await runner.RunWorkflowOrchestrationAsync(orchestrationContext, request, logger).ConfigureAwait(true);
+                }));
     }
 }

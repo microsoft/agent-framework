@@ -1,0 +1,8 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Prompt the agent
+POST {{authority}}/api/workflows/FanOutWorkflow/run
+Content-Type: text/plain
+
+What is temperature?

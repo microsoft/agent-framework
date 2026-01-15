@@ -12,6 +12,46 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 /// <param name="IsAgenticExecutor">Indicates whether this executor is an agentic executor.</param>
 internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor);
 
+/// <summary>
+/// Represents a level of executors that can be executed in parallel (Fan-Out).
+/// All executors in the same level have their dependencies satisfied by previous levels.
+/// </summary>
+/// <param name="Level">The level number (0-based, starting from the root executor).</param>
+/// <param name="Executors">The executors that can run in parallel at this level.</param>
+/// <param name="IsFanIn">Indicates if this level is a Fan-In point (has executors with multiple predecessors).</param>
+internal sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
+
+/// <summary>
+/// Represents the complete execution plan for a workflow, including parallel execution levels.
+/// </summary>
+internal sealed class WorkflowExecutionPlan
+{
+    /// <summary>
+    /// The execution levels in order. Each level contains executors that can run in parallel.
+    /// </summary>
+    public List<WorkflowExecutionLevel> Levels { get; } = [];
+
+    /// <summary>
+    /// Maps each executor ID to its predecessors (for Fan-In result aggregation).
+    /// </summary>
+    public Dictionary<string, List<string>> Predecessors { get; } = [];
+
+    /// <summary>
+    /// Maps each executor ID to its successors (for Fan-Out result distribution).
+    /// </summary>
+    public Dictionary<string, List<string>> Successors { get; } = [];
+
+    /// <summary>
+    /// Gets whether this workflow has any parallel execution opportunities.
+    /// </summary>
+    public bool HasParallelism => this.Levels.Any(l => l.Executors.Count > 1);
+
+    /// <summary>
+    /// Gets whether this workflow has any Fan-In points.
+    /// </summary>
+    public bool HasFanIn => this.Levels.Any(l => l.IsFanIn);
+}
+
 internal static class WorkflowHelper
 {
     /// <summary>
@@ -21,19 +61,44 @@ internal static class WorkflowHelper
     /// <returns>A list of executor information in topological order (execution order).</returns>
     public static List<WorkflowExecutorInfo> GetExecutorsFromWorkflowInOrder(Workflow workflow)
     {
+        WorkflowExecutionPlan plan = GetExecutionPlan(workflow);
+
+        // Flatten the levels into a single list for backward compatibility
+        List<WorkflowExecutorInfo> result = [];
+        foreach (WorkflowExecutionLevel level in plan.Levels)
+        {
+            result.AddRange(level.Executors);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Analyzes the workflow and returns an execution plan that supports Fan-Out/Fan-In patterns.
+    /// Executors at the same level can be executed in parallel (Fan-Out).
+    /// Fan-In points are identified where multiple executors converge.
+    /// </summary>
+    /// <param name="workflow">The workflow instance to analyze.</param>
+    /// <returns>An execution plan with parallel execution levels.</returns>
+    public static WorkflowExecutionPlan GetExecutionPlan(Workflow workflow)
+    {
         ArgumentNullException.ThrowIfNull(workflow);
 
         Dictionary<string, ExecutorInfo> executors = workflow.ReflectExecutors();
         Dictionary<string, HashSet<EdgeInfo>> edges = workflow.ReflectEdges();
 
-        // Build adjacency list and in-degree map
-        Dictionary<string, List<string>> adjacencyList = new();
-        Dictionary<string, int> inDegree = new();
+        WorkflowExecutionPlan plan = new();
 
-        // Initialize all executors with in-degree 0
+        // Build adjacency lists (successors and predecessors)
+        Dictionary<string, List<string>> successors = [];
+        Dictionary<string, List<string>> predecessors = [];
+        Dictionary<string, int> inDegree = [];
+
+        // Initialize all executors
         foreach (string executorId in executors.Keys)
         {
-            adjacencyList[executorId] = new List<string>();
+            successors[executorId] = [];
+            predecessors[executorId] = [];
             inDegree[executorId] = 0;
         }
 
@@ -44,80 +109,89 @@ internal static class WorkflowHelper
 
             foreach (EdgeInfo edge in edgeGroup.Value)
             {
-                // For each sink (target) in this edge
                 foreach (string sinkId in edge.Connection.SinkIds)
                 {
-                    // Add edge from source to sink
-                    adjacencyList[sourceId].Add(sinkId);
-
-                    // Increment in-degree of the sink
-                    if (inDegree.TryGetValue(sinkId, out int currentDegree))
+                    if (executors.ContainsKey(sinkId))
                     {
-                        inDegree[sinkId] = currentDegree + 1;
+                        successors[sourceId].Add(sinkId);
+                        predecessors[sinkId].Add(sourceId);
+                        inDegree[sinkId]++;
                     }
                 }
             }
         }
 
-        // Perform topological sort using Kahn's algorithm
-        List<string> orderedExecutorIds = new();
-        Queue<string> queue = new();
-
-        // Start with the workflow's starting executor
-        queue.Enqueue(workflow.StartExecutorId);
-
-        // Also add any other executors with in-degree 0 (shouldn't be any if workflow is well-formed)
-        foreach (KeyValuePair<string, int> kvp in inDegree)
+        // Store the graph structure in the plan
+        foreach (string executorId in executors.Keys)
         {
-            if (kvp.Value == 0 && kvp.Key != workflow.StartExecutorId)
-            {
-                queue.Enqueue(kvp.Key);
-            }
+            plan.Predecessors[executorId] = [.. predecessors[executorId]];
+            plan.Successors[executorId] = [.. successors[executorId]];
         }
 
-        while (queue.Count > 0)
+        // Build execution levels using modified Kahn's algorithm
+        // Instead of processing one at a time, we process all nodes with in-degree 0 at once (same level)
+        HashSet<string> processed = [];
+        Dictionary<string, int> currentInDegree = new(inDegree);
+        int levelNumber = 0;
+
+        while (processed.Count < executors.Count)
         {
-            string current = queue.Dequeue();
-            orderedExecutorIds.Add(current);
+            // Find all executors that can be executed at this level (in-degree == 0 and not yet processed)
+            List<string> currentLevelIds = [];
 
-            // For each neighbor of the current executor
-            foreach (string neighbor in adjacencyList[current])
+            foreach (KeyValuePair<string, int> kvp in currentInDegree)
             {
-                inDegree[neighbor]--;
-
-                // If in-degree becomes 0, add to queue
-                if (inDegree[neighbor] == 0)
+                if (kvp.Value == 0 && !processed.Contains(kvp.Key))
                 {
-                    queue.Enqueue(neighbor);
+                    currentLevelIds.Add(kvp.Key);
                 }
             }
-        }
 
-        // If result doesn't contain all executors, there might be a cycle or disconnected components
-        if (orderedExecutorIds.Count != executors.Count)
-        {
-            // Add any remaining executors that weren't reached
-            foreach (string executorId in executors.Keys)
+            // If no executors found but not all processed, there might be a cycle
+            if (currentLevelIds.Count == 0)
             {
-                if (!orderedExecutorIds.Contains(executorId))
+                // Add remaining unprocessed executors
+                foreach (string executorId in executors.Keys)
                 {
-                    orderedExecutorIds.Add(executorId);
+                    if (!processed.Contains(executorId))
+                    {
+                        currentLevelIds.Add(executorId);
+                    }
+                }
+
+                if (currentLevelIds.Count == 0)
+                {
+                    break;
                 }
             }
-        }
 
-        // Convert to WorkflowExecutorInfo with agentic executor detection
-        List<WorkflowExecutorInfo> result = new();
-        foreach (string executorId in orderedExecutorIds)
-        {
-            if (executors.TryGetValue(executorId, out ExecutorInfo? executorInfo))
+            // Check if this level is a Fan-In point (any executor has multiple predecessors)
+            bool isFanIn = currentLevelIds.Any(id => predecessors[id].Count > 1);
+
+            // Convert to WorkflowExecutorInfo
+            List<WorkflowExecutorInfo> levelExecutors = [];
+            foreach (string executorId in currentLevelIds)
             {
-                bool isAgentic = IsAgentExecutorType(executorInfo.ExecutorType);
-                result.Add(new WorkflowExecutorInfo(executorId, isAgentic));
+                processed.Add(executorId);
+
+                if (executors.TryGetValue(executorId, out ExecutorInfo? executorInfo))
+                {
+                    bool isAgentic = IsAgentExecutorType(executorInfo.ExecutorType);
+                    levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic));
+                }
+
+                // Decrement in-degree of all successors
+                foreach (string successor in successors[executorId])
+                {
+                    currentInDegree[successor]--;
+                }
             }
+
+            plan.Levels.Add(new WorkflowExecutionLevel(levelNumber, levelExecutors, isFanIn));
+            levelNumber++;
         }
 
-        return result;
+        return plan;
     }
 
     /// <summary>

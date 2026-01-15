@@ -114,6 +114,29 @@ public static class DurableAgentsOptionsExtensions
         bool enableHttpTrigger,
         bool enableMcpToolTrigger)
     {
+        return AddAIAgentFactory(options, name, factory, enableHttpTrigger, enableMcpToolTrigger, timeToLive: null);
+    }
+
+    /// <summary>
+    /// Registers an AI agent factory with the specified name, trigger options, and time-to-live configuration.
+    /// </summary>
+    /// <remarks>If both triggers are disabled, the agent will not be accessible via HTTP or MCP tool
+    /// endpoints. This method can be used to register multiple agent factories with different configurations.</remarks>
+    /// <param name="options">The options object to which the AI agent factory will be added. Cannot be null.</param>
+    /// <param name="name">The unique name used to identify the AI agent factory. Cannot be null.</param>
+    /// <param name="factory">A delegate that creates an instance of the AI agent using the provided service provider. Cannot be null.</param>
+    /// <param name="enableHttpTrigger">true to enable the HTTP trigger for the agent; otherwise, false.</param>
+    /// <param name="enableMcpToolTrigger">true to enable the MCP tool trigger for the agent; otherwise, false.</param>
+    /// <param name="timeToLive">Optional time-to-live for this agent's entities.</param>
+    /// <returns>The same DurableAgentsOptions instance, allowing for method chaining.</returns>
+    public static DurableAgentsOptions AddAIAgentFactory(
+        this DurableAgentsOptions options,
+        string name,
+        Func<IServiceProvider, AIAgent> factory,
+        bool enableHttpTrigger,
+        bool enableMcpToolTrigger,
+        TimeSpan? timeToLive)
+    {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(factory);
@@ -122,7 +145,7 @@ public static class DurableAgentsOptionsExtensions
         agentOptions.HttpTrigger.IsEnabled = enableHttpTrigger;
         agentOptions.McpToolTrigger.IsEnabled = enableMcpToolTrigger;
 
-        options.AddAIAgentFactory(name, factory);
+        options.AddAIAgentFactory(name, factory, timeToLive);
         s_agentOptions[name] = agentOptions;
         return options;
     }

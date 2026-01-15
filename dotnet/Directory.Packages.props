@@ -112,14 +112,14 @@
     <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1106.1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.5.0-build.20251008-1002" />
     <!-- Durable Task -->
-    <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.18.0" />
-    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.18.0" />
-    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.18.0" />
-    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.19.1" />
+    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.19.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.19.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.19.0" />
     <!-- Azure Functions -->
     <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.50.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.11.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.13.1" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask.AzureManaged" Version="1.0.1" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
