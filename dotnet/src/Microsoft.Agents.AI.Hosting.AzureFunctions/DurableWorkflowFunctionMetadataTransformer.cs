@@ -29,6 +29,9 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         {
             this._logger.LogAddingWorkflowFunction(workflow.Key);
 
+            // Currently due to how durable executor is registered, we are not able to bind TaskOrechestrationContext parameter properly
+            // because the InputBinding for TOC happens inside the DurableExecutor (rathen than in an input converter).
+            // So for now, we are going to use single orchestration function for all workflows.
             //original.Add(CreateOrchestrationTrigger(workflow.Key));
 
             // We also want to create an HTTP trigger for this orchestration so users can start it via HTTP.
@@ -58,14 +61,13 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
             {
                 if (executorInfos.TryGetValue(executorId, out ExecutorInfo? executorInfo))
                 {
-                    // string functionName = $"{AgentSessionId.ToEntityName(workflow.Key)}-{executorId}"; //.Split("_")[0]
-                    string functionName = $"{AgentSessionId.ToEntityName(workflow.Key)}-{executorId.Split("_")[0]}"; //.Split("_")[0]
+                    string functionName = $"dafx-{executorId.Split("_")[0]}";
 
                     // Check if the executor type is an agent-related type
                     if (IsAgentExecutorType(executorInfo.ExecutorType))
                     {
                         this._logger.LogAddingAgentEntityFunction(executorId, executorInfo.ExecutorType.TypeName, workflow.Key);
-                        original.Add(CreateAgentTrigger(functionName));
+                        //original.Add(CreateAgentTrigger(functionName));
                     }
                     else
                     {
@@ -140,19 +142,19 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         };
     }
 
-    private static DefaultFunctionMetadata CreateAgentTrigger(string functionName)
-    {
-        return new DefaultFunctionMetadata()
-        {
-            Name = functionName,
-            Language = "dotnet-isolated",
-            RawBindings =
-            [
-                """{"name":"encodedEntityRequest","type":"entityTrigger","direction":"In"}""",
-                """{"name":"client","type":"durableClient","direction":"In"}"""
-            ],
-            EntryPoint = BuiltInFunctions.RunAgentEntityFunctionEntryPoint,
-            ScriptFile = BuiltInFunctions.ScriptFile,
-        };
-    }
+    //private static DefaultFunctionMetadata CreateAgentTrigger(string functionName)
+    //{
+    //    return new DefaultFunctionMetadata()
+    //    {
+    //        Name = functionName,
+    //        Language = "dotnet-isolated",
+    //        RawBindings =
+    //        [
+    //            """{"name":"encodedEntityRequest","type":"entityTrigger","direction":"In"}""",
+    //            """{"name":"client","type":"durableClient","direction":"In"}"""
+    //        ],
+    //        EntryPoint = BuiltInFunctions.RunAgentEntityFunctionEntryPoint,
+    //        ScriptFile = BuiltInFunctions.ScriptFile,
+    //    };
+    //}
 }

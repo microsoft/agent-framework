@@ -10,16 +10,30 @@ namespace Microsoft.Agents.AI.DurableTask;
 public sealed class DurableWorkflowOptions
 {
     private readonly Dictionary<string, Workflow> _workflows = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object? _parentOptions;
+    private readonly DurableOptions? _parentOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableWorkflowOptions"/> class.
     /// </summary>
     /// <param name="parentOptions">Optional parent options container for accessing related configuration.</param>
-    public DurableWorkflowOptions(object? parentOptions = null)
+    internal DurableWorkflowOptions(DurableOptions? parentOptions = null)
     {
         this._parentOptions = parentOptions;
+        this.Executors = new ExecutorRegistry();
     }
+
+    /// <summary>
+    /// Gets the collection of workflows available in the current context, keyed by their unique names.
+    /// </summary>
+    /// <remarks>The returned dictionary is read-only and reflects the current set of registered workflows.
+    /// Changes to the underlying workflow collection are immediately visible through this property. Accessing a
+    /// workflow by name that does not exist will result in a KeyNotFoundException.</remarks>
+    public IReadOnlyDictionary<string, Workflow> Workflows => this._workflows;
+
+    /// <summary>
+    /// Gets the executor registry.
+    /// </summary>
+    internal ExecutorRegistry Executors { get; }
 
     /// <summary>
     /// Adds a workflow to the collection for processing or execution.
@@ -40,6 +54,9 @@ public sealed class DurableWorkflowOptions
 
         this._workflows[workflow.Name] = workflow;
 
+        // Register executors in the registry for direct lookup
+        RegisterExecutors(workflow, this.Executors);
+
         // Register any agentic executors with DurableAgentsOptions if available through parent
         DurableAgentsOptions? agentOptions = this.TryGetAgentOptions();
         if (agentOptions is not null)
@@ -48,36 +65,9 @@ public sealed class DurableWorkflowOptions
         }
     }
 
-    /// <summary>
-    /// Gets the collection of workflows available in the current context, keyed by their unique names.
-    /// </summary>
-    /// <remarks>The returned dictionary is read-only and reflects the current set of registered workflows.
-    /// Changes to the underlying workflow collection are immediately visible through this property. Accessing a
-    /// workflow by name that does not exist will result in a KeyNotFoundException.</remarks>
-    public IReadOnlyDictionary<string, Workflow> Workflows => this._workflows;
-
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("ReflectionAnalysis", "IL2075",
-        Justification = "Reflection is used to access Agents property from parent options container for automatic agent registration.")]
     private DurableAgentsOptions? TryGetAgentOptions()
     {
-        // Try to extract DurableAgentsOptions from the parent container
-        // This uses reflection to access the Agents property if available
-        if (this._parentOptions is null)
-        {
-            return null;
-        }
-
-        // Check if parent has an Agents property (DurableOptions pattern)
-        System.Reflection.PropertyInfo? agentsProperty = this._parentOptions.GetType()
-            .GetProperty("Agents", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-
-        if (agentsProperty?.PropertyType == typeof(DurableAgentsOptions))
-        {
-            return agentsProperty.GetValue(this._parentOptions) as DurableAgentsOptions;
-        }
-
-        // If parent is directly DurableAgentsOptions (for backward compatibility)
-        return this._parentOptions as DurableAgentsOptions;
+        return this._parentOptions?.Agents;
     }
 
     private static void RegisterAgenticExecutors(Workflow workflow, DurableAgentsOptions agentOptions)
@@ -87,14 +77,25 @@ public sealed class DurableWorkflowOptions
         {
             try
             {
-                // Register the agent with DurableAgentsOptions
-                agentOptions.AddAIAgent(agent);
+                // Register the agent as workflow-only (no HTTP trigger)
+                agentOptions.AddAIAgent(agent, workflowOnly: true);
             }
             catch (ArgumentException)
             {
                 // Agent with this name is already registered, skip it
                 // This is expected behavior when multiple workflows use the same agent
             }
+        }
+    }
+
+    private static void RegisterExecutors(Workflow workflow, ExecutorRegistry registry)
+    {
+        // Register all executors from the workflow in the registry
+        foreach (KeyValuePair<string, Workflows.Checkpointing.ExecutorInfo> executor in workflow.ReflectExecutors())
+        {
+            // Extract the executor name (without GUID suffix)
+            string executorName = executor.Key.Split('_')[0];
+            registry.Register(executorName, executor.Key, workflow);
         }
     }
 }
