@@ -26,7 +26,7 @@
     <PackageVersion Include="Azure.Identity" Version="1.17.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- Google Gemini  -->
-    <PackageVersion Include="Google.GenAI" Version="0.9.0" />
+    <PackageVersion Include="Google.GenAI" Version="0.11.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
     <!-- Microsoft.Azure.* -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.54.0" />

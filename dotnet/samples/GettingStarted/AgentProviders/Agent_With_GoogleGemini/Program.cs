@@ -14,8 +14,6 @@ string apiKey = Environment.GetEnvironmentVariable("GOOGLE_GENAI_API_KEY") ?? th
 string model = Environment.GetEnvironmentVariable("GOOGLE_GENAI_MODEL") ?? "gemini-2.5-flash";
 
 // Using a Google GenAI IChatClient implementation
-// Until the PR https://github.com/googleapis/dotnet-genai/pull/81 is not merged this option
-// requires usage of also both GeminiChatClient.cs and GoogleGenAIExtensions.cs polyfills to work.
 
 ChatClientAgent agentGenAI = new(
     new Client(vertexAI: false, apiKey: apiKey).AsIChatClient(model),
