@@ -69,7 +69,7 @@ internal sealed class AgentRunHandle
                 if (response is not null)
                 {
                     this._logger.LogDonePollingForResponse(this.SessionId, this.CorrelationId);
-                    return response.ToRunResponse();
+                    return response.ToResponse();
                 }
             }
 

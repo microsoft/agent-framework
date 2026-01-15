@@ -103,7 +103,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
 
             // Persist the agent response to the entity state for client polling
             this.State.Data.ConversationHistory.Add(
-                DurableAgentStateResponse.FromRunResponse(request.CorrelationId, response));
+                DurableAgentStateResponse.FromResponse(request.CorrelationId, response));
 
             string responseText = response.Text;
 
