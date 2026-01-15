@@ -5,4 +5,4 @@
 POST {{authority}}/api/workflows/HandleSurveyResponse/run
 Content-Type: text/plain
 
-Rating: 5. Why was I charged $99 when my plan should be $49? I need a refund for the overcharge
+Rating: 10. Why was I charged $99 when my plan should be $49? I need a refund for the overcharge
