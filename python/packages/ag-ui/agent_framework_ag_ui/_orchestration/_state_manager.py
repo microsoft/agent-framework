@@ -22,9 +22,11 @@ class StateManager:
         self.predict_state_config = predict_state_config or {}
         self.require_confirmation = require_confirmation
         self.current_state: dict[str, Any] = {}
+        self._state_from_input: bool = False
 
     def initialize(self, initial_state: dict[str, Any] | None) -> dict[str, Any]:
         """Initialize state with schema defaults."""
+        self._state_from_input = initial_state is not None
         self.current_state = (initial_state or {}).copy()
         self._apply_schema_defaults()
         return self.current_state
@@ -60,7 +62,9 @@ class StateManager:
         """Inject state context only when starting a new user turn."""
         if not self.current_state or not self.state_schema:
             return None
-        if not is_new_user_turn or conversation_has_tool_calls:
+        if not is_new_user_turn:
+            return None
+        if conversation_has_tool_calls and not self._state_from_input:
             return None
 
         state_json = json.dumps(self.current_state, indent=2)

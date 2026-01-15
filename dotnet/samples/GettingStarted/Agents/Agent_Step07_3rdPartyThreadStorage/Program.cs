@@ -31,17 +31,15 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = ctx =>
-        {
+        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(
             // Create a new chat message store for this agent that stores the messages in a vector store.
             // Each thread must get its own copy of the VectorChatMessageStore, since the store
             // also contains the id that the thread is stored under.
-            return new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions);
-        }
+            new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
 // Start a new thread for the agent conversation.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 // Run the agent with the thread that stores conversation history in the vector store.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
@@ -58,7 +56,7 @@ Console.WriteLine(JsonSerializer.Serialize(serializedThread, new JsonSerializerO
 // and loaded again later.
 
 // Deserialize the thread state after loading from storage.
-AgentThread resumedThread = agent.DeserializeThread(serializedThread);
+AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
 // Run the agent with the thread that stores conversation history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
@@ -89,24 +87,7 @@ namespace SampleApp
 
         public string? ThreadDbKey { get; private set; }
 
-        public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
-        {
-            this.ThreadDbKey ??= Guid.NewGuid().ToString("N");
-
-            var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
-            await collection.EnsureCollectionExistsAsync(cancellationToken);
-
-            await collection.UpsertAsync(messages.Select(x => new ChatHistoryItem()
-            {
-                Key = this.ThreadDbKey + x.MessageId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ThreadId = this.ThreadDbKey,
-                SerializedMessage = JsonSerializer.Serialize(x),
-                MessageText = x.Text
-            }), cancellationToken);
-        }
-
-        public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
+        public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
@@ -122,6 +103,33 @@ namespace SampleApp
 ;
             messages.Reverse();
             return messages;
+        }
+
+        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        {
+            // Don't store messages if the request failed.
+            if (context.InvokeException is not null)
+            {
+                return;
+            }
+
+            this.ThreadDbKey ??= Guid.NewGuid().ToString("N");
+
+            var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
+            await collection.EnsureCollectionExistsAsync(cancellationToken);
+
+            // Add both request and response messages to the store
+            // Optionally messages produced by the AIContextProvider can also be persisted (not shown).
+            var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+
+            await collection.UpsertAsync(allNewMessages.Select(x => new ChatHistoryItem()
+            {
+                Key = this.ThreadDbKey + x.MessageId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ThreadId = this.ThreadDbKey,
+                SerializedMessage = JsonSerializer.Serialize(x),
+                MessageText = x.Text
+            }), cancellationToken);
         }
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>

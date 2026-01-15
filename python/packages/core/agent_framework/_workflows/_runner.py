@@ -7,11 +7,20 @@ from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
-from ._checkpoint_encoding import DATACLASS_MARKER, MODEL_MARKER, decode_checkpoint_value
+from ._checkpoint_encoding import (
+    DATACLASS_MARKER,
+    MODEL_MARKER,
+    decode_checkpoint_value,
+)
 from ._const import EXECUTOR_STATE_KEY
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
 from ._events import SuperStepCompletedEvent, SuperStepStartedEvent, WorkflowEvent
+from ._exceptions import (
+    WorkflowCheckpointException,
+    WorkflowConvergenceException,
+    WorkflowRunnerException,
+)
 from ._executor import Executor
 from ._runner_context import (
     Message,
@@ -72,7 +81,7 @@ class Runner:
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
         if self._running:
-            raise RuntimeError("Runner is already running.")
+            raise WorkflowRunnerException("Runner is already running.")
 
         self._running = True
         try:
@@ -134,12 +143,9 @@ class Runner:
                     break
 
             if self._iteration >= self._max_iterations and await self._ctx.has_messages():
-                raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
+                raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
 
             logger.info(f"Workflow completed after {self._iteration} supersteps")
-            # TODO(@taochen): iteration is reset to zero, even in the event of a request info event.
-            # Should iteration be preserved in the event of a request info event?
-            self._iteration = 0
             self._resumed_from_checkpoint = False  # Reset resume flag for next run
         finally:
             self._running = False
@@ -168,7 +174,8 @@ class Runner:
             # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
             if not associated_edge_runners:
-                logger.warning(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
+                # This is expected for terminal nodes (e.g., EndWorkflow, last action in workflow)
+                logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
                 return
 
             for message in messages:
@@ -211,7 +218,7 @@ class Runner:
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
-    ) -> bool:
+    ) -> None:
         """Restore workflow state from a checkpoint.
 
         Args:
@@ -220,7 +227,10 @@ class Runner:
                 runner context itself is not configured with checkpointing.
 
         Returns:
-            True if restoration was successful, False otherwise
+            None on success.
+
+        Raises:
+            WorkflowCheckpointException on failure.
         """
         try:
             # Load the checkpoint
@@ -230,18 +240,19 @@ class Runner:
             elif checkpoint_storage is not None:
                 checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
             else:
-                logger.warning("Context does not support checkpointing and no external storage was provided")
-                return False
+                raise WorkflowCheckpointException(
+                    "Cannot load checkpoint: no checkpointing configured in context or external storage provided."
+                )
 
             if not checkpoint:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
-                return False
+                raise WorkflowCheckpointException(f"Checkpoint {checkpoint_id} not found")
 
             # Validate the loaded checkpoint against the workflow
             graph_hash = getattr(self, "graph_signature_hash", None)
             checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
             if graph_hash and checkpoint_hash and graph_hash != checkpoint_hash:
-                raise ValueError(
+                raise WorkflowCheckpointException(
                     "Workflow graph has changed since the checkpoint was created. "
                     "Please rebuild the original workflow before resuming."
                 )
@@ -262,12 +273,11 @@ class Runner:
             self._mark_resumed(checkpoint.iteration_count)
 
             logger.info(f"Successfully restored workflow from checkpoint: {checkpoint_id}")
-            return True
-        except ValueError:
+        except WorkflowCheckpointException:
             raise
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
-            return False
+            raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint_id}") from e
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors.
@@ -308,7 +318,7 @@ class Runner:
                 try:
                     state_dict = await executor.on_checkpoint_save()
                 except Exception as ex:  # pragma: no cover
-                    raise ValueError(f"Executor {exec_id} on_checkpoint_save failed: {ex}") from ex
+                    raise WorkflowCheckpointException(f"Executor {exec_id} on_checkpoint_save failed") from ex
 
             try:
                 await self._set_executor_state(exec_id, state_dict)
@@ -334,17 +344,19 @@ class Runner:
 
         executor_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
         if not isinstance(executor_states, dict):
-            raise ValueError("Executor states in shared state is not a dictionary. Unable to restore.")
+            raise WorkflowCheckpointException("Executor states in shared state is not a dictionary. Unable to restore.")
 
         for executor_id, state in executor_states.items():  # pyright: ignore[reportUnknownVariableType]
             if not isinstance(executor_id, str):
-                raise ValueError("Executor ID in executor states is not a string. Unable to restore.")
+                raise WorkflowCheckpointException("Executor ID in executor states is not a string. Unable to restore.")
             if not isinstance(state, dict) or not all(isinstance(k, str) for k in state):  # pyright: ignore[reportUnknownVariableType]
-                raise ValueError(f"Executor state for {executor_id} is not a dict[str, Any]. Unable to restore.")
+                raise WorkflowCheckpointException(
+                    f"Executor state for {executor_id} is not a dict[str, Any]. Unable to restore."
+                )
 
             executor = self._executors.get(executor_id)
             if not executor:
-                raise ValueError(f"Executor {executor_id} not found during state restoration.")
+                raise WorkflowCheckpointException(f"Executor {executor_id} not found during state restoration.")
 
             # Try backward compatibility behavior first
             # TODO(@taochen): Remove backward compatibility
@@ -357,7 +369,7 @@ class Runner:
                         await maybe  # type: ignore[arg-type]
                     restored = True
             except Exception as ex:  # pragma: no cover - defensive
-                raise ValueError(f"Executor {executor_id} restore_state failed: {ex}") from ex
+                raise WorkflowCheckpointException(f"Executor {executor_id} restore_state failed") from ex
 
             if not restored:
                 # Try the updated behavior only if backward compatibility did not restore
@@ -365,7 +377,7 @@ class Runner:
                     await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
                     restored = True
                 except Exception as ex:  # pragma: no cover - defensive
-                    raise ValueError(f"Executor {executor_id} on_checkpoint_restore failed: {ex}") from ex
+                    raise WorkflowCheckpointException(f"Executor {executor_id} on_checkpoint_restore failed") from ex
 
             if not restored:
                 logger.debug(f"Executor {executor_id} does not support state restoration; skipping.")
@@ -408,7 +420,7 @@ class Runner:
             existing_states = {}
 
         if not isinstance(existing_states, dict):
-            raise ValueError("Existing executor states in shared state is not a dictionary.")
+            raise WorkflowCheckpointException("Existing executor states in shared state is not a dictionary.")
 
         existing_states[executor_id] = state
         await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)

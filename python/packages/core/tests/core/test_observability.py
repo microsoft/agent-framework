@@ -13,11 +13,10 @@ from opentelemetry.trace import StatusCode
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
-    AgentRunResponse,
+    AgentResponse,
     AgentThread,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Role,
@@ -215,7 +214,7 @@ def mock_chat_client():
             return "https://test.example.com"
 
         async def _inner_get_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             return ChatResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
@@ -224,7 +223,7 @@ def mock_chat_client():
             )
 
         async def _inner_get_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
             yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
@@ -342,7 +341,6 @@ def test_agent_decorator_with_valid_class():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
             self.description = "Test agent description"
 
         async def run(self, messages=None, *, thread=None, **kwargs):
@@ -384,7 +382,6 @@ def test_agent_decorator_with_partial_methods():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return Mock()
@@ -406,12 +403,11 @@ def mock_chat_agent():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
             self.description = "Test agent description"
-            self.chat_options = ChatOptions(model_id="TestModel")
+            self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
@@ -419,10 +415,10 @@ def mock_chat_agent():
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            from agent_framework import AgentRunResponseUpdate
+            from agent_framework import AgentResponseUpdate
 
-            yield AgentRunResponseUpdate(text="Hello", role=Role.ASSISTANT)
-            yield AgentRunResponseUpdate(text=" from agent", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text=" from agent", role=Role.ASSISTANT)
 
     return MockChatClientAgent
 
@@ -441,10 +437,10 @@ async def test_agent_instrumentation_enabled(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "invoke_agent Test Agent"
+    assert span.name == "invoke_agent test_agent"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
@@ -469,10 +465,10 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "invoke_agent Test Agent"
+    assert span.name == "invoke_agent test_agent"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     if enable_sensitive_data:

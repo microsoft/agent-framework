@@ -4,11 +4,11 @@
 Sample: Request Info with SequentialBuilder
 
 This sample demonstrates using the `.with_request_info()` method to pause a
-SequentialBuilder workflow BEFORE each agent runs, allowing external input
-(e.g., human steering) before the agent responds.
+SequentialBuilder workflow AFTER each agent runs, allowing external input
+(e.g., human feedback) for review and optional iteration.
 
 Purpose:
-Show how to use the request info API that pauses before every agent response,
+Show how to use the request info API that pauses after every agent response,
 using the standard request_info pattern for consistency.
 
 Demonstrate:
@@ -24,7 +24,8 @@ Prerequisites:
 import asyncio
 
 from agent_framework import (
-    AgentInputRequest,
+    AgentExecutorResponse,
+    AgentRequestInfoResponse,
     ChatMessage,
     RequestInfoEvent,
     SequentialBuilder,
@@ -48,7 +49,7 @@ async def main() -> None:
     editor = chat_client.create_agent(
         name="editor",
         instructions=(
-            "You are an editor. Review the draft and suggest improvements. "
+            "You are an editor. Review the draft and make improvements. "
             "Incorporate any human feedback that was provided."
         ),
     )
@@ -61,11 +62,17 @@ async def main() -> None:
         ),
     )
 
-    # Build workflow with request info enabled (pauses before each agent)
-    workflow = SequentialBuilder().participants([drafter, editor, finalizer]).with_request_info().build()
+    # Build workflow with request info enabled (pauses after each agent responds)
+    workflow = (
+        SequentialBuilder()
+        .participants([drafter, editor, finalizer])
+        # Only enable request info for the editor agent
+        .with_request_info(agents=["editor"])
+        .build()
+    )
 
     # Run the workflow with request info handling
-    pending_responses: dict[str, str] | None = None
+    pending_responses: dict[str, AgentRequestInfoResponse] | None = None
     workflow_complete = False
 
     print("Starting document review workflow...")
@@ -84,26 +91,34 @@ async def main() -> None:
         # Process events
         async for event in stream:
             if isinstance(event, RequestInfoEvent):
-                if isinstance(event.data, AgentInputRequest):
-                    # Display pre-agent context for steering
+                if isinstance(event.data, AgentExecutorResponse):
+                    # Display agent response and conversation context for review
                     print("\n" + "-" * 40)
                     print("REQUEST INFO: INPUT REQUESTED")
-                    print(f"About to call agent: {event.data.target_agent_id}")
-                    print("-" * 40)
-                    print("Conversation context:")
-                    recent = (
-                        event.data.conversation[-2:] if len(event.data.conversation) > 2 else event.data.conversation
+                    print(
+                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
+                        "Please provide your feedback."
                     )
-                    for msg in recent:
-                        role = msg.role.value if msg.role else "unknown"
-                        text = (msg.text or "")[:150]
-                        print(f"  [{role}]: {text}...")
                     print("-" * 40)
+                    if event.data.full_conversation:
+                        print("Conversation context:")
+                        recent = (
+                            event.data.full_conversation[-2:]
+                            if len(event.data.full_conversation) > 2
+                            else event.data.full_conversation
+                        )
+                        for msg in recent:
+                            name = msg.author_name or msg.role.value
+                            text = (msg.text or "")[:150]
+                            print(f"  [{name}]: {text}...")
+                        print("-" * 40)
 
-                    # Get input to steer the agent
-                    user_input = input("Your guidance (or 'skip' to continue): ")  # noqa: ASYNC250
+                    # Get feedback on the agent's response (approve or request iteration)
+                    user_input = input("Your guidance (or 'skip' to approve): ")  # noqa: ASYNC250
                     if user_input.lower() == "skip":
-                        user_input = "Please continue naturally."
+                        user_input = AgentRequestInfoResponse.approve()
+                    else:
+                        user_input = AgentRequestInfoResponse.from_strings([user_input])
 
                     pending_responses = {event.request_id: user_input}
                     print("(Resuming workflow...)")

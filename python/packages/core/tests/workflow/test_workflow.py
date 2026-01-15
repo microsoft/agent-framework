@@ -11,9 +11,9 @@ import pytest
 
 from agent_framework import (
     AgentExecutor,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunEvent,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
@@ -25,7 +25,9 @@ from agent_framework import (
     Role,
     TextContent,
     WorkflowBuilder,
+    WorkflowCheckpointException,
     WorkflowContext,
+    WorkflowConvergenceException,
     WorkflowEvent,
     WorkflowOutputEvent,
     WorkflowRunState,
@@ -143,7 +145,7 @@ async def test_workflow_run_stream_not_completed():
         .build()
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(WorkflowConvergenceException):
         async for _ in workflow.run_stream(NumberMessage(data=0)):
             pass
 
@@ -181,7 +183,7 @@ async def test_workflow_run_not_completed():
         .build()
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(WorkflowConvergenceException):
         await workflow.run(NumberMessage(data=0))
 
 
@@ -289,7 +291,9 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
         assert result is not None
 
 
-async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_executor: Executor):
+async def test_workflow_checkpointing_not_enabled_for_external_restore(
+    simple_executor: Executor,
+):
     """Test that external checkpoint restoration fails when workflow doesn't support checkpointing."""
     # Build workflow WITHOUT checkpointing
     workflow = (
@@ -308,7 +312,9 @@ async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_ex
         assert "either provide checkpoint_storage parameter" in str(e)
 
 
-async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(
+    simple_executor: Executor,
+):
     # Build workflow WITHOUT checkpointing
     workflow = (
         WorkflowBuilder()
@@ -327,7 +333,9 @@ async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simp
         assert "either provide checkpoint_storage parameter" in str(e)
 
 
-async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(
+    simple_executor: Executor,
+):
     """Test that attempting to restore from a non-existent checkpoint fails appropriately."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -345,12 +353,14 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(simple_exe
         try:
             async for _ in workflow.run_stream(checkpoint_id="nonexistent_checkpoint_id"):
                 pass
-            raise AssertionError("Expected RuntimeError to be raised")
-        except RuntimeError as e:
-            assert "Failed to restore from checkpoint" in str(e)
+            raise AssertionError("Expected WorkflowCheckpointException to be raised")
+        except WorkflowCheckpointException as e:
+            assert str(e) == "Checkpoint nonexistent_checkpoint_id not found"
 
 
-async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_with_external_storage(
+    simple_executor: Executor,
+):
     """Test that external checkpoint storage can be provided for restoration."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -416,7 +426,9 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
         assert hasattr(result, "get_outputs")  # Should have WorkflowRunResult methods
 
 
-async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_with_responses(
+    simple_executor: Executor,
+):
     """Test that workflow can be resumed from checkpoint with pending RequestInfoEvents."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -475,7 +487,9 @@ class StateTrackingExecutor(Executor):
 
     @handler
     async def handle_message(
-        self, message: StateTrackingMessage, ctx: WorkflowContext[StateTrackingMessage, list[str]]
+        self,
+        message: StateTrackingMessage,
+        ctx: WorkflowContext[StateTrackingMessage, list[str]],
     ) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
@@ -537,7 +551,9 @@ async def test_workflow_multiple_runs_no_state_collision():
         assert outputs1[0] != outputs3[0]
 
 
-async def test_workflow_checkpoint_runtime_only_configuration(simple_executor: Executor):
+async def test_workflow_checkpoint_runtime_only_configuration(
+    simple_executor: Executor,
+):
     """Test that checkpointing can be configured ONLY at runtime, not at build time."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -574,12 +590,20 @@ async def test_workflow_checkpoint_runtime_only_configuration(simple_executor: E
             checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage
         )
         assert result_resumed is not None
-        assert result_resumed.get_final_state() in (WorkflowRunState.IDLE, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+        assert result_resumed.get_final_state() in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        )
 
 
-async def test_workflow_checkpoint_runtime_overrides_buildtime(simple_executor: Executor):
+async def test_workflow_checkpoint_runtime_overrides_buildtime(
+    simple_executor: Executor,
+):
     """Test that runtime checkpoint storage overrides build-time configuration."""
-    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+    with (
+        tempfile.TemporaryDirectory() as temp_dir1,
+        tempfile.TemporaryDirectory() as temp_dir2,
+    ):
         buildtime_storage = FileCheckpointStorage(temp_dir1)
         runtime_storage = FileCheckpointStorage(temp_dir2)
 
@@ -740,7 +764,10 @@ async def test_workflow_concurrent_execution_prevention():
     await asyncio.sleep(0.01)
 
     # Try to start a second concurrent execution - this should fail
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        RuntimeError,
+        match="Workflow is already running. Concurrent executions are not allowed.",
+    ):
         await workflow.run(NumberMessage(data=0))
 
     # Wait for the first task to complete
@@ -773,7 +800,10 @@ async def test_workflow_concurrent_execution_prevention_streaming():
     await asyncio.sleep(0.02)
 
     # Try to start a second concurrent execution - this should fail
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        RuntimeError,
+        match="Workflow is already running. Concurrent executions are not allowed.",
+    ):
         await workflow.run(NumberMessage(data=0))
 
     # Wait for the first task to complete
@@ -803,10 +833,16 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     await asyncio.sleep(0.02)  # Let it start
 
     # Try different execution methods - all should fail
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        RuntimeError,
+        match="Workflow is already running. Concurrent executions are not allowed.",
+    ):
         await workflow.run(NumberMessage(data=0))
 
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        RuntimeError,
+        match="Workflow is already running. Concurrent executions are not allowed.",
+    ):
         async for _ in workflow.run_stream(NumberMessage(data=0)):
             break
 
@@ -831,9 +867,9 @@ class _StreamingTestAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Non-streaming run - returns complete response."""
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
     async def run_stream(
         self,
@@ -841,11 +877,11 @@ class _StreamingTestAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Streaming run - yields incremental updates."""
         # Simulate streaming by yielding character by character
         for char in self._reply_text:
-            yield AgentRunResponseUpdate(contents=[TextContent(text=char)])
+            yield AgentResponseUpdate(contents=[TextContent(text=char)])
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
@@ -923,7 +959,9 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
             pass
 
 
-async def test_workflow_run_stream_parameter_validation(simple_executor: Executor) -> None:
+async def test_workflow_run_stream_parameter_validation(
+    simple_executor: Executor,
+) -> None:
     """Test run_stream() specific parameter validation scenarios."""
     workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
 

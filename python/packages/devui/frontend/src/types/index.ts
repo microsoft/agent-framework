@@ -39,8 +39,8 @@ export interface AgentInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
-  middleware?: string[];
+  context_provider?: string | undefined;
+  middleware?: string[] | undefined;
 }
 
 // JSON Schema types for workflow input
@@ -130,6 +130,7 @@ export type {
   ResponseCompletedEvent,
   ResponseFailedEvent,
   ResponseFunctionResultComplete,
+  ResponseFunctionToolCall,
   StructuredEvent,
   WorkflowItem,
   ExecutorActionItem,
@@ -159,7 +160,7 @@ export interface MetaResponse {
   framework: string;
   runtime: "python" | "dotnet";
   capabilities: {
-    tracing: boolean;
+    instrumentation: boolean;
     openai_proxy: boolean;
     deployment: boolean;
   };
@@ -266,6 +267,29 @@ export interface CheckpointInfo {
   metadata?: Record<string, unknown>;
 }
 
+// Full checkpoint data structure
+export interface FullCheckpoint {
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: string;
+  messages: Record<string, unknown[]>;
+  shared_state: Record<string, unknown>;
+  pending_request_info_events: Record<string, PendingRequestInfoEvent>;
+  iteration_count: number;
+  metadata: Record<string, unknown>;
+  version: string;
+}
+
+// Pending request info event data
+export interface PendingRequestInfoEvent {
+  source_executor_id: string;
+  request_type?: string;
+  response_type?: string;
+  request_data?: Record<string, unknown>;
+  request_schema?: Record<string, unknown>;
+  timestamp?: string;
+}
+
 // Checkpoint item from conversation items API
 export interface CheckpointItem {
   id: string;
@@ -281,16 +305,6 @@ export interface CheckpointItem {
     message_count: number;
     size_bytes?: number;
     version: string;
-    full_checkpoint?: {
-      checkpoint_id: string;
-      workflow_id: string;
-      timestamp: string;
-      messages: Record<string, unknown[]>;
-      shared_state: Record<string, unknown>;
-      pending_request_info_events: Record<string, unknown>;
-      iteration_count: number;
-      metadata: Record<string, unknown>;
-      version: string;
-    };
+    full_checkpoint?: FullCheckpoint;
   };
 }

@@ -202,11 +202,11 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #endregion
 
-    #region AddMessagesAsync Tests
+    #region InvokedAsync Tests
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task AddMessagesAsync_WithSingleMessage_ShouldAddMessageAsync()
+    public async Task InvokedAsync_WithSingleMessage_ShouldAddMessageAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
@@ -214,14 +214,20 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         using var store = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
         var message = new ChatMessage(ChatRole.User, "Hello, world!");
 
+        var context = new ChatMessageStore.InvokedContext([message], [])
+        {
+            ResponseMessages = []
+        };
+
         // Act
-        await store.AddMessagesAsync([message]);
+        await store.InvokedAsync(context);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
         // Assert
-        var messages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var messages = await store.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
         // Simple assertion - if this fails, we know the deserialization is the issue
@@ -256,7 +262,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             }
 
             string rawJson = rawResults.Count > 0 ? Newtonsoft.Json.JsonConvert.SerializeObject(rawResults[0], Newtonsoft.Json.Formatting.Indented) : "null";
-            Assert.Fail($"GetMessagesAsync returned 0 messages, but direct count query found {count} items for conversation {conversationId}. Raw document: {rawJson}");
+            Assert.Fail($"InvokingAsync returned 0 messages, but direct count query found {count} items for conversation {conversationId}. Raw document: {rawJson}");
         }
 
         Assert.Single(messageList);
@@ -266,45 +272,63 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task AddMessagesAsync_WithMultipleMessages_ShouldAddAllMessagesAsync()
+    public async Task InvokedAsync_WithMultipleMessages_ShouldAddAllMessagesAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
         var conversationId = Guid.NewGuid().ToString();
         using var store = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
-        var messages = new[]
+        var requestMessages = new[]
         {
             new ChatMessage(ChatRole.User, "First message"),
             new ChatMessage(ChatRole.Assistant, "Second message"),
             new ChatMessage(ChatRole.User, "Third message")
         };
+        var aiContextProviderMessages = new[]
+        {
+            new ChatMessage(ChatRole.System, "System context message")
+        };
+        var responseMessages = new[]
+        {
+            new ChatMessage(ChatRole.Assistant, "Response message")
+        };
+
+        var context = new ChatMessageStore.InvokedContext(requestMessages, [])
+        {
+            AIContextProviderMessages = aiContextProviderMessages,
+            ResponseMessages = responseMessages
+        };
 
         // Act
-        await store.AddMessagesAsync(messages);
+        await store.InvokedAsync(context);
 
         // Assert
-        var retrievedMessages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var retrievedMessages = await store.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
-        Assert.Equal(3, messageList.Count);
+        Assert.Equal(5, messageList.Count);
         Assert.Equal("First message", messageList[0].Text);
         Assert.Equal("Second message", messageList[1].Text);
         Assert.Equal("Third message", messageList[2].Text);
+        Assert.Equal("System context message", messageList[3].Text);
+        Assert.Equal("Response message", messageList[4].Text);
     }
 
     #endregion
 
-    #region GetMessagesAsync Tests
+    #region InvokingAsync Tests
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task GetMessagesAsync_WithNoMessages_ShouldReturnEmptyAsync()
+    public async Task InvokingAsync_WithNoMessages_ShouldReturnEmptyAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
         using var store = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act
-        var messages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var messages = await store.InvokingAsync(invokingContext);
 
         // Assert
         Assert.Empty(messages);
@@ -312,7 +336,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task GetMessagesAsync_WithConversationIsolation_ShouldOnlyReturnMessagesForConversationAsync()
+    public async Task InvokingAsync_WithConversationIsolation_ShouldOnlyReturnMessagesForConversationAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
@@ -322,12 +346,18 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         using var store1 = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, TestContainerId, conversation1);
         using var store2 = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, TestContainerId, conversation2);
 
-        await store1.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message for conversation 1")]);
-        await store2.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message for conversation 2")]);
+        var context1 = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 1")], []);
+        var context2 = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 2")], []);
+
+        await store1.InvokedAsync(context1);
+        await store2.InvokedAsync(context2);
 
         // Act
-        var messages1 = await store1.GetMessagesAsync();
-        var messages2 = await store2.GetMessagesAsync();
+        var invokingContext1 = new ChatMessageStore.InvokingContext([]);
+        var invokingContext2 = new ChatMessageStore.InvokingContext([]);
+
+        var messages1 = await store1.InvokingAsync(invokingContext1);
+        var messages2 = await store2.InvokingAsync(invokingContext2);
 
         // Assert
         var messageList1 = messages1.ToList();
@@ -361,16 +391,18 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         };
 
         // Act 1: Add messages
-        await originalStore.AddMessagesAsync(messages);
+        var invokedContext = new ChatMessageStore.InvokedContext(messages, []);
+        await originalStore.InvokedAsync(invokedContext);
 
         // Act 2: Verify messages were added
-        var retrievedMessages = await originalStore.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var retrievedMessages = await originalStore.InvokingAsync(invokingContext);
         var retrievedList = retrievedMessages.ToList();
         Assert.Equal(5, retrievedList.Count);
 
         // Act 3: Create new store instance for same conversation (test persistence)
         using var newStore = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
-        var persistedMessages = await newStore.GetMessagesAsync();
+        var persistedMessages = await newStore.InvokingAsync(invokingContext);
         var persistedList = persistedMessages.ToList();
 
         // Assert final state
@@ -502,7 +534,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task AddMessagesAsync_WithHierarchicalPartitioning_ShouldAddMessageWithMetadataAsync()
+    public async Task InvokedAsync_WithHierarchicalPartitioning_ShouldAddMessageWithMetadataAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
@@ -513,14 +545,17 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         using var store = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
         var message = new ChatMessage(ChatRole.User, "Hello from hierarchical partitioning!");
 
+        var context = new ChatMessageStore.InvokedContext([message], []);
+
         // Act
-        await store.AddMessagesAsync([message]);
+        await store.InvokedAsync(context);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
         // Assert
-        var messages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var messages = await store.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
         Assert.Single(messageList);
@@ -551,7 +586,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task AddMessagesAsync_WithHierarchicalMultipleMessages_ShouldAddAllMessagesAsync()
+    public async Task InvokedAsync_WithHierarchicalMultipleMessages_ShouldAddAllMessagesAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
@@ -567,14 +602,17 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             new ChatMessage(ChatRole.User, "Third hierarchical message")
         };
 
+        var context = new ChatMessageStore.InvokedContext(messages, []);
+
         // Act
-        await store.AddMessagesAsync(messages);
+        await store.InvokedAsync(context);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
         // Assert
-        var retrievedMessages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var retrievedMessages = await store.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
         Assert.Equal(3, messageList.Count);
@@ -585,7 +623,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public async Task GetMessagesAsync_WithHierarchicalPartitionIsolation_ShouldIsolateMessagesByUserIdAsync()
+    public async Task InvokingAsync_WithHierarchicalPartitionIsolation_ShouldIsolateMessagesByUserIdAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
@@ -599,17 +637,23 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         using var store2 = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
 
         // Add messages to both stores
-        await store1.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message from user 1")]);
-        await store2.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message from user 2")]);
+        var context1 = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 1")], []);
+        var context2 = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 2")], []);
+
+        await store1.InvokedAsync(context1);
+        await store2.InvokedAsync(context2);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
         // Act & Assert
-        var messages1 = await store1.GetMessagesAsync();
+        var invokingContext1 = new ChatMessageStore.InvokingContext([]);
+        var invokingContext2 = new ChatMessageStore.InvokingContext([]);
+
+        var messages1 = await store1.InvokingAsync(invokingContext1);
         var messageList1 = messages1.ToList();
 
-        var messages2 = await store2.GetMessagesAsync();
+        var messages2 = await store2.InvokingAsync(invokingContext2);
         var messageList2 = messages2.ToList();
 
         // With true hierarchical partitioning, each user sees only their own messages
@@ -630,7 +674,9 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         const string SessionId = "session-serialize";
 
         using var originalStore = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
-        await originalStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Test serialization message")]);
+
+        var context = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Test serialization message")], []);
+        await originalStore.InvokedAsync(context);
 
         // Act - Serialize the store state
         var serializedState = originalStore.Serialize();
@@ -647,7 +693,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert - The deserialized store should have the same functionality
-        var messages = await deserializedStore.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var messages = await deserializedStore.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
         Assert.Single(messageList);
@@ -670,17 +717,22 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         using var hierarchicalStore = new CosmosChatMessageStore(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
 
         // Add messages to both
-        await simpleStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Simple partitioning message")]);
-        await hierarchicalStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")]);
+        var simpleContext = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Simple partitioning message")], []);
+        var hierarchicalContext = new ChatMessageStore.InvokedContext([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")], []);
+
+        await simpleStore.InvokedAsync(simpleContext);
+        await hierarchicalStore.InvokedAsync(hierarchicalContext);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
         // Act & Assert
-        var simpleMessages = await simpleStore.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+
+        var simpleMessages = await simpleStore.InvokingAsync(invokingContext);
         var simpleMessageList = simpleMessages.ToList();
 
-        var hierarchicalMessages = await hierarchicalStore.GetMessagesAsync();
+        var hierarchicalMessages = await hierarchicalStore.InvokingAsync(invokingContext);
         var hierarchicalMessageList = hierarchicalMessages.ToList();
 
         // Each should only see its own messages since they use different containers
@@ -707,14 +759,17 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
             await Task.Delay(10); // Small delay to ensure different timestamps
         }
-        await store.AddMessagesAsync(messages);
+
+        var context = new ChatMessageStore.InvokedContext(messages, []);
+        await store.InvokedAsync(context);
 
         // Wait for eventual consistency
         await Task.Delay(100);
 
         // Act - Set max to 5 and retrieve
         store.MaxMessagesToRetrieve = 5;
-        var retrievedMessages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var retrievedMessages = await store.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
         // Assert - Should get the 5 most recent messages (6-10) in ascending order
@@ -742,13 +797,16 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         {
             messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
         }
-        await store.AddMessagesAsync(messages);
+
+        var context = new ChatMessageStore.InvokedContext(messages, []);
+        await store.InvokedAsync(context);
 
         // Wait for eventual consistency
         await Task.Delay(100);
 
         // Act - No limit set (default null)
-        var retrievedMessages = await store.GetMessagesAsync();
+        var invokingContext = new ChatMessageStore.InvokingContext([]);
+        var retrievedMessages = await store.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
         // Assert - Should get all 10 messages

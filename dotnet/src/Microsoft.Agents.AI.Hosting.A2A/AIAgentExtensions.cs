@@ -43,10 +43,14 @@ public static class AIAgentExtensions
         {
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
             var thread = await hostAgent.GetOrCreateThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var options = messageSendParams.Metadata is not { Count: > 0 }
+                ? null
+                : new AgentRunOptions { AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
 
             var response = await hostAgent.RunAsync(
                 messageSendParams.ToChatMessages(),
                 thread: thread,
+                options: options,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
             await hostAgent.SaveThreadAsync(contextId, thread, cancellationToken).ConfigureAwait(false);
@@ -56,7 +60,8 @@ public static class AIAgentExtensions
                 MessageId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
                 ContextId = contextId,
                 Role = MessageRole.Agent,
-                Parts = parts
+                Parts = parts,
+                Metadata = response.AdditionalProperties?.ToA2AMetadata()
             };
         }
     }
@@ -85,13 +90,7 @@ public static class AIAgentExtensions
             // we can help user if they did not set Url explicitly.
             if (string.IsNullOrEmpty(agentCard.Url))
             {
-                var agentCardUrl = context.TrimEnd('/');
-                if (!context.EndsWith("/v1/card", StringComparison.Ordinal))
-                {
-                    agentCardUrl += "/v1/card";
-                }
-
-                agentCard.Url = agentCardUrl;
+                agentCard.Url = context.TrimEnd('/');
             }
 
             return Task.FromResult(agentCard);

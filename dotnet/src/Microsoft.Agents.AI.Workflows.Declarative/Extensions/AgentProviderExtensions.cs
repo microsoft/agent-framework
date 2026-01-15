@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
-    public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
+    public static async ValueTask<AgentResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
         string executorId,
         IWorkflowContext context,
@@ -20,15 +20,15 @@ internal static class AgentProviderExtensions
         IDictionary<string, object?>? inputArguments = null,
         CancellationToken cancellationToken = default)
     {
-        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
         autoSend |= isWorkflowConversation;
 
         // Process the agent response updates.
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
             await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
 
@@ -36,15 +36,15 @@ internal static class AgentProviderExtensions
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
             }
         }
 
-        AgentRunResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }
 
         // If autoSend is enabled and this is not the workflow conversation, copy messages to the workflow conversation.

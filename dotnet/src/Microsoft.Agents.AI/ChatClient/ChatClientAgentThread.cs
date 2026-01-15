@@ -3,6 +3,8 @@
 using System;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -11,7 +13,7 @@ namespace Microsoft.Agents.AI;
 /// Provides a thread implementation for use with <see cref="ChatClientAgent"/>.
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public class ChatClientAgentThread : AgentThread
+public sealed class ChatClientAgentThread : AgentThread
 {
     private ChatMessageStore? _messageStore;
 
@@ -20,48 +22,6 @@ public class ChatClientAgentThread : AgentThread
     /// </summary>
     internal ChatClientAgentThread()
     {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class from previously serialized state.
-    /// </summary>
-    /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="chatMessageStoreFactory">
-    /// An optional factory function to create a custom <see cref="ChatMessageStore"/> from its serialized state.
-    /// If not provided, the default in-memory message store will be used.
-    /// </param>
-    /// <param name="aiContextProviderFactory">
-    /// An optional factory function to create a custom <see cref="AIContextProvider"/> from its serialized state.
-    /// If not provided, no context provider will be configured.
-    /// </param>
-    internal ChatClientAgentThread(
-        JsonElement serializedThreadState,
-        JsonSerializerOptions? jsonSerializerOptions = null,
-        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = null,
-        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = null)
-    {
-        if (serializedThreadState.ValueKind != JsonValueKind.Object)
-        {
-            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
-        }
-
-        var state = serializedThreadState.Deserialize(
-            AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
-
-        this.AIContextProvider = aiContextProviderFactory?.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions);
-
-        if (state?.ConversationId is string threadId)
-        {
-            this.ConversationId = threadId;
-
-            // Since we have an ID, we should not have a chat message store and we can return here.
-            return;
-        }
-
-        this._messageStore =
-            chatMessageStoreFactory?.Invoke(state?.StoreState ?? default, jsonSerializerOptions) ??
-            new InMemoryChatMessageStore(state?.StoreState ?? default, jsonSerializerOptions); // default to an in-memory store
     }
 
     /// <summary>
@@ -152,6 +112,58 @@ public class ChatClientAgentThread : AgentThread
     /// </summary>
     public AIContextProvider? AIContextProvider { get; internal set; }
 
+    /// <summary>
+    /// Creates a new instance of the <see cref="ChatClientAgentThread"/> class from previously serialized state.
+    /// </summary>
+    /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
+    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <param name="chatMessageStoreFactory">
+    /// An optional factory function to create a custom <see cref="ChatMessageStore"/> from its serialized state.
+    /// If not provided, the default in-memory message store will be used.
+    /// </param>
+    /// <param name="aiContextProviderFactory">
+    /// An optional factory function to create a custom <see cref="AIContextProvider"/> from its serialized state.
+    /// If not provided, no context provider will be configured.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation. The task result contains the deserialized <see cref="ChatClientAgentThread"/>.</returns>
+    internal static async Task<ChatClientAgentThread> DeserializeAsync(
+        JsonElement serializedThreadState,
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<ChatMessageStore>>? chatMessageStoreFactory = null,
+        Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<AIContextProvider>>? aiContextProviderFactory = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
+        }
+
+        var state = serializedThreadState.Deserialize(
+            AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+
+        var thread = new ChatClientAgentThread();
+
+        thread.AIContextProvider = aiContextProviderFactory is not null
+            ? await aiContextProviderFactory.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions, cancellationToken).ConfigureAwait(false)
+            : null;
+
+        if (state?.ConversationId is string threadId)
+        {
+            thread.ConversationId = threadId;
+
+            // Since we have an ID, we should not have a chat message store and we can return here.
+            return thread;
+        }
+
+        thread._messageStore =
+            chatMessageStoreFactory is not null
+                ? await chatMessageStoreFactory.Invoke(state?.StoreState ?? default, jsonSerializerOptions, cancellationToken).ConfigureAwait(false)
+                : new InMemoryChatMessageStore(state?.StoreState ?? default, jsonSerializerOptions); // default to an in-memory store
+
+        return thread;
+    }
+
     /// <inheritdoc/>
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
@@ -171,9 +183,7 @@ public class ChatClientAgentThread : AgentThread
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        serviceType == typeof(AgentThreadMetadata)
-            ? new AgentThreadMetadata(this.ConversationId)
-            : base.GetService(serviceType, serviceKey)
+        base.GetService(serviceType, serviceKey)
             ?? this.AIContextProvider?.GetService(serviceType, serviceKey)
             ?? this.MessageStore?.GetService(serviceType, serviceKey);
 

@@ -19,7 +19,7 @@ internal abstract class AgentClientBase
     /// <param name="threadId">Optional thread identifier for conversation continuity.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An asynchronous enumerable of agent response updates.</returns>
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public abstract IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,

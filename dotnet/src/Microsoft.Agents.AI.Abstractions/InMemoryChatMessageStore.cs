@@ -29,7 +29,7 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 [DebuggerDisplay("Count = {Count}")]
 [DebuggerTypeProxy(typeof(DebugView))]
-public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>
+public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>, IReadOnlyList<ChatMessage>
 {
     private List<ChatMessage> _messages;
 
@@ -134,27 +134,36 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     }
 
     /// <inheritdoc />
-    public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
+    public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        _ = Throw.IfNull(context);
 
-        this._messages.AddRange(messages);
-
-        if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
-        {
-            this._messages = (await this.ChatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
-        }
-    }
-
-    /// <inheritdoc />
-    public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
-    {
         if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
             this._messages = (await this.ChatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
         }
 
         return this._messages;
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(context);
+
+        if (context.InvokeException is not null)
+        {
+            return;
+        }
+
+        // Add request, AI context provider, and response messages to the store
+        var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+        this._messages.AddRange(allNewMessages);
+
+        if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
+        {
+            this._messages = (await this.ChatReducer.ReduceAsync(this._messages, cancellationToken).ConfigureAwait(false)).ToList();
+        }
     }
 
     /// <inheritdoc />
@@ -221,7 +230,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     {
         /// <summary>
         /// Trigger the reducer when a new message is added.
-        /// <see cref="AddMessagesAsync(IEnumerable{ChatMessage}, CancellationToken)"/> will only complete when reducer processing is done.
+        /// <see cref="InvokedAsync(InvokedContext, CancellationToken)"/> will only complete when reducer processing is done.
         /// </summary>
         AfterMessageAdded,
 

@@ -34,7 +34,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages);
+        AgentResponse response = await agent.RunAsync(messages);
 
         // Assert
         Assert.NotNull(response);
@@ -59,7 +59,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages);
+        AgentResponse response = await agent.RunAsync(messages);
 
         // Assert
         Assert.NotNull(response);
@@ -95,7 +95,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages, thread: null);
+        AgentResponse response = await agent.RunAsync(messages, thread: null);
 
         // Assert
         Assert.NotNull(response);
@@ -119,8 +119,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             // Consume the stream
             updates.Add(update);
@@ -166,8 +166,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
         {
             // Consume the stream
             updates.Add(update);
@@ -228,11 +228,11 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, thread))
         {
             updates.Add(update);
@@ -244,17 +244,17 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public void DeserializeThread_WithValidState_ReturnsChatClientAgentThread()
+    public async Task DeserializeThread_WithValidState_ReturnsChatClientAgentThreadAsync()
     {
         // Arrange
         using var httpClient = new HttpClient();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread originalThread = agent.GetNewThread();
+        AgentThread originalThread = await agent.GetNewThreadAsync();
         JsonElement serialized = originalThread.Serialize();
 
         // Act
-        AgentThread deserialized = agent.DeserializeThread(serialized);
+        AgentThread deserialized = await agent.DeserializeThreadAsync(serialized);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -305,8 +305,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "What's the weather?")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -357,8 +357,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -407,8 +407,8 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -487,11 +487,11 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, thread))
         {
             updates.Add(update);

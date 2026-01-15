@@ -19,8 +19,8 @@ internal static class Step7EntryPoint
 
         for (int i = 0; i < numIterations; i++)
         {
-            AgentThread thread = agent.GetNewThread();
-            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
+            AgentThread thread = await agent.GetNewThreadAsync();
+            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
             {
                 if (update.RawRepresentation is WorkflowEvent)
                 {
