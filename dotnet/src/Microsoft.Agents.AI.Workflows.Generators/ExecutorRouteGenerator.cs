@@ -47,8 +47,8 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
             groupedByClass.Where(static r => r.ExecutorInfo is not null),
             static (ctx, result) =>
             {
-                var source = SourceBuilder.Generate(result.ExecutorInfo!);
-                var hintName = GetHintName(result.ExecutorInfo!);
+                string source = SourceBuilder.Generate(result.ExecutorInfo!);
+                string hintName = GetHintName(result.ExecutorInfo!);
                 ctx.AddSource(hintName, SourceText.From(source, Encoding.UTF8));
             });
 

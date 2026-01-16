@@ -51,39 +51,39 @@ internal static class SemanticAnalyzer
         // The target should be a method
         if (context.TargetSymbol is not IMethodSymbol methodSymbol)
         {
-            return CreateEmptyResult();
+            return MethodAnalysisResult.Empty;
         }
 
         // Get the containing class
-        var classSymbol = methodSymbol.ContainingType;
+        INamedTypeSymbol? classSymbol = methodSymbol.ContainingType;
         if (classSymbol is null)
         {
-            return CreateEmptyResult();
+            return MethodAnalysisResult.Empty;
         }
 
         // Get the method syntax for location info
-        var methodSyntax = context.TargetNode as MethodDeclarationSyntax;
+        MethodDeclarationSyntax? methodSyntax = context.TargetNode as MethodDeclarationSyntax;
 
         // Extract class-level info (raw facts, no validation here)
-        var classKey = GetClassKey(classSymbol);
-        var isPartialClass = IsPartialClass(classSymbol, cancellationToken);
-        var derivesFromExecutor = DerivesFromExecutor(classSymbol);
-        var hasManualConfigureRoutes = HasConfigureRoutesDefined(classSymbol);
+        string classKey = GetClassKey(classSymbol);
+        bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
+        bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
+        bool hasManualConfigureRoutes = HasConfigureRoutesDefined(classSymbol);
 
         // Extract class metadata
-        var @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
+        string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
             ? null
             : classSymbol.ContainingNamespace?.ToDisplayString();
-        var className = classSymbol.Name;
-        var genericParameters = GetGenericParameters(classSymbol);
-        var isNested = classSymbol.ContainingType != null;
-        var containingTypeChain = GetContainingTypeChain(classSymbol);
-        var baseHasConfigureRoutes = BaseHasConfigureRoutes(classSymbol);
-        var classSendTypes = GetClassLevelTypes(classSymbol, SendsMessageAttributeName);
-        var classYieldTypes = GetClassLevelTypes(classSymbol, YieldsMessageAttributeName);
+        string className = classSymbol.Name;
+        string? genericParameters = GetGenericParameters(classSymbol);
+        bool isNested = classSymbol.ContainingType != null;
+        string containingTypeChain = GetContainingTypeChain(classSymbol);
+        bool baseHasConfigureRoutes = BaseHasConfigureRoutes(classSymbol);
+        ImmutableEquatableArray<string> classSendTypes = GetClassLevelTypes(classSymbol, SendsMessageAttributeName);
+        ImmutableEquatableArray<string> classYieldTypes = GetClassLevelTypes(classSymbol, YieldsMessageAttributeName);
 
         // Get class location for class-level diagnostics
-        var classLocation = GetClassLocation(classSymbol, cancellationToken);
+        DiagnosticLocationInfo? classLocation = GetClassLocation(classSymbol, cancellationToken);
 
         // Analyze the handler method (method-level validation only)
         // Skip method analysis if class doesn't derive from Executor (class-level diagnostic will be reported later)
@@ -109,15 +109,15 @@ internal static class SemanticAnalyzer
     /// </summary>
     public static AnalysisResult CombineMethodResults(IEnumerable<MethodAnalysisResult> methodResults)
     {
-        var methods = methodResults.ToList();
+        List<MethodAnalysisResult> methods = methodResults.ToList();
         if (methods.Count == 0)
         {
             return AnalysisResult.Empty;
         }
 
         // All methods should have same class info - take from first
-        var first = methods[0];
-        var classLocation = first.ClassLocation?.ToRoslynLocation() ?? Location.None;
+        MethodAnalysisResult first = methods[0];
+        Location classLocation = first.ClassLocation?.ToRoslynLocation() ?? Location.None;
 
         // Collect method-level diagnostics
         var allDiagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
@@ -159,7 +159,7 @@ internal static class SemanticAnalyzer
         }
 
         // Collect valid handlers
-        var handlers = methods
+        ImmutableArray<HandlerInfo> handlers = methods
             .Where(m => m.Handler is not null)
             .Select(m => m.Handler!)
             .ToImmutableArray();
@@ -169,7 +169,7 @@ internal static class SemanticAnalyzer
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
-        var executorInfo = new ExecutorInfo(
+        ExecutorInfo executorInfo = new ExecutorInfo(
             first.Namespace,
             first.ClassName,
             first.GenericParameters,
@@ -189,25 +189,13 @@ internal static class SemanticAnalyzer
     }
 
     /// <summary>
-    /// Creates a placeholder result for invalid targets (e.g., attribute on non-method).
-    /// </summary>
-    private static MethodAnalysisResult CreateEmptyResult()
-    {
-        return new MethodAnalysisResult(
-            string.Empty, null, string.Empty, null, false, string.Empty,
-            false, ImmutableEquatableArray<string>.Empty, ImmutableEquatableArray<string>.Empty,
-            false, false, false,
-            null, null, ImmutableEquatableArray<DiagnosticInfo>.Empty);
-    }
-
-    /// <summary>
     /// Gets the source location of the class identifier for diagnostic reporting.
     /// </summary>
     private static DiagnosticLocationInfo? GetClassLocation(INamedTypeSymbol classSymbol, CancellationToken cancellationToken)
     {
-        foreach (var syntaxRef in classSymbol.DeclaringSyntaxReferences)
+        foreach (SyntaxReference syntaxRef in classSymbol.DeclaringSyntaxReferences)
         {
-            var syntax = syntaxRef.GetSyntax(cancellationToken);
+            SyntaxNode syntax = syntaxRef.GetSyntax(cancellationToken);
             if (syntax is ClassDeclarationSyntax classDecl)
             {
                 return DiagnosticLocationInfo.FromLocation(classDecl.Identifier.GetLocation());
@@ -230,9 +218,9 @@ internal static class SemanticAnalyzer
     /// </summary>
     private static bool IsPartialClass(INamedTypeSymbol classSymbol, CancellationToken cancellationToken)
     {
-        foreach (var syntaxRef in classSymbol.DeclaringSyntaxReferences)
+        foreach (SyntaxReference syntaxRef in classSymbol.DeclaringSyntaxReferences)
         {
-            var syntax = syntaxRef.GetSyntax(cancellationToken);
+            SyntaxNode syntax = syntaxRef.GetSyntax(cancellationToken);
             if (syntax is ClassDeclarationSyntax classDecl &&
                 classDecl.Modifiers.Any(SyntaxKind.PartialKeyword))
             {
@@ -248,10 +236,10 @@ internal static class SemanticAnalyzer
     /// </summary>
     private static bool DerivesFromExecutor(INamedTypeSymbol classSymbol)
     {
-        var current = classSymbol.BaseType;
+        INamedTypeSymbol? current = classSymbol.BaseType;
         while (current != null)
         {
-            var fullName = current.OriginalDefinition.ToDisplayString();
+            string fullName = current.OriginalDefinition.ToDisplayString();
             if (fullName == ExecutorTypeName || fullName.StartsWith(ExecutorTypeName + "<", StringComparison.Ordinal))
             {
                 return true;
@@ -287,10 +275,10 @@ internal static class SemanticAnalyzer
     /// </summary>
     private static bool BaseHasConfigureRoutes(INamedTypeSymbol classSymbol)
     {
-        var baseType = classSymbol.BaseType;
+        INamedTypeSymbol? baseType = classSymbol.BaseType;
         while (baseType != null)
         {
-            var fullName = baseType.OriginalDefinition.ToDisplayString();
+            string fullName = baseType.OriginalDefinition.ToDisplayString();
             // Stop at Executor - its ConfigureRoutes is abstract/empty
             if (fullName == ExecutorTypeName)
             {
@@ -328,7 +316,7 @@ internal static class SemanticAnalyzer
         MethodDeclarationSyntax? methodSyntax,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics)
     {
-        var location = methodSyntax?.Identifier.GetLocation() ?? Location.None;
+        Location location = methodSyntax?.Identifier.GetLocation() ?? Location.None;
 
         // Check if static
         if (methodSymbol.IsStatic)
@@ -345,7 +333,7 @@ internal static class SemanticAnalyzer
         }
 
         // Check second parameter is IWorkflowContext
-        var secondParam = methodSymbol.Parameters[1];
+        IParameterSymbol secondParam = methodSymbol.Parameters[1];
         if (secondParam.Type.ToDisplayString() != WorkflowContextTypeName)
         {
             diagnostics.Add(DiagnosticInfo.Create("MAFGENWF001", location, methodSymbol.Name));
@@ -353,12 +341,12 @@ internal static class SemanticAnalyzer
         }
 
         // Check for optional CancellationToken as third parameter
-        var hasCancellationToken = methodSymbol.Parameters.Length >= 3 &&
+        bool hasCancellationToken = methodSymbol.Parameters.Length >= 3 &&
             methodSymbol.Parameters[2].Type.ToDisplayString() == CancellationTokenTypeName;
 
         // Analyze return type
-        var returnType = methodSymbol.ReturnType;
-        var signatureKind = GetSignatureKind(returnType);
+        ITypeSymbol returnType = methodSymbol.ReturnType;
+        HandlerSignatureKind? signatureKind = GetSignatureKind(returnType);
         if (signatureKind == null)
         {
             diagnostics.Add(DiagnosticInfo.Create("MAFGENWF002", location, methodSymbol.Name));
@@ -366,8 +354,8 @@ internal static class SemanticAnalyzer
         }
 
         // Get input type
-        var inputType = methodSymbol.Parameters[0].Type;
-        var inputTypeName = inputType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        ITypeSymbol inputType = methodSymbol.Parameters[0].Type;
+        string inputTypeName = inputType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
         // Get output type
         string? outputTypeName = null;
@@ -384,7 +372,7 @@ internal static class SemanticAnalyzer
         }
 
         // Get Yield and Send types from attribute
-        var (yieldTypes, sendTypes) = GetAttributeTypeArrays(methodSymbol);
+        (ImmutableEquatableArray<string> yieldTypes, ImmutableEquatableArray<string> sendTypes) = GetAttributeTypeArrays(methodSymbol);
 
         return new HandlerInfo(
             methodSymbol.Name,
@@ -402,7 +390,7 @@ internal static class SemanticAnalyzer
     /// <returns>The signature kind, or null if the return type is not supported (e.g., Task, Task&lt;T&gt;).</returns>
     private static HandlerSignatureKind? GetSignatureKind(ITypeSymbol returnType)
     {
-        var returnTypeName = returnType.ToDisplayString();
+        string returnTypeName = returnType.ToDisplayString();
 
         if (returnType.SpecialType == SpecialType.System_Void)
         {
@@ -522,8 +510,8 @@ internal static class SemanticAnalyzer
     /// </example>
     private static string GetContainingTypeChain(INamedTypeSymbol classSymbol)
     {
-        var chain = new List<string>();
-        var current = classSymbol.ContainingType;
+        List<string> chain = new List<string>();
+        INamedTypeSymbol? current = classSymbol.ContainingType;
 
         while (current != null)
         {
@@ -544,7 +532,7 @@ internal static class SemanticAnalyzer
             return null;
         }
 
-        var parameters = string.Join(", ", classSymbol.TypeParameters.Select(p => p.Name));
+        string parameters = string.Join(", ", classSymbol.TypeParameters.Select(p => p.Name));
         return $"<{parameters}>";
     }
 }

@@ -22,7 +22,7 @@ internal sealed record DiagnosticInfo(
     /// </summary>
     public static DiagnosticInfo Create(string diagnosticId, Location location, params string[] messageArgs)
     {
-        var lineSpan = location.GetLineSpan();
+        FileLinePositionSpan lineSpan = location.GetLineSpan();
         return new DiagnosticInfo(
             diagnosticId,
             lineSpan.Path ?? string.Empty,
@@ -36,11 +36,11 @@ internal sealed record DiagnosticInfo(
     /// </summary>
     public Diagnostic ToRoslynDiagnostic(SyntaxTree? syntaxTree)
     {
-        var descriptor = DiagnosticDescriptors.GetById(this.DiagnosticId);
+        DiagnosticDescriptor? descriptor = DiagnosticDescriptors.GetById(this.DiagnosticId);
         if (descriptor is null)
         {
             // Fallback - should not happen
-            var fallbackArgs = new object[this.MessageArgs.Count];
+            object[] fallbackArgs = new object[this.MessageArgs.Count];
             for (int i = 0; i < this.MessageArgs.Count; i++)
             {
                 fallbackArgs[i] = this.MessageArgs[i];
@@ -66,7 +66,7 @@ internal sealed record DiagnosticInfo(
             location = Location.None;
         }
 
-        var args = new object[this.MessageArgs.Count];
+        object[] args = new object[this.MessageArgs.Count];
         for (int i = 0; i < this.MessageArgs.Count; i++)
         {
             args[i] = this.MessageArgs[i];

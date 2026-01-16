@@ -23,7 +23,7 @@ internal sealed record DiagnosticLocationInfo(
             return null;
         }
 
-        var lineSpan = location.GetLineSpan();
+        FileLinePositionSpan lineSpan = location.GetLineSpan();
         return new DiagnosticLocationInfo(
             lineSpan.Path ?? string.Empty,
             location.SourceSpan,

@@ -46,10 +46,10 @@ internal static class SourceBuilder
         // For nested classes, we must emit partial declarations for each containing type.
         // Example: if MyExecutor is nested in Outer.Inner, we emit:
         //   partial class Outer { partial class Inner { partial class MyExecutor { ... } } }
-        var indent = "";
+        string indent = "";
         if (info.IsNested)
         {
-            foreach (var containingType in info.ContainingTypeChain.Split('.'))
+            foreach (string containingType in info.ContainingTypeChain.Split('.'))
             {
                 sb.AppendLine($"{indent}partial class {containingType}");
                 sb.AppendLine($"{indent}{{");
@@ -61,7 +61,7 @@ internal static class SourceBuilder
         sb.AppendLine($"{indent}partial class {info.ClassName}{info.GenericParameters}");
         sb.AppendLine($"{indent}{{");
 
-        var memberIndent = indent + "    ";
+        string memberIndent = indent + "    ";
 
         GenerateConfigureRoutes(sb, info, memberIndent);
 
@@ -81,7 +81,7 @@ internal static class SourceBuilder
         // Close nested classes
         if (info.IsNested)
         {
-            var containingTypes = info.ContainingTypeChain.Split('.');
+            string[] containingTypes = info.ContainingTypeChain.Split('.');
             for (int i = containingTypes.Length - 1; i >= 0; i--)
             {
                 indent = new string(' ', i * 4);
@@ -100,7 +100,7 @@ internal static class SourceBuilder
         sb.AppendLine($"{indent}protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)");
         sb.AppendLine($"{indent}{{");
 
-        var bodyIndent = indent + "    ";
+        string bodyIndent = indent + "    ";
 
         // If a base class has its own ConfigureRoutes, chain to it first to preserve inherited handlers.
         if (info.BaseHasConfigureRoutes)
@@ -113,7 +113,7 @@ internal static class SourceBuilder
         // RouteBuilder.AddHandler<TIn> registers a void handler; AddHandler<TIn, TOut> registers one with a return value.
         if (info.Handlers.Count == 1)
         {
-            var handler = info.Handlers[0];
+            HandlerInfo handler = info.Handlers[0];
             sb.AppendLine($"{bodyIndent}return routeBuilder");
             sb.Append($"{bodyIndent}    .AddHandler");
             AppendHandlerGenericArgs(sb, handler);
@@ -126,8 +126,8 @@ internal static class SourceBuilder
 
             for (int i = 0; i < info.Handlers.Count; i++)
             {
-                var handler = info.Handlers[i];
-                var isLast = i == info.Handlers.Count - 1;
+                HandlerInfo handler = info.Handlers[i];
+                bool isLast = i == info.Handlers.Count - 1;
 
                 sb.Append($"{bodyIndent}    .AddHandler");
                 AppendHandlerGenericArgs(sb, handler);
@@ -175,7 +175,7 @@ internal static class SourceBuilder
         sb.AppendLine($"{indent}protected override ISet<Type> ConfigureSentTypes()");
         sb.AppendLine($"{indent}{{");
 
-        var bodyIndent = indent + "    ";
+        string bodyIndent = indent + "    ";
 
         sb.AppendLine($"{bodyIndent}var types = base.ConfigureSentTypes();");
 
@@ -208,7 +208,7 @@ internal static class SourceBuilder
         sb.AppendLine($"{indent}protected override ISet<Type> ConfigureYieldTypes()");
         sb.AppendLine($"{indent}{{");
 
-        var bodyIndent = indent + "    ";
+        string bodyIndent = indent + "    ";
 
         sb.AppendLine($"{bodyIndent}var types = base.ConfigureYieldTypes();");
 

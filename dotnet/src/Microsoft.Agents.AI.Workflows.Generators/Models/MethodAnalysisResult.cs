@@ -38,4 +38,14 @@ internal sealed record MethodAnalysisResult(
     HandlerInfo? Handler,
 
     // Method-level diagnostics only (class-level diagnostics created in CombineMethodResults)
-    ImmutableEquatableArray<DiagnosticInfo> Diagnostics);
+    ImmutableEquatableArray<DiagnosticInfo> Diagnostics)
+{
+    /// <summary>
+    /// Gets an empty result for invalid targets (e.g., attribute on non-method).
+    /// </summary>
+    public static MethodAnalysisResult Empty { get; } = new(
+        string.Empty, null, string.Empty, null, false, string.Empty,
+        false, ImmutableEquatableArray<string>.Empty, ImmutableEquatableArray<string>.Empty,
+        false, false, false,
+        null, null, ImmutableEquatableArray<DiagnosticInfo>.Empty);
+}
