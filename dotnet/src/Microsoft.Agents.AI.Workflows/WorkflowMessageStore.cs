@@ -10,7 +10,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
-internal sealed class WorkflowMessageStore : ChatMessageStore
+internal sealed class WorkflowMessageStore : AIContextProvider
 {
     private int _bookmark;
     private readonly List<ChatMessage> _chatMessages = [];
@@ -46,8 +46,8 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
 
     internal void AddMessages(params IEnumerable<ChatMessage> messages) => this._chatMessages.AddRange(messages);
 
-    public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => new(this._chatMessages.AsReadOnly());
+    public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        => new(new AIContext { Messages = this._chatMessages.AsReadOnly() });
 
     public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {

@@ -63,7 +63,7 @@ public static class ChatClientBuilderExtensions
     /// <param name="builder">A builder for creating pipelines of <see cref="IChatClient"/>.</param>
     /// <param name="options">
     /// Configuration options that control all aspects of the agent's behavior, including chat settings,
-    /// message store factories, context provider factories, and other advanced configurations.
+    /// chat history provider factories, context provider factories, and other advanced configurations.
     /// </param>
     /// <param name="loggerFactory">
     /// Optional logger factory for creating loggers used by the agent and its components.

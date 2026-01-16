@@ -15,11 +15,11 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides a Cosmos DB implementation of the <see cref="ChatMessageStore"/> abstract class.
+/// Provides a Cosmos DB implementation of the <see cref="AIContextProvider"/> abstract class for storing chat history.
 /// </summary>
-[RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
-[RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
-public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
+[RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
+[RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
+public sealed class CosmosChatHistoryProvider : AIContextProvider, IDisposable
 {
     private readonly CosmosClient _cosmosClient;
     private readonly Container _container;
@@ -73,17 +73,17 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     public int? MessageTtlSeconds { get; set; } = 86400;
 
     /// <summary>
-    /// Gets the conversation ID associated with this message store.
+    /// Gets the conversation ID associated with this chat history provider.
     /// </summary>
     public string ConversationId { get; init; }
 
     /// <summary>
-    /// Gets the database ID associated with this message store.
+    /// Gets the database ID associated with this chat history provider.
     /// </summary>
     public string DatabaseId { get; init; }
 
     /// <summary>
-    /// Gets the container ID associated with this message store.
+    /// Gets the container ID associated with this chat history provider.
     /// </summary>
     public string ContainerId { get; init; }
 
@@ -97,7 +97,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="ownsClient">Whether this instance owns the CosmosClient and should dispose it.</param>
     /// <param name="tenantId">Optional tenant identifier for hierarchical partitioning.</param>
     /// <param name="userId">Optional user identifier for hierarchical partitioning.</param>
-    internal CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId, bool ownsClient, string? tenantId = null, string? userId = null)
+    internal CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId, bool ownsClient, string? tenantId = null, string? userId = null)
     {
         this._cosmosClient = Throw.IfNull(cosmosClient);
         this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
@@ -121,20 +121,20 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a connection string.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string.
     /// </summary>
     /// <param name="connectionString">The Cosmos DB connection string.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(string connectionString, string databaseId, string containerId)
+    public CosmosChatHistoryProvider(string connectionString, string databaseId, string containerId)
         : this(connectionString, databaseId, containerId, Guid.NewGuid().ToString("N"))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a connection string.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string.
     /// </summary>
     /// <param name="connectionString">The Cosmos DB connection string.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
@@ -142,13 +142,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="conversationId">The unique identifier for this conversation thread.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(string connectionString, string databaseId, string containerId, string conversationId)
+    public CosmosChatHistoryProvider(string connectionString, string databaseId, string containerId, string conversationId)
         : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, conversationId, ownsClient: true)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using TokenCredential for authentication.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using TokenCredential for authentication.
     /// </summary>
     /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
     /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
@@ -156,13 +156,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
+    public CosmosChatHistoryProvider(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
         : this(accountEndpoint, tokenCredential, databaseId, containerId, Guid.NewGuid().ToString("N"))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a TokenCredential for authentication.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a TokenCredential for authentication.
     /// </summary>
     /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
     /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
@@ -171,26 +171,26 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="conversationId">The unique identifier for this conversation thread.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId, string conversationId)
+    public CosmosChatHistoryProvider(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId, string conversationId)
         : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, conversationId, ownsClient: true)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using an existing <see cref="CosmosClient"/>.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using an existing <see cref="CosmosClient"/>.
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId)
+    public CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId)
         : this(cosmosClient, databaseId, containerId, Guid.NewGuid().ToString("N"))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using an existing <see cref="CosmosClient"/>.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using an existing <see cref="CosmosClient"/>.
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
@@ -198,13 +198,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="conversationId">The unique identifier for this conversation thread.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId)
+    public CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId)
         : this(cosmosClient, databaseId, containerId, conversationId, ownsClient: false)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a connection string with hierarchical partition keys.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string with hierarchical partition keys.
     /// </summary>
     /// <param name="connectionString">The Cosmos DB connection string.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
@@ -214,13 +214,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(string connectionString, string databaseId, string containerId, string tenantId, string userId, string sessionId)
+    public CosmosChatHistoryProvider(string connectionString, string databaseId, string containerId, string tenantId, string userId, string sessionId)
         : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, Throw.IfNullOrWhitespace(sessionId), ownsClient: true, Throw.IfNullOrWhitespace(tenantId), Throw.IfNullOrWhitespace(userId))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a TokenCredential for authentication with hierarchical partition keys.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a TokenCredential for authentication with hierarchical partition keys.
     /// </summary>
     /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
     /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
@@ -231,13 +231,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId, string tenantId, string userId, string sessionId)
+    public CosmosChatHistoryProvider(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId, string tenantId, string userId, string sessionId)
         : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, Throw.IfNullOrWhitespace(sessionId), ownsClient: true, Throw.IfNullOrWhitespace(tenantId), Throw.IfNullOrWhitespace(userId))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using an existing <see cref="CosmosClient"/> with hierarchical partition keys.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using an existing <see cref="CosmosClient"/> with hierarchical partition keys.
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
@@ -247,23 +247,23 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId, string tenantId, string userId, string sessionId)
+    public CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId, string tenantId, string userId, string sessionId)
         : this(cosmosClient, databaseId, containerId, Throw.IfNullOrWhitespace(sessionId), ownsClient: false, Throw.IfNullOrWhitespace(tenantId), Throw.IfNullOrWhitespace(userId))
     {
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="CosmosChatMessageStore"/> class from previously serialized state.
+    /// Creates a new instance of the <see cref="CosmosChatHistoryProvider"/> class from previously serialized state.
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
-    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
+    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the chat history provider.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <returns>A new instance of <see cref="CosmosChatMessageStore"/> initialized from the serialized state.</returns>
+    /// <returns>A new instance of <see cref="CosmosChatHistoryProvider"/> initialized from the serialized state.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the serialized state cannot be deserialized.</exception>
-    public static CosmosChatMessageStore CreateFromSerializedState(CosmosClient cosmosClient, JsonElement serializedStoreState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
+    public static CosmosChatHistoryProvider CreateFromSerializedState(CosmosClient cosmosClient, JsonElement serializedStoreState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         Throw.IfNull(cosmosClient);
         Throw.IfNullOrWhitespace(databaseId);
@@ -282,12 +282,12 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         // Use the internal constructor with all parameters to ensure partition key logic is centralized
         return state.UseHierarchicalPartitioning && state.TenantId != null && state.UserId != null
-            ? new CosmosChatMessageStore(cosmosClient, databaseId, containerId, conversationId, ownsClient: false, state.TenantId, state.UserId)
-            : new CosmosChatMessageStore(cosmosClient, databaseId, containerId, conversationId, ownsClient: false);
+            ? new CosmosChatHistoryProvider(cosmosClient, databaseId, containerId, conversationId, ownsClient: false, state.TenantId, state.UserId)
+            : new CosmosChatHistoryProvider(cosmosClient, databaseId, containerId, conversationId, ownsClient: false);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -343,7 +343,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             messages.Reverse();
         }
 
-        return messages;
+        return new() { Messages = messages };
     }
 
     /// <inheritdoc />

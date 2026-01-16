@@ -46,19 +46,19 @@ public class ChatClientAgent_DeserializeThreadTests
     }
 
     [Fact]
-    public async Task DeserializeThread_UsesChatMessageStoreFactory_IfProvidedAsync()
+    public async Task DeserializeThread_UsesChatHistoryProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
-        var mockMessageStore = new Mock<ChatMessageStore>();
+        var mockHistoryProvider = new Mock<AIContextProvider>();
         var factoryCalled = false;
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            ChatMessageStoreFactory = (_, _) =>
+            ChatHistoryProviderFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return new ValueTask<ChatMessageStore>(mockMessageStore.Object);
+                return new ValueTask<AIContextProvider>(mockHistoryProvider.Object);
             }
         });
 
@@ -72,9 +72,9 @@ public class ChatClientAgent_DeserializeThreadTests
         var thread = await agent.DeserializeThreadAsync(json);
 
         // Assert
-        Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
+        Assert.True(factoryCalled, "ChatHistoryProviderFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
         var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockMessageStore.Object, typedThread.MessageStore);
+        Assert.Same(mockHistoryProvider.Object, typedThread.ChatHistoryProvider);
     }
 }

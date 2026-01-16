@@ -15,7 +15,7 @@ using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-// Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
+// Construct the agent, and provide a factory to create an in-memory chat history provider with a reducer that keeps only the last 2 non-system messages.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
@@ -24,7 +24,7 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions))
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new InMemoryChatHistoryProvider(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
 AgentThread thread = await agent.GetNewThreadAsync();

@@ -31,11 +31,11 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(
-            // Create a new chat message store for this agent that stores the messages in a vector store.
-            // Each thread must get its own copy of the VectorChatMessageStore, since the store
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(
+            // Create a new chat history provider for this agent that stores the chat history in a vector store.
+            // Each thread must get its own copy of the VectorStoreChatHistoryProvider, since the store
             // also contains the id that the thread is stored under.
-            new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
+            new VectorStoreChatHistoryProvider(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
 // Start a new thread for the agent conversation.
@@ -61,20 +61,20 @@ AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread)
 // Run the agent with the thread that stores conversation history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
-// We can access the VectorChatMessageStore via the thread's GetService method if we need to read the key under which threads are stored.
-var messageStore = resumedThread.GetService<VectorChatMessageStore>()!;
-Console.WriteLine($"\nThread is stored in vector store under key: {messageStore.ThreadDbKey}");
+// We can access the VectorStoreChatHistoryProvider via the thread's GetService method if we need to read the key under which threads are stored.
+var chatHistoryProvider = resumedThread.GetService<VectorStoreChatHistoryProvider>()!;
+Console.WriteLine($"\nThread is stored in vector store under key: {chatHistoryProvider.ThreadDbKey}");
 
 namespace SampleApp
 {
     /// <summary>
-    /// A sample implementation of <see cref="ChatMessageStore"/> that stores chat messages in a vector store.
+    /// A sample implementation of <see cref="AIContextProvider"/> that stores and provides chat history from a vector store.
     /// </summary>
-    internal sealed class VectorChatMessageStore : ChatMessageStore
+    internal sealed class VectorStoreChatHistoryProvider : AIContextProvider
     {
         private readonly VectorStore _vectorStore;
 
-        public VectorChatMessageStore(VectorStore vectorStore, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+        public VectorStoreChatHistoryProvider(VectorStore vectorStore, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
 
@@ -87,7 +87,7 @@ namespace SampleApp
 
         public string? ThreadDbKey { get; private set; }
 
-        public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
@@ -102,7 +102,7 @@ namespace SampleApp
             var messages = records.ConvertAll(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!)
 ;
             messages.Reverse();
-            return messages;
+            return new() { Messages = messages };
         }
 
         public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
