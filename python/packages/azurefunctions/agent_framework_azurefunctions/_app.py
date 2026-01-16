@@ -6,6 +6,7 @@ This module provides the AgentFunctionApp class that integrates Microsoft Agent 
 with Azure Durable Entities, enabling stateful and durable AI agent execution.
 """
 
+import asyncio
 import json
 import re
 import uuid
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentProtocol, get_logger
+from agent_framework import AgentExecutor, AgentProtocol, Workflow, WorkflowOutputEvent, get_logger
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -39,6 +40,9 @@ from agent_framework_durabletask import (
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
+from ._shared_state import SHARED_STATE_ENTITY_NAME, DurableSharedState, create_shared_state_entity_function
+from ._utils import CapturingRunnerContext, deserialize_value, reconstruct_message_for_handler, serialize_message
+from ._workflow import run_workflow_orchestrator
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -151,16 +155,21 @@ class AgentFunctionApp(DFAppBase):
         enable_mcp_tool_trigger: Whether MCP tool triggers are created for agents
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
+        workflow: Optional Workflow instance for workflow orchestration
+        enable_shared_state: Whether SharedState entity is enabled for workflows
     """
 
     _agent_metadata: dict[str, AgentMetadata]
     enable_health_check: bool
     enable_http_endpoints: bool
     enable_mcp_tool_trigger: bool
+    workflow: Workflow | None
+    enable_shared_state: bool
 
     def __init__(
         self,
         agents: list[AgentProtocol] | None = None,
+        workflow: Workflow | None = None,
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
@@ -168,10 +177,12 @@ class AgentFunctionApp(DFAppBase):
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         enable_mcp_tool_trigger: bool = False,
         default_callback: AgentResponseCallbackProtocol | None = None,
+        enable_shared_state: bool = True,
     ):
         """Initialize the AgentFunctionApp.
 
         :param agents: List of agent instances to register.
+        :param workflow: Optional Workflow instance to extract agents from and set up orchestration.
         :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
         :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
         :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
@@ -182,6 +193,7 @@ class AgentFunctionApp(DFAppBase):
         :param poll_interval_seconds: Delay in seconds between polling attempts.
             Defaults to ``DEFAULT_POLL_INTERVAL_SECONDS``.
         :param default_callback: Optional callback invoked for agents without specific callbacks.
+        :param enable_shared_state: Enable SharedState entity for workflow executors (default: ``True``).
 
         :note: If no agents are provided, they can be added later using :meth:`add_agent`.
         """
@@ -196,6 +208,8 @@ class AgentFunctionApp(DFAppBase):
         self.enable_http_endpoints = enable_http_endpoints
         self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
         self.default_callback = default_callback
+        self.workflow = workflow
+        self.enable_shared_state = enable_shared_state
 
         try:
             retries = int(max_poll_retries)
@@ -209,6 +223,18 @@ class AgentFunctionApp(DFAppBase):
             interval = DEFAULT_POLL_INTERVAL_SECONDS
         self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
+        # If workflow is provided, extract agents and set up orchestration
+        if workflow:
+            if agents is None:
+                agents = []
+            logger.debug("[AgentFunctionApp] Extracting agents from workflow")
+            for executor in workflow.executors.values():
+                if isinstance(executor, AgentExecutor):
+                    agents.append(executor.agent)
+
+            self._setup_executor_activity()
+            self._setup_workflow_orchestration()
+
         if agents:
             # Register all provided agents
             logger.debug(f"[AgentFunctionApp] Registering {len(agents)} agent(s)")
@@ -220,6 +246,201 @@ class AgentFunctionApp(DFAppBase):
             self._setup_health_route()
 
         logger.debug("[AgentFunctionApp] Initialization complete")
+
+    def _setup_executor_activity(self) -> None:
+        """Register the activity for executing standard executors."""
+
+        @self.activity_trigger(input_name="inputData")
+        def ExecuteExecutor(inputData: str) -> str:
+            """Activity to execute non-agent executors.
+
+            Note: We use str type annotations instead of dict to work around
+            Azure Functions worker type validation issues with dict[str, Any].
+            """
+            import json as json_module
+
+            from agent_framework import SharedState
+
+            data = json_module.loads(inputData)
+            executor_id = data["executor_id"]
+            message_data = data["message"]
+            shared_state_snapshot = data.get("shared_state_snapshot", {})
+            source_executor_ids = data.get("source_executor_ids", ["__orchestrator__"])
+
+            if not self.workflow:
+                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
+
+            executor = self.workflow.executors.get(executor_id)
+            if not executor:
+                raise ValueError(f"Unknown executor: {executor_id}")
+
+            # Reconstruct message - try to match handler's expected types using public input_types
+            message = reconstruct_message_for_handler(message_data, executor.input_types)
+
+            async def run() -> dict[str, Any]:
+                # Create runner context and shared state
+                runner_context = CapturingRunnerContext()
+                shared_state = SharedState()
+
+                # Deserialize shared state values to reconstruct dataclasses/Pydantic models
+                deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
+                original_snapshot = dict(deserialized_state)
+                await shared_state.import_state(deserialized_state)
+
+                # Execute using the public execute() method
+                await executor.execute(
+                    message=message,
+                    source_executor_ids=source_executor_ids,
+                    shared_state=shared_state,
+                    runner_context=runner_context,
+                )
+
+                # Export current state and compute changes
+                current_state = await shared_state.export_state()
+                original_keys = set(original_snapshot.keys())
+                current_keys = set(current_state.keys())
+
+                # Deleted = was in original, not in current
+                deletes = original_keys - current_keys
+
+                # Updates = keys in current that are new or have different values
+                updates = {
+                    k: v for k, v in current_state.items() if k not in original_snapshot or original_snapshot[k] != v
+                }
+
+                # Drain messages and events from runner context
+                sent_messages = await runner_context.drain_messages()
+                events = await runner_context.drain_events()
+
+                # Extract outputs from WorkflowOutputEvent instances
+                outputs: list[Any] = []
+                for event in events:
+                    if isinstance(event, WorkflowOutputEvent):
+                        outputs.append(serialize_message(event.data))
+
+                # Serialize messages for JSON compatibility
+                serialized_sent_messages = []
+                for _source_id, msg_list in sent_messages.items():
+                    for msg in msg_list:
+                        serialized_sent_messages.append({
+                            "message": serialize_message(msg.data),
+                            "target_id": msg.target_id,
+                            "source_id": msg.source_id,
+                        })
+
+                serialized_updates = {k: serialize_message(v) for k, v in updates.items()}
+
+                return {
+                    "sent_messages": serialized_sent_messages,
+                    "outputs": outputs,
+                    "shared_state_updates": serialized_updates,
+                    "shared_state_deletes": list(deletes),
+                }
+
+            result = asyncio.run(run())
+            return json_module.dumps(result)
+
+    def _setup_shared_state_entity(self) -> None:
+        """Register the SharedState durable entity for workflow state sharing."""
+        entity_function = create_shared_state_entity_function()
+        entity_function.__name__ = SHARED_STATE_ENTITY_NAME
+        self.entity_trigger(context_name="context", entity_name=SHARED_STATE_ENTITY_NAME)(entity_function)
+        logger.debug(f"[AgentFunctionApp] Registered SharedState entity: {SHARED_STATE_ENTITY_NAME}")
+
+    def _setup_workflow_orchestration(self) -> None:
+        """Register the workflow orchestration and related HTTP endpoints."""
+        # Only register the SharedState entity if enabled
+        if self.enable_shared_state:
+            self._setup_shared_state_entity()
+
+        # Capture enable_shared_state for use in nested function
+        enable_shared_state = self.enable_shared_state
+
+        @self.orchestration_trigger(context_name="context")
+        def workflow_orchestrator(context: df.DurableOrchestrationContext):  # type: ignore[type-arg]
+            """Generic orchestrator for running the configured workflow."""
+            input_data = context.get_input()
+
+            # Ensure input is a string for the agent
+            if isinstance(input_data, (dict, list)):
+                initial_message = json.dumps(input_data)
+            else:
+                initial_message = str(input_data)
+
+            # Only create DurableSharedState if enabled to avoid extra entity calls
+            shared_state = None
+            if enable_shared_state:
+                shared_state = DurableSharedState(context, context.instance_id)
+
+            outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
+            return outputs
+
+        @self.route(route="workflow/run", methods=["POST"])
+        @self.durable_client_input(client_name="client")
+        async def start_workflow_orchestration(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """HTTP endpoint to start the workflow."""
+            try:
+                req_body = req.get_json()
+            except ValueError:
+                return func.HttpResponse(
+                    json.dumps({"error": "Invalid JSON body"}),
+                    status_code=400,
+                    mimetype="application/json",
+                )
+
+            instance_id = await client.start_new("workflow_orchestrator", client_input=req_body)
+
+            status_url = self._build_status_url(req.url, instance_id)
+
+            return func.HttpResponse(
+                json.dumps({
+                    "instanceId": instance_id,
+                    "statusQueryGetUri": status_url,
+                    "message": "Workflow started",
+                }),
+                status_code=202,
+                mimetype="application/json",
+            )
+
+        @self.route(route="workflow/status/{instanceId}", methods=["GET"])
+        @self.durable_client_input(client_name="client")
+        async def get_workflow_status(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """HTTP endpoint to get workflow status."""
+            instance_id = req.route_params.get("instanceId")
+            status = await client.get_status(instance_id)
+
+            if not status:
+                return func.HttpResponse(
+                    json.dumps({"error": "Instance not found"}),
+                    status_code=404,
+                    mimetype="application/json",
+                )
+
+            response = {
+                "instanceId": status.instance_id,
+                "runtimeStatus": status.runtime_status.name if status.runtime_status else None,
+                "output": status.output,
+                "error": status.output if status.runtime_status == df.OrchestrationRuntimeStatus.Failed else None,
+                "createdTime": status.created_time.isoformat() if status.created_time else None,
+                "lastUpdatedTime": status.last_updated_time.isoformat() if status.last_updated_time else None,
+            }
+
+            return func.HttpResponse(
+                json.dumps(response),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+    def _build_status_url(self, request_url: str, instance_id: str) -> str:
+        """Build the status URL for a workflow instance."""
+        base_url, _, _ = request_url.partition("/api/")
+        if not base_url:
+            base_url = request_url.rstrip("/")
+        return f"{base_url}/api/workflow/status/{instance_id}"
 
     @property
     def agents(self) -> dict[str, AgentProtocol]:
