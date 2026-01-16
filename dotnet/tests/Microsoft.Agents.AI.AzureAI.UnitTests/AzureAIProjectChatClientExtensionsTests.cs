@@ -25,13 +25,13 @@ namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 /// </summary>
 public sealed class AzureAIProjectChatClientExtensionsTests
 {
-    #region GetAIAgent(AIProjectClient, AgentRecord) Tests
+    #region AsAIAgent(AIProjectClient, AgentRecord) Tests
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when AIProjectClient is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when AIProjectClient is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecord_WithNullClient_ThrowsArgumentNullException()
+    public void AsAIAgent_WithAgentRecord_WithNullClient_ThrowsArgumentNullException()
     {
         // Arrange
         AIProjectClient? client = null;
@@ -39,39 +39,39 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.GetAIAgent(agentRecord));
+            client!.AsAIAgent(agentRecord));
 
         Assert.Equal("aiProjectClient", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when agentRecord is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when agentRecord is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecord_WithNullAgentRecord_ThrowsArgumentNullException()
+    public void AsAIAgent_WithAgentRecord_WithNullAgentRecord_ThrowsArgumentNullException()
     {
         // Arrange
         var mockClient = new Mock<AIProjectClient>();
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgent((AgentRecord)null!));
+            mockClient.Object.AsAIAgent((AgentRecord)null!));
 
         Assert.Equal("agentRecord", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with AgentRecord creates a valid agent.
+    /// Verify that AsAIAgent with AgentRecord creates a valid agent.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecord_CreatesValidAgent()
+    public void AsAIAgent_WithAgentRecord_CreatesValidAgent()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord);
+        var agent = client.AsAIAgent(agentRecord);
 
         // Assert
         Assert.NotNull(agent);
@@ -79,10 +79,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with AgentRecord and clientFactory applies the factory.
+    /// Verify that AsAIAgent with AgentRecord and clientFactory applies the factory.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecord_WithClientFactory_AppliesFactoryCorrectly()
+    public void AsAIAgent_WithAgentRecord_WithClientFactory_AppliesFactoryCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -90,7 +90,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         TestChatClient? testChatClient = null;
 
         // Act
-        var agent = client.GetAIAgent(
+        var agent = client.AsAIAgent(
             agentRecord,
             clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
 
@@ -103,13 +103,13 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region GetAIAgent(AIProjectClient, AgentVersion) Tests
+    #region AsAIAgent(AIProjectClient, AgentVersion) Tests
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when AIProjectClient is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when AIProjectClient is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentVersion_WithNullClient_ThrowsArgumentNullException()
+    public void AsAIAgent_WithAgentVersion_WithNullClient_ThrowsArgumentNullException()
     {
         // Arrange
         AIProjectClient? client = null;
@@ -117,39 +117,39 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.GetAIAgent(agentVersion));
+            client!.AsAIAgent(agentVersion));
 
         Assert.Equal("aiProjectClient", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when agentVersion is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when agentVersion is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentVersion_WithNullAgentVersion_ThrowsArgumentNullException()
+    public void AsAIAgent_WithAgentVersion_WithNullAgentVersion_ThrowsArgumentNullException()
     {
         // Arrange
         var mockClient = new Mock<AIProjectClient>();
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgent((AgentVersion)null!));
+            mockClient.Object.AsAIAgent((AgentVersion)null!));
 
         Assert.Equal("agentVersion", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with AgentVersion creates a valid agent.
+    /// Verify that AsAIAgent with AgentVersion creates a valid agent.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentVersion_CreatesValidAgent()
+    public void AsAIAgent_WithAgentVersion_CreatesValidAgent()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
         AgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
-        var agent = client.GetAIAgent(agentVersion);
+        var agent = client.AsAIAgent(agentVersion);
 
         // Assert
         Assert.NotNull(agent);
@@ -157,10 +157,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with AgentVersion and clientFactory applies the factory.
+    /// Verify that AsAIAgent with AgentVersion and clientFactory applies the factory.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentVersion_WithClientFactory_AppliesFactoryCorrectly()
+    public void AsAIAgent_WithAgentVersion_WithClientFactory_AppliesFactoryCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -168,7 +168,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         TestChatClient? testChatClient = null;
 
         // Act
-        var agent = client.GetAIAgent(
+        var agent = client.AsAIAgent(
             agentVersion,
             clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
 
@@ -183,7 +183,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that GetAIAgent with requireInvocableTools=true enforces invocable tools.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentVersion_WithRequireInvocableToolsTrue_EnforcesInvocableTools()
+    public void AsAIAgent_WithAgentVersion_WithRequireInvocableToolsTrue_EnforcesInvocableTools()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -194,7 +194,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(agentVersion, tools: tools);
+        var agent = client.AsAIAgent(agentVersion, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
@@ -205,14 +205,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that GetAIAgent with requireInvocableTools=false allows declarative functions.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentVersion_WithRequireInvocableToolsFalse_AllowsDeclarativeFunctions()
+    public void AsAIAgent_WithAgentVersion_WithRequireInvocableToolsFalse_AllowsDeclarativeFunctions()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
         AgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act - should not throw even without tools when requireInvocableTools is false
-        var agent = client.GetAIAgent(agentVersion);
+        var agent = client.AsAIAgent(agentVersion);
 
         // Assert
         Assert.NotNull(agent);
@@ -374,7 +374,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region GetAIAgent(AIProjectClient, string) Tests
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when AIProjectClient is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when AIProjectClient is null.
     /// </summary>
     [Fact]
     public void GetAIAgent_ByName_WithNullClient_ThrowsArgumentNullException()
@@ -390,7 +390,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when name is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when name is null.
     /// </summary>
     [Fact]
     public void GetAIAgent_ByName_WithNullName_ThrowsArgumentNullException()
@@ -406,7 +406,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentException when name is empty.
+    /// Verify that AsAIAgent throws ArgumentException when name is empty.
     /// </summary>
     [Fact]
     public void GetAIAgent_ByName_WithEmptyName_ThrowsArgumentException()
@@ -422,7 +422,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws InvalidOperationException when agent is not found.
+    /// Verify that AsAIAgent throws InvalidOperationException when agent is not found.
     /// </summary>
     [Fact]
     public void GetAIAgent_ByName_WithNonExistentAgent_ThrowsInvalidOperationException()
@@ -505,13 +505,13 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region GetAIAgent(AIProjectClient, AgentRecord) with tools Tests
+    #region AsAIAgent(AIProjectClient, AgentRecord) with tools Tests
 
     /// <summary>
-    /// Verify that GetAIAgent with additional tools when the definition has no tools does not throw and results in an agent with no tools.
+    /// Verify that AsAIAgent with additional tools when the definition has no tools does not throw and results in an agent with no tools.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecordAndAdditionalTools_WhenDefinitionHasNoTools_ShouldNotThrow()
+    public void AsAIAgent_WithAgentRecordAndAdditionalTools_WhenDefinitionHasNoTools_ShouldNotThrow()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -522,7 +522,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(agentRecord, tools: tools);
+        var agent = client.AsAIAgent(agentRecord, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
@@ -536,17 +536,17 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with null tools works correctly.
+    /// Verify that AsAIAgent with null tools works correctly.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecordAndNullTools_WorksCorrectly()
+    public void AsAIAgent_WithAgentRecordAndNullTools_WorksCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord, tools: null);
+        var agent = client.AsAIAgent(agentRecord, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -1104,7 +1104,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var shouldBeIgnoredTool = AIFunctionFactory.Create(() => "test", "additional_tool", "An additional test function that should be ignored");
 
         // Act & Assert
-        var agent = client.GetAIAgent(agentVersion, tools: [invocableInlineAITool, shouldBeIgnoredTool]);
+        var agent = client.AsAIAgent(agentVersion, tools: [invocableInlineAITool, shouldBeIgnoredTool]);
         Assert.NotNull(agent);
         var version = agent.GetService<AgentVersion>();
         Assert.NotNull(version);
@@ -1136,7 +1136,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(agentRecord, tools: tools);
+        var agent = client.AsAIAgent(agentRecord, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
@@ -1632,7 +1632,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region AgentName Validation Tests
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentException when agent name is invalid.
+    /// Verify that AsAIAgent throws ArgumentException when agent name is invalid.
     /// </summary>
     [Theory]
     [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
@@ -1846,7 +1846,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that the underlying chat client created by extension methods can be wrapped with clientFactory.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithClientFactory_WrapsUnderlyingChatClient()
+    public void AsAIAgent_WithClientFactory_WrapsUnderlyingChatClient()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -1854,7 +1854,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         int factoryCallCount = 0;
 
         // Act
-        var agent = client.GetAIAgent(
+        var agent = client.AsAIAgent(
             agentRecord,
             clientFactory: (innerClient) =>
             {
@@ -1903,18 +1903,18 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that multiple clientFactory calls create independent wrapped clients.
     /// </summary>
     [Fact]
-    public void GetAIAgent_MultipleCallsWithClientFactory_CreatesIndependentClients()
+    public void AsAIAgent_MultipleCallsWithClientFactory_CreatesIndependentClients()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent1 = client.GetAIAgent(
+        var agent1 = client.AsAIAgent(
             agentRecord,
             clientFactory: (innerClient) => new TestChatClient(innerClient));
 
-        var agent2 = client.GetAIAgent(
+        var agent2 = client.AsAIAgent(
             agentRecord,
             clientFactory: (innerClient) => new TestChatClient(innerClient));
 
@@ -2165,7 +2165,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region GetAIAgent(AIProjectClient, AgentReference) Tests
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when AIProjectClient is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when AIProjectClient is null.
     /// </summary>
     [Fact]
     public void GetAIAgent_WithAgentReference_WithNullClient_ThrowsArgumentNullException()
@@ -2182,7 +2182,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when agentReference is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when agentReference is null.
     /// </summary>
     [Fact]
     public void GetAIAgent_WithAgentReference_WithNullAgentReference_ThrowsArgumentNullException()
@@ -2297,7 +2297,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord);
+        var agent = client.AsAIAgent(agentRecord);
         var retrievedRecord = agent.GetService<AgentRecord>();
 
         // Assert
@@ -2338,7 +2338,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
-        var agent = client.GetAIAgent(agentVersion);
+        var agent = client.AsAIAgent(agentVersion);
         var retrievedVersion = agent.GetService<AgentVersion>();
 
         // Assert
@@ -2379,7 +2379,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord);
+        var agent = client.AsAIAgent(agentRecord);
         var metadata = agent.GetService<ChatClientMetadata>();
 
         // Assert
@@ -2402,7 +2402,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentRecord agentRecord = this.CreateTestAgentRecord(definition);
 
         // Act
-        var agent = client.GetAIAgent(agentRecord);
+        var agent = client.AsAIAgent(agentRecord);
         var metadata = agent.GetService<ChatClientMetadata>();
 
         // Assert
@@ -2423,7 +2423,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
-        var agent = client.GetAIAgent(agentVersion);
+        var agent = client.AsAIAgent(agentVersion);
         var metadata = agent.GetService<ChatClientMetadata>();
 
         // Assert
@@ -2467,7 +2467,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord);
+        var agent = client.AsAIAgent(agentRecord);
         var retrievedReference = agent.GetService<AgentReference>();
 
         // Assert
@@ -2486,7 +2486,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
-        var agent = client.GetAIAgent(agentVersion);
+        var agent = client.AsAIAgent(agentVersion);
         var retrievedReference = agent.GetService<AgentReference>();
 
         // Assert

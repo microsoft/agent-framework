@@ -6,7 +6,7 @@ This sample demonstrates conditional orchestration logic with two agents that an
 
 - Multi-agent orchestration with two specialized agents (SpamDetectionAgent and EmailAssistantAgent).
 - Conditional branching with different execution paths based on spam detection results.
-- Structured outputs using Pydantic models with `response_format` for type-safe agent responses.
+- Structured outputs using Pydantic models with `options={"response_format": ...}` for type-safe agent responses.
 - Activity functions for side effects (spam handling and email sending).
 - Decision-based routing where orchestration logic branches on agent output.
 

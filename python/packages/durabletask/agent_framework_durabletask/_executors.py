@@ -147,18 +147,27 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
     def get_run_request(
         self,
         message: str,
-        response_format: type[BaseModel] | None,
-        enable_tool_calls: bool,
-        wait_for_response: bool = True,
+        *,
+        options: dict[str, Any] | None = None,
     ) -> RunRequest:
-        """Create a RunRequest for the given parameters."""
+        """Create a RunRequest from message and options."""
         correlation_id = self.generate_unique_id()
+
+        # Create a copy to avoid modifying the caller's dict
+        opts = dict(options) if options else {}
+
+        # Extract and REMOVE known keys from options copy
+        response_format = opts.pop("response_format", None)
+        enable_tool_calls = opts.pop("enable_tool_calls", True)
+        wait_for_response = opts.pop("wait_for_response", True)
+
         return RunRequest(
             message=message,
             response_format=response_format,
             enable_tool_calls=enable_tool_calls,
             wait_for_response=wait_for_response,
             correlation_id=correlation_id,
+            options=opts,
         )
 
     def _create_acceptance_response(self, correlation_id: str) -> AgentResponse:

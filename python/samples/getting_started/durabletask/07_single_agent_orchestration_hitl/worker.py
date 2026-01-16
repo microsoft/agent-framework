@@ -17,7 +17,7 @@ import logging
 import os
 from typing import Any, cast
 
-from agent_framework import AgentRunResponse
+from agent_framework import AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_durabletask import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
@@ -153,10 +153,10 @@ def content_generation_hitl_orchestration(
     # Generate initial content
     logger.info("[Orchestration] Generating initial content...")
     
-    initial_response: AgentRunResponse = yield writer.run(
+    initial_response: AgentResponse = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         thread=writer_thread,
-        response_format=GeneratedContent,
+            options={"response_format": GeneratedContent},
     )
     content = cast(GeneratedContent, initial_response.value)
     
@@ -241,10 +241,10 @@ def content_generation_hitl_orchestration(
 
             logger.warning(f"Regenerating with ThreadID: {writer_thread.session_id}")
             
-            rewrite_response: AgentRunResponse = yield writer.run(
+            rewrite_response: AgentResponse = yield writer.run(
                 messages=rewrite_prompt,
                 thread=writer_thread,
-                response_format=GeneratedContent,
+                    options={"response_format": GeneratedContent},
             )
             rewritten_content = cast(GeneratedContent, rewrite_response.value)
             

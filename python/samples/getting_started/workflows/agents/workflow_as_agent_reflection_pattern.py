@@ -100,7 +100,7 @@ class Reviewer(Executor):
         messages.append(ChatMessage(role=Role.USER, text="Please review the agent's responses."))
 
         print("Reviewer: Sending review request to LLM...")
-        response = await self._chat_client.get_response(messages=messages, response_format=_Response)
+        response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
 
         parsed = _Response.model_validate_json(response.messages[-1].text)
 

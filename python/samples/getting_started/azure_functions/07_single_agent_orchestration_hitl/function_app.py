@@ -98,7 +98,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
     initial_raw = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         thread=writer_thread,
-        response_format=GeneratedContent,
+        options={"response_format": GeneratedContent},
     )
 
     content = initial_raw.value
@@ -134,9 +134,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
                 )
                 return {"content": content.content}
 
-            context.set_custom_status(
-                "Content rejected by human reviewer. Incorporating feedback and regenerating..."
-            )
+            context.set_custom_status("Content rejected by human reviewer. Incorporating feedback and regenerating...")
             rewrite_prompt = (
                 "The content was rejected by a human reviewer. Please rewrite the article incorporating their feedback.\n\n"
                 f"Human Feedback: {approval_payload.feedback or 'No feedback provided.'}"
@@ -144,7 +142,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
             rewritten_raw = yield writer.run(
                 messages=rewrite_prompt,
                 thread=writer_thread,
-                response_format=GeneratedContent,
+                options={"response_format": GeneratedContent},
             )
 
             rewritten_value = rewritten_raw.value
@@ -156,9 +154,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
             )
-            raise TimeoutError(
-                f"Human approval timed out after {payload.approval_timeout_hours} hour(s)."
-            )
+            raise TimeoutError(f"Human approval timed out after {payload.approval_timeout_hours} hour(s).")
 
     raise RuntimeError(f"Content could not be approved after {payload.max_review_attempts} iteration(s).")
 

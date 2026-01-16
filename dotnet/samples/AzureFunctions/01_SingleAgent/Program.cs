@@ -25,7 +25,7 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
-AIAgent agent = client.GetChatClient(deploymentName).CreateAIAgent(JokerInstructions, JokerName);
+AIAgent agent = client.GetChatClient(deploymentName).AsAIAgent(JokerInstructions, JokerName);
 
 // Configure the function app to host the AI agent.
 // This will automatically generate HTTP API endpoints for the agent.

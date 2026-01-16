@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from agent_framework import AgentProtocol, AgentResponse, AgentThread, HostedMCPTool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -42,9 +42,9 @@ async def main() -> None:
     """Example showing Hosted MCP tools for a Azure AI Agent."""
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential) as chat_client,
+        AzureAIAgentsProvider(credential=credential) as provider,
     ):
-        agent = chat_client.create_agent(
+        agent = await provider.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
             tools=HostedMCPTool(

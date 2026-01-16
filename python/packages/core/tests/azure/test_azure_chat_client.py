@@ -657,7 +657,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 
     assert response is not None
     assert isinstance(response, ChatResponse)
-    assert "scientists" in response.text
+    assert "Emily" in response.text or "David" in response.text
 
 
 @pytest.mark.flaky
@@ -692,7 +692,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
 
-    assert "scientists" in full_message
+    assert "Emily" in full_message or "David" in full_message
 
 
 @pytest.mark.flaky
@@ -718,7 +718,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
 
-    assert "scientists" in full_message
+    assert "Emily" in full_message or "David" in full_message
 
 
 @pytest.mark.flaky

@@ -217,7 +217,7 @@ class TestAzureFunctionsFireAndForget:
         thread = agent.get_new_thread()
 
         # Run with wait_for_response=False
-        result = agent.run("Test message", thread=thread, wait_for_response=False)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
 
         # Verify signal_entity was called and call_entity was not
         assert context.signal_entity.call_count == 1
@@ -234,7 +234,7 @@ class TestAzureFunctionsFireAndForget:
         agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
-        result = agent.run("Test message", thread=thread, wait_for_response=False)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
 
         # Task should be immediately complete
         assert isinstance(result, AgentTask)
@@ -248,7 +248,7 @@ class TestAzureFunctionsFireAndForget:
         agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
-        result = agent.run("Test message", thread=thread, wait_for_response=False)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
 
         # Get the result
         response = result.result
@@ -269,7 +269,7 @@ class TestAzureFunctionsFireAndForget:
         agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
-        result = agent.run("Test message", thread=thread, wait_for_response=True)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": True})
 
         # Verify call_entity was called and signal_entity was not
         assert context.call_entity.call_count == 1

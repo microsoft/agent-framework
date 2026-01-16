@@ -36,13 +36,13 @@ This package provides a `ConfigureDurableAgents` extension method on the `Functi
 // Invocable via HTTP via http://localhost:7071/api/agents/SpamDetectionAgent/run
 AIAgent spamDetector = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a spam detection assistant that identifies spam emails.",
         name: "SpamDetectionAgent");
 
 AIAgent emailAssistant = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are an email assistant that helps users draft responses to emails with professionalism.",
         name: "EmailAssistantAgent");
 
@@ -156,7 +156,7 @@ These tools are registered with the agent using the `tools` parameter when creat
 Tools tools = new();
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a content generation assistant that helps users generate content.",
         name: "ContentGenerationAgent",
         tools: [

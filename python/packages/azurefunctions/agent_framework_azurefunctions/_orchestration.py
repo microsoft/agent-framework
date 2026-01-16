@@ -151,17 +151,16 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
     def get_run_request(
         self,
         message: str,
-        response_format: type[BaseModel] | None,
-        enable_tool_calls: bool,
-        wait_for_response: bool = True,
+        *,
+        options: dict[str, Any] | None = None,
     ) -> RunRequest:
         """Get the current run request from the orchestration context.
 
         Args:
             message: The message to send to the agent
-            response_format: Optional Pydantic model for response parsing
-            enable_tool_calls: Whether to enable tool calls
-            wait_for_response: Must be True for orchestration contexts
+            options: Optional options dictionary. Supported keys include
+                ``response_format``, ``enable_tool_calls``, and ``wait_for_response``.
+                Additional keys are forwarded to the agent execution.
 
         Returns:
             RunRequest: The current run request
@@ -169,12 +168,9 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
         Raises:
             ValueError: If wait_for_response=False (not supported in orchestrations)
         """
-        request = super().get_run_request(
-            message,
-            response_format,
-            enable_tool_calls,
-            wait_for_response,
-        )
+        # Create a copy to avoid modifying the caller's dict
+
+        request = super().get_run_request(message, options=options)
         request.orchestration_id = self.context.instance_id
         return request
 

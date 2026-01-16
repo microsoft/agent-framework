@@ -35,18 +35,21 @@ def mock_executor() -> Mock:
     # Mock get_run_request to create actual RunRequest objects
     def create_run_request(
         message: str,
-        response_format: type[BaseModel] | None = None,
-        enable_tool_calls: bool = True,
-        wait_for_response: bool = True,
+        options: dict[str, Any] | None = None,
     ) -> RunRequest:
         import uuid
 
+        opts = dict(options) if options else {}
+        response_format = opts.pop("response_format", None)
+        enable_tool_calls = opts.pop("enable_tool_calls", True)
+        wait_for_response = opts.pop("wait_for_response", True)
         return RunRequest(
             message=message,
             correlation_id=str(uuid.uuid4()),
             response_format=response_format,
             enable_tool_calls=enable_tool_calls,
             wait_for_response=wait_for_response,
+            options=opts,
         )
 
     mock.get_run_request = Mock(side_effect=create_run_request)
@@ -132,7 +135,7 @@ class TestDurableAIAgentParameterFlow:
 
     def test_run_forwards_response_format(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run forwards response_format parameter to executor."""
-        test_agent.run("message", response_format=ResponseFormatModel)
+        test_agent.run("message", options={"response_format": ResponseFormatModel})
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args

@@ -23,7 +23,7 @@ AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Get anthropic client to create agents.
 AIAgent agent = new AnthropicClient { APIKey = apiKey }
-    .CreateAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
+    .AsAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
 AgentThread thread = await agent.GetNewThreadAsync();

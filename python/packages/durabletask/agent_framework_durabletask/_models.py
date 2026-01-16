@@ -11,7 +11,7 @@ import inspect
 import json
 import uuid
 from collections.abc import MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
@@ -109,6 +109,7 @@ class RunRequest:
         correlation_id: Correlation ID for tracking the response to this specific request
         created_at: Optional timestamp when the request was created
         orchestration_id: Optional ID of the orchestration that initiated this request
+        options: Optional options dictionary forwarded to the agent
     """
 
     message: str
@@ -120,6 +121,7 @@ class RunRequest:
     wait_for_response: bool = True
     created_at: datetime | None = None
     orchestration_id: str | None = None
+    options: dict[str, Any] = field(default_factory=lambda: {})
 
     def __init__(
         self,
@@ -132,6 +134,7 @@ class RunRequest:
         wait_for_response: bool = True,
         created_at: datetime | None = None,
         orchestration_id: str | None = None,
+        options: dict[str, Any] | None = None,
     ) -> None:
         self.message = message
         self.correlation_id = correlation_id
@@ -142,6 +145,7 @@ class RunRequest:
         self.wait_for_response = wait_for_response
         self.created_at = created_at if created_at is not None else datetime.now(tz=timezone.utc)
         self.orchestration_id = orchestration_id
+        self.options = options if options is not None else {}
 
     @staticmethod
     def coerce_role(value: Role | str | None) -> Role:
@@ -164,6 +168,7 @@ class RunRequest:
             "role": self.role.value,
             "request_response_format": self.request_response_format,
             "correlationId": self.correlation_id,
+            "options": self.options,
         }
         if self.response_format:
             result["response_format"] = serialize_response_format(self.response_format)
@@ -171,7 +176,6 @@ class RunRequest:
             result["created_at"] = self.created_at.isoformat()
         if self.orchestration_id:
             result["orchestrationId"] = self.orchestration_id
-
         return result
 
     @classmethod
@@ -198,6 +202,8 @@ class RunRequest:
         if not correlation_id:
             raise ValueError("correlationId is required in RunRequest data")
 
+        options = data.get("options")
+
         return cls(
             message=data.get("message", ""),
             correlation_id=correlation_id,
@@ -208,6 +214,7 @@ class RunRequest:
             enable_tool_calls=data.get("enable_tool_calls", True),
             created_at=created_at,
             orchestration_id=data.get("orchestrationId"),
+            options=cast(dict[str, Any], options) if isinstance(options, dict) else {},
         )
 
 

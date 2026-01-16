@@ -42,7 +42,7 @@ public sealed class PersistentAgentsClientExtensionsTests
 
         // Act & Assert - null agentId
         var exception1 = Assert.Throws<ArgumentException>(() =>
-            mockClient.Object.GetAIAgent((string)null!));
+            mockClient.Object.GetAIAgent(null!));
         Assert.Equal("agentId", exception1.ParamName);
 
         // Act & Assert - empty agentId
@@ -314,7 +314,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(response, options);
+        var agent = client.AsAIAgent(response, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -341,7 +341,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(persistentAgent, options);
+        var agent = client.AsAIAgent(persistentAgent, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -363,7 +363,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         var options = new ChatClientAgentOptions(); // Empty options
 
         // Act
-        var agent = client.GetAIAgent(persistentAgent, options);
+        var agent = client.AsAIAgent(persistentAgent, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -443,7 +443,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(
+        var agent = client.AsAIAgent(
             persistentAgent,
             options,
             clientFactory: (innerClient) => testChatClient);
@@ -470,7 +470,7 @@ public sealed class PersistentAgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client.GetAIAgent((Response<PersistentAgent>)null!, options));
+            client.AsAIAgent(null!, options));
 
         Assert.Equal("persistentAgentResponse", exception.ParamName);
     }
@@ -487,7 +487,7 @@ public sealed class PersistentAgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client.GetAIAgent((PersistentAgent)null!, options));
+            client.AsAIAgent((PersistentAgent)null!, options));
 
         Assert.Equal("persistentAgentMetadata", exception.ParamName);
     }
@@ -504,7 +504,7 @@ public sealed class PersistentAgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client.GetAIAgent(persistentAgent, (ChatClientAgentOptions)null!));
+            client.AsAIAgent(persistentAgent, (ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }

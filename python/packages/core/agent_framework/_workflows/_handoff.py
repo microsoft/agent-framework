@@ -275,43 +275,47 @@ class HandoffAgentExecutor(AgentExecutor):
         middleware = list(agent.middleware or [])
 
         # Reconstruct the original tools list by combining regular tools with MCP tools.
-        # ChatAgent.__init__ separates MCP tools into _local_mcp_tools during initialization,
+        # ChatAgent.__init__ separates MCP tools during initialization,
         # so we need to recombine them here to pass the complete tools list to the constructor.
         # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
         tools_from_options = options.get("tools")
         all_tools = list(tools_from_options) if tools_from_options else []
-        if agent._local_mcp_tools:  # type: ignore
-            all_tools.extend(agent._local_mcp_tools)  # type: ignore
+        if agent.mcp_tools:
+            all_tools.extend(agent.mcp_tools)
 
         logit_bias = options.get("logit_bias")
         metadata = options.get("metadata")
 
+        # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
+        cloned_options: dict[str, Any] = {
+            "allow_multiple_tool_calls": False,
+            "frequency_penalty": options.get("frequency_penalty"),
+            "instructions": options.get("instructions"),
+            "logit_bias": dict(logit_bias) if logit_bias else None,
+            "max_tokens": options.get("max_tokens"),
+            "metadata": dict(metadata) if metadata else None,
+            "model_id": options.get("model_id"),
+            "presence_penalty": options.get("presence_penalty"),
+            "response_format": options.get("response_format"),
+            "seed": options.get("seed"),
+            "stop": options.get("stop"),
+            "store": options.get("store"),
+            "temperature": options.get("temperature"),
+            "tool_choice": options.get("tool_choice"),
+            "tools": all_tools if all_tools else None,
+            "top_p": options.get("top_p"),
+            "user": options.get("user"),
+        }
+
         return ChatAgent(
             chat_client=agent.chat_client,
-            instructions=options.get("instructions"),
             id=agent.id,
             name=agent.name,
             description=agent.description,
             chat_message_store_factory=agent.chat_message_store_factory,
             context_providers=agent.context_provider,
             middleware=middleware,
-            # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
-            allow_multiple_tool_calls=False,
-            frequency_penalty=options.get("frequency_penalty"),
-            logit_bias=dict(logit_bias) if logit_bias else None,
-            max_tokens=options.get("max_tokens"),
-            metadata=dict(metadata) if metadata else None,
-            model_id=options.get("model_id"),
-            presence_penalty=options.get("presence_penalty"),
-            response_format=options.get("response_format"),
-            seed=options.get("seed"),
-            stop=options.get("stop"),
-            store=options.get("store"),
-            temperature=options.get("temperature"),
-            tool_choice=options.get("tool_choice"),  # type: ignore[arg-type]
-            tools=all_tools if all_tools else None,
-            top_p=options.get("top_p"),
-            user=options.get("user"),
+            default_options=cloned_options,  # type: ignore[arg-type]
         )
 
     def _apply_auto_tools(self, agent: ChatAgent, targets: Sequence[HandoffConfiguration]) -> None:

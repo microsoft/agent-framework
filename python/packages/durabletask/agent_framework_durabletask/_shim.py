@@ -14,7 +14,6 @@ from collections.abc import AsyncIterator
 from typing import Any, Generic, TypeVar
 
 from agent_framework import AgentProtocol, AgentResponseUpdate, AgentThread, ChatMessage
-from pydantic import BaseModel
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentThread
@@ -106,21 +105,16 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        response_format: type[BaseModel] | None = None,
-        enable_tool_calls: bool = True,
-        wait_for_response: bool = True,
+        options: dict[str, Any] | None = None,
     ) -> TaskT:
         """Execute the agent via the injected provider.
 
         Args:
             messages: The message(s) to send to the agent
             thread: Optional agent thread for conversation context
-            response_format: Optional Pydantic model for structured response
-            enable_tool_calls: Whether to enable tool calls for this request
-            wait_for_response: If True (default), waits for agent response.
-                             If False, returns immediately (fire-and-forget mode).
-
-                             **Only supported for DurableAIAgentClient contexts.**
+            options: Optional options dictionary. Supported keys include
+                ``response_format``, ``enable_tool_calls``, and ``wait_for_response``.
+                Additional keys are forwarded to the agent execution.
 
         Note:
             This method overrides AgentProtocol.run() with a different return type:
@@ -140,9 +134,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
         run_request = self._executor.get_run_request(
             message=message_str,
-            response_format=response_format,
-            enable_tool_calls=enable_tool_calls,
-            wait_for_response=wait_for_response,
+            options=options,
         )
 
         return self._executor.run_durable_agent(

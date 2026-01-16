@@ -14,6 +14,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AzureAISearchContextProvider": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
     "AzureAISearchSettings": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
     "AzureAISettings": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
+    "AzureAIAgentsProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", "agent-framework-core"),
     "AzureOpenAIAssistantsOptions": ("agent_framework.azure._assistants_client", "agent-framework-core"),
     "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", "agent-framework-core"),

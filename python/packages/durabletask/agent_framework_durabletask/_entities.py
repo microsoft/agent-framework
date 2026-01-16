@@ -139,8 +139,10 @@ class AgentEntity:
         correlation_id = run_request.correlation_id
         if not thread_id:
             raise ValueError("Entity State Provider must provide a thread_id")
-        response_format = run_request.response_format
-        enable_tool_calls = run_request.enable_tool_calls
+        options: dict[str, Any] = dict(run_request.options)
+        options.setdefault("response_format", run_request.response_format)
+        if not run_request.enable_tool_calls:
+            options.setdefault("tools", None)
 
         logger.debug("[AgentEntity.run] Received ThreadId %s Message: %s", thread_id, run_request)
 
@@ -155,11 +157,7 @@ class AgentEntity:
                 for m in entry.messages
             ]
 
-            run_kwargs: dict[str, Any] = {"messages": chat_messages}
-            if not enable_tool_calls:
-                run_kwargs["tools"] = None
-            if response_format:
-                run_kwargs["response_format"] = response_format
+            run_kwargs: dict[str, Any] = {"messages": chat_messages, "options": options}
 
             agent_run_response: AgentResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
@@ -249,7 +247,7 @@ class AgentEntity:
             await self._notify_stream_update(update, callback_context)
 
         if updates:
-            response = AgentResponse.from_agent_response_updates(updates)
+            response = AgentResponse.from_agent_run_response_updates(updates)
         else:
             logger.debug("[AgentEntity] No streaming updates received; creating empty response")
             response = AgentResponse(messages=[])
