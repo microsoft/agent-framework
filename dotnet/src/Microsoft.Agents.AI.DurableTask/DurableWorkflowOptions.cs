@@ -63,6 +63,20 @@ public sealed class DurableWorkflowOptions
         }
     }
 
+    /// <summary>
+    /// Adds a collection of workflows to the current instance.
+    /// </summary>
+    /// <param name="workflows">The collection of <see cref="Workflow"/> objects to add. Cannot be <see langword="null"/>.</param>
+    public void AddWorkflow(IEnumerable<Workflow> workflows)
+    {
+        ArgumentNullException.ThrowIfNull(workflows);
+
+        foreach (var workflow in workflows)
+        {
+            this.AddWorkflow(workflow);
+        }
+    }
+
     private static void RegisterExecutors(Workflow workflow, ExecutorRegistry registry)
     {
         foreach (KeyValuePair<string, ExecutorInfo> executor in workflow.ReflectExecutors())

@@ -44,7 +44,7 @@ public static class DurableOptionsExtensions
         if (options.Workflows.Workflows.Count > 0)
         {
             builder.RegisterWorkflowServices();
-            ConfigureWorkflowOrchestration(builder);
+            ConfigureWorkflowOrchestrations(builder, options.Workflows);
         }
 
         return builder;
@@ -79,23 +79,27 @@ public static class DurableOptionsExtensions
         });
     }
 
-    private static void ConfigureWorkflowOrchestration(FunctionsApplicationBuilder builder)
+    private static void ConfigureWorkflowOrchestrations(FunctionsApplicationBuilder builder, DurableWorkflowOptions workflows)
     {
-        // Registering a single orchestration function to handle all workflow runs.
-        // This is due to a gap in durable extension today and can be replace with dynamic orchestration registration in future, per workflow.
+        // Registering orchestration functions for each workflow.
 
         builder.ConfigureDurableWorker().AddTasks(tasks =>
-            tasks.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(
-                "WorkflowRunnerOrchestration",
-                async (orchestrationContext, request) =>
-                {
-                    FunctionContext functionContext = orchestrationContext.GetFunctionContext()
-                        ?? throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
+        {
+            foreach (string workflowName in workflows.Workflows.Select(kp => kp.Key))
+            {
+                tasks.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(
+                    $"dafx-{workflowName}",
+                    async (orchestrationContext, request) =>
+                    {
+                        FunctionContext functionContext = orchestrationContext.GetFunctionContext()
+                            ?? throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
 
-                    DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
-                    ILogger logger = orchestrationContext.CreateReplaySafeLogger("WorkflowRunnerOrchestration");
+                        DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
+                        ILogger logger = orchestrationContext.CreateReplaySafeLogger($"dafx-orchestration-{workflowName}");
 
-                    return await runner.RunWorkflowOrchestrationAsync(orchestrationContext, request, logger).ConfigureAwait(true);
-                }));
+                        return await runner.RunWorkflowOrchestrationAsync(orchestrationContext, request, logger).ConfigureAwait(true);
+                    });
+            }
+        });
     }
 }
