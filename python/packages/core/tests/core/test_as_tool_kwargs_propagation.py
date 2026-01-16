@@ -5,7 +5,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agent_framework import ChatAgent, ChatMessage, ChatResponse, FunctionCallContent, agent_middleware
+from agent_framework import ChatAgent, ChatMessage, ChatResponse, Content, agent_middleware
 from agent_framework._middleware import AgentRunContext
 
 from .conftest import MockChatClient
@@ -113,7 +113,7 @@ class TestAsToolKwargsPropagation:
                     ChatMessage(
                         role="assistant",
                         contents=[
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="call_c_1",
                                 name="call_c",
                                 arguments='{"task": "Please execute agent_c"}',
@@ -170,10 +170,10 @@ class TestAsToolKwargsPropagation:
             await next(context)
 
         # Setup mock streaming responses
-        from agent_framework import ChatResponseUpdate, TextContent
+        from agent_framework import ChatResponseUpdate
 
         chat_client.streaming_responses = [
-            [ChatResponseUpdate(text=TextContent(text="Streaming response"), role="assistant")],
+            [ChatResponseUpdate(text=Content.from_text(text="Streaming response"), role="assistant")],
         ]
 
         sub_agent = ChatAgent(

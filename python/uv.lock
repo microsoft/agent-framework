@@ -3914,7 +3914,7 @@ wheels = [
 
 [[package]]
 name = "openai-agents"
-version = "0.6.5"
+version = "0.6.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffe", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3925,14 +3925,14 @@ dependencies = [
     { name = "types-requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e7/5c/5ebface62a0efdc7298152dcd2d32164403e25e53f1088c042936d8d40f9/openai_agents-0.6.5.tar.gz", hash = "sha256:67e8cab27082d1a1fe6f3fecfcf89b41ff249988a75640bbcc2764952d603ef0", size = 2044506, upload-time = "2026-01-06T15:32:50.936Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/35/4fa8b007c831e1aaa58d337f0dc888a9a44e5dd32103c8f9c77dfe2201b0/openai_agents-0.6.6.tar.gz", hash = "sha256:3c4a9a96dc04307a6df5ef1462ce96451c6875e4fc0d24437c6b3b10e317d3a6", size = 2096069, upload-time = "2026-01-15T05:38:33.045Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/db/16020e45d53366f2ed653ce0ddf959a647687d47180954de7654a133b910/openai_agents-0.6.5-py3-none-any.whl", hash = "sha256:c81d2eaa5c4563b8e893ba836fe170cf10ba974420ff283b4f001f84e7cb6e6b", size = 249352, upload-time = "2026-01-06T15:32:48.847Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/42/e2ba13b62cc4d51e49c64a876020ba57304b3d6466b7b1e7f3f201ac5124/openai_agents-0.6.6-py3-none-any.whl", hash = "sha256:737bc58516c0f63a8d9f1e8034fc9a8f1f852d373d3448cda0a8c81e5e75a239", size = 256303, upload-time = "2026-01-15T05:38:30.852Z" },
 ]
 
 [[package]]
 name = "openai-chatkit"
-version = "1.5.2"
+version = "1.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3941,9 +3941,9 @@ dependencies = [
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0e/f3/3e7aafd6c29348e60d32082fb14e539661fe4100453a31b34d0fef1ff7b7/openai_chatkit-1.5.2.tar.gz", hash = "sha256:187d27b815f153fa060337c86ee3aab189f72269f23ac2bb2a35c6c88b83846d", size = 59268, upload-time = "2026-01-10T00:59:41.215Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/45/854c988728c8638064f3fb5652b30be395a164b526aa7fda2f24de6652c9/openai_chatkit-1.5.3.tar.gz", hash = "sha256:ef43c500a9a8f7e066a99cd04369cee5ee4dacdb1ec94976cb3b17a2caab185f", size = 59768, upload-time = "2026-01-15T06:25:51.225Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/b6/475a4c723fb2e0de30feea505505eabe77666aa7d81855d356fb289e3d8a/openai_chatkit-1.5.2-py3-none-any.whl", hash = "sha256:3bf3f140f314924ef1d4148ce5174cff6aa4c5d1760f988ba2aa267fd434f960", size = 41482, upload-time = "2026-01-10T00:59:40.023Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/40/f5dacf061be090a912a3977033123044856bb0e195bbf0a6afa27dd288a7/openai_chatkit-1.5.3-py3-none-any.whl", hash = "sha256:aa6a5bda8620d5875cdeccd843f675cf74c56842622c4a24dc1e89f3b74304fb", size = 41731, upload-time = "2026-01-15T06:25:50.105Z" },
 ]
 
 [[package]]
@@ -4688,7 +4688,7 @@ wheels = [
 
 [[package]]
 name = "py2docfx"
-version = "0.1.22"
+version = "0.1.23.dev2382197"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -4696,7 +4696,7 @@ dependencies = [
     { name = "wheel", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/94/6475c7faa94a1d90303f624936471cd0f4c20430bd2c92deab607cd0ff31/py2docfx-0.1.22-py3-none-any.whl", hash = "sha256:ccee611af2aefe9f39f446f72b5e07d3369bbdb77c13ebafb69ed1a116116467", size = 11420273, upload-time = "2025-10-10T07:16:25.294Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/5b/201ff811df866172fc422ecbfe9fc4a0463a361b1fe4a92905a7bed53fac/py2docfx-0.1.23.dev2382197-py3-none-any.whl", hash = "sha256:d343babcdee307365776e4c7b9ef95d4f2e218c9d3d23072a483a1ca93c1b316", size = 11339298, upload-time = "2026-01-15T06:35:07.866Z" },
 ]
 
 [[package]]

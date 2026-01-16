@@ -18,12 +18,12 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Content,
     Executor,
     FileCheckpointStorage,
     Message,
     RequestInfoEvent,
     Role,
-    TextContent,
     WorkflowBuilder,
     WorkflowCheckpointException,
     WorkflowContext,
@@ -881,7 +881,7 @@ class _StreamingTestAgent(BaseAgent):
         """Streaming run - yields incremental updates."""
         # Simulate streaming by yielding character by character
         for char in self._reply_text:
-            yield AgentResponseUpdate(contents=[TextContent(text=char)])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=char)])
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:

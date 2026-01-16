@@ -25,10 +25,7 @@ from ag_ui.core import (
 )
 from agent_framework import (
     AgentResponseUpdate,
-    FunctionApprovalRequestContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    TextContent,
+    Content,
     prepare_function_call_results,
 )
 
@@ -96,18 +93,20 @@ class AgentFrameworkEventBridge:
         logger.info(f"Processing AgentRunUpdate with {len(update.contents)} content items")
         for idx, content in enumerate(update.contents):
             logger.info(f"  Content {idx}: type={type(content).__name__}")
-            if isinstance(content, TextContent):
-                events.extend(self._handle_text_content(content))
-            elif isinstance(content, FunctionCallContent):
-                events.extend(self._handle_function_call_content(content))
-            elif isinstance(content, FunctionResultContent):
-                events.extend(self._handle_function_result_content(content))
-            elif isinstance(content, FunctionApprovalRequestContent):
-                events.extend(self._handle_function_approval_request_content(content))
-
+            match content.type:
+                case "text":
+                    events.extend(self._handle_text_content(content))
+                case "function_call":
+                    events.extend(self._handle_function_call_content(content))
+                case "function_result":
+                    events.extend(self._handle_function_result_content(content))
+                case "function_approval_request":
+                    events.extend(self._handle_function_approval_request_content(content))
+                case _:
+                    logger.warning(f"  Unsupported content type: {content.type}, skipping.")
         return events
 
-    def _handle_text_content(self, content: TextContent) -> list[BaseEvent]:
+    def _handle_text_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         logger.info(f"  TextContent found: length={len(content.text)}")
         logger.info(
@@ -150,14 +149,14 @@ class AgentFrameworkEventBridge:
         events.append(event)
         return events
 
-    def _handle_function_call_content(self, content: FunctionCallContent) -> list[BaseEvent]:
+    def _handle_function_call_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         if content.name:
             logger.debug(f"Tool call: {content.name} (call_id: {content.call_id})")
 
         if not content.name and not content.call_id and not self.current_tool_call_name:
             args_length = len(str(content.arguments)) if content.arguments else 0
-            logger.warning(f"FunctionCallContent missing name and call_id. args_length={args_length}")
+            logger.warning(f"Content missing name and call_id. args_length={args_length}")
 
         tool_call_id = self._coalesce_tool_call_id(content)
         # Only emit ToolCallStartEvent once per tool call (when it's a new tool call)
@@ -190,7 +189,7 @@ class AgentFrameworkEventBridge:
 
         return events
 
-    def _coalesce_tool_call_id(self, content: FunctionCallContent) -> str:
+    def _coalesce_tool_call_id(self, content: Content) -> str:
         if content.call_id:
             return content.call_id
         if self.current_tool_call_id:
@@ -286,7 +285,7 @@ class AgentFrameworkEventBridge:
                     self.pending_state_updates[state_key] = state_value
         return events
 
-    def _handle_function_result_content(self, content: FunctionResultContent) -> list[BaseEvent]:
+    def _handle_function_result_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         if content.call_id:
             end_event = ToolCallEndEvent(
@@ -367,7 +366,7 @@ class AgentFrameworkEventBridge:
             self.current_tool_call_name = None
         return events
 
-    def _emit_confirm_changes_tool_call(self, function_call: FunctionCallContent | None = None) -> list[BaseEvent]:
+    def _emit_confirm_changes_tool_call(self, function_call: Content | None = None) -> list[BaseEvent]:
         """Emit a confirm_changes tool call for Dojo UI compatibility.
 
         Args:
@@ -419,7 +418,7 @@ class AgentFrameworkEventBridge:
         logger.info("Set flag to stop run after confirm_changes")
         return events
 
-    def _emit_function_approval_tool_call(self, function_call: FunctionCallContent) -> list[BaseEvent]:
+    def _emit_function_approval_tool_call(self, function_call: Content) -> list[BaseEvent]:
         """Emit a tool call that can drive UI approval for function requests."""
         tool_call_name = "confirm_changes"
         if self.approval_tool_name and self.approval_tool_name != function_call.name:
@@ -462,7 +461,7 @@ class AgentFrameworkEventBridge:
         logger.info("Set flag to stop run after confirm_changes")
         return events
 
-    def _handle_function_approval_request_content(self, content: FunctionApprovalRequestContent) -> list[BaseEvent]:
+    def _handle_function_approval_request_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         logger.info("=== FUNCTION APPROVAL REQUEST ===")
         logger.info(f"  Function: {content.function_call.name}")

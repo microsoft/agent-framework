@@ -18,7 +18,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     HostedCodeInterpreterTool,
-    TextContent,
 )
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from agent_framework.exceptions import ServiceInitializationError
@@ -332,7 +331,7 @@ async def test_azure_assistants_client_streaming() -> None:
             assert chunk is not None
             assert isinstance(chunk, ChatResponseUpdate)
             for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
+                if content.type == "text" and content.text:
                     full_message += content.text
 
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather", "seattle"])
@@ -358,7 +357,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
             assert chunk is not None
             assert isinstance(chunk, ChatResponseUpdate)
             for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
+                if content.type == "text" and content.text:
                     full_message += content.text
 
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])

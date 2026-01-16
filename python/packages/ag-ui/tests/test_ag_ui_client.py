@@ -11,14 +11,13 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
+    Content,
     Role,
-    TextContent,
     ai_function,
 )
 from pytest import MonkeyPatch
 
-from agent_framework_ag_ui._client import AGUIChatClient, ServerFunctionCallContent
+from agent_framework_ag_ui._client import AGUIChatClient
 from agent_framework_ag_ui._http_service import AGUIHttpService
 
 
@@ -96,13 +95,11 @@ class TestAGUIChatClient:
         state_json = json.dumps(state_data)
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
-        from agent_framework import DataContent
-
         messages = [
             ChatMessage(role="user", text="Hello"),
             ChatMessage(
                 role="user",
-                contents=[DataContent(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
         ]
 
@@ -121,12 +118,10 @@ class TestAGUIChatClient:
         invalid_json = "not valid json"
         state_b64 = base64.b64encode(invalid_json.encode("utf-8")).decode("utf-8")
 
-        from agent_framework import DataContent
-
         messages = [
             ChatMessage(
                 role="user",
-                contents=[DataContent(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
         ]
 
@@ -200,8 +195,8 @@ class TestAGUIChatClient:
 
         first_content = updates[1].contents[0]
         second_content = updates[2].contents[0]
-        assert isinstance(first_content, TextContent)
-        assert isinstance(second_content, TextContent)
+        assert first_content.type == "text"
+        assert second_content.type == "text"
         assert first_content.text == "Hello"
         assert second_content.text == " world"
 
@@ -294,13 +289,12 @@ class TestAGUIChatClient:
             updates.append(update)
 
         function_calls = [
-            content for update in updates for content in update.contents if isinstance(content, FunctionCallContent)
+            content for update in updates for content in update.contents if content.type == "function_call"
         ]
         assert function_calls
         assert function_calls[0].name == "get_time_zone"
-        assert not any(
-            isinstance(content, ServerFunctionCallContent) for update in updates for content in update.contents
-        )
+
+        assert not any(content.type == "server_function_call" for update in updates for content in update.contents)
 
     async def test_server_tool_calls_not_executed_locally(self, monkeypatch: MonkeyPatch) -> None:
         """Server tools should not trigger local function invocation even when client tools exist."""
@@ -343,13 +337,11 @@ class TestAGUIChatClient:
         state_json = json.dumps(state_data)
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
-        from agent_framework import DataContent
-
         messages = [
             ChatMessage(role="user", text="Hello"),
             ChatMessage(
                 role="user",
-                contents=[DataContent(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
         ]
 
