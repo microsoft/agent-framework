@@ -306,6 +306,10 @@ internal static class SemanticAnalyzer
             }
         }
 
+        // Sort to ensure consistent ordering for incremental generator caching
+        sendTypes.Sort(StringComparer.Ordinal);
+        yieldTypes.Sort(StringComparer.Ordinal);
+
         // Create ExecutorInfo with no handlers but with protocol types
         ExecutorInfo executorInfo = new(
             first.Namespace,
@@ -596,6 +600,9 @@ internal static class SemanticAnalyzer
     /// <summary>
     /// Converts a TypedConstant array (from attribute argument) to fully-qualified type name strings.
     /// </summary>
+    /// <remarks>
+    /// Results are sorted to ensure consistent ordering for incremental generator caching.
+    /// </remarks>
     private static ImmutableArray<string> ExtractTypeArray(TypedConstant typedConstant)
     {
         if (typedConstant.Kind != TypedConstantKind.Array)
@@ -603,8 +610,8 @@ internal static class SemanticAnalyzer
             return ImmutableArray<string>.Empty;
         }
 
-        var builder = ImmutableArray.CreateBuilder<string>();
-        foreach (var value in typedConstant.Values)
+        ImmutableArray<string>.Builder builder = ImmutableArray.CreateBuilder<string>();
+        foreach (TypedConstant value in typedConstant.Values)
         {
             if (value.Value is INamedTypeSymbol typeSymbol)
             {
@@ -612,12 +619,19 @@ internal static class SemanticAnalyzer
             }
         }
 
+        // Sort to ensure consistent ordering for incremental generator caching
+        builder.Sort(StringComparer.Ordinal);
+
         return builder.ToImmutable();
     }
 
     /// <summary>
     /// Collects types from [SendsMessage] or [YieldsOutput] attributes applied to the class.
     /// </summary>
+    /// <remarks>
+    /// Results are sorted to ensure consistent ordering for incremental generator caching,
+    /// since GetAttributes() order is not guaranteed across partial class declarations.
+    /// </remarks>
     /// <example>
     /// [SendsMessage(typeof(Request))]
     /// [YieldsOutput(typeof(Response))]
@@ -625,9 +639,9 @@ internal static class SemanticAnalyzer
     /// </example>
     private static ImmutableEquatableArray<string> GetClassLevelTypes(INamedTypeSymbol classSymbol, string attributeName)
     {
-        var builder = ImmutableArray.CreateBuilder<string>();
+        ImmutableArray<string>.Builder builder = ImmutableArray.CreateBuilder<string>();
 
-        foreach (var attr in classSymbol.GetAttributes())
+        foreach (AttributeData attr in classSymbol.GetAttributes())
         {
             if (attr.AttributeClass?.ToDisplayString() == attributeName &&
                 attr.ConstructorArguments.Length > 0 &&
@@ -636,6 +650,9 @@ internal static class SemanticAnalyzer
                 builder.Add(typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
             }
         }
+
+        // Sort to ensure consistent ordering for incremental generator caching
+        builder.Sort(StringComparer.Ordinal);
 
         return new ImmutableEquatableArray<string>(builder.ToImmutable());
     }
