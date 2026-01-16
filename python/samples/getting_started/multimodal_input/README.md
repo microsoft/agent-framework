@@ -82,7 +82,7 @@ with open("path/to/your/image.jpg", "rb") as f:
     image_uri = f"data:image/jpeg;base64,{image_base64}"
 
 # Use in DataContent
-DataContent(
+Content.from_uri(
     uri=image_uri,
     media_type="image/jpeg"
 )
@@ -96,7 +96,7 @@ with open("path/to/your/image.jpg", "rb") as f:
     image_bytes = f.read()
 
 # Use in DataContent
-DataContent(
+Content.from_data(
     data=image_bytes,
     media_type="image/jpeg"
 )

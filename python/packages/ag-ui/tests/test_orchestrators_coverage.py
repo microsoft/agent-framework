@@ -8,12 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from agent_framework import (
-    AgentResponseUpdate,
-    ChatMessage,
-    TextContent,
-    ai_function,
-)
+from agent_framework import AgentResponseUpdate, ChatMessage, Content, ai_function
 from pydantic import BaseModel
 
 from agent_framework_ag_ui._agent import AgentConfig
@@ -48,14 +43,14 @@ async def test_human_in_the_loop_json_decode_error() -> None:
     messages = [
         ChatMessage(
             role="tool",
-            contents=[TextContent(text="not valid json {")],
+            contents=[Content.from_text(text="not valid json {")],
             additional_properties={"is_tool_result": True},
         )
     ]
 
     agent = StubAgent(
         default_options={"tools": [approval_tool], "response_format": None},
-        updates=[AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")],
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="response")], role="assistant")],
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -78,14 +73,14 @@ async def test_human_in_the_loop_json_decode_error() -> None:
 
 async def test_sanitize_tool_history_confirm_changes() -> None:
     """Test sanitize_tool_history logic for confirm_changes synthetic result."""
-    from agent_framework import ChatMessage, FunctionCallContent, TextContent
+    from agent_framework import ChatMessage
 
     # Create messages that will trigger confirm_changes synthetic result injection
     messages = [
         ChatMessage(
             role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     name="confirm_changes",
                     call_id="call_confirm_123",
                     arguments='{"changes": "test"}',
@@ -94,7 +89,7 @@ async def test_sanitize_tool_history_confirm_changes() -> None:
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text='{"accepted": true}')],
+            contents=[Content.from_text(text='{"accepted": true}')],
         ),
     ]
 
@@ -134,17 +129,17 @@ async def test_sanitize_tool_history_confirm_changes() -> None:
 
 async def test_sanitize_tool_history_orphaned_tool_result() -> None:
     """Test sanitize_tool_history removes orphaned tool results."""
-    from agent_framework import ChatMessage, FunctionResultContent, TextContent
+    from agent_framework import ChatMessage
 
     # Tool result without preceding assistant tool call
     messages = [
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="orphan_123", result="orphaned data")],
+            contents=[Content.from_function_result(call_id="orphan_123", result="orphaned data")],
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="Hello")],
+            contents=[Content.from_text(text="Hello")],
         ),
     ]
 
@@ -214,20 +209,20 @@ async def test_orphaned_tool_result_sanitization() -> None:
 
 async def test_deduplicate_messages_empty_tool_results() -> None:
     """Test deduplicate_messages prefers non-empty tool results."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="test_tool", call_id="call_789", arguments="{}")],
+            contents=[Content.from_function_call(name="test_tool", call_id="call_789", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_789", result="")],
+            contents=[Content.from_function_result(call_id="call_789", result="")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_789", result="real data")],
+            contents=[Content.from_function_result(call_id="call_789", result="real data")],
         ),
     ]
 
@@ -259,20 +254,20 @@ async def test_deduplicate_messages_empty_tool_results() -> None:
 
 async def test_deduplicate_messages_duplicate_assistant_tool_calls() -> None:
     """Test deduplicate_messages removes duplicate assistant tool call messages."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="test_tool", call_id="call_abc", arguments="{}")],
+            contents=[Content.from_function_call(name="test_tool", call_id="call_abc", arguments="{}")],
         ),
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="test_tool", call_id="call_abc", arguments="{}")],
+            contents=[Content.from_function_call(name="test_tool", call_id="call_abc", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_abc", result="result")],
+            contents=[Content.from_function_result(call_id="call_abc", result="result")],
         ),
     ]
 
@@ -303,20 +298,20 @@ async def test_deduplicate_messages_duplicate_assistant_tool_calls() -> None:
 
 async def test_deduplicate_messages_duplicate_system_messages() -> None:
     """Test that deduplication logic is invoked for system messages."""
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="system",
-            contents=[TextContent(text="You are a helpful assistant.")],
+            contents=[Content.from_text(text="You are a helpful assistant.")],
         ),
         ChatMessage(
             role="system",
-            contents=[TextContent(text="You are a helpful assistant.")],
+            contents=[Content.from_text(text="You are a helpful assistant.")],
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="Hello")],
+            contents=[Content.from_text(text="Hello")],
         ),
     ]
 
@@ -387,20 +382,20 @@ async def test_state_context_injection() -> None:
 
 async def test_state_context_injection_with_tool_calls_and_input_state() -> None:
     """Test state context is injected when state is provided, even with tool calls."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent, TextContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="get_weather", call_id="call_xyz", arguments="{}")],
+            contents=[Content.from_function_call(name="get_weather", call_id="call_xyz", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_xyz", result="sunny")],
+            contents=[Content.from_function_result(call_id="call_xyz", result="sunny")],
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="Thanks")],
+            contents=[Content.from_text(text="Thanks")],
         ),
     ]
 
@@ -452,7 +447,7 @@ async def test_structured_output_processing() -> None:
         default_options=DEFAULT_OPTIONS,
         updates=[
             AgentResponseUpdate(
-                contents=[TextContent(text='{"ingredients": ["tomato"], "message": "Added tomato"}')],
+                contents=[Content.from_text(text='{"ingredients": ["tomato"], "message": "Added tomato"}')],
                 role="assistant",
             )
         ],
@@ -641,13 +636,13 @@ async def test_all_messages_filtered_handling() -> None:
 
 async def test_confirm_changes_with_invalid_json_fallback() -> None:
     """Test confirm_changes with invalid JSON falls back to normal processing."""
-    from agent_framework import ChatMessage, FunctionCallContent, TextContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     name="confirm_changes",
                     call_id="call_confirm_invalid",
                     arguments='{"changes": "test"}',
@@ -656,7 +651,7 @@ async def test_confirm_changes_with_invalid_json_fallback() -> None:
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="invalid json {")],
+            contents=[Content.from_text(text="invalid json {")],
         ),
     ]
 
@@ -688,19 +683,18 @@ async def test_confirm_changes_with_invalid_json_fallback() -> None:
 async def test_confirm_changes_closes_active_message_before_finish() -> None:
     """Confirm-changes flow closes any active text message before run finishes."""
     from ag_ui.core import TextMessageEndEvent, TextMessageStartEvent
-    from agent_framework import FunctionCallContent, FunctionResultContent
 
     updates = [
         AgentResponseUpdate(
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     name="write_document_local",
                     call_id="call_1",
                     arguments='{"document": "Draft"}',
                 )
             ]
         ),
-        AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")]),
+        AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_1", result="Done")]),
     ]
 
     orchestrator = DefaultOrchestrator()
@@ -735,16 +729,16 @@ async def test_confirm_changes_closes_active_message_before_finish() -> None:
 
 async def test_tool_result_kept_when_call_id_matches() -> None:
     """Test tool result is kept when call_id matches pending tool calls."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="get_data", call_id="call_match", arguments="{}")],
+            contents=[Content.from_function_call(name="get_data", call_id="call_match", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_match", result="data")],
+            contents=[Content.from_function_result(call_id="call_match", result="data")],
         ),
     ]
 
@@ -794,11 +788,11 @@ async def test_agent_protocol_fallback_paths() -> None:
             **kwargs: Any,
         ) -> AsyncGenerator[AgentResponseUpdate, None]:
             self.messages_received = messages
-            yield AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="response")], role="assistant")
 
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
-    messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
@@ -820,9 +814,9 @@ async def test_agent_protocol_fallback_paths() -> None:
 
 async def test_initial_state_snapshot_with_array_schema() -> None:
     """Test state initialization with array type schema."""
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
-    messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": [], "state": {}}
@@ -851,9 +845,9 @@ async def test_response_format_skip_text_content() -> None:
     class OutputModel(BaseModel):
         result: str
 
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
-    messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}

@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
+from agent_framework._types import ChatMessage, Content, Role
 from agent_framework_lab_tau2._message_utils import flip_messages, log_messages
 
 
@@ -10,7 +10,10 @@ def test_flip_messages_user_to_assistant():
     """Test flipping user message to assistant."""
     messages = [
         ChatMessage(
-            role=Role.USER, contents=[TextContent(text="Hello assistant")], author_name="User1", message_id="msg_001"
+            role=Role.USER,
+            contents=[Content.from_text(text="Hello assistant")],
+            author_name="User1",
+            message_id="msg_001",
         )
     ]
 
@@ -28,7 +31,7 @@ def test_flip_messages_assistant_to_user():
     messages = [
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[TextContent(text="Hello user")],
+            contents=[Content.from_text(text="Hello user")],
             author_name="Assistant1",
             message_id="msg_002",
         )
@@ -45,12 +48,16 @@ def test_flip_messages_assistant_to_user():
 
 def test_flip_messages_assistant_with_function_calls_filtered():
     """Test that function calls are filtered out when flipping assistant to user."""
-    function_call = FunctionCallContent(call_id="call_123", name="test_function", arguments={"param": "value"})
+    function_call = Content.from_function_call(call_id="call_123", name="test_function", arguments={"param": "value"})
 
     messages = [
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[TextContent(text="I'll call a function"), function_call, TextContent(text="After the call")],
+            contents=[
+                Content.from_text(text="I'll call a function"),
+                function_call,
+                Content.from_text(text="After the call"),
+            ],
             message_id="msg_003",
         )
     ]
@@ -68,7 +75,7 @@ def test_flip_messages_assistant_with_function_calls_filtered():
 
 def test_flip_messages_assistant_with_only_function_calls_skipped():
     """Test that assistant messages with only function calls are skipped."""
-    function_call = FunctionCallContent(call_id="call_456", name="another_function", arguments={"key": "value"})
+    function_call = Content.from_function_call(call_id="call_456", name="another_function", arguments={"key": "value"})
 
     messages = [
         ChatMessage(role=Role.ASSISTANT, contents=[function_call], message_id="msg_004")  # Only function call, no text
@@ -82,7 +89,7 @@ def test_flip_messages_assistant_with_only_function_calls_skipped():
 
 def test_flip_messages_tool_messages_skipped():
     """Test that tool messages are skipped."""
-    function_result = FunctionResultContent(call_id="call_789", result={"success": True})
+    function_result = Content.from_function_result(call_id="call_789", result={"success": True})
 
     messages = [ChatMessage(role=Role.TOOL, contents=[function_result])]
 
@@ -94,7 +101,9 @@ def test_flip_messages_tool_messages_skipped():
 
 def test_flip_messages_system_messages_preserved():
     """Test that system messages are preserved as-is."""
-    messages = [ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System instruction")], message_id="sys_001")]
+    messages = [
+        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="System instruction")], message_id="sys_001")
+    ]
 
     flipped = flip_messages(messages)
 
@@ -106,16 +115,16 @@ def test_flip_messages_system_messages_preserved():
 
 def test_flip_messages_mixed_conversation():
     """Test flipping a mixed conversation."""
-    function_call = FunctionCallContent(call_id="call_mixed", name="mixed_function", arguments={})
+    function_call = Content.from_function_call(call_id="call_mixed", name="mixed_function", arguments={})
 
-    function_result = FunctionResultContent(call_id="call_mixed", result="function result")
+    function_result = Content.from_function_result(call_id="call_mixed", result="function result")
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System prompt")]),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="User question")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Assistant response"), function_call]),
+        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="System prompt")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="User question")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Assistant response"), function_call]),
         ChatMessage(role=Role.TOOL, contents=[function_result]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Final response")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Final response")]),
     ]
 
     flipped = flip_messages(messages)
@@ -151,7 +160,10 @@ def test_flip_messages_preserves_metadata():
     """Test that message metadata is preserved during flipping."""
     messages = [
         ChatMessage(
-            role=Role.USER, contents=[TextContent(text="Test message")], author_name="TestUser", message_id="test_123"
+            role=Role.USER,
+            contents=[Content.from_text(text="Test message")],
+            author_name="TestUser",
+            message_id="test_123",
         )
     ]
 
@@ -166,8 +178,8 @@ def test_flip_messages_preserves_metadata():
 def test_log_messages_text_content(mock_logger):
     """Test logging messages with text content."""
     messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hi there!")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hi there!")]),
     ]
 
     log_messages(messages)
@@ -179,7 +191,7 @@ def test_log_messages_text_content(mock_logger):
 @patch("agent_framework_lab_tau2._message_utils.logger")
 def test_log_messages_function_call(mock_logger):
     """Test logging messages with function calls."""
-    function_call = FunctionCallContent(call_id="call_log", name="log_function", arguments={"param": "value"})
+    function_call = Content.from_function_call(call_id="call_log", name="log_function", arguments={"param": "value"})
 
     messages = [ChatMessage(role=Role.ASSISTANT, contents=[function_call])]
 
@@ -195,7 +207,7 @@ def test_log_messages_function_call(mock_logger):
 @patch("agent_framework_lab_tau2._message_utils.logger")
 def test_log_messages_function_result(mock_logger):
     """Test logging messages with function results."""
-    function_result = FunctionResultContent(call_id="call_result", result="success")
+    function_result = Content.from_function_result(call_id="call_result", result="success")
 
     messages = [ChatMessage(role=Role.TOOL, contents=[function_result])]
 
@@ -211,10 +223,10 @@ def test_log_messages_function_result(mock_logger):
 def test_log_messages_different_roles(mock_logger):
     """Test logging messages with different roles get different colors."""
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System")]),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="User")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Assistant")]),
-        ChatMessage(role=Role.TOOL, contents=[TextContent(text="Tool")]),
+        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="System")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="User")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Assistant")]),
+        ChatMessage(role=Role.TOOL, contents=[Content.from_text(text="Tool")]),
     ]
 
     log_messages(messages)
@@ -238,7 +250,7 @@ def test_log_messages_different_roles(mock_logger):
 @patch("agent_framework_lab_tau2._message_utils.logger")
 def test_log_messages_escapes_html(mock_logger):
     """Test that HTML-like characters are properly escaped in log output."""
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Message with <tag> content")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Message with <tag> content")])]
 
     log_messages(messages)
 
@@ -251,12 +263,12 @@ def test_log_messages_escapes_html(mock_logger):
 @patch("agent_framework_lab_tau2._message_utils.logger")
 def test_log_messages_mixed_content_types(mock_logger):
     """Test logging messages with mixed content types."""
-    function_call = FunctionCallContent(call_id="mixed_call", name="mixed_function", arguments={"key": "value"})
+    function_call = Content.from_function_call(call_id="mixed_call", name="mixed_function", arguments={"key": "value"})
 
     messages = [
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[TextContent(text="I'll call a function"), function_call, TextContent(text="Done!")],
+            contents=[Content.from_text(text="I'll call a function"), function_call, Content.from_text(text="Done!")],
         )
     ]
 

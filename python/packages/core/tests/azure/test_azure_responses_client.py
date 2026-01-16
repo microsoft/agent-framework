@@ -15,10 +15,10 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
+    Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
     ai_function,
 )
@@ -48,7 +48,7 @@ async def get_weather(location: Annotated[str, "The location as a city name"]) -
     return f"The weather in {location} is sunny and 72°F."
 
 
-async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
+async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
@@ -61,7 +61,7 @@ async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, 
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
+    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
 async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:

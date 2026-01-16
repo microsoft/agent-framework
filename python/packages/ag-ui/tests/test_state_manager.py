@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from ag_ui.core import CustomEvent, EventType
-from agent_framework import ChatMessage, TextContent
+from agent_framework import ChatMessage
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 from agent_framework_ag_ui._orchestration._state_manager import StateManager
@@ -47,5 +47,5 @@ def test_state_context_only_when_new_user_turn() -> None:
 
     message = state_manager.state_context_message(is_new_user_turn=True, conversation_has_tool_calls=False)
     assert isinstance(message, ChatMessage)
-    assert isinstance(message.contents[0], TextContent)
+    assert message.contents[0].type == "text"
     assert "Current state of the application" in message.contents[0].text

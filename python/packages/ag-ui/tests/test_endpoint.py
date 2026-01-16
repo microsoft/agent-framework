@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from agent_framework import ChatAgent, ChatResponseUpdate, TextContent
+from agent_framework import ChatAgent, ChatResponseUpdate, Content
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
 from fastapi.testclient import TestClient
@@ -20,7 +20,7 @@ from utils_test_ag_ui import StreamingChatClientStub, stream_from_updates
 
 def build_chat_client(response_text: str = "Test response") -> StreamingChatClientStub:
     """Create a typed chat client stub for endpoint tests."""
-    updates = [ChatResponseUpdate(contents=[TextContent(text=response_text)])]
+    updates = [ChatResponseUpdate(contents=[Content.from_text(text=response_text)])]
     return StreamingChatClientStub(stream_from_updates(updates))
 
 

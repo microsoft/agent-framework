@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, ErrorContent, Role
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Role
 from pydantic import BaseModel
 
 from agent_framework_azurefunctions._durable_agent_state import (
@@ -608,7 +608,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
         assert "Agent failed" in (content.message or "")
         assert content.error_code == "Exception"
 
@@ -627,7 +627,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
         assert content.error_code == "ValueError"
         assert "Invalid input" in str(content.message)
 
@@ -646,7 +646,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
         assert content.error_code == "TimeoutError"
 
     def test_entity_function_handles_exception_in_operation(self) -> None:
@@ -685,7 +685,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
 
 
 class TestConversationHistory:

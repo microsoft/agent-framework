@@ -61,7 +61,7 @@ async def main() -> None:
                 case "text_reasoning":
                     print(f"\033[32m{content.text}\033[0m", end="", flush=True)
                 case "usage":
-                    print(f"\n\033[34m[Usage so far: {content.details}]\033[0m\n", end="", flush=True)
+                    print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)
                 case "hosted_file":
                     # Catch generated files
                     files.append(content)

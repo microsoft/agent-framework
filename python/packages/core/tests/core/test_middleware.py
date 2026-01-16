@@ -14,8 +14,8 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Role,
-    TextContent,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -217,8 +217,8 @@ class TestAgentMiddlewarePipeline:
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk2")])
 
         updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
@@ -250,8 +250,8 @@ class TestAgentMiddlewarePipeline:
 
         async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             execution_order.append("handler_start")
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk2")])
             execution_order.append("handler_end")
 
         updates: list[AgentResponseUpdate] = []
@@ -313,8 +313,8 @@ class TestAgentMiddlewarePipeline:
         async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             # Handler should not be executed when terminated before next()
             execution_order.append("handler_start")
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk2")])
             execution_order.append("handler_end")
 
         updates: list[AgentResponseUpdate] = []
@@ -336,8 +336,8 @@ class TestAgentMiddlewarePipeline:
 
         async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             execution_order.append("handler_start")
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk2")])
             execution_order.append("handler_end")
 
         updates: list[AgentResponseUpdate] = []
@@ -609,8 +609,8 @@ class TestChatMiddlewarePipeline:
         context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk2")])
 
         updates: list[ChatResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_chat_client, messages, chat_options, context, final_handler):
@@ -641,8 +641,8 @@ class TestChatMiddlewarePipeline:
 
         async def final_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
             execution_order.append("handler_start")
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk2")])
             execution_order.append("handler_end")
 
         updates: list[ChatResponseUpdate] = []
@@ -706,8 +706,8 @@ class TestChatMiddlewarePipeline:
         async def final_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
             # Handler should not be executed when terminated before next()
             execution_order.append("handler_start")
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk2")])
             execution_order.append("handler_end")
 
         updates: list[ChatResponseUpdate] = []
@@ -730,8 +730,8 @@ class TestChatMiddlewarePipeline:
 
         async def final_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
             execution_order.append("handler_start")
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk1")])
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk1")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk2")])
             execution_order.append("handler_end")
 
         updates: list[ChatResponseUpdate] = []
@@ -1264,7 +1264,7 @@ class TestStreamingScenarios:
 
         async def final_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             streaming_flags.append(ctx.is_streaming)
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk")])
 
         updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context_stream, final_stream_handler):
@@ -1292,9 +1292,9 @@ class TestStreamingScenarios:
 
         async def final_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             chunks_processed.append("stream_start")
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk1")])
             chunks_processed.append("chunk1_yielded")
-            yield AgentResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="chunk2")])
             chunks_processed.append("chunk2_yielded")
             chunks_processed.append("stream_end")
 
@@ -1342,7 +1342,7 @@ class TestStreamingScenarios:
 
         async def final_stream_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
             streaming_flags.append(ctx.is_streaming)
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk")])
 
         updates: list[ChatResponseUpdate] = []
         async for update in pipeline.execute_stream(
@@ -1371,9 +1371,9 @@ class TestStreamingScenarios:
 
         async def final_stream_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
             chunks_processed.append("stream_start")
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk1")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk1")])
             chunks_processed.append("chunk1_yielded")
-            yield ChatResponseUpdate(contents=[TextContent(text="chunk2")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="chunk2")])
             chunks_processed.append("chunk2_yielded")
             chunks_processed.append("stream_end")
 
@@ -1486,7 +1486,7 @@ class TestMiddlewareExecutionControl:
         async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
             nonlocal handler_called
             handler_called = True
-            yield AgentResponseUpdate(contents=[TextContent(text="should not execute")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="should not execute")])
 
         # When middleware doesn't call next(), streaming should yield no updates
         updates: list[AgentResponseUpdate] = []
@@ -1617,7 +1617,7 @@ class TestMiddlewareExecutionControl:
         async def final_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
             nonlocal handler_called
             handler_called = True
-            yield ChatResponseUpdate(contents=[TextContent(text="should not execute")])
+            yield ChatResponseUpdate(contents=[Content.from_text(text="should not execute")])
 
         # When middleware doesn't call next(), streaming should yield no updates
         updates: list[ChatResponseUpdate] = []

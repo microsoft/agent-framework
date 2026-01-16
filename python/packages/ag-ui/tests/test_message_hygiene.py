@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent, TextContent
+from agent_framework import ChatMessage, Content
 
 from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
 
@@ -10,7 +10,7 @@ def test_sanitize_tool_history_injects_confirm_changes_result() -> None:
         ChatMessage(
             role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     name="confirm_changes",
                     call_id="call_confirm_123",
                     arguments='{"changes": "test"}',
@@ -19,7 +19,7 @@ def test_sanitize_tool_history_injects_confirm_changes_result() -> None:
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text='{"accepted": true}')],
+            contents=[Content.from_text(text='{"accepted": true}')],
         ),
     ]
 
@@ -37,11 +37,11 @@ def test_deduplicate_messages_prefers_non_empty_tool_results() -> None:
     messages = [
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call1", result="")],
+            contents=[Content.from_function_result(call_id="call1", result="")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call1", result="result data")],
+            contents=[Content.from_function_result(call_id="call1", result="result data")],
         ),
     ]
 

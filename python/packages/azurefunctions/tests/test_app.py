@@ -10,7 +10,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentResponse, ChatMessage, ErrorContent
+from agent_framework import AgentResponse, ChatMessage
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
@@ -622,7 +622,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
         assert "Agent error" in (content.message or "")
         assert content.error_code == "Exception"
 

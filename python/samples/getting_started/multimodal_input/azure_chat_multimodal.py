@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, DataContent, Role, TextContent
+from agent_framework import ChatMessage, Content, Role
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -26,7 +26,10 @@ async def test_image() -> None:
     image_uri = create_sample_image()
     message = ChatMessage(
         role=Role.USER,
-        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/png")],
+        contents=[
+            Content.from_text(text="What's in this image?"),
+            Content.from_uri(uri=image_uri, media_type="image/png"),
+        ],
     )
 
     response = await client.get_response(message)

@@ -13,8 +13,8 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
+    Content,
     Role,
-    TextContent,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -75,8 +75,8 @@ class TestResultOverrideMiddleware:
         """Test that agent middleware can override response for streaming execution."""
 
         async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[TextContent(text="overridden")])
-            yield AgentResponseUpdate(contents=[TextContent(text=" stream")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="overridden")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" stream")])
 
         class StreamResponseOverrideMiddleware(AgentMiddleware):
             async def process(
@@ -92,7 +92,7 @@ class TestResultOverrideMiddleware:
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[TextContent(text="original")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
 
         updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
@@ -175,9 +175,9 @@ class TestResultOverrideMiddleware:
         mock_chat_client = MockChatClient()
 
         async def custom_stream() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[TextContent(text="Custom")])
-            yield AgentResponseUpdate(contents=[TextContent(text=" streaming")])
-            yield AgentResponseUpdate(contents=[TextContent(text=" response!")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Custom")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" streaming")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" response!")])
 
         class ChatAgentStreamOverrideMiddleware(AgentMiddleware):
             async def process(

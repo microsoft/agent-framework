@@ -9,13 +9,8 @@ from agent_framework import (
     BaseChatClient,
     ChatMessage,
     ChatResponseUpdate,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     HostedWebSearchTool,
-    TextContent,
-    TextReasoningContent,
-    UriContent,
     ai_function,
     chat_middleware,
 )
@@ -231,7 +226,7 @@ async def test_cmc_reasoning(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    reasoning = "".join(c.text for c in result.messages.pop().contents if isinstance(c, TextReasoningContent))
+    reasoning = "".join(c.text for c in result.messages.pop().contents if c.type == "text_reasoning")
     assert reasoning == "test"
 
 
@@ -286,7 +281,7 @@ async def test_cmc_streaming_reasoning(
     result = ollama_client.get_streaming_response(messages=chat_history)
 
     async for chunk in result:
-        reasoning = "".join(c.text for c in chunk.contents if isinstance(c, TextReasoningContent))
+        reasoning = "".join(c.text for c in chunk.contents if c.type == "text_reasoning")
         assert reasoning == "test"
 
 
@@ -333,14 +328,14 @@ async def test_cmc_streaming_with_tool_call(
         chunks.append(chunk)
 
     # Check parsed Toolcalls
-    assert isinstance(chunks[0].contents[0], FunctionCallContent)
+    assert chunks[0].contents[0].type == "function_call"
     tool_call = chunks[0].contents[0]
     assert tool_call.name == "hello_world"
     assert tool_call.arguments == {"arg1": "value1"}
-    assert isinstance(chunks[1].contents[0], FunctionResultContent)
+    assert chunks[1].contents[0].type == "function_result"
     tool_result = chunks[1].contents[0]
     assert tool_result.result == "Hello World"
-    assert isinstance(chunks[2].contents[0], TextContent)
+    assert chunks[2].contents[0].type == "text"
     text_result = chunks[2].contents[0]
     assert text_result.text == "test"
 
@@ -378,7 +373,7 @@ async def test_cmc_with_data_content_type(
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
         ChatMessage(
-            contents=[DataContent(uri="data:image/png;base64,xyz", media_type="image/png")],
+            contents=[Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png")],
             role="user",
         )
     )
@@ -401,7 +396,7 @@ async def test_cmc_with_invalid_data_content_media_type(
         # Remote Uris are not supported by Ollama client
         chat_history.append(
             ChatMessage(
-                contents=[DataContent(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
+                contents=[Content.from_uri(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
                 role="user",
             )
         )
@@ -424,7 +419,7 @@ async def test_cmc_with_invalid_content_type(
         # Remote Uris are not supported by Ollama client
         chat_history.append(
             ChatMessage(
-                contents=[UriContent(uri="http://example.com/image.png", media_type="image/png")],
+                contents=[Content.from_uri(uri="http://example.com/image.png", media_type="image/png")],
                 role="user",
             )
         )
@@ -444,7 +439,7 @@ async def test_cmc_integration_with_tool_call(
     result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
 
     assert "hello" in result.text.lower() and "world" in result.text.lower()
-    assert isinstance(result.messages[-2].contents[0], FunctionResultContent)
+    assert result.messages[-2].contents[0].type == "function_result"
     tool_result = result.messages[-2].contents[0]
     assert tool_result.result == "Hello World"
 
@@ -478,10 +473,10 @@ async def test_cmc_streaming_integration_with_tool_call(
 
     for c in chunks:
         if len(c.contents) > 0:
-            if isinstance(c.contents[0], FunctionResultContent):
+            if c.contents[0].type == "function_result":
                 tool_result = c.contents[0]
                 assert tool_result.result == "Hello World"
-            if isinstance(c.contents[0], FunctionCallContent):
+            if c.contents[0].type == "function_call":
                 tool_call = c.contents[0]
                 assert tool_call.name == "hello_world"
 

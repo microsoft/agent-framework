@@ -32,14 +32,7 @@ from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
-from ._types import (
-    AgentResponse,
-    AgentResponseUpdate,
-    ChatMessage,
-    ChatResponse,
-    ChatResponseUpdate,
-    Role,
-)
+from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, ChatResponse, ChatResponseUpdate, Role
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
 
@@ -1155,9 +1148,9 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
             # Convert result to MCP content
             if isinstance(result, str):
-                return [types.TextContent(type="text", text=result)]
+                return [types.Content.from_text(type="text", text=result)]
 
-            return [types.TextContent(type="text", text=str(result))]
+            return [types.Content.from_text(type="text", text=str(result))]
 
         @server.set_logging_level()  # type: ignore
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore

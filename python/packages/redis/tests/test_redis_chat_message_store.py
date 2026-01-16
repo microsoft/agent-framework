@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Role, TextContent
+from agent_framework import ChatMessage, Content, Role
 
 from agent_framework_redis import RedisChatMessageStore
 
@@ -413,7 +413,7 @@ class TestRedisChatMessageStore:
         # Message with multiple content types
         message = ChatMessage(
             role=Role.ASSISTANT,
-            contents=[TextContent(text="Hello"), TextContent(text="World")],
+            contents=[Content.from_text(text="Hello"), Content.from_text(text="World")],
             author_name="TestBot",
             message_id="complex_msg",
             additional_properties={"metadata": "test"},
