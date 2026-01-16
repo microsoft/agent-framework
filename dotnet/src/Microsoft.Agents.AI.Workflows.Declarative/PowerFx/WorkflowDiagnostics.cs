@@ -4,10 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
-using Microsoft.Bot.ObjectModel.Analysis;
-using Microsoft.Bot.ObjectModel.PowerFx;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel.Analysis;
+using Microsoft.Agents.ObjectModel.PowerFx;
 using Microsoft.Extensions.Configuration;
 using Microsoft.PowerFx.Types;
 
