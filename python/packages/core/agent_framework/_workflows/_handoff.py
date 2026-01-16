@@ -116,31 +116,6 @@ class HandoffConfiguration:
         """Compute hash based on source_id and target_id."""
         return hash(self.target_id)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict, excluding conversation to prevent checkpoint duplication.
-
-        The conversation is already preserved in the workflow coordinator's state.
-        Including it here would cause duplicate messages when restoring from checkpoint.
-        """
-        return {
-            "awaiting_agent_id": self.awaiting_agent_id,
-            "prompt": self.prompt,
-            "source_executor_id": self.source_executor_id,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "HandoffUserInputRequest":
-        """Deserialize from dict, initializing conversation as empty.
-
-        The conversation will be reconstructed from the coordinator's state on restore.
-        """
-        return cls(
-            conversation=[],
-            awaiting_agent_id=data["awaiting_agent_id"],
-            prompt=data["prompt"],
-            source_executor_id=data["source_executor_id"],
-        )
-
 
 def get_handoff_tool_name(target_id: str) -> str:
     """Get the standardized handoff tool name for a given target agent ID."""
@@ -623,10 +598,6 @@ class HandoffBuilder:
         self._participants: dict[str, AgentProtocol] = {}
         self._participant_factories: dict[str, Callable[[], AgentProtocol]] = {}
         self._start_id: str | None = None
-        if participant_factories:
-            self.participant_factories(participant_factories)
-
-        self._participant_factories: dict[str, Callable[[], AgentProtocol | Executor]] = {}
         if participant_factories:
             self.participant_factories(participant_factories)
 

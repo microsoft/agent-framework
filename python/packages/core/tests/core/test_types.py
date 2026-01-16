@@ -1012,54 +1012,6 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
     assert tool_choice["required_function_name"] == "get_weather"
 
 
-def test_chat_options_and_tool_choice_override() -> None:
-    """Test that tool_choice from other takes precedence in ChatOptions merge."""
-    # Agent-level defaults to "auto"
-    agent_options = ChatOptions(model_id="gpt-4o", tool_choice="auto")
-    # Run-level specifies "required"
-    run_options = ChatOptions(tool_choice="required")
-
-    merged = agent_options & run_options
-
-    # Run-level should override agent-level
-    assert merged.tool_choice == "required"
-    assert merged.model_id == "gpt-4o"  # Other fields preserved
-
-
-def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
-    """Test that when other.tool_choice is None, self.tool_choice is used."""
-    agent_options = ChatOptions(tool_choice="auto")
-    run_options = ChatOptions(model_id="gpt-4.1")  # tool_choice is None
-
-    merged = agent_options & run_options
-
-    # Should keep agent-level tool_choice since run-level is None
-    assert merged.tool_choice == "auto"
-    assert merged.model_id == "gpt-4.1"
-
-
-def test_chat_options_and_tool_choice_with_tool_mode() -> None:
-    """Test ChatOptions merge with ToolMode objects."""
-    agent_options = ChatOptions(tool_choice=ToolMode.AUTO)
-    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED_ANY)
-
-    merged = agent_options & run_options
-
-    assert merged.tool_choice == ToolMode.REQUIRED_ANY
-    assert merged.tool_choice == "required"  # ToolMode equality with string
-
-
-def test_chat_options_and_tool_choice_required_specific_function() -> None:
-    """Test ChatOptions merge with required specific function."""
-    agent_options = ChatOptions(tool_choice="auto")
-    run_options = ChatOptions(tool_choice=ToolMode.REQUIRED(function_name="get_weather"))
-
-    merged = agent_options & run_options
-
-    assert merged.tool_choice == "required"
-    assert merged.tool_choice.required_function_name == "get_weather"
-
-
 # region Agent Response Fixtures
 
 

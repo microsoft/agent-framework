@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage
+from agent_framework import AgentProtocol, AgentResponseUpdate, AgentThread, ChatMessage
 from pydantic import BaseModel
 
 from ._executors import DurableAgentExecutor
@@ -55,7 +55,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
     This class implements AgentProtocol but with one critical difference:
     - AgentProtocol.run() returns a Coroutine (async, must await)
     - DurableAIAgent.run() returns TaskT (sync Task object - must yield
-        or the AgentRunResponse directly in the case of TaskHubGrpcClient)
+        or the AgentResponse directly in the case of TaskHubGrpcClient)
 
     This represents fundamentally different execution models but maintains the same
     interface contract for all other properties and methods.
@@ -64,7 +64,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
     and what type of Task object is returned.
 
     Type Parameters:
-        TaskT: The task type returned by this agent (e.g., AgentRunResponse, DurableAgentTask, AgentTask)
+        TaskT: The task type returned by this agent (e.g., AgentResponse, DurableAgentTask, AgentTask)
     """
 
     def __init__(self, executor: DurableAgentExecutor[TaskT], name: str, *, agent_id: str | None = None):
@@ -124,7 +124,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
         Note:
             This method overrides AgentProtocol.run() with a different return type:
-            - AgentProtocol.run() returns Coroutine[Any, Any, AgentRunResponse] (async)
+            - AgentProtocol.run() returns Coroutine[Any, Any, AgentResponse] (async)
             - DurableAIAgent.run() returns TaskT (Task object for yielding)
 
             This is intentional to support orchestration contexts that use yield patterns
@@ -157,7 +157,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[AgentRunResponseUpdate]:
+    ) -> AsyncIterator[AgentResponseUpdate]:
         """Run the agent with streaming (not supported for durable agents).
 
         Args:

@@ -12,7 +12,6 @@ from agent_framework import (
     HandoffBuilder,
     HandoffSentEvent,
     RequestInfoEvent,
-    Role,
     WorkflowEvent,
     WorkflowOutputEvent,
     WorkflowRunState,

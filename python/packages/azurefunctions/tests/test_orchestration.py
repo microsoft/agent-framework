@@ -252,7 +252,7 @@ class TestAzureFunctionsFireAndForget:
 
         # Get the result
         response = result.result
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         assert response.messages[0].role == Role.SYSTEM
         # Check message contains key information

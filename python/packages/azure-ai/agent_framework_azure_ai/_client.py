@@ -44,11 +44,6 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 
 logger = get_logger("agent_framework.azure")
 
@@ -304,11 +299,6 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         Returns:
             dict[str, str]: The agent reference to use.
         """
-        # chat_options is needed separately because the base class excludes response_format
-        # from run_options (transforming it to text/text_format for OpenAI). Azure's agent
-        # creation API requires the original response_format to build its own config format.
-        if chat_options is None:
-            chat_options = ChatOptions()
         # Agent name must be explicitly provided by the user.
         if self.agent_name is None:
             raise ServiceInitializationError(

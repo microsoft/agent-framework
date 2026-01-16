@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Shared utilities for handling AgentRunResponse parsing and validation."""
+"""Shared utilities for handling AgentResponse parsing and validation."""
 
 from typing import Any
 

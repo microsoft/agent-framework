@@ -449,7 +449,7 @@ class TestAgentEntityFactory:
         """Test that the entity function handles the run operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
         )
 
         entity_function = create_agent_entity(mock_agent)

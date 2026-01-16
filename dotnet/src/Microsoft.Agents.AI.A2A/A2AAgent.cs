@@ -147,15 +147,15 @@ public sealed class A2AAgent : AIAgent
 
         if (options?.ContinuationToken is not null)
         {
-            // Task stream resumption is not well defined in the A2A v2.* specification, leaving it to the agent implementations.
-            // The v3.0 specification improves this by defining task stream reconnection that allows obtaining the same stream
-            // from the beginning, but it does not define stream resumption from a specific point in the stream.
-            // Therefore, the code should be updated once the A2A .NET library supports the A2A v3.0 specification,
-            // and AF has the necessary model to allow consumers to know whether they need to resume the stream and add new updates to
-            // the existing ones or reconnect the stream and obtain all updates again.
-            // For more details, see the following issue: https://github.com/microsoft/agent-framework/issues/1764
+            // Task stream resumption is not well defined in the A2A v2.* specification, leaving it to the agent implementations.  
+            // The v3.0 specification improves this by defining task stream reconnection that allows obtaining the same stream  
+            // from the beginning, but it does not define stream resumption from a specific point in the stream.  
+            // Therefore, the code should be updated once the A2A .NET library supports the A2A v3.0 specification,  
+            // and AF has the necessary model to allow consumers to know whether they need to resume the stream and add new updates to  
+            // the existing ones or reconnect the stream and obtain all updates again.  
+            // For more details, see the following issue: https://github.com/microsoft/agent-framework/issues/1764  
             throw new InvalidOperationException("Reconnecting to task streams using continuation tokens is not supported yet.");
-            // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
+            // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
         }
 
         MessageSendParams sendParams = new()

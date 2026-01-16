@@ -305,61 +305,6 @@ class ConcurrentBuilder:
         self._participant_factories = list(participant_factories)
         return self
 
-    def register_participants(
-        self,
-        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
-    ) -> "ConcurrentBuilder":
-        r"""Define the parallel participants for this concurrent workflow.
-
-        Accepts factories (callables) that return AgentProtocol instances (e.g., created
-        by a chat client) or Executor instances. Each participant created by a factory
-        is wired as a parallel branch using fan-out edges from an internal dispatcher.
-
-        Args:
-            participant_factories: Sequence of callables returning AgentProtocol or Executor instances
-
-        Raises:
-            ValueError: if `participant_factories` is empty or `.participants()`
-                       or `.register_participants()` were already called
-
-        Example:
-
-        .. code-block:: python
-
-            def create_researcher() -> ChatAgent:
-                return ...
-
-
-            def create_marketer() -> ChatAgent:
-                return ...
-
-
-            def create_legal() -> ChatAgent:
-                return ...
-
-
-            class MyCustomExecutor(Executor): ...
-
-
-            wf = ConcurrentBuilder().register_participants([create_researcher, create_marketer, create_legal]).build()
-
-            # Mixing agent(s) and executor(s) is supported
-            wf2 = ConcurrentBuilder().register_participants([create_researcher, MyCustomExecutor]).build()
-        """
-        if self._participants:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
-            )
-
-        if self._participant_factories:
-            raise ValueError("register_participants() has already been called on this builder instance.")
-
-        if not participant_factories:
-            raise ValueError("participant_factories cannot be empty")
-
-        self._participant_factories = list(participant_factories)
-        return self
-
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
 

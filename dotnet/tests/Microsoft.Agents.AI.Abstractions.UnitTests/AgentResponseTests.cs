@@ -246,24 +246,6 @@ public class AgentResponseTests
         var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
 
         // Act.
-        var animal = response.Deserialize<Animal>();
-
-        // Assert.
-        Assert.NotNull(animal);
-        Assert.Equal(expectedResult.Id, animal.Id);
-        Assert.Equal(expectedResult.FullName, animal.FullName);
-        Assert.Equal(expectedResult.Species, animal.Species);
-    }
-#endif
-
-    [Fact]
-    public void ParseAsStructuredOutputWithJSOSuccess()
-    {
-        // Arrange.
-        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
-
-        // Act.
         var animal = response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options);
 
         // Assert.
@@ -334,24 +316,6 @@ public class AgentResponseTests
         // Arrange.
         var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
         var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
-
-        // Act.
-        response.TryDeserialize(out Animal? animal);
-
-        // Assert.
-        Assert.NotNull(animal);
-        Assert.Equal(expectedResult.Id, animal.Id);
-        Assert.Equal(expectedResult.FullName, animal.FullName);
-        Assert.Equal(expectedResult.Species, animal.Species);
-    }
-#endif
-
-    [Fact]
-    public void TryParseAsStructuredOutputWithJSOSuccess()
-    {
-        // Arrange.
-        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
 
         // Act.
         response.TryDeserialize(TestJsonSerializerContext.Default.Options, out Animal? animal);
