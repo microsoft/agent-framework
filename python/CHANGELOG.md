@@ -11,23 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **agent-framework-azure-ai**: Create/Get Agent API for Azure V1 ([#3192](https://github.com/microsoft/agent-framework/pull/3192)) by @dmytrostruk
-- **agent-framework-core**: Create/Get Agent API for OpenAI Assistants ([#3208](https://github.com/microsoft/agent-framework/pull/3208)) by @dmytrostruk
-- **agent-framework-ag-ui**: Support service-managed thread on AG-UI ([#3136](https://github.com/microsoft/agent-framework/pull/3136)) by @howlowck
-- **agent-framework-ag-ui**: Add MCP tool support for AG-UI approval flows ([#3212](https://github.com/microsoft/agent-framework/pull/3212)) by @moonbox3
-- **samples**: Add AzureAI sample for downloading code interpreter generated files ([#3189](https://github.com/microsoft/agent-framework/pull/3189)) by @giles17
+- **agent-framework-azure-ai**: Create/Get Agent API for Azure V1 ([#3192](https://github.com/microsoft/agent-framework/pull/3192))
+- **agent-framework-core**: Create/Get Agent API for OpenAI Assistants ([#3208](https://github.com/microsoft/agent-framework/pull/3208))
+- **agent-framework-ag-ui**: Support service-managed thread on AG-UI ([#3136](https://github.com/microsoft/agent-framework/pull/3136))
+- **agent-framework-ag-ui**: Add MCP tool support for AG-UI approval flows ([#3212](https://github.com/microsoft/agent-framework/pull/3212))
+- **samples**: Add AzureAI sample for downloading code interpreter generated files ([#3189](https://github.com/microsoft/agent-framework/pull/3189))
 
 ### Changed
 
-- **agent-framework-core**: [BREAKING] Rename `create_agent` to `as_agent` ([#3249](https://github.com/microsoft/agent-framework/pull/3249)) by @dmytrostruk
-- **agent-framework-core**: [BREAKING] Rename `WorkflowOutputEvent.source_executor_id` to `executor_id` for API consistency ([#3166](https://github.com/microsoft/agent-framework/pull/3166)) by @moonbox3
+- **agent-framework-core**: [BREAKING] Rename `create_agent` to `as_agent` ([#3249](https://github.com/microsoft/agent-framework/pull/3249))
+- **agent-framework-core**: [BREAKING] Rename `WorkflowOutputEvent.source_executor_id` to `executor_id` for API consistency ([#3166](https://github.com/microsoft/agent-framework/pull/3166))
 
 ### Fixed
 
-- **agent-framework-core**: Properly configure structured outputs based on new options dict ([#3213](https://github.com/microsoft/agent-framework/pull/3213)) by @moonbox3
-- **agent-framework-core**: Correct `FunctionResultContent` ordering in `WorkflowAgent.merge_updates` ([#3168](https://github.com/microsoft/agent-framework/pull/3168)) by @moonbox3
-- **agent-framework-azurefunctions**: Update `DurableAIAgent` and fix integration tests ([#3241](https://github.com/microsoft/agent-framework/pull/3241)) by @moonbox3
-- **agent-framework-azure-ai**: Create/Get Agent API fixes and example improvements ([#3246](https://github.com/microsoft/agent-framework/pull/3246)) by @dmytrostruk
+- **agent-framework-core**: Properly configure structured outputs based on new options dict ([#3213](https://github.com/microsoft/agent-framework/pull/3213))
+- **agent-framework-core**: Correct `FunctionResultContent` ordering in `WorkflowAgent.merge_updates` ([#3168](https://github.com/microsoft/agent-framework/pull/3168))
+- **agent-framework-azurefunctions**: Update `DurableAIAgent` and fix integration tests ([#3241](https://github.com/microsoft/agent-framework/pull/3241))
+- **agent-framework-azure-ai**: Create/Get Agent API fixes and example improvements ([#3246](https://github.com/microsoft/agent-framework/pull/3246))
 
 ## [1.0.0b260114] - 2026-01-14
 
