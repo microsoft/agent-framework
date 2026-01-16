@@ -324,7 +324,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         response = await self._inner_get_response(messages=messages, options=options, **kwargs)
         contents = list(response.messages[0].contents if response.messages else [])
         if response.usage_details:
-            contents.append(Content.from_usage(details=response.usage_details))
+            contents.append(Content.from_usage(usage_details=response.usage_details))  # type: ignore[arg-type]
         yield ChatResponseUpdate(
             response_id=response.response_id,
             contents=contents,
@@ -629,7 +629,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     Content.from_function_result(
                         call_id=tool_result.get("toolUseId") or self._generate_tool_call_id(),
                         result=result_value,
-                        exception=exception,
+                        exception=str(exception) if exception else None,  # type: ignore[arg-type]
                         raw_representation=block,
                     )
                 )

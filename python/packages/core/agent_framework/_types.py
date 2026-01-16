@@ -131,9 +131,8 @@ def detect_media_type_from_base64(data_base64: str) -> str | None:
             # Returns: "image/png"
     """
     # Remove data URI prefix if present
-    if data_base64.startswith("data:"):
-        if ";base64," in data_base64:
-            data_base64 = data_base64.split(";base64,", 1)[1]
+    if data_base64.startswith("data:") and ";base64," in data_base64:
+        data_base64 = data_base64.split(";base64,", 1)[1]
 
     try:
         # Decode just the first few bytes to check magic numbers
@@ -236,7 +235,7 @@ def _get_data_bytes_as_str(content: "Content") -> str | None:
         raise ContentError("Data URI must use base64 encoding")
 
     _, data = uri.split(";base64,", 1)
-    return data
+    return data  # type: ignore[return-value, no-any-return]
 
 
 def _get_data_bytes(content: "Content") -> bytes | None:
@@ -462,7 +461,7 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
 
         # Sum if both present, otherwise use the non-None value
         if val1 is not None and val2 is not None:
-            result[key] = val1 + val2  # type: ignore[literal-required]
+            result[key] = val1 + val2  # type: ignore[literal-required, operator]
         elif val1 is not None:
             result[key] = val1  # type: ignore[literal-required]
         elif val2 is not None:
@@ -532,7 +531,7 @@ class Content:
         """
         self.type = type
         self.annotations = annotations
-        self.additional_properties: dict[str, Any] = additional_properties or {}
+        self.additional_properties: dict[str, Any] = additional_properties or {}  # type: ignore[assignment]
         self.raw_representation = raw_representation
 
         # Set all content-specific attributes
@@ -1032,8 +1031,8 @@ class Content:
             )
         return Content.from_function_approval_response(
             approved=approved,
-            id=self.id,  # type: ignore[attr-defined]
-            function_call=self.function_call,  # type: ignore[attr-defined]
+            id=self.id,  # type: ignore[attr-defined, arg-type]
+            function_call=self.function_call,  # type: ignore[attr-defined, arg-type]
             annotations=self.annotations,
             additional_properties=self.additional_properties,
             raw_representation=self.raw_representation,
@@ -1177,11 +1176,11 @@ class Content:
         elif other.annotations is None:
             annotations = self.annotations
         else:
-            annotations = self.annotations + other.annotations
+            annotations = self.annotations + other.annotations  # type: ignore[operator]
 
         return Content(
             "text",
-            text=self.text + other.text,  # type: ignore[attr-defined]
+            text=self.text + other.text,  # type: ignore[attr-defined, operator]
             annotations=annotations,
             additional_properties={
                 **(other.additional_properties or {}),
@@ -1208,7 +1207,7 @@ class Content:
         elif other.annotations is None:
             annotations = self.annotations
         else:
-            annotations = self.annotations + other.annotations
+            annotations = self.annotations + other.annotations  # type: ignore[operator]
 
         # Concatenate text, handling None values
         self_text = self.text or ""  # type: ignore[attr-defined]
@@ -1382,7 +1381,7 @@ class Content:
                 return {"raw": loaded}
             except (json.JSONDecodeError, TypeError):
                 return {"raw": self.arguments}
-        return self.arguments
+        return self.arguments  # type: ignore[return-value]
 
 
 # endregion
@@ -1715,7 +1714,7 @@ class ChatMessage(SerializationMixin):
         Remarks:
             This property concatenates the text of all TextContent objects in Content.
         """
-        return " ".join(content.text for content in self.contents if content.type == "text")
+        return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
 def prepare_messages(
@@ -2378,7 +2377,7 @@ class ChatResponseUpdate(SerializationMixin):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all contents in the update."""
-        return "".join(content.text for content in self.contents if content.type == "text")
+        return "".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
     def __str__(self) -> str:
         return self.text
@@ -2700,7 +2699,7 @@ class AgentResponseUpdate(SerializationMixin):
     @property
     def text(self) -> str:
         """Get the concatenated text of all TextContent objects in contents."""
-        return "".join(content.text for content in self.contents if content.type == "text") if self.contents else ""
+        return "".join(content.text for content in self.contents if content.type == "text") if self.contents else ""  # type: ignore[misc]
 
     @property
     def user_input_requests(self) -> list[Content]:

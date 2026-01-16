@@ -1524,28 +1524,28 @@ async def _auto_invoke_function(
 
     tool: AIFunction[BaseModel, Any] | None = None
     if function_call_content.type == "function_call":
-        tool = tool_map.get(function_call_content.name)
+        tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
         if tool is None:
             exc = KeyError(f'Function "{function_call_content.name}" not found.')
             return FunctionExecutionResult(
                 content=Content.from_function_result(
-                    call_id=function_call_content.call_id,
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
                     result=f'Error: Requested function "{function_call_content.name}" not found.',
-                    exception=exc,
+                    exception=str(exc),  # type: ignore[arg-type]
                 )
             )
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
         # and never reach this function, so we only handle approved=True cases here.
         inner_call = function_call_content.function_call  # type: ignore[attr-defined]
-        if inner_call.type != "function_call":
+        if inner_call.type != "function_call":  # type: ignore[union-attr]
             return function_call_content
-        tool = tool_map.get(inner_call.name)  # type: ignore[attr-defined]
+        tool = tool_map.get(inner_call.name)  # type: ignore[attr-defined, union-attr, arg-type]
         if tool is None:
             # we assume it is a hosted tool
             return function_call_content
-        function_call_content = inner_call
+        function_call_content = inner_call  # type: ignore[assignment]
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1562,7 +1562,11 @@ async def _auto_invoke_function(
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
         return FunctionExecutionResult(
-            content=Content.from_function_result(call_id=function_call_content.call_id, result=message, exception=exc)
+            content=Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=message,
+                exception=str(exc),  # type: ignore[arg-type]
+            )
         )
 
     if not middleware_pipeline or (
@@ -1577,7 +1581,7 @@ async def _auto_invoke_function(
             )
             return FunctionExecutionResult(
                 content=Content.from_function_result(
-                    call_id=function_call_content.call_id,
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
                     result=function_result,
                 )
             )
@@ -1587,7 +1591,9 @@ async def _auto_invoke_function(
                 message = f"{message} Exception: {exc}"
             return FunctionExecutionResult(
                 content=Content.from_function_result(
-                    call_id=function_call_content.call_id, result=message, exception=exc
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                    result=message,
+                    exception=str(exc),
                 )
             )
     # Execute through middleware pipeline if available
@@ -1615,7 +1621,7 @@ async def _auto_invoke_function(
         )
         return FunctionExecutionResult(
             content=Content.from_function_result(
-                call_id=function_call_content.call_id,
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=function_result,
             ),
             terminate=middleware_context.terminate,
@@ -1625,7 +1631,11 @@ async def _auto_invoke_function(
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
         return FunctionExecutionResult(
-            content=Content.from_function_result(call_id=function_call_content.call_id, result=message, exception=exc)
+            content=Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=message,
+                exception=str(exc),  # type: ignore[arg-type]
+            )
         )
 
 
@@ -1698,7 +1708,7 @@ async def _try_execute_function_calls(
         # approval can only be needed for Function Call Content, not Approval Responses.
         return (
             [
-                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined]
+                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
                 for fcc in function_calls
                 if fcc.type == "function_call"
             ],
@@ -1778,7 +1788,7 @@ def _collect_approval_responses(
         for content in msg.contents if isinstance(msg, ChatMessage) else []:
             # Collect BOTH approved and rejected responses
             if content.type == "function_approval_response":
-                fcc_todo[content.id] = content  # type: ignore[attr-defined]
+                fcc_todo[content.id] = content  # type: ignore[attr-defined, index]
     return fcc_todo
 
 
@@ -1797,7 +1807,7 @@ def _replace_approval_contents_with_results(
     for msg in messages:
         # First pass - collect existing function call IDs to avoid duplicates
         existing_call_ids = {
-            content.call_id
+            content.call_id  # type: ignore[union-attr, operator]
             for content in msg.contents
             if content.type == "function_call" and content.call_id  # type: ignore[attr-defined]
         }
@@ -1808,12 +1818,12 @@ def _replace_approval_contents_with_results(
         for content_idx, content in enumerate(msg.contents):
             if content.type == "function_approval_request":
                 # Don't add the function call if it already exists (would create duplicate)
-                if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined]
+                if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined, union-attr, operator]
                     # Just mark for removal - the function call already exists
                     contents_to_remove.append(content_idx)
                 else:
                     # Put back the function call content only if it doesn't exist
-                    msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined]
+                    msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
             elif content.type == "function_approval_response":
                 if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
                     # Replace with the corresponding result
@@ -1825,7 +1835,7 @@ def _replace_approval_contents_with_results(
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
                     msg.contents[content_idx] = Content.from_function_result(
-                        call_id=content.function_call.call_id,
+                        call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
                     msg.role = Role.TOOL

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
-from agent_framework import ChatMessage
+from agent_framework import ChatMessage, Content
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -722,7 +722,7 @@ class MessageMapper:
             # Add usage information if present
             usage_details = getattr(response, "usage_details", None)
             if usage_details:
-                usage_content = Content.from_usage(details=usage_details)
+                usage_content = Content.from_usage(usage_details=usage_details)
                 await self._map_usage_content(usage_content, context)
                 # Note: _map_usage_content returns None - it accumulates usage for final Response.usage
 

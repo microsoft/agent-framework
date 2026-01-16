@@ -474,7 +474,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": content.get_data_bytes_as_str(),
+                                "data": content.get_data_bytes_as_str(),  # type: ignore[attr-defined]
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },
@@ -692,9 +692,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         if usage.input_tokens is not None:
             usage_details["input_token_count"] = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
+            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens  # type: ignore[typeddict-unknown-key]
         if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
+            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens  # type: ignore[typeddict-unknown-key]
         return usage_details
 
     def _parse_contents_from_anthropic(
@@ -748,7 +748,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             )
                         )
                 case "mcp_tool_result":
-                    call_id, name = self._last_call_id_name or (None, None)
+                    call_id, _ = self._last_call_id_name or (None, None)
                     parsed_output: list[Content] | None = None
                     if content_block.content:
                         if isinstance(content_block.content, list):
@@ -921,7 +921,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                 Annotation(
                                     type="citation",
                                     raw_representation=content_block.content,
-                                    snippet="\n".join(content_block.content.lines)
+                                    snippet="\n".join(content_block.content.lines)  # type: ignore[typeddict-item]
                                     if content_block.content.lines
                                     else None,
                                     annotated_regions=[
@@ -1006,7 +1006,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
                     cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
                             type="text_span",
                             start_index=citation.start_char_index,
@@ -1019,7 +1019,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
                     cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
                             type="text_span",
                             start_index=citation.start_page_number,
@@ -1032,7 +1032,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
                     cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
                             type="text_span",
                             start_index=citation.start_block_index,
@@ -1048,7 +1048,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     cit["snippet"] = citation.cited_text
                     cit["url"] = citation.source
                     cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
                             type="text_span",
                             start_index=citation.start_block_index,

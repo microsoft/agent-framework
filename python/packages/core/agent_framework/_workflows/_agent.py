@@ -382,7 +382,7 @@ class WorkflowAgent(BaseAgent):
             for content in message.contents:
                 if content.type == "function_approval_response":
                     # Parse the function arguments to recover request payload
-                    arguments_payload = content.function_call.arguments  # type: ignore[attr-defined]
+                    arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
                     if isinstance(arguments_payload, str):
                         try:
                             parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
@@ -428,7 +428,7 @@ class WorkflowAgent(BaseAgent):
         if isinstance(data, list):
             return [c for item in data for c in self._extract_contents(item)]
         if isinstance(data, Content):
-            return [cast(Content, data)]
+            return [data]  # type: ignore[redundant-cast]
         if isinstance(data, str):
             return [Content.from_text(text=data)]
         return [Content.from_text(text=str(data))]
@@ -522,7 +522,7 @@ class WorkflowAgent(BaseAgent):
                 messages=(current.messages or []) + (incoming.messages or []),
                 response_id=current.response_id or incoming.response_id,
                 created_at=incoming.created_at or current.created_at,
-                usage_details=add_usage_details(current.usage_details, incoming.usage_details),
+                usage_details=add_usage_details(current.usage_details, incoming.usage_details),  # type: ignore[arg-type]
                 raw_representation=raw_list if raw_list else None,
                 additional_properties=incoming.additional_properties or current.additional_properties,
             )
@@ -557,7 +557,7 @@ class WorkflowAgent(BaseAgent):
             if aggregated:
                 final_messages.extend(aggregated.messages)
                 if aggregated.usage_details:
-                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)
+                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)  # type: ignore[arg-type]
                 if aggregated.created_at and (
                     not latest_created_at or _parse_dt(aggregated.created_at) > _parse_dt(latest_created_at)
                 ):
@@ -581,7 +581,7 @@ class WorkflowAgent(BaseAgent):
             flattened = AgentResponse.from_agent_run_response_updates(global_dangling)
             final_messages.extend(flattened.messages)
             if flattened.usage_details:
-                merged_usage = add_usage_details(merged_usage, flattened.usage_details)
+                merged_usage = add_usage_details(merged_usage, flattened.usage_details)  # type: ignore[arg-type]
             if flattened.created_at and (
                 not latest_created_at or _parse_dt(flattened.created_at) > _parse_dt(latest_created_at)
             ):

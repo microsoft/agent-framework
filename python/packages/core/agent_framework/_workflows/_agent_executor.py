@@ -193,7 +193,7 @@ class AgentExecutor(Executor):
             ctx: The workflow context for emitting events and outputs.
         """
         self._pending_responses_to_agent.append(response)
-        self._pending_agent_requests.pop(original_request.id, None)
+        self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
 
         if not self._pending_agent_requests:
             # All pending requests have been resolved; resume agent execution
@@ -344,7 +344,7 @@ class AgentExecutor(Executor):
         # Handle any user input requests
         if response.user_input_requests:
             for user_input_request in response.user_input_requests:
-                self._pending_agent_requests[user_input_request.id] = user_input_request
+                self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
                 await ctx.request_info(user_input_request, Content)
             return None
 
@@ -387,7 +387,7 @@ class AgentExecutor(Executor):
         # Handle any user input requests after the streaming completes
         if user_input_requests:
             for user_input_request in user_input_requests:
-                self._pending_agent_requests[user_input_request.id] = user_input_request
+                self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
                 await ctx.request_info(user_input_request, Content)
             return None
 

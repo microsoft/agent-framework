@@ -91,11 +91,11 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                 user_text = ""
                 for content in msg.contents or []:
                     if content.type == "text":
-                        user_text = content.text
+                        user_text = content.text  # type: ignore[assignment]
                         break
 
                 try:
-                    parsed = json.loads(user_text)
+                    parsed = json.loads(user_text)  # type: ignore[arg-type]
                     if "accepted" in parsed:
                         logger.info(
                             f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
@@ -460,8 +460,8 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         _update_tool_call_arguments(messages, str(approval_call_id), merged_args)
                         # Create a new FunctionCallContent with the modified arguments
                         func_call_for_approval = Content.from_function_call(
-                            call_id=matching_func_call.call_id,
-                            name=matching_func_call.name,
+                            call_id=matching_func_call.call_id,  # type: ignore[arg-type]
+                            name=matching_func_call.name,  # type: ignore[arg-type]
                             arguments=json.dumps(filtered_args),
                         )
                         logger.info(f"Using modified arguments from approval: {filtered_args}")
@@ -647,7 +647,7 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
 
         for content in msg.contents:
             if content.type == "text":
-                content_text += content.text
+                content_text += content.text  # type: ignore[operator]
             elif content.type == "function_call":
                 tool_calls.append(
                     {

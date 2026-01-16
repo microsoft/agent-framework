@@ -477,7 +477,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         for message in messages:
             if message.role.value in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
-                    instructions_list.append(text_content.text)
+                    instructions_list.append(text_content.text)  # type: ignore[arg-type]
             else:
                 result.append(message)
 

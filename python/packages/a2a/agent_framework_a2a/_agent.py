@@ -330,7 +330,7 @@ class A2AAgent(BaseAgent):
                         A2APart(
                             root=FilePart(
                                 file=FileWithBytes(
-                                    bytes=_get_uri_data(content.uri),
+                                    bytes=_get_uri_data(content.uri),  # type: ignore[arg-type]
                                     mime_type=content.media_type,
                                 ),
                                 metadata=content.additional_properties,

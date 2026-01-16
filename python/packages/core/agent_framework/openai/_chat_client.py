@@ -291,7 +291,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(None, protected_data=json.dumps(reasoning_details)))
+                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -314,7 +314,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             return ChatResponseUpdate(
                 role=Role.ASSISTANT,
                 contents=[
-                    Content.from_usage(details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk)
+                    Content.from_usage(
+                        usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
+                    )
                 ],
                 model_id=chunk.model,
                 additional_properties=chunk_metadata,
@@ -332,7 +334,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(None, protected_data=json.dumps(reasoning_details)))
+                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -353,18 +355,18 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         )
         if usage.completion_tokens_details:
             if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
-                details["completion/accepted_prediction_tokens"] = tokens
+                details["completion/accepted_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.audio_tokens:
-                details["completion/audio_tokens"] = tokens
+                details["completion/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.reasoning_tokens:
-                details["completion/reasoning_tokens"] = tokens
+                details["completion/reasoning_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
-                details["completion/rejected_prediction_tokens"] = tokens
+                details["completion/rejected_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
         if usage.prompt_tokens_details:
             if tokens := usage.prompt_tokens_details.audio_tokens:
-                details["prompt/audio_tokens"] = tokens
+                details["prompt/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.prompt_tokens_details.cached_tokens:
-                details["prompt/cached_tokens"] = tokens
+                details["prompt/cached_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
         return details
 
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
@@ -516,9 +518,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
                 # Extract base64 data from data URI
                 audio_data = content.uri
-                if audio_data.startswith("data:"):
+                if audio_data.startswith("data:"):  # type: ignore[union-attr]
                     # Extract just the base64 part after "data:audio/format;base64,"
-                    audio_data = audio_data.split(",", 1)[-1]
+                    audio_data = audio_data.split(",", 1)[-1]  # type: ignore[union-attr]
 
                 return {
                     "type": "input_audio",
@@ -527,7 +529,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                         "format": audio_format,
                     },
                 }
-            case "data" | "uri" if content.has_top_level_media_type("application") and content.uri.startswith("data:"):
+            case "data" | "uri" if content.has_top_level_media_type("application") and content.uri.startswith("data:"):  # type: ignore[union-attr]
                 # All application/* media types should be treated as files for OpenAI
                 filename = getattr(content, "filename", None) or (
                     content.additional_properties.get("filename")

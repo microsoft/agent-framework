@@ -108,7 +108,7 @@ class AgentFrameworkEventBridge:
 
     def _handle_text_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
-        logger.info(f"  TextContent found: length={len(content.text)}")
+        logger.info(f"  TextContent found: length={len(content.text)}")  # type: ignore[arg-type]
         logger.info(
             "  Flags: skip_text_content=%s, should_stop_after_confirm=%s",
             self.skip_text_content,
@@ -121,7 +121,7 @@ class AgentFrameworkEventBridge:
 
         if self.should_stop_after_confirm:
             logger.info("  SKIPPING TextContent: waiting for confirm_changes response")
-            self.suppressed_summary += content.text
+            self.suppressed_summary += content.text  # type: ignore[operator]
             logger.info(f"  Suppressed summary length={len(self.suppressed_summary)}")
             return events
 
@@ -309,7 +309,7 @@ class AgentFrameworkEventBridge:
 
         result_event = ToolCallResultEvent(
             message_id=result_message_id,
-            tool_call_id=content.call_id,
+            tool_call_id=content.call_id,  # type: ignore[arg-type]
             content=result_content,
             role="tool",
         )
@@ -464,10 +464,10 @@ class AgentFrameworkEventBridge:
     def _handle_function_approval_request_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         logger.info("=== FUNCTION APPROVAL REQUEST ===")
-        logger.info(f"  Function: {content.function_call.name}")
-        logger.info(f"  Call ID: {content.function_call.call_id}")
+        logger.info(f"  Function: {content.function_call.name}")  # type: ignore[union-attr]
+        logger.info(f"  Call ID: {content.function_call.call_id}")  # type: ignore[union-attr]
 
-        parsed_args = content.function_call.parse_arguments()
+        parsed_args = content.function_call.parse_arguments()  # type: ignore[union-attr]
         parsed_arg_keys = list(parsed_args.keys()) if parsed_args else "None"
         logger.info(f"  Parsed args keys: {parsed_arg_keys}")
 
@@ -477,12 +477,12 @@ class AgentFrameworkEventBridge:
                 list(self.predict_state_config.keys()) if self.predict_state_config else "None",
             )
             for state_key, config in self.predict_state_config.items():
-                if config["tool"] != content.function_call.name:
+                if config["tool"] != content.function_call.name:  # type: ignore[union-attr]
                     continue
                 tool_arg_name = config["tool_argument"]
                 logger.info(
                     "  MATCHED tool '%s' for state key '%s', arg='%s'",
-                    content.function_call.name,
+                    content.function_call.name,  # type: ignore[union-attr]
                     state_key,
                     tool_arg_name,
                 )
@@ -499,11 +499,11 @@ class AgentFrameworkEventBridge:
                 )
                 events.append(state_snapshot)
 
-        if content.function_call.call_id:
+        if content.function_call.call_id:  # type: ignore[union-attr]
             end_event = ToolCallEndEvent(
-                tool_call_id=content.function_call.call_id,
+                tool_call_id=content.function_call.call_id,  # type: ignore[union-attr]
             )
-            logger.info(f"Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'")
+            logger.info(f"Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'")  # type: ignore[union-attr]
             events.append(end_event)
 
         # Emit the function_approval_request custom event for UI implementations that support it
@@ -512,18 +512,18 @@ class AgentFrameworkEventBridge:
             value={
                 "id": content.id,
                 "function_call": {
-                    "call_id": content.function_call.call_id,
-                    "name": content.function_call.name,
-                    "arguments": content.function_call.parse_arguments(),
+                    "call_id": content.function_call.call_id,  # type: ignore[union-attr]
+                    "name": content.function_call.name,  # type: ignore[union-attr]
+                    "arguments": content.function_call.parse_arguments(),  # type: ignore[union-attr]
                 },
             },
         )
-        logger.info(f"Emitting function_approval_request custom event for '{content.function_call.name}'")
+        logger.info(f"Emitting function_approval_request custom event for '{content.function_call.name}'")  # type: ignore[union-attr]
         events.append(approval_event)
 
         # Emit a UI-friendly approval tool call for function approvals.
         if self.require_confirmation:
-            events.extend(self._emit_function_approval_tool_call(content.function_call))
+            events.extend(self._emit_function_approval_tool_call(content.function_call))  # type: ignore[arg-type]
 
         # Signal orchestrator to stop the run and wait for user approval response
         self.should_stop_after_confirm = True

@@ -58,7 +58,7 @@ def log_messages(messages: list[ChatMessage]) -> None:
             for content in msg.contents:
                 if hasattr(content, "type"):
                     if content.type == "text":
-                        escape_text = content.text.replace("<", r"\<")
+                        escape_text = content.text.replace("<", r"\<")  # type: ignore[union-attr]
                         if msg.role == Role.SYSTEM:
                             logger_.info(f"<cyan>[SYSTEM]</cyan> {escape_text}")
                         elif msg.role == Role.USER:

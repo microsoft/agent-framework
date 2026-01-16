@@ -452,16 +452,16 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
             )
 
-        if not any(isinstance(c, Content) and c.type == "data" for c in message.contents):
+        if not any(c.type == "data" for c in message.contents):
             return [OllamaMessage(role="user", content=message.text)]
 
         user_message = OllamaMessage(role="user", content=message.text)
-        data_contents = [c for c in message.contents if isinstance(c, Content) and c.type == "data"]
+        data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
             if not any(c.has_top_level_media_type("image") for c in data_contents):
                 raise ServiceInvalidRequestError("Only image data content is supported for user messages in Ollama.")
             # Ollama expects base64 strings without prefix
-            user_message["images"] = [c.uri.split(",")[1] for c in data_contents]
+            user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:

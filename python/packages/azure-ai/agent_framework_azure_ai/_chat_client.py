@@ -527,9 +527,9 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                         # Create Annotation with real URL
                         citation = Annotation(
                             type="citation",
-                            title=annotation.url_citation.title,
+                            title=annotation.url_citation.title,  # type: ignore[typeddict-item]
                             url=real_url,
-                            snippet=None,
+                            snippet=None,  # type: ignore[typeddict-item]
                             annotated_regions=annotated_regions,
                             raw_representation=annotation,
                         )
@@ -1067,7 +1067,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         for chat_message in messages:
             if chat_message.role.value in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if content.type == "text"]:
-                    instructions.append(text_content.text)
+                    instructions.append(text_content.text)  # type: ignore[arg-type]
                 continue
 
             message_contents: list[MessageInputContentBlock] = []
@@ -1075,11 +1075,11 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             for content in chat_message.contents:
                 match content.type:
                     case "text":
-                        message_contents.append(MessageInputTextBlock(text=content.text))
+                        message_contents.append(MessageInputTextBlock(text=content.text))  # type: ignore[arg-type]
                     case "data" | "uri":
                         if content.has_top_level_media_type("image"):
                             message_contents.append(
-                                MessageInputImageUrlBlock(image_url=MessageImageUrlParam(url=content.uri))
+                                MessageInputImageUrlBlock(image_url=MessageImageUrlParam(url=content.uri))  # type: ignore[arg-type]
                             )
                         # Only images are supported. Other media types are ignored.
                     case "function_result" | "function_approval_response":
@@ -1165,7 +1165,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 case HostedFileSearchTool():
                     vector_stores = [inp for inp in tool.inputs or [] if inp.type == "hosted_vector_store"]
                     if vector_stores:
-                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
+                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])  # type: ignore[misc]
                         tool_definitions.extend(file_search.definitions)
                         # Set tool_resources for file search to work properly with Azure AI
                         if run_options is not None and "tool_resources" not in run_options:
@@ -1194,7 +1194,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 # We need to extract the run ID and ensure that the Output/Approval we send back to Azure
                 # is only the call ID.
                 run_and_call_ids: list[str] = (
-                    json.loads(content.call_id) if content.type == "function_result" else json.loads(content.id)
+                    json.loads(content.call_id) if content.type == "function_result" else json.loads(content.id)  # type: ignore[arg-type]
                 )
 
                 if (
@@ -1218,7 +1218,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 elif content.type == "function_approval_response":
                     if tool_approvals is None:
                         tool_approvals = []
-                    tool_approvals.append(ToolApproval(tool_call_id=call_id, approve=content.approved))
+                    tool_approvals.append(ToolApproval(tool_call_id=call_id, approve=content.approved))  # type: ignore[arg-type]
 
         return run_id, tool_outputs, tool_approvals
 

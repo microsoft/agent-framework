@@ -9,6 +9,7 @@ from agent_framework import (
     AIFunction,
     ChatAgent,
     ChatClientProtocol,
+    Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedMCPSpecificApproval,

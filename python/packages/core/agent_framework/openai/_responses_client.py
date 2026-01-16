@@ -400,7 +400,7 @@ class OpenAIBaseResponsesClient(
                         if not tool.inputs:
                             raise ValueError("HostedFileSearchTool requires inputs to be specified.")
                         inputs: list[str] = [
-                            inp.vector_store_id
+                            inp.vector_store_id  # type: ignore[misc]
                             for inp in tool.inputs
                             if inp.type == "hosted_vector_store"  # type: ignore[attr-defined]
                         ]
@@ -618,7 +618,7 @@ class OpenAIBaseResponsesClient(
                     and content.additional_properties
                     and "fc_id" in content.additional_properties
                 ):
-                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined]
+                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
@@ -757,11 +757,11 @@ class OpenAIBaseResponsesClient(
             case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",
-                    "id": content.id,
-                    "arguments": content.function_call.arguments,
-                    "name": content.function_call.name,
-                    "server_label": content.function_call.additional_properties.get("server_label")
-                    if content.function_call.additional_properties
+                    "id": content.id,  # type: ignore[union-attr]
+                    "arguments": content.function_call.arguments,  # type: ignore[union-attr]
+                    "name": content.function_call.name,  # type: ignore[union-attr]
+                    "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
+                    if content.function_call.additional_properties  # type: ignore[union-attr]
                     else None,
                 }
             case "function_approval_response":
@@ -1151,7 +1151,7 @@ class OpenAIBaseResponsesClient(
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
-                        contents.append(Content.from_usage(details=usage, raw_representation=event))
+                        contents.append(Content.from_usage(usage_details=usage, raw_representation=event))
             case "response.output_item.added":
                 event_item = event.item
                 match event_item.type:
@@ -1405,9 +1405,9 @@ class OpenAIBaseResponsesClient(
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details and usage.input_tokens_details.cached_tokens:
-            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens
+            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens  # type: ignore[typeddict-unknown-key]
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
-            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
+            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens  # type: ignore[typeddict-unknown-key]
         return details
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:

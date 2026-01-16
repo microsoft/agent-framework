@@ -602,7 +602,7 @@ class AgentFrameworkExecutor:
         """
         # Import Agent Framework types
         try:
-            from agent_framework import ChatMessage, Content, Role
+            from agent_framework import ChatMessage, Role
         except ImportError:
             # Fallback to string extraction if Agent Framework not available
             return self._extract_user_message_fallback(input_data)

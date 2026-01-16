@@ -54,8 +54,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
     """Replace server_function_call instances with their underlying call content."""
     for idx, content in enumerate(contents):
-        if content.type == "server_function_call":
-            contents[idx] = content.function_call  # type: ignore[assignment]
+        if content.type == "server_function_call":  # type: ignore[union-attr]
+            contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
 TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
@@ -273,10 +273,10 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
             if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
                 try:
                     uri = content.uri
-                    if uri.startswith("data:application/json;base64,"):
+                    if uri.startswith("data:application/json;base64,"):  # type: ignore[union-attr]
                         import base64
 
-                        encoded_data = uri.split(",", 1)[1]
+                        encoded_data = uri.split(",", 1)[1]  # type: ignore[union-attr]
                         decoded_bytes = base64.b64decode(encoded_data)
                         state = json.loads(decoded_bytes.decode("utf-8"))
 
@@ -414,19 +414,19 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
                 )
                 # Distinguish client vs server tools
                 for i, content in enumerate(update.contents):
-                    if content.type == "function_call":
+                    if content.type == "function_call":  # type: ignore[attr-defined]
                         logger.debug(
-                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
+                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"  # type: ignore[attr-defined]
                         )
-                        if content.name in client_tool_set:
+                        if content.name in client_tool_set:  # type: ignore[attr-defined]
                             # Client tool - let @use_function_invocation execute it
-                            if not content.additional_properties:
-                                content.additional_properties = {}
-                            content.additional_properties["agui_thread_id"] = thread_id
+                            if not content.additional_properties:  # type: ignore[attr-defined]
+                                content.additional_properties = {}  # type: ignore[attr-defined]
+                            content.additional_properties["agui_thread_id"] = thread_id  # type: ignore[attr-defined]
                         else:
                             # Server tool - wrap so @use_function_invocation ignores it
-                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
-                            self._register_server_tool_placeholder(content.name)
+                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")  # type: ignore[union-attr]
+                            self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
                 yield update
