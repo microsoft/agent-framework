@@ -87,6 +87,37 @@ class AzureAISettings(AFBaseSettings):
     model_deployment_name: str | None = None
 
 
+def _extract_project_connection_id(additional_properties: dict[str, Any] | None) -> str | None:
+    """Extract project_connection_id from HostedMCPTool additional_properties.
+
+    Checks for both direct 'project_connection_id' key (programmatic usage)
+    and 'connection.name' structure (declarative/YAML usage).
+
+    Args:
+        additional_properties: The additional_properties dict from a HostedMCPTool.
+
+    Returns:
+        The project_connection_id if found, None otherwise.
+    """
+    if not additional_properties:
+        return None
+
+    # Check for direct project_connection_id (programmatic usage)
+    project_connection_id = additional_properties.get("project_connection_id")
+    if isinstance(project_connection_id, str):
+        return project_connection_id
+
+    # Check for connection.name structure (declarative/YAML usage)
+    if "connection" in additional_properties:
+        conn = additional_properties["connection"]
+        if isinstance(conn, dict):
+            name = conn.get("name")
+            if isinstance(name, str):
+                return name
+
+    return None
+
+
 def to_azure_ai_agent_tools(
     tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
     run_options: dict[str, Any] | None = None,
@@ -322,6 +353,11 @@ def from_azure_ai_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[T
                     if "never" in require_approval:
                         approval_mode["never_require_approval"] = set(require_approval["never"].get("tool_names", []))  # type: ignore
 
+            # Preserve project_connection_id in additional_properties
+            additional_props: dict[str, Any] | None = None
+            if project_connection_id := mcp_tool.get("project_connection_id"):
+                additional_props = {"connection": {"name": project_connection_id}}
+
             agent_tools.append(
                 HostedMCPTool(
                     name=mcp_tool.get("server_label", "").replace("_", " "),
@@ -330,6 +366,7 @@ def from_azure_ai_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[T
                     headers=mcp_tool.get("headers"),
                     allowed_tools=mcp_tool.get("allowed_tools"),
                     approval_mode=approval_mode,  # type: ignore
+                    additional_properties=additional_props,
                 )
             )
         elif tool_type == "code_interpreter":
@@ -466,7 +503,13 @@ def _prepare_mcp_tool_for_azure_ai(tool: HostedMCPTool) -> MCPTool:
     if tool.description:
         mcp["server_description"] = tool.description
 
-    if tool.headers:
+    # Check for project_connection_id in additional_properties (for Azure AI Foundry connections)
+    project_connection_id = _extract_project_connection_id(tool.additional_properties)
+    if project_connection_id:
+        mcp["project_connection_id"] = project_connection_id
+    elif tool.headers:
+        # Only use headers if no project_connection_id is available
+        # Note: Azure AI Agent Service may reject headers with sensitive info
         mcp["headers"] = tool.headers
 
     if tool.allowed_tools:
