@@ -165,6 +165,7 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore{T}"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="tokenCredential"/> is null.</exception>
     [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
     [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore<T> CreateCheckpointStoreUsingManagedIdentity<T>(
