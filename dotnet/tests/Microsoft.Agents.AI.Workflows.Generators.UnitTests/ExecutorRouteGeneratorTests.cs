@@ -274,7 +274,7 @@ public class ExecutorRouteGeneratorTests
     }
 
     [Fact]
-    public void ClassLevel_YieldsMessageAttribute_GeneratesConfigureYieldTypes()
+    public void ClassLevel_YieldsOutputAttribute_GeneratesConfigureYieldTypes()
     {
         var source = """
             using System;
@@ -286,7 +286,7 @@ public class ExecutorRouteGeneratorTests
 
             public class YieldedMessage { }
 
-            [YieldsMessage(typeof(YieldedMessage))]
+            [YieldsOutput(typeof(YieldedMessage))]
             public partial class TestExecutor : Executor
             {
                 public TestExecutor() : base("test") { }
@@ -693,6 +693,75 @@ public class ExecutorRouteGeneratorTests
         // Both handlers from different files should be registered
         generated.Should().Contain(".AddHandler<string>(this.HandleFromFile1)");
         generated.Should().Contain(".AddHandler<int>(this.HandleFromFile2)");
+    }
+
+    [Fact]
+    public void PartialClass_SendsYieldsInBothFiles_GeneratesAlOverrides()
+    {
+        // File 1: Partial with one handler
+        var file1 = """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            [YieldsOutput(typeof(string))]
+            [SendsMessage(typeof(int))]
+            public partial class TestExecutor : Executor
+            {
+                public TestExecutor() : base("test") { }
+
+                [MessageHandler]
+                private void HandleFromFile1(string message, IWorkflowContext context) { }
+            }
+            """;
+
+        // File 2: Another partial with another handler
+        var file2 = """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            [YieldsOutput(typeof(int))]
+            [SendsMessage(typeof(string))]
+            public partial class TestExecutor
+            {
+                [MessageHandler]
+                private void HandleFromFile2(int message, IWorkflowContext context) { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(file1, file2);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Verify ConfigureSentTypes override
+        var sendsStart = generated.IndexOf("protected override ISet<Type> ConfigureSentTypes()", StringComparison.Ordinal);
+        sendsStart.Should().NotBe(-1, "should generate ConfigureSentTypes override");
+
+        var sendsEnd = generated.IndexOf("}", sendsStart, StringComparison.Ordinal);
+        sendsEnd.Should().NotBe(-1, "should close ConfigureSentTypes override");
+
+        generated.Substring(sendsStart, sendsEnd - sendsStart).Should().ContainAll(
+            "types.Add(typeof(string));",
+            "types.Add(typeof(int));");
+
+        // Verify ConfigureYieldTypes override
+        var yieldsStart = generated.IndexOf("protected override ISet<Type> ConfigureYieldTypes()", StringComparison.Ordinal);
+        yieldsStart.Should().NotBe(-1, "should generate ConfigureYieldTypes override");
+
+        var yieldsEnd = generated.IndexOf("}", yieldsStart, StringComparison.Ordinal);
+        yieldsEnd.Should().NotBe(-1, "should close ConfigureYieldTypes override");
+
+        generated.Substring(yieldsStart, yieldsEnd - yieldsStart).Should().ContainAll(
+            "types.Add(typeof(string));",
+            "types.Add(typeof(int));");
     }
 
     #endregion

@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// <param name="BaseHasConfigureRoutes">Whether the base class has a ConfigureRoutes method that should be called.</param>
 /// <param name="Handlers">The list of handler methods to register.</param>
 /// <param name="ClassSendTypes">The types declared via class-level [SendsMessage] attributes.</param>
-/// <param name="ClassYieldTypes">The types declared via class-level [YieldsMessage] attributes.</param>
+/// <param name="ClassYieldTypes">The types declared via class-level [YieldsOutput] attributes.</param>
 internal sealed record ExecutorInfo(
     string? Namespace,
     string ClassName,

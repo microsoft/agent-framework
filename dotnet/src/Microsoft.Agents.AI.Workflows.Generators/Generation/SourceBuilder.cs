@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Generation;
 /// <remarks>
 /// This builder produces a partial class file that overrides <c>ConfigureRoutes</c> to register
 /// handlers discovered via [MessageHandler] attributes. It may also generate <c>ConfigureSentTypes</c>
-/// and <c>ConfigureYieldTypes</c> overrides when [SendsMessage] or [YieldsMessage] attributes are present.
+/// and <c>ConfigureYieldTypes</c> overrides when [SendsMessage] or [YieldsOutput] attributes are present.
 /// </remarks>
 internal static class SourceBuilder
 {
@@ -65,7 +65,7 @@ internal static class SourceBuilder
 
         GenerateConfigureRoutes(sb, info, memberIndent);
 
-        // Only generate protocol overrides if [SendsMessage] or [YieldsMessage] attributes are present.
+        // Only generate protocol overrides if [SendsMessage] or [YieldsOutput] attributes are present.
         // Without these attributes, we rely on the base class defaults.
         if (info.ShouldGenerateProtocolOverrides)
         {
@@ -127,21 +127,17 @@ internal static class SourceBuilder
             for (int i = 0; i < info.Handlers.Count; i++)
             {
                 HandlerInfo handler = info.Handlers[i];
-                bool isLast = i == info.Handlers.Count - 1;
 
                 sb.Append($"{bodyIndent}    .AddHandler");
                 AppendHandlerGenericArgs(sb, handler);
                 sb.Append($"(this.{handler.MethodName})");
-
-                if (isLast)
-                {
-                    sb.AppendLine(";");
-                }
-                else
-                {
-                    sb.AppendLine();
-                }
+                sb.AppendLine();
             }
+
+            // Remove last newline without using that System.Environment which is banned from use in analyzers
+            var newLineLength = new StringBuilder().AppendLine().Length;
+            sb.Remove(sb.Length - newLineLength, newLineLength);
+            sb.AppendLine(";");
         }
 
         sb.AppendLine($"{indent}}}");
@@ -200,7 +196,7 @@ internal static class SourceBuilder
     /// Generates ConfigureYieldTypes override declaring message types this executor yields via context.YieldOutputAsync.
     /// </summary>
     /// <remarks>
-    /// Types come from [YieldsMessage] attributes and handler return types (ValueTask&lt;T&gt;).
+    /// Types come from [YieldsOutput] attributes and handler return types (ValueTask&lt;T&gt;).
     /// This enables workflow protocol validation at build time.
     /// </remarks>
     private static void GenerateConfigureYieldTypes(StringBuilder sb, ExecutorInfo info, string indent)

@@ -33,7 +33,7 @@ internal static class SemanticAnalyzer
     private const string ValueTaskTypeName = "System.Threading.Tasks.ValueTask";
     private const string MessageHandlerAttributeName = "Microsoft.Agents.AI.Workflows.MessageHandlerAttribute";
     private const string SendsMessageAttributeName = "Microsoft.Agents.AI.Workflows.SendsMessageAttribute";
-    private const string YieldsMessageAttributeName = "Microsoft.Agents.AI.Workflows.YieldsMessageAttribute";
+    private const string YieldsOutputAttributeName = "Microsoft.Agents.AI.Workflows.YieldsOutputAttribute";
 
     /// <summary>
     /// Analyzes a method with [MessageHandler] attribute found by ForAttributeWithMetadataName.
@@ -80,7 +80,7 @@ internal static class SemanticAnalyzer
         string containingTypeChain = GetContainingTypeChain(classSymbol);
         bool baseHasConfigureRoutes = BaseHasConfigureRoutes(classSymbol);
         ImmutableEquatableArray<string> classSendTypes = GetClassLevelTypes(classSymbol, SendsMessageAttributeName);
-        ImmutableEquatableArray<string> classYieldTypes = GetClassLevelTypes(classSymbol, YieldsMessageAttributeName);
+        ImmutableEquatableArray<string> classYieldTypes = GetClassLevelTypes(classSymbol, YieldsOutputAttributeName);
 
         // Get class location for class-level diagnostics
         DiagnosticLocationInfo? classLocation = GetClassLocation(classSymbol, cancellationToken);
@@ -478,11 +478,11 @@ internal static class SemanticAnalyzer
     }
 
     /// <summary>
-    /// Collects types from [SendsMessage] or [YieldsMessage] attributes applied to the class.
+    /// Collects types from [SendsMessage] or [YieldsOutput] attributes applied to the class.
     /// </summary>
     /// <example>
     /// [SendsMessage(typeof(Request))]
-    /// [YieldsMessage(typeof(Response))]
+    /// [YieldsOutput(typeof(Response))]
     /// public partial class MyExecutor : Executor { }
     /// </example>
     private static ImmutableEquatableArray<string> GetClassLevelTypes(INamedTypeSymbol classSymbol, string attributeName)

@@ -21,8 +21,8 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </remarks>
 /// <example>
 /// <code>
-/// [YieldsMessage(typeof(FinalResult))]
-/// [YieldsMessage(typeof(StreamChunk))]
+/// [YieldsOutput(typeof(FinalResult))]
+/// [YieldsOutput(typeof(StreamChunk))]
 /// public partial class MyExecutor : Executor
 /// {
 ///     // ...
@@ -30,7 +30,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
-public sealed class YieldsMessageAttribute : Attribute
+public sealed class YieldsOutputAttribute : Attribute
 {
     /// <summary>
     /// Gets the type of message that the executor may yield.
@@ -38,11 +38,11 @@ public sealed class YieldsMessageAttribute : Attribute
     public Type Type { get; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="YieldsMessageAttribute"/> class.
+    /// Initializes a new instance of the <see cref="YieldsOutputAttribute"/> class.
     /// </summary>
     /// <param name="type">The type of message that the executor may yield.</param>
     /// <exception cref="ArgumentNullException"><paramref name="type"/> is <see langword="null"/>.</exception>
-    public YieldsMessageAttribute(Type type)
+    public YieldsOutputAttribute(Type type)
     {
         this.Type = Throw.IfNull(type);
     }
