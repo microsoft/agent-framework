@@ -2,7 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using Azure.Identity;
+using Azure.Core;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Azure.Cosmos;
 
@@ -52,6 +52,7 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
@@ -59,7 +60,8 @@ public static class CosmosDBWorkflowExtensions
     public static CosmosCheckpointStore CreateCheckpointStoreUsingManagedIdentity(
         string accountEndpoint,
         string databaseId,
-        string containerId)
+        string containerId,
+        TokenCredential tokenCredential)
     {
         if (string.IsNullOrWhiteSpace(accountEndpoint))
         {
@@ -76,7 +78,12 @@ public static class CosmosDBWorkflowExtensions
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
         }
 
-        return new CosmosCheckpointStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
+        if (tokenCredential is null)
+        {
+            throw new ArgumentNullException(nameof(tokenCredential));
+        }
+
+        return new CosmosCheckpointStore(accountEndpoint, tokenCredential, databaseId, containerId);
     }
 
     /// <summary>
@@ -154,6 +161,7 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore{T}"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
@@ -161,7 +169,8 @@ public static class CosmosDBWorkflowExtensions
     public static CosmosCheckpointStore<T> CreateCheckpointStoreUsingManagedIdentity<T>(
         string accountEndpoint,
         string databaseId,
-        string containerId)
+        string containerId,
+        TokenCredential tokenCredential)
     {
         if (string.IsNullOrWhiteSpace(accountEndpoint))
         {
@@ -178,7 +187,12 @@ public static class CosmosDBWorkflowExtensions
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
         }
 
-        return new CosmosCheckpointStore<T>(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
+        if (tokenCredential is null)
+        {
+            throw new ArgumentNullException(nameof(tokenCredential));
+        }
+
+        return new CosmosCheckpointStore<T>(accountEndpoint, tokenCredential, databaseId, containerId);
     }
 
     /// <summary>
