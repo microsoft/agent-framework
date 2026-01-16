@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
-/// An interface for a class that managed background jobs.
+/// An interface for a class that manages background jobs.
 /// </summary>
 internal interface IBackgroundJobRunner
 {

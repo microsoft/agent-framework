@@ -26,7 +26,7 @@ internal sealed class PurviewWrapper : IDisposable
     /// <param name="scopedProcessor">The scoped processor used to orchestrate the calls to Purview.</param>
     /// <param name="purviewSettings">The settings for Purview integration.</param>
     /// <param name="logger">The logger used for logging.</param>
-    /// <param name="backgroundJobRunner">The runner used manage background jobs.</param>
+    /// <param name="backgroundJobRunner">The runner used to manage background jobs.</param>
     public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IBackgroundJobRunner backgroundJobRunner)
     {
         this._scopedProcessor = scopedProcessor;
