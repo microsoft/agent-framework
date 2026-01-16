@@ -1082,11 +1082,11 @@ def test_group_chat_builder_requires_exactly_one_orchestrator_option():
 
     # No options provided
     with pytest.raises(ValueError, match="Exactly one of"):
-        GroupChatBuilder().with_orchestrator()
+        GroupChatBuilder().with_orchestrator()  # type: ignore
 
     # Multiple options provided
     with pytest.raises(ValueError, match="Exactly one of"):
-        GroupChatBuilder().with_orchestrator(selection_func=selector, orchestrator_factory=orchestrator_factory)
+        GroupChatBuilder().with_orchestrator(selection_func=selector, orchestrator_factory=orchestrator_factory)  # type: ignore
 
 
 async def test_group_chat_with_orchestrator_factory_returning_chat_agent():

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, TypeVar, cast
+from typing import Any, ClassVar, TypeVar, cast, overload
 
 from typing_extensions import Never
 
@@ -1577,10 +1577,140 @@ class MagenticBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
+    @overload
+    def with_manager(self, *, manager: MagenticManagerBase) -> Self:
+        """Configure the workflow with a pre-defined Magentic manager instance.
+
+        Args:
+            manager: A custom manager instance (subclass of MagenticManagerBase)
+
+        Returns:
+            Self for method chaining
+        """
+        ...
+
+    @overload
+    def with_manager(self, *, manager_factory: Callable[[], MagenticManagerBase]) -> Self:
+        """Configure the workflow with a factory for creating custom Magentic manager instances.
+
+        Args:
+            manager_factory: Callable that returns a new MagenticManagerBase instance
+
+        Returns:
+            Self for method chaining
+        """
+        ...
+
+    @overload
     def with_manager(
         self,
-        manager: MagenticManagerBase | None = None,
         *,
+        agent: AgentProtocol,
+        task_ledger: _MagenticTaskLedger | None = None,
+        # Prompt overrides
+        task_ledger_facts_prompt: str | None = None,
+        task_ledger_plan_prompt: str | None = None,
+        task_ledger_full_prompt: str | None = None,
+        task_ledger_facts_update_prompt: str | None = None,
+        task_ledger_plan_update_prompt: str | None = None,
+        progress_ledger_prompt: str | None = None,
+        final_answer_prompt: str | None = None,
+        # Limits
+        max_stall_count: int = 3,
+        max_reset_count: int | None = None,
+        max_round_count: int | None = None,
+    ) -> Self:
+        """Configure the workflow with an agent for creating a standard manager.
+
+        This will create a StandardMagenticManager using the provided agent.
+
+        Args:
+            agent: AgentProtocol instance for the standard magentic manager
+                   (`StandardMagenticManager`)
+            task_ledger: Optional custom task ledger implementation for specialized
+                prompting or structured output requirements
+            task_ledger_facts_prompt: Custom prompt template for extracting facts from
+                task description
+            task_ledger_plan_prompt: Custom prompt template for generating initial plan
+            task_ledger_full_prompt: Custom prompt template for complete task ledger
+                (facts + plan combined)
+            task_ledger_facts_update_prompt: Custom prompt template for updating facts
+                based on agent progress
+            task_ledger_plan_update_prompt: Custom prompt template for replanning when
+                needed
+            progress_ledger_prompt: Custom prompt template for assessing progress and
+                determining next actions
+            final_answer_prompt: Custom prompt template for synthesizing final response
+                when task is complete
+            max_stall_count: Maximum consecutive rounds without progress before triggering
+                replan (default 3). Set to 0 to disable stall detection.
+            max_reset_count: Maximum number of complete resets allowed before failing.
+                None means unlimited resets.
+            max_round_count: Maximum total coordination rounds before stopping with
+                partial result. None means unlimited rounds.
+
+        Returns:
+            Self for method chaining
+        """
+        ...
+
+    @overload
+    def with_manager(
+        self,
+        *,
+        agent_factory: Callable[[], AgentProtocol],
+        task_ledger: _MagenticTaskLedger | None = None,
+        # Prompt overrides
+        task_ledger_facts_prompt: str | None = None,
+        task_ledger_plan_prompt: str | None = None,
+        task_ledger_full_prompt: str | None = None,
+        task_ledger_facts_update_prompt: str | None = None,
+        task_ledger_plan_update_prompt: str | None = None,
+        progress_ledger_prompt: str | None = None,
+        final_answer_prompt: str | None = None,
+        # Limits
+        max_stall_count: int = 3,
+        max_reset_count: int | None = None,
+        max_round_count: int | None = None,
+    ) -> Self:
+        """Configure the workflow with a factory for creating the manager agent.
+
+        This will create a StandardMagenticManager using the provided agent factory.
+
+        Args:
+            agent_factory: Callable that returns a new AgentProtocol instance for the standard
+                           magentic manager (`StandardMagenticManager`)
+            task_ledger: Optional custom task ledger implementation for specialized
+                prompting or structured output requirements
+            task_ledger_facts_prompt: Custom prompt template for extracting facts from
+                task description
+            task_ledger_plan_prompt: Custom prompt template for generating initial plan
+            task_ledger_full_prompt: Custom prompt template for complete task ledger
+                (facts + plan combined)
+            task_ledger_facts_update_prompt: Custom prompt template for updating facts
+                based on agent progress
+            task_ledger_plan_update_prompt: Custom prompt template for replanning when
+                needed
+            progress_ledger_prompt: Custom prompt template for assessing progress and
+                determining next actions
+            final_answer_prompt: Custom prompt template for synthesizing final response
+                when task is complete
+            max_stall_count: Maximum consecutive rounds without progress before triggering
+                replan (default 3). Set to 0 to disable stall detection.
+            max_reset_count: Maximum number of complete resets allowed before failing.
+                None means unlimited resets.
+            max_round_count: Maximum total coordination rounds before stopping with
+                partial result. None means unlimited rounds.
+
+        Returns:
+            Self for method chaining
+        """
+        ...
+
+    def with_manager(
+        self,
+        *,
+        manager: MagenticManagerBase | None = None,
         manager_factory: Callable[[], MagenticManagerBase] | None = None,
         agent_factory: Callable[[], AgentProtocol] | None = None,
         # Constructor args for StandardMagenticManager when manager is not provided

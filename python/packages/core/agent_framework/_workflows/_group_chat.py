@@ -24,7 +24,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, cast, overload
 
 from pydantic import BaseModel, Field
 from typing_extensions import Never
@@ -536,6 +536,75 @@ class GroupChatBuilder:
         # Request info related members
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] = set()
+
+    @overload
+    def with_orchestrator(self, *, agent: ChatAgent) -> "GroupChatBuilder":
+        """Set the orchestrator for this group chat workflow using a ChatAgent.
+
+        Args:
+            agent: An instance of ChatAgent to manage the group chat.
+
+        Returns:
+            Self for fluent chaining.
+        """
+        ...
+
+    @overload
+    def with_orchestrator(
+        self,
+        *,
+        selection_func: GroupChatSelectionFunction,
+        orchestrator_name: str | None = None,
+    ) -> "GroupChatBuilder":
+        """Set the orchestrator for this group chat workflow using a selection function.
+
+        Args:
+            selection_func: Callable that receives the current GroupChatState and returns
+                            the name of the next participant to speak, or None to finish.
+            orchestrator_name: Optional display name for the orchestrator in the workflow.
+                               If not provided, defaults to `GroupChatBuilder.DEFAULT_ORCHESTRATOR_ID`.
+
+        Returns:
+            Self for fluent chaining.
+        """
+        ...
+
+    @overload
+    def with_orchestrator(self, *, orchestrator: BaseGroupChatOrchestrator) -> "GroupChatBuilder":
+        """Set the orchestrator for this group chat workflow using a custom orchestrator.
+
+        Args:
+            orchestrator: An instance of BaseGroupChatOrchestrator to manage the group chat.
+
+        Returns:
+            Self for fluent chaining.
+
+        Note:
+            When using a custom orchestrator that implements `BaseGroupChatOrchestrator`, setting
+            `termination_condition` and `max_rounds` on the builder will have no effect since the
+            orchestrator is already fully defined.
+        """
+        ...
+
+    @overload
+    def with_orchestrator(
+        self, *, orchestrator_factory: Callable[[], ChatAgent | BaseGroupChatOrchestrator]
+    ) -> "GroupChatBuilder":
+        """Set the orchestrator for this group chat workflow using a factory.
+
+        Args:
+            orchestrator_factory: A callable that produces either a ChatAgent or BaseGroupChatOrchestrator
+                                  when invoked.
+
+        Returns:
+            Self for fluent chaining.
+
+        Note:
+            When using a custom orchestrator that implements `BaseGroupChatOrchestrator`, setting
+            `termination_condition` and `max_rounds` on the builder will have no effect since the
+            orchestrator is already fully defined.
+        """
+        ...
 
     def with_orchestrator(
         self,
