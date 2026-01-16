@@ -517,6 +517,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
         return mcp
 
+    @override
     def as_agent(
         self,
         *,

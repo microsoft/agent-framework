@@ -1167,6 +1167,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         """
         return self.agents_client._config.endpoint  # type: ignore
 
+    @override
     def as_agent(
         self,
         *,

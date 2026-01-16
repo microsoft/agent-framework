@@ -769,6 +769,7 @@ class OpenAIAssistantsClient(
         if description and not self.assistant_description:
             self.assistant_description = description
 
+    @override
     def as_agent(
         self,
         *,
