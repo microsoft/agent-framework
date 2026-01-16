@@ -19,9 +19,13 @@ namespace Microsoft.Agents.AI;
 /// and process user requests. An agent instance may participate in multiple concurrent conversations, and each conversation
 /// may involve multiple agents working together.
 /// </remarks>
-[DebuggerDisplay("{DisplayName,nq}")]
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class AIAgent
 {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay =>
+        this.Name is { } name ? $"Id = {this.Id}, Name = {name}" : $"Id = {this.Id}";
+
     /// <summary>
     /// Gets the unique identifier for this agent instance.
     /// </summary>
