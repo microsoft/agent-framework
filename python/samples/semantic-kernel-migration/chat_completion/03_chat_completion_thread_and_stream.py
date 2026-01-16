@@ -40,7 +40,7 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # AF thread objects are requested explicitly from the agent.
-    chat_agent = OpenAIChatClient().create_agent(
+    chat_agent = OpenAIChatClient().as_agent(
         name="Writer",
         instructions="Keep answers short and friendly.",
     )

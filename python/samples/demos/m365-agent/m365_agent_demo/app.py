@@ -93,7 +93,7 @@ def get_weather(
 
 def build_agent() -> ChatAgent:
     """Create and return the chat agent instance with weather tool registered."""
-    return OpenAIChatClient().create_agent(
+    return OpenAIChatClient().as_agent(
         name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
     )
 

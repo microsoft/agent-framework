@@ -72,7 +72,7 @@ class WorkflowFactory:
 
             # Pre-register agents for InvokeAzureAgent actions
             chat_client = AzureOpenAIChatClient()
-            agent = chat_client.create_agent(name="MyAgent", instructions="You are helpful.")
+            agent = chat_client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
@@ -115,8 +115,8 @@ class WorkflowFactory:
                 # With pre-registered agents
                 client = AzureOpenAIChatClient()
                 agents = {
-                    "WriterAgent": client.create_agent(name="Writer", instructions="Write content."),
-                    "ReviewerAgent": client.create_agent(name="Reviewer", instructions="Review content."),
+                    "WriterAgent": client.as_agent(name="Writer", instructions="Write content."),
+                    "ReviewerAgent": client.as_agent(name="Reviewer", instructions="Review content."),
                 }
                 factory = WorkflowFactory(agents=agents)
 
@@ -533,14 +533,14 @@ class WorkflowFactory:
                     WorkflowFactory()
                     .register_agent(
                         "Writer",
-                        client.create_agent(
+                        client.as_agent(
                             name="Writer",
                             instructions="Write content.",
                         ),
                     )
                     .register_agent(
                         "Reviewer",
-                        client.create_agent(
+                        client.as_agent(
                             name="Reviewer",
                             instructions="Review content.",
                         ),

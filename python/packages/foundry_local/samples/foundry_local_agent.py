@@ -65,7 +65,7 @@ async def main() -> None:
             print(
                 f"- {model.alias} for {model.task} - id={model.id} - {(model.file_size_mb / 1000):.2f} GB - {model.license}"
             )
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="LocalAgent",
         instructions="You are a helpful agent.",
         tools=get_weather,

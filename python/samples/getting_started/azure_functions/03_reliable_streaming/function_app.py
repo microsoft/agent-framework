@@ -151,7 +151,7 @@ redis_callback = RedisStreamCallback()
 # Create the travel planner agent
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

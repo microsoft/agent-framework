@@ -32,7 +32,7 @@ async def run_agent_framework() -> None:
 
     assistants_client = OpenAIAssistantsClient()
     # AF wraps the assistant lifecycle with an async context manager.
-    async with assistants_client.create_agent(
+    async with assistants_client.as_agent(
         name="Helper",
         instructions="Answer questions in one concise paragraph.",
         model=ASSISTANT_MODEL,

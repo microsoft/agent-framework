@@ -82,7 +82,7 @@ def create_coding_agent(client: AzureAIAgentClient) -> ChatAgent:
     Returns:
         A ChatAgent configured with coding instructions and tools
     """
-    return client.create_agent(
+    return client.as_agent(
         name="CodingAgent",
         instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
         tools=HostedCodeInterpreterTool(),

@@ -69,19 +69,19 @@ async def run_agent_framework() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.create_agent(
+    researcher = client.as_agent(
         name="researcher",
         instructions="You are a research analyst. Gather and analyze information.",
         description="Research analyst for data gathering",
     )
 
-    coder = client.create_agent(
+    coder = client.as_agent(
         name="coder",
         instructions="You are a programmer. Write code based on requirements.",
         description="Software developer for implementation",
     )
 
-    reviewer = client.create_agent(
+    reviewer = client.as_agent(
         name="reviewer",
         instructions="You are a code reviewer. Review code for quality and correctness.",
         description="Code reviewer for quality assurance",

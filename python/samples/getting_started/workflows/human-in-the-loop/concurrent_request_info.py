@@ -99,7 +99,7 @@ async def main() -> None:
     _chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents that analyze from different perspectives
-    technical_analyst = _chat_client.create_agent(
+    technical_analyst = _chat_client.as_agent(
         name="technical_analyst",
         instructions=(
             "You are a technical analyst. When given a topic, provide a technical "
@@ -108,7 +108,7 @@ async def main() -> None:
         ),
     )
 
-    business_analyst = _chat_client.create_agent(
+    business_analyst = _chat_client.as_agent(
         name="business_analyst",
         instructions=(
             "You are a business analyst. When given a topic, provide a business "
@@ -117,7 +117,7 @@ async def main() -> None:
         ),
     )
 
-    user_experience_analyst = _chat_client.create_agent(
+    user_experience_analyst = _chat_client.as_agent(
         name="ux_analyst",
         instructions=(
             "You are a UX analyst. When given a topic, provide a user experience "

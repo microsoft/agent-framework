@@ -104,7 +104,7 @@ async def main() -> None:
     # 3. Create two agents focused on different stocks but with the same tool sets
     chat_client = OpenAIChatClient()
 
-    microsoft_agent = chat_client.create_agent(
+    microsoft_agent = chat_client.as_agent(
         name="MicrosoftAgent",
         instructions=(
             "You are a personal trading assistant focused on Microsoft (MSFT). "
@@ -113,7 +113,7 @@ async def main() -> None:
         tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
     )
 
-    google_agent = chat_client.create_agent(
+    google_agent = chat_client.as_agent(
         name="GoogleAgent",
         instructions=(
             "You are a personal trading assistant focused on Google (GOOGL). "

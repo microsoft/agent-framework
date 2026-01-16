@@ -29,12 +29,12 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 def _create_agents() -> list[Any]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physicist = chat_client.create_agent(
+    physicist = chat_client.as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
-    chemist = chat_client.create_agent(
+    chemist = chat_client.as_agent(
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )
