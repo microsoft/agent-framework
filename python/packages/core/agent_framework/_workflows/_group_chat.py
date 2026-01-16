@@ -397,7 +397,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             agent_response = await self._agent.run(
                 messages=conversation,
                 thread=self._thread,
-                response_format=AgentOrchestrationOutput,
+                options={"response_format": AgentOrchestrationOutput},
             )
             # Parse and validate the structured output
             agent_orchestration_output = AgentOrchestrationOutput.model_validate_json(agent_response.text)

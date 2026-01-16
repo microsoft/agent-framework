@@ -78,7 +78,7 @@ class ResearchLead(Executor):
 
     def __init__(self, chat_client: AzureAIClient, id: str = "travel-planning-coordinator"):
         # store=True to preserve conversation history for evaluation
-        self.agent = chat_client.create_agent(
+        self.agent = chat_client.as_agent(
             id="travel-planning-coordinator",
             instructions=(
                 "You are the final coordinator. You will receive responses from multiple agents: "
@@ -220,7 +220,7 @@ async def _create_workflow(project_client, credential):
     travel_request_handler_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="travel-request-handler"
     )
-    travel_request_handler = travel_request_handler_client.create_agent(
+    travel_request_handler = travel_request_handler_client.as_agent(
         id="travel-request-handler",
         instructions=(
             "You receive user travel queries and relay them to specialized agents. Extract key information: destination, dates, budget, and preferences. Pass this information forward clearly to the next agents."
@@ -233,7 +233,7 @@ async def _create_workflow(project_client, credential):
     hotel_search_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="hotel-search-agent"
     )
-    hotel_search_agent = hotel_search_client.create_agent(
+    hotel_search_agent = hotel_search_client.as_agent(
         id="hotel-search-agent",
         instructions=(
             "You are a hotel search specialist. Your task is ONLY to search for and provide hotel information. Use search_hotels to find options, get_hotel_details for specifics, and check_availability to verify rooms. Output format: List hotel names, prices per night, total cost for the stay, locations, ratings, amenities, and addresses. IMPORTANT: Only provide hotel information without additional commentary."
@@ -247,7 +247,7 @@ async def _create_workflow(project_client, credential):
     flight_search_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="flight-search-agent"
     )
-    flight_search_agent = flight_search_client.create_agent(
+    flight_search_agent = flight_search_client.as_agent(
         id="flight-search-agent",
         instructions=(
             "You are a flight search specialist. Your task is ONLY to search for and provide flight information. Use search_flights to find options, get_flight_details for specifics, and check_availability for seats. Output format: List flight numbers, airlines, departure/arrival times, prices, durations, and cabin class. IMPORTANT: Only provide flight information without additional commentary."
@@ -261,7 +261,7 @@ async def _create_workflow(project_client, credential):
     activity_search_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="activity-search-agent"
     )
-    activity_search_agent = activity_search_client.create_agent(
+    activity_search_agent = activity_search_client.as_agent(
         id="activity-search-agent",
         instructions=(
             "You are an activities specialist. Your task is ONLY to search for and provide activity information. Use search_activities to find options for activities. Output format: List activity names, descriptions, prices, durations, ratings, and categories. IMPORTANT: Only provide activity information without additional commentary."
@@ -275,7 +275,7 @@ async def _create_workflow(project_client, credential):
     booking_confirmation_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="booking-confirmation-agent"
     )
-    booking_confirmation_agent = booking_confirmation_client.create_agent(
+    booking_confirmation_agent = booking_confirmation_client.as_agent(
         id="booking-confirmation-agent",
         instructions=(
             "You confirm bookings. Use check_hotel_availability and check_flight_availability to verify slots, then confirm_booking to finalize. Provide ONLY: confirmation numbers, booking references, and confirmation status."
@@ -289,7 +289,7 @@ async def _create_workflow(project_client, credential):
     booking_payment_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="booking-payment-agent"
     )
-    booking_payment_agent = booking_payment_client.create_agent(
+    booking_payment_agent = booking_payment_client.as_agent(
         id="booking-payment-agent",
         instructions=(
             "You process payments. Use validate_payment_method to verify payment, then process_payment to complete transactions. Provide ONLY: payment confirmation status, transaction IDs, and payment amounts."
@@ -303,7 +303,7 @@ async def _create_workflow(project_client, credential):
     booking_info_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="booking-info-aggregation-agent"
     )
-    booking_info_aggregation_agent = booking_info_client.create_agent(
+    booking_info_aggregation_agent = booking_info_client.as_agent(
         id="booking-info-aggregation-agent",
         instructions=(
             "You aggregate hotel and flight search results. Receive options from search agents and organize them. Provide: top 2-3 hotel options with prices and top 2-3 flight options with prices in a structured format."

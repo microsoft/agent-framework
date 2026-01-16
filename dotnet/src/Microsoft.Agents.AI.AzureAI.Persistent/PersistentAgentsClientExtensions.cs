@@ -19,7 +19,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         Response<PersistentAgent> persistentAgentResponse,
         ChatOptions? chatOptions = null,
@@ -31,7 +31,7 @@ public static class PersistentAgentsClientExtensions
             throw new ArgumentNullException(nameof(persistentAgentResponse));
         }
 
-        return GetAIAgent(persistentAgentsClient, persistentAgentResponse.Value, chatOptions, clientFactory, services);
+        return AsAIAgent(persistentAgentsClient, persistentAgentResponse.Value, chatOptions, clientFactory, services);
     }
 
     /// <summary>
@@ -43,7 +43,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         PersistentAgent persistentAgentMetadata,
         ChatOptions? chatOptions = null,
@@ -112,7 +112,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = persistentAgentsClient.Administration.GetAgent(agentId, cancellationToken);
-        return persistentAgentsClient.GetAIAgent(persistentAgentResponse, chatOptions, clientFactory, services);
+        return persistentAgentsClient.AsAIAgent(persistentAgentResponse, chatOptions, clientFactory, services);
     }
 
     /// <summary>
@@ -145,7 +145,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentsClient.GetAIAgent(persistentAgentResponse, chatOptions, clientFactory, services);
+        return persistentAgentsClient.AsAIAgent(persistentAgentResponse, chatOptions, clientFactory, services);
     }
 
     /// <summary>
@@ -158,7 +158,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="persistentAgentResponse"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         Response<PersistentAgent> persistentAgentResponse,
         ChatClientAgentOptions options,
@@ -170,7 +170,7 @@ public static class PersistentAgentsClientExtensions
             throw new ArgumentNullException(nameof(persistentAgentResponse));
         }
 
-        return GetAIAgent(persistentAgentsClient, persistentAgentResponse.Value, options, clientFactory, services);
+        return AsAIAgent(persistentAgentsClient, persistentAgentResponse.Value, options, clientFactory, services);
     }
 
     /// <summary>
@@ -183,7 +183,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="persistentAgentMetadata"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         PersistentAgent persistentAgentMetadata,
         ChatClientAgentOptions options,
@@ -268,7 +268,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = persistentAgentsClient.Administration.GetAgent(agentId, cancellationToken);
-        return persistentAgentsClient.GetAIAgent(persistentAgentResponse, options, clientFactory, services);
+        return persistentAgentsClient.AsAIAgent(persistentAgentResponse, options, clientFactory, services);
     }
 
     /// <summary>
@@ -307,7 +307,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentsClient.GetAIAgent(persistentAgentResponse, options, clientFactory, services);
+        return persistentAgentsClient.AsAIAgent(persistentAgentResponse, options, clientFactory, services);
     }
 
     /// <summary>

@@ -16,7 +16,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Start a new thread for the agent conversation.
 AgentThread thread = await agent.GetNewThreadAsync();

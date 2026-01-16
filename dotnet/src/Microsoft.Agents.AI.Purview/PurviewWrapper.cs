@@ -18,7 +18,7 @@ internal sealed class PurviewWrapper : IDisposable
     private readonly ILogger _logger;
     private readonly IScopedContentProcessor _scopedProcessor;
     private readonly PurviewSettings _purviewSettings;
-    private readonly IChannelHandler _channelHandler;
+    private readonly IBackgroundJobRunner _backgroundJobRunner;
 
     /// <summary>
     /// Creates a new <see cref="PurviewWrapper"/> instance.
@@ -26,13 +26,13 @@ internal sealed class PurviewWrapper : IDisposable
     /// <param name="scopedProcessor">The scoped processor used to orchestrate the calls to Purview.</param>
     /// <param name="purviewSettings">The settings for Purview integration.</param>
     /// <param name="logger">The logger used for logging.</param>
-    /// <param name="channelHandler">The channel handler used to queue background jobs and add job runners.</param>
-    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IChannelHandler channelHandler)
+    /// <param name="backgroundJobRunner">The runner used to manage background jobs.</param>
+    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IBackgroundJobRunner backgroundJobRunner)
     {
         this._scopedProcessor = scopedProcessor;
         this._purviewSettings = purviewSettings;
         this._logger = logger;
-        this._channelHandler = channelHandler;
+        this._backgroundJobRunner = backgroundJobRunner;
     }
 
     private static string GetThreadIdFromAgentThread(AgentThread? thread, IEnumerable<ChatMessage> messages)
@@ -203,7 +203,7 @@ internal sealed class PurviewWrapper : IDisposable
     public void Dispose()
     {
 #pragma warning disable VSTHRD002 // Need to wait for pending jobs to complete.
-        this._channelHandler.StopAndWaitForCompletionAsync().GetAwaiter().GetResult();
+        this._backgroundJobRunner.ShutdownAsync().GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002 // Need to wait for pending jobs to complete.
     }
 }

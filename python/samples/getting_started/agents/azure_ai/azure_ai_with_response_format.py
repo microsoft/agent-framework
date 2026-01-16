@@ -33,8 +33,8 @@ async def main() -> None:
         agent = await provider.create_agent(
             name="ProductMarketerAgent",
             instructions="Return launch briefs as structured JSON.",
-            # Specify type to use as response
-            response_format=ReleaseBrief,
+            # Specify Pydantic model for structured output via default_options
+            default_options={"response_format": ReleaseBrief},
         )
 
         query = "Draft a launch brief for the Contoso Note app."

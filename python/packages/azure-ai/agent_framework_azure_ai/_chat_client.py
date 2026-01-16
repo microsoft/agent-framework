@@ -2,33 +2,31 @@
 
 import ast
 import json
-import os
 import re
 import sys
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     BaseChatClient,
+    ChatAgent,
     ChatMessage,
+    ChatMessageStoreProtocol,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
     Contents,
+    ContextProvider,
     DataContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
-    HostedCodeInterpreterTool,
     HostedFileContent,
-    HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
-    HostedWebSearchTool,
+    Middleware,
     Role,
     TextContent,
     TextSpanRegion,
@@ -52,14 +50,9 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
-    BingCustomSearchTool,
-    BingGroundingTool,
-    CodeInterpreterToolDefinition,
-    FileSearchTool,
     FunctionName,
     FunctionToolDefinition,
     ListSortOrder,
-    McpTool,
     MessageDeltaChunk,
     MessageDeltaTextContent,
     MessageDeltaTextFileCitationAnnotation,
@@ -91,7 +84,7 @@ from azure.ai.agents.models import (
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel, ValidationError
 
-from ._shared import AzureAISettings
+from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -1007,7 +1000,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         tool_choice = options.get("tool_choice")
         tools = options.get("tools")
         if tool_choice is not None and tool_choice != "none" and tools:
-            tool_definitions.extend(await self._prepare_tools_for_azure_ai(tools, run_options))
+            tool_definitions.extend(to_azure_ai_agent_tools(tools, run_options))
 
             # Handle MCP tool resources
             mcp_resources = self._prepare_mcp_resources(tools)
@@ -1106,82 +1099,6 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
         return additional_messages, instructions, required_action_results
 
-    async def _prepare_tools_for_azure_ai(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
-    ) -> list[ToolDefinition | dict[str, Any]]:
-        """Prepare tool definitions for the Azure AI Agents API."""
-        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
-        for tool in tools:
-            match tool:
-                case AIFunction():
-                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                case HostedWebSearchTool():
-                    additional_props = tool.additional_properties or {}
-                    config_args: dict[str, Any] = {}
-                    if count := additional_props.get("count"):
-                        config_args["count"] = count
-                    if freshness := additional_props.get("freshness"):
-                        config_args["freshness"] = freshness
-                    if market := additional_props.get("market"):
-                        config_args["market"] = market
-                    if set_lang := additional_props.get("set_lang"):
-                        config_args["set_lang"] = set_lang
-                    # Bing Grounding
-                    connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
-                    # Custom Bing Search
-                    custom_connection_id = additional_props.get("custom_connection_id") or os.getenv(
-                        "BING_CUSTOM_CONNECTION_ID"
-                    )
-                    custom_instance_name = additional_props.get("custom_instance_name") or os.getenv(
-                        "BING_CUSTOM_INSTANCE_NAME"
-                    )
-                    bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if (connection_id) and not custom_connection_id and not custom_instance_name:
-                        if connection_id:
-                            conn_id = connection_id
-                        else:
-                            raise ServiceInitializationError("Parameter connection_id is not provided.")
-                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
-                    if custom_connection_id and custom_instance_name:
-                        bing_search = BingCustomSearchTool(
-                            connection_id=custom_connection_id,
-                            instance_name=custom_instance_name,
-                            **config_args,
-                        )
-                    if not bing_search:
-                        raise ServiceInitializationError(
-                            "Bing search tool requires either 'connection_id' for Bing Grounding "
-                            "or both 'custom_connection_id' and 'custom_instance_name' for Custom Bing Search. "
-                            "These can be provided via additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_ID', "
-                            "'BING_CUSTOM_INSTANCE_NAME'"
-                        )
-                    tool_definitions.extend(bing_search.definitions)
-                case HostedCodeInterpreterTool():
-                    tool_definitions.append(CodeInterpreterToolDefinition())
-                case HostedMCPTool():
-                    mcp_tool = McpTool(
-                        server_label=tool.name.replace(" ", "_"),
-                        server_url=str(tool.url),
-                        allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
-                    )
-                    tool_definitions.extend(mcp_tool.definitions)
-                case HostedFileSearchTool():
-                    vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
-                    if vector_stores:
-                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
-                        tool_definitions.extend(file_search.definitions)
-                        # Set tool_resources for file search to work properly with Azure AI
-                        if run_options is not None and "tool_resources" not in run_options:
-                            run_options["tool_resources"] = file_search.resources
-                case ToolDefinition():
-                    tool_definitions.append(tool)
-                case dict():
-                    tool_definitions.append(tool)
-                case _:
-                    raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
-        return tool_definitions
-
     def _prepare_tool_outputs_for_azure_ai(
         self,
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
@@ -1249,3 +1166,59 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             The service URL for the chat client, or None if not set.
         """
         return self.agents_client._config.endpoint  # type: ignore
+
+    @override
+    def as_agent(
+        self,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        default_options: TAzureAIAgentOptions | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> ChatAgent[TAzureAIAgentOptions]:
+        """Convert this chat client to a ChatAgent.
+
+        This method creates a ChatAgent instance with this client pre-configured.
+        It does NOT create an agent on the Azure AI service - the actual agent
+        will be created on the server during the first invocation (run).
+
+        For creating and managing persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.AzureAIAgentsProvider` instead.
+
+        Keyword Args:
+            id: The unique identifier for the agent. Will be created automatically if not provided.
+            name: The name of the agent.
+            description: A brief description of the agent's purpose.
+            instructions: Optional instructions for the agent.
+            tools: The tools to use for the request.
+            default_options: A TypedDict containing chat options.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+            context_provider: Context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
+            kwargs: Any additional keyword arguments.
+
+        Returns:
+            A ChatAgent instance configured with this chat client.
+        """
+        return super().as_agent(
+            id=id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )

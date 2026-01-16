@@ -66,7 +66,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    triage_agent = chat_client.create_agent(
+    triage_agent = chat_client.as_agent(
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
@@ -75,7 +75,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     )
 
     # Refund specialist: Handles refund requests
-    refund_agent = chat_client.create_agent(
+    refund_agent = chat_client.as_agent(
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -83,7 +83,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order_agent = chat_client.create_agent(
+    order_agent = chat_client.as_agent(
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -91,7 +91,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     )
 
     # Return specialist: Handles return requests
-    return_agent = chat_client.create_agent(
+    return_agent = chat_client.as_agent(
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple

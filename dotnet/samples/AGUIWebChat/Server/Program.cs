@@ -25,7 +25,7 @@ AzureOpenAIClient azureOpenAIClient = new(
 
 ChatClient chatClient = azureOpenAIClient.GetChatClient(deploymentName);
 
-ChatClientAgent agent = chatClient.AsIChatClient().CreateAIAgent(
+ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
     name: "ChatAssistant",
     instructions: "You are a helpful assistant.");
 

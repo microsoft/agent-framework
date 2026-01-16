@@ -233,7 +233,7 @@ async def run_agent_framework_example(task: str) -> str:
 
     workflow = (
         GroupChatBuilder()
-        .with_orchestrator(agent=AzureOpenAIChatClient(credential=credential).create_agent())
+        .with_orchestrator(agent=AzureOpenAIChatClient(credential=credential).as_agent())
         .participants([researcher, planner])
         .build()
     )

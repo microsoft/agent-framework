@@ -585,7 +585,7 @@ async def test_workflow_output_event(mapper: MessageMapper, test_request: AgentF
     """Test WorkflowOutputEvent is converted to output_item.added."""
     from agent_framework._workflows._events import WorkflowOutputEvent
 
-    event = WorkflowOutputEvent(data="Final workflow output", source_executor_id="final_executor")
+    event = WorkflowOutputEvent(data="Final workflow output", executor_id="final_executor")
     events = await mapper.convert_event(event, test_request)
 
     # WorkflowOutputEvent should emit output_item.added
@@ -607,7 +607,7 @@ async def test_workflow_output_event_with_list_data(mapper: MessageMapper, test_
         ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")]),
         ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="World")]),
     ]
-    event = WorkflowOutputEvent(data=messages, source_executor_id="complete")
+    event = WorkflowOutputEvent(data=messages, executor_id="complete")
     events = await mapper.convert_event(event, test_request)
 
     assert len(events) == 1

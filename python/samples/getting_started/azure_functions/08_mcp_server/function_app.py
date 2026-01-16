@@ -30,19 +30,19 @@ chat_client = AzureOpenAIChatClient()
 
 # Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)
-agent1 = chat_client.create_agent(
+agent1 = chat_client.as_agent(
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
 # Agent 2: StockAdvisor - MCP tool trigger only
-agent2 = chat_client.create_agent(
+agent2 = chat_client.as_agent(
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
 # Agent 3: PlantAdvisor - Both HTTP and MCP tool triggers
-agent3 = chat_client.create_agent(
+agent3 = chat_client.as_agent(
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",

@@ -57,7 +57,7 @@ async def main() -> None:
     # - "func": the parameter name that will receive the injected function
     tool = AIFunction.from_dict(definition, dependencies={"ai_function": {"name:add_numbers": {"func": func}}})
 
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="FunctionToolAgent", instructions="You are a helpful assistant.", tools=tool
     )
     response = await agent.run("What is 5 + 3?")

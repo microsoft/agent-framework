@@ -87,7 +87,7 @@ async def enrich_with_references(
 
 
 def create_research_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="research_agent",
         instructions=(
             "Produce a short, bullet-style briefing with two actionable ideas. Label the section as 'Initial Draft'."
@@ -96,7 +96,7 @@ def create_research_agent():
 
 
 def create_final_editor_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "Use all conversation context (including external notes) to produce the final answer. "

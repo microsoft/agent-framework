@@ -49,7 +49,7 @@ async def run_agent_framework() -> None:
     # AF forwards the same response_format payload at invocation time.
     reply = await chat_agent.run(
         "Draft a launch brief for the Contoso Note app.",
-        response_format=ReleaseBrief,
+        options={"response_format": ReleaseBrief},
     )
     print("[AF]", reply.text)
 

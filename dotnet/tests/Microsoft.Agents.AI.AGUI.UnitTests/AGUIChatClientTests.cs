@@ -30,7 +30,7 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -55,7 +55,7 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -74,7 +74,7 @@ public sealed class AGUIAgentTests
         // Arrange
         using HttpClient httpClient = new();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => agent.RunAsync(messages: null!));
@@ -91,7 +91,7 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -115,7 +115,7 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -139,7 +139,7 @@ public sealed class AGUIAgentTests
         // Arrange
         using HttpClient httpClient = new();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -162,7 +162,7 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -195,7 +195,7 @@ public sealed class AGUIAgentTests
         using HttpClient httpClient = new(handler);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -227,7 +227,7 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         AgentThread thread = await agent.GetNewThreadAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
@@ -249,7 +249,7 @@ public sealed class AGUIAgentTests
         // Arrange
         using var httpClient = new HttpClient();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         AgentThread originalThread = await agent.GetNewThreadAsync();
         JsonElement serialized = originalThread.Serialize();
 
@@ -301,7 +301,7 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "What's the weather?")];
 
         // Act
@@ -353,7 +353,7 @@ public sealed class AGUIAgentTests
         using HttpClient httpClient = new(handler);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1]); // Only tool1, not tool2
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1]); // Only tool1, not tool2
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -403,7 +403,7 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [faultyTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [faultyTool]);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -448,7 +448,7 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1, tool2]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1, tool2]);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -486,7 +486,7 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
         AgentThread thread = await agent.GetNewThreadAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 

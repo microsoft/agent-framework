@@ -278,20 +278,20 @@ class WorkflowOutputEvent(WorkflowEvent):
     def __init__(
         self,
         data: Any,
-        source_executor_id: str,
+        executor_id: str,
     ):
         """Initialize the workflow output event.
 
         Args:
             data: The output yielded by the executor.
-            source_executor_id: ID of the executor that yielded the output.
+            executor_id: ID of the executor that yielded the output.
         """
         super().__init__(data)
-        self.source_executor_id = source_executor_id
+        self.executor_id = executor_id
 
     def __repr__(self) -> str:
         """Return a string representation of the workflow output event."""
-        return f"{self.__class__.__name__}(data={self.data}, source_executor_id={self.source_executor_id})"
+        return f"{self.__class__.__name__}(data={self.data}, executor_id={self.executor_id})"
 
 
 class SuperStepEvent(WorkflowEvent):

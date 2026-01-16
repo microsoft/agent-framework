@@ -48,7 +48,7 @@ def get_item_price(
 async def run() -> None:
     # Define an agent
     # Agent's name and description provide better context for AI model
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="RestaurantAgent",
         description="Answer questions about the menu.",
         tools=[get_specials, get_item_price],

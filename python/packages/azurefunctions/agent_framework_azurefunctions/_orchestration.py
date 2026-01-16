@@ -196,7 +196,7 @@ class DurableAIAgent(AgentProtocol):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        response_format: type[BaseModel] | None = None,
+        options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentTask:
         """Execute the agent with messages and return an AgentTask for orchestrations.
@@ -208,7 +208,7 @@ class DurableAIAgent(AgentProtocol):
         Args:
             messages: The message(s) to send to the agent
             thread: Optional agent thread for conversation context
-            response_format: Optional Pydantic model for response parsing
+            options: Optional dict containing chat options like response_format, tools, etc.
             **kwargs: Additional arguments (enable_tool_calls)
 
         Returns:
@@ -219,13 +219,15 @@ class DurableAIAgent(AgentProtocol):
             def my_orchestration(context):
                 agent = app.get_agent(context, "MyAgent")
                 thread = agent.get_new_thread()
-                response = yield agent.run("Hello", thread=thread)
+                response = yield agent.run("Hello", thread=thread, options={"response_format": MyModel})
                 # response is typed as AgentResponse
         """
         message_str = self._normalize_messages(messages)
 
-        # Extract optional parameters from kwargs
-        enable_tool_calls = kwargs.get("enable_tool_calls", True)
+        # Extract options from the options dict (aligned with ChatAgent pattern)
+        opts = options or {}
+        response_format: type[BaseModel] | None = opts.get("response_format")
+        enable_tool_calls = opts.get("enable_tool_calls", kwargs.get("enable_tool_calls", True))
 
         # Get the session ID for the entity
         if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
