@@ -22,7 +22,7 @@ import asyncio
 import logging
 import os
 
-from agent_framework import ChatAgent, FunctionCallContent, FunctionResultContent, TextContent, ai_function
+from agent_framework import ChatAgent, ai_function
 from agent_framework.ag_ui import AGUIChatClient
 
 # Enable debug logging
@@ -141,8 +141,9 @@ async def main():
                     # Build from contents when no direct text
                     parts: list[str] = []
                     for c in getattr(m, "contents", []) or []:
-                        if isinstance(c, FunctionCallContent):
-                            args = c.arguments
+                        content_type = getattr(c, "type", None)
+                        if content_type == "function_call":
+                            args = getattr(c, "arguments", None)
                             if isinstance(args, dict):
                                 try:
                                     import json as _json
@@ -152,12 +153,15 @@ async def main():
                                     args_str = str(args)
                             else:
                                 args_str = str(args or "{}")
-                            parts.append(f"tool_call {c.name} {args_str}")
-                        elif isinstance(c, FunctionResultContent):
-                            parts.append(f"tool_result[{c.call_id}]: {str(c.result)[:40]}")
-                        elif isinstance(c, TextContent):
-                            if c.text:
-                                parts.append(c.text)
+                            parts.append(f"tool_call {getattr(c, 'name', '?')} {args_str}")
+                        elif content_type == "function_result":
+                            call_id = getattr(c, "call_id", "?")
+                            result = getattr(c, "result", None)
+                            parts.append(f"tool_result[{call_id}]: {str(result)[:40]}")
+                        elif content_type == "text":
+                            text = getattr(c, "text", None)
+                            if text:
+                                parts.append(text)
                         else:
                             typename = getattr(c, "type", c.__class__.__name__)
                             parts.append(f"<{typename}>")

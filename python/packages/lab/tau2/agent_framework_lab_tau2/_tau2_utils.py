@@ -60,7 +60,7 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
         text_content = None
         text_contents = [c for c in msg.contents if hasattr(c, "text") and hasattr(c, "type") and c.type == "text"]
         if text_contents:
-            text_content = " ".join(c.text for c in text_contents)
+            text_content = " ".join(c.text for c in text_contents)  # type: ignore[misc]
 
         # Extract function calls and convert to ToolCall objects
         function_calls = [c for c in msg.contents if hasattr(c, "type") and c.type == "function_call"]

@@ -185,7 +185,7 @@ def _parse_content_from_mcp(
                         result=_parse_content_from_mcp(mcp_type.content)
                         if mcp_type.content
                         else mcp_type.structuredContent,
-                        exception=Exception() if mcp_type.isError else None,
+                        exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
                         raw_representation=mcp_type,
                     )
                 )

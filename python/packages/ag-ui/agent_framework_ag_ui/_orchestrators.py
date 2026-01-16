@@ -288,7 +288,7 @@ class HumanInTheLoopOrchestrator(Orchestrator):
                     break
 
         try:
-            tool_result = json.loads(tool_content_text)
+            tool_result = json.loads(tool_content_text)  # type: ignore[arg-type]
             accepted = tool_result.get("accepted", False)
             steps = tool_result.get("steps", [])
 
@@ -326,7 +326,7 @@ class HumanInTheLoopOrchestrator(Orchestrator):
 
         except json.JSONDecodeError:
             logger.error(f"Failed to parse tool result: {tool_content_text}")
-            yield RunErrorEvent(message=f"Invalid tool result format: {tool_content_text[:100]}")
+            yield RunErrorEvent(message=f"Invalid tool result format: {tool_content_text[:100]}")  # type: ignore[index]
             yield event_bridge.create_run_finished_event()
 
 
@@ -440,7 +440,7 @@ class DefaultOrchestrator(Orchestrator):
             if hasattr(msg, "contents") and msg.contents:
                 for j, content in enumerate(msg.contents):
                     if content.type == "text":
-                        logger.debug("    Content %s: %s - text_length=%s", j, content.type, len(content.text))
+                        logger.debug("    Content %s: %s - text_length=%s", j, content.type, len(content.text))  # type: ignore[arg-type]
                     elif content.type == "function_call":
                         arg_length = len(str(content.arguments)) if content.arguments else 0
                         logger.debug(
@@ -538,9 +538,9 @@ class DefaultOrchestrator(Orchestrator):
                 if idx < len(approved_function_results) and approved_function_results[idx].type == "function_result":
                     normalized_results.append(approved_function_results[idx])
                     continue
-                call_id = approval.function_call.call_id or approval.id
+                call_id = approval.function_call.call_id or approval.id  # type: ignore[union-attr]
                 normalized_results.append(
-                    Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
+                    Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")  # type: ignore[arg-type]
                 )
 
             _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore

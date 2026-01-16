@@ -53,7 +53,7 @@ def is_state_context_message(message: ChatMessage) -> bool:
     if get_role_value(message) != "system":
         return False
     for content in message.contents:
-        if content.type == "text" and content.text.startswith("Current state of the application:"):
+        if content.type == "text" and content.text.startswith("Current state of the application:"):  # type: ignore[union-attr]
             return True
     return False
 

@@ -146,6 +146,7 @@ ignore = [
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
     "B027", # allow empty non-abstract method in ABC
+    "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
 ]
 

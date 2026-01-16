@@ -689,7 +689,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
             correlation_id=correlation_id,
             created_at=_parse_created_at(response.created_at),
             messages=[DurableAgentStateMessage.from_chat_message(m) for m in response.messages],
-            usage=DurableAgentStateUsage.from_usage(response.usage_details),
+            usage=DurableAgentStateUsage.from_usage(response.usage_details),  # type: ignore[arg-type]
         )
 
 
@@ -859,7 +859,7 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
 
     @staticmethod
     def from_data_content(content: Content) -> DurableAgentStateDataContent:
-        return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)
+        return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)  # type: ignore[arg-type]
 
     def to_ai_content(self) -> Content:
         return Content.from_uri(uri=self.uri, media_type=self.media_type)
@@ -952,7 +952,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
                 except json.JSONDecodeError:
                     arguments = {}
 
-        return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
+        return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)  # type: ignore[arg-type]
 
     def to_ai_content(self) -> Content:
         return Content.from_function_call(call_id=self.call_id, name=self.name, arguments=self.arguments)
@@ -988,7 +988,7 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
 
     @staticmethod
     def from_function_result_content(content: Content) -> DurableAgentStateFunctionResultContent:
-        return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)
+        return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)  # type: ignore[arg-type]
 
     def to_ai_content(self) -> Content:
         return Content.from_function_result(call_id=self.call_id, result=self.result)
@@ -1016,7 +1016,7 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
 
     @staticmethod
     def from_hosted_file_content(content: Content) -> DurableAgentStateHostedFileContent:
-        return DurableAgentStateHostedFileContent(file_id=content.file_id)
+        return DurableAgentStateHostedFileContent(file_id=content.file_id)  # type: ignore[arg-type]
 
     def to_ai_content(self) -> Content:
         return Content.from_hosted_file(file_id=self.file_id)
@@ -1050,7 +1050,7 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
     def from_hosted_vector_store_content(
         content: Content,
     ) -> DurableAgentStateHostedVectorStoreContent:
-        return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)
+        return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)  # type: ignore[arg-type]
 
     def to_ai_content(self) -> Content:
         return Content.from_hosted_vector_store(vector_store_id=self.vector_store_id)
@@ -1137,7 +1137,7 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
 
     @staticmethod
     def from_uri_content(content: Content) -> DurableAgentStateUriContent:
-        return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)
+        return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)  # type: ignore[arg-type]
 
     def to_ai_content(self) -> Content:
         return Content.from_uri(uri=self.uri, media_type=self.media_type)
@@ -1194,13 +1194,13 @@ class DurableAgentStateUsage:
         )
 
     @staticmethod
-    def from_usage(usage: UsageDetails | None) -> DurableAgentStateUsage | None:
+    def from_usage(usage: UsageDetails | dict[str, int] | None) -> DurableAgentStateUsage | None:
         if usage is None:
             return None
         return DurableAgentStateUsage(
-            input_token_count=usage.input_token_count,
-            output_token_count=usage.output_token_count,
-            total_token_count=usage.total_token_count,
+            input_token_count=usage.get("input_token_count"),
+            output_token_count=usage.get("output_token_count"),
+            total_token_count=usage.get("total_token_count"),
         )
 
     def to_usage_details(self) -> UsageDetails:
@@ -1272,4 +1272,4 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
     def to_ai_content(self) -> Content:
         if not self.content:
             raise Exception("The content is missing and cannot be converted to valid AI content.")
-        return Content(type=self.type, additional_properties={"content": self.content})
+        return Content(type=self.type, additional_properties={"content": self.content})  # type: ignore

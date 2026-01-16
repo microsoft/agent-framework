@@ -687,10 +687,10 @@ class OpenAIAssistantsClient(
 
             for content in chat_message.contents:
                 if content.type == "text":
-                    message_contents.append(TextContentBlockParam(type="text", text=content.text))  # type: ignore[attr-defined]
+                    message_contents.append(TextContentBlockParam(type="text", text=content.text))  # type: ignore[attr-defined, typeddict-item]
                 elif content.type == "uri" and content.has_top_level_media_type("image"):
                     message_contents.append(
-                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))  # type: ignore[attr-defined]
+                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))  # type: ignore[attr-defined, typeddict-item]
                     )
                 elif content.type == "function_result":
                     if tool_results is None:
@@ -728,7 +728,7 @@ class OpenAIAssistantsClient(
                 # When creating the FunctionCallContent, we created it with a CallId == [runId, callId].
                 # We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                 # is only the call ID.
-                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)
+                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)  # type: ignore[arg-type]
 
                 if (
                     not run_and_call_ids
