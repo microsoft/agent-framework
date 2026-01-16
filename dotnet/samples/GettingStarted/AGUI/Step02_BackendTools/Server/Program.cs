@@ -79,7 +79,7 @@ ChatClient chatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-ChatClientAgent agent = chatClient.AsIChatClient().CreateAIAgent(
+ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
     name: "AGUIAssistant",
     instructions: "You are a helpful assistant with access to restaurant information.",
     tools: tools);

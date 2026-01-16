@@ -57,9 +57,9 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 context.messages, Activity.UPLOAD_TEXT
             )
             if should_block_prompt:
-                from agent_framework import AgentRunResponse, ChatMessage, Role
+                from agent_framework import AgentResponse, ChatMessage, Role
 
-                context.result = AgentRunResponse(
+                context.result = AgentResponse(
                     messages=[ChatMessage(role=Role.SYSTEM, text=self._settings.blocked_prompt_message)]
                 )
                 context.terminate = True
@@ -76,7 +76,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         await next(context)
 
         try:
-            # Post (response) check only if we have a normal AgentRunResponse
+            # Post (response) check only if we have a normal AgentResponse
             # Use the same user_id from the request for the response evaluation
             if context.result and not context.is_streaming:
                 should_block_response, _ = await self._processor.process_messages(
@@ -85,9 +85,9 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                     user_id=resolved_user_id,
                 )
                 if should_block_response:
-                    from agent_framework import AgentRunResponse, ChatMessage, Role
+                    from agent_framework import AgentResponse, ChatMessage, Role
 
-                    context.result = AgentRunResponse(
+                    context.result = AgentResponse(
                         messages=[ChatMessage(role=Role.SYSTEM, text=self._settings.blocked_response_message)]
                     )
             else:

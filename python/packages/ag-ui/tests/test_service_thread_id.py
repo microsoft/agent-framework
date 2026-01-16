@@ -8,7 +8,7 @@ from typing import Any
 
 from ag_ui.core import RunFinishedEvent, RunStartedEvent
 from agent_framework import TextContent
-from agent_framework._types import AgentRunResponseUpdate, ChatResponseUpdate
+from agent_framework._types import AgentResponseUpdate, ChatResponseUpdate
 
 sys.path.insert(0, str(Path(__file__).parent))
 from utils_test_ag_ui import StubAgent
@@ -18,8 +18,8 @@ async def test_service_thread_id_when_there_are_updates():
     """Test that service-managed thread IDs (conversation_id) are correctly set as the thread_id in events."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    updates: list[AgentRunResponseUpdate] = [
-        AgentRunResponseUpdate(
+    updates: list[AgentResponseUpdate] = [
+        AgentResponseUpdate(
             contents=[TextContent(text="Hello, user!")],
             response_id="resp_67890",
             raw_representation=ChatResponseUpdate(
@@ -50,7 +50,7 @@ async def test_service_thread_id_when_no_user_message():
     """Test when user submits no messages, emitted events still have with a thread_id"""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    updates: list[AgentRunResponseUpdate] = []
+    updates: list[AgentResponseUpdate] = []
     agent = StubAgent(updates=updates)
     wrapper = AgentFrameworkAgent(agent=agent)
 
@@ -72,7 +72,7 @@ async def test_service_thread_id_when_user_supplied_thread_id():
     """Test that user-supplied thread IDs are preserved in emitted events."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    updates: list[AgentRunResponseUpdate] = []
+    updates: list[AgentResponseUpdate] = []
     agent = StubAgent(updates=updates)
     wrapper = AgentFrameworkAgent(agent=agent)
 

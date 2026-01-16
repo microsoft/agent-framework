@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._chat_client import BedrockChatClient
+from ._chat_client import BedrockChatClient, BedrockChatOptions, BedrockGuardrailConfig, BedrockSettings
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,5 +11,8 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "BedrockChatClient",
+    "BedrockChatOptions",
+    "BedrockGuardrailConfig",
+    "BedrockSettings",
     "__version__",
 ]

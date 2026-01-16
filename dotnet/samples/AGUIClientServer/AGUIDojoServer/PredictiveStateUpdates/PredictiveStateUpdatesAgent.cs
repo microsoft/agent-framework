@@ -20,12 +20,12 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -79,7 +79,7 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
                         stateUpdate,
                         this._jsonSerializerOptions.GetTypeInfo(typeof(DocumentState)));
 
-                    yield return new AgentRunResponseUpdate(
+                    yield return new AgentResponseUpdate(
                         new ChatResponseUpdate(role: ChatRole.Assistant, [new DataContent(stateBytes, "application/json")])
                         {
                             MessageId = "snapshot" + Guid.NewGuid().ToString("N"),

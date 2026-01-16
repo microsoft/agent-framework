@@ -11,8 +11,8 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     UseStringEnumConverter = true)]
-[JsonSerializable(typeof(AgentRunResponse))]
-[JsonSerializable(typeof(AgentRunResponseUpdate))]
+[JsonSerializable(typeof(AgentResponse))]
+[JsonSerializable(typeof(AgentResponseUpdate))]
 [JsonSerializable(typeof(AgentRunOptions))]
 [JsonSerializable(typeof(Animal))]
 [JsonSerializable(typeof(JsonElement))]

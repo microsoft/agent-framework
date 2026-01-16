@@ -99,7 +99,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     spam_result_raw = yield spam_agent.run(
         messages=spam_prompt,
         thread=spam_thread,
-        response_format=SpamDetectionResult,
+        options={"response_format": SpamDetectionResult},
     )
 
     spam_result = cast(SpamDetectionResult, spam_result_raw.value)
@@ -120,7 +120,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     email_result_raw = yield email_agent.run(
         messages=email_prompt,
         thread=email_thread,
-        response_format=EmailResponse,
+        options={"response_format": EmailResponse},
     )
 
     email_result = cast(EmailResponse, email_result_raw.value)

@@ -15,7 +15,7 @@ namespace AgentWebChat.Web;
 /// </summary>
 internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentClientBase
 {
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -35,7 +35,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
 
         await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
-            yield return new AgentRunResponseUpdate(update);
+            yield return new AgentResponseUpdate(update);
         }
     }
 }

@@ -34,7 +34,7 @@ async def main():
 Expected result:
 User: What is the current time?
 Result: {
-  "type": "agent_run_response",
+  "type": "agent_response",
   "messages": [
     {
       "type": "chat_message",

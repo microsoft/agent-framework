@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260114] - 2026-01-14
+
+### Added
+
+- **agent-framework-azure-ai**: Create/Get Agent API for Azure V2 ([#3059](https://github.com/microsoft/agent-framework/pull/3059)) by @moonbox3
+- **agent-framework-declarative**: Add declarative workflow runtime ([#2815](https://github.com/microsoft/agent-framework/pull/2815)) by @emattson
+- **agent-framework-ag-ui**: Add dependencies param to ag-ui FastAPI endpoint ([#3191](https://github.com/microsoft/agent-framework/pull/3191)) by @emattson
+- **agent-framework-ag-ui**: Add Pydantic request model and OpenAPI tags support to AG-UI FastAPI endpoint ([#2522](https://github.com/microsoft/agent-framework/pull/2522)) by @claude89757
+- **agent-framework-core**: Add tool call/result content types and update connectors and samples ([#2971](https://github.com/microsoft/agent-framework/pull/2971)) by @moonbox3
+- **agent-framework-core**: Add more specific exceptions to Workflow ([#3188](https://github.com/microsoft/agent-framework/pull/3188)) by @taochenms
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Refactor orchestrations ([#3023](https://github.com/microsoft/agent-framework/pull/3023)) by @taochenms
+- **agent-framework-core**: [BREAKING] Introducing Options as TypedDict and Generic ([#3140](https://github.com/microsoft/agent-framework/pull/3140)) by @eavanvalkenburg
+- **agent-framework-core**: [BREAKING] Removed display_name, renamed context_providers, middleware and AggregateContextProvider ([#3139](https://github.com/microsoft/agent-framework/pull/3139)) by @eavanvalkenburg
+- **agent-framework-core**: MCP Improvements: improved connection loss behavior, pagination for loading and a param to control representation ([#3154](https://github.com/microsoft/agent-framework/pull/3154)) by @eavanvalkenburg
+- **agent-framework-azure-ai**: Azure AI direct A2A endpoint support ([#3127](https://github.com/microsoft/agent-framework/pull/3127)) by @moonbox3
+
+### Fixed
+
+- **agent-framework-anthropic**: Fix duplicate ToolCallStartEvent in streaming tool calls ([#3051](https://github.com/microsoft/agent-framework/pull/3051)) by @emattson
+- **agent-framework-anthropic**: Fix Anthropic streaming response bugs ([#3141](https://github.com/microsoft/agent-framework/pull/3141)) by @eavanvalkenburg
+- **agent-framework-ag-ui**: Execute tools with approval_mode, fix shared state, code cleanup ([#3079](https://github.com/microsoft/agent-framework/pull/3079)) by @emattson
+- **agent-framework-azure-ai**: Fix AzureAIClient tool call bug for AG-UI use ([#3148](https://github.com/microsoft/agent-framework/pull/3148)) by @emattson
+- **agent-framework-core**: Fix MCPStreamableHTTPTool to use new streamable_http_client API ([#3088](https://github.com/microsoft/agent-framework/pull/3088)) by @Copilot
+- **agent-framework-core**: Multiple bug fixes ([#3150](https://github.com/microsoft/agent-framework/pull/3150)) by @eavanvalkenburg
+
 ## [1.0.0b260107] - 2026-01-07
 
 ### Added

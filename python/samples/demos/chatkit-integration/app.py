@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -289,8 +289,10 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             # Use the chat client directly for a quick, lightweight call
             response = await self.weather_agent.chat_client.get_response(
                 messages=title_prompt,
-                temperature=0.3,
-                max_tokens=20,
+                options={
+                    "temperature": 0.3,
+                    "max_tokens": 20,
+                },
             )
 
             if response.messages and response.messages[-1].text:
@@ -363,7 +365,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             agent_stream = self.weather_agent.run_stream(agent_messages)
 
             # Create an intercepting stream that extracts function results while passing through updates
-            async def intercept_stream() -> AsyncIterator[AgentRunResponseUpdate]:
+            async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
                 nonlocal weather_data, show_city_selector
                 async for update in agent_stream:
                     # Check for function results in the update
@@ -460,7 +462,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             agent_stream = self.weather_agent.run_stream(agent_messages)
 
             # Create an intercepting stream that extracts function results while passing through updates
-            async def intercept_stream() -> AsyncIterator[AgentRunResponseUpdate]:
+            async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
                 nonlocal weather_data
                 async for update in agent_stream:
                     # Check for function results in the update

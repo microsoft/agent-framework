@@ -3,13 +3,15 @@
 """Tests for AG-UI orchestrators."""
 
 from collections.abc import AsyncGenerator
-from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 from ag_ui.core import BaseEvent, RunFinishedEvent
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentThread,
+    BaseChatClient,
+    ChatAgent,
     ChatResponseUpdate,
     FunctionInvocationConfiguration,
     TextContent,
@@ -26,27 +28,57 @@ def server_tool() -> str:
     return "server"
 
 
-class DummyAgent:
-    """Minimal agent stub to capture run_stream parameters."""
+def _create_mock_chat_agent(
+    tools: list[Any] | None = None,
+    response_format: Any = None,
+    capture_tools: list[Any] | None = None,
+    capture_messages: list[Any] | None = None,
+) -> ChatAgent:
+    """Create a ChatAgent with mocked chat client for testing.
 
-    def __init__(self) -> None:
-        self.chat_options = SimpleNamespace(tools=[server_tool], response_format=None)
-        self.tools = [server_tool]
-        self.chat_client = SimpleNamespace(
-            function_invocation_configuration=FunctionInvocationConfiguration(),
-        )
-        self.seen_tools: list[Any] | None = None
+    Args:
+        tools: Tools to configure on the agent.
+        response_format: Response format to configure.
+        capture_tools: If provided, tools passed to run_stream will be appended here.
+        capture_messages: If provided, messages passed to run_stream will be appended here.
+    """
+    mock_chat_client = MagicMock(spec=BaseChatClient)
+    mock_chat_client.function_invocation_configuration = FunctionInvocationConfiguration()
 
-    async def run_stream(
-        self,
+    agent = ChatAgent(
+        chat_client=mock_chat_client,
+        tools=tools or [server_tool],
+        response_format=response_format,
+    )
+
+    # Create a mock run_stream that captures parameters and yields a simple response
+    async def mock_run_stream(
         messages: list[Any],
         *,
+        #     thread: AgentThread,
+        #     tools: list[Any] | None = None,
+        #     **kwargs: Any,
+        # ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+        #     self.seen_tools = tools
+        #     yield AgentRunResponseUpdate(
+        #         contents=[TextContent(text="ok")],
+        #         role="assistant",
+        #         response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+        #         raw_representation=ChatResponseUpdate(
+        #             contents=[TextContent(text="ok")],
+        #             conversation_id=thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+        #             response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+        #         ),
+        #     )
         thread: AgentThread,
         tools: list[Any] | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
-        self.seen_tools = tools
-        yield AgentRunResponseUpdate(
+    ) -> AsyncGenerator[AgentResponseUpdate, None]:
+        if capture_tools is not None and tools is not None:
+            capture_tools.extend(tools)
+        if capture_messages is not None:
+            capture_messages.extend(messages)
+        yield AgentResponseUpdate(
             contents=[TextContent(text="ok")],
             role="assistant",
             response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
@@ -57,34 +89,16 @@ class DummyAgent:
             ),
         )
 
+    # Patch the run_stream method
+    agent.run_stream = mock_run_stream  # type: ignore[method-assign]
 
-class RecordingAgent:
-    """Agent stub that captures messages passed to run_stream."""
-
-    def __init__(self) -> None:
-        self.chat_options = SimpleNamespace(tools=[], response_format=None)
-        self.tools: list[Any] = []
-        self.chat_client = SimpleNamespace(
-            function_invocation_configuration=FunctionInvocationConfiguration(),
-        )
-        self.seen_messages: list[Any] | None = None
-
-    async def run_stream(
-        self,
-        messages: list[Any],
-        *,
-        thread: Any,
-        tools: list[Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
-        self.seen_messages = messages
-        yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+    return agent
 
 
 async def test_default_orchestrator_merges_client_tools() -> None:
     """Client tool declarations are merged with server tools before running agent."""
-
-    agent = DummyAgent()
+    captured_tools: list[Any] = []
+    agent = _create_mock_chat_agent(tools=[server_tool], capture_tools=captured_tools)
     orchestrator = DefaultOrchestrator()
 
     input_data = {
@@ -117,8 +131,8 @@ async def test_default_orchestrator_merges_client_tools() -> None:
     async for event in orchestrator.run(context):
         events.append(event)
 
-    assert agent.seen_tools is not None
-    tool_names = [getattr(tool, "name", "?") for tool in agent.seen_tools]
+    assert len(captured_tools) > 0
+    tool_names = [getattr(tool, "name", "?") for tool in captured_tools]
     assert "server_tool" in tool_names
     assert "get_weather" in tool_names
     assert agent.chat_client.function_invocation_configuration.additional_tools
@@ -126,8 +140,7 @@ async def test_default_orchestrator_merges_client_tools() -> None:
 
 async def test_default_orchestrator_with_camel_case_ids() -> None:
     """Client tool is able to extract camelCase IDs."""
-
-    agent = DummyAgent()
+    agent = _create_mock_chat_agent()
     orchestrator = DefaultOrchestrator()
 
     input_data = {
@@ -161,8 +174,7 @@ async def test_default_orchestrator_with_camel_case_ids() -> None:
 
 async def test_default_orchestrator_with_snake_case_ids() -> None:
     """Client tool is able to extract snake_case IDs."""
-
-    agent = DummyAgent()
+    agent = _create_mock_chat_agent()
     orchestrator = DefaultOrchestrator()
 
     input_data = {
@@ -196,8 +208,8 @@ async def test_default_orchestrator_with_snake_case_ids() -> None:
 
 async def test_state_context_injected_when_tool_call_state_mismatch() -> None:
     """State context should be injected when current state differs from tool call args."""
-
-    agent = RecordingAgent()
+    captured_messages: list[Any] = []
+    agent = _create_mock_chat_agent(tools=[], capture_messages=captured_messages)
     orchestrator = DefaultOrchestrator()
 
     tool_recipe = {"title": "Salad", "special_preferences": []}
@@ -234,9 +246,9 @@ async def test_state_context_injected_when_tool_call_state_mismatch() -> None:
     async for _event in orchestrator.run(context):
         pass
 
-    assert agent.seen_messages is not None
+    assert len(captured_messages) > 0
     state_messages = []
-    for msg in agent.seen_messages:
+    for msg in captured_messages:
         role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
         if role_value != "system":
             continue
@@ -249,8 +261,8 @@ async def test_state_context_injected_when_tool_call_state_mismatch() -> None:
 
 async def test_state_context_not_injected_when_tool_call_matches_state() -> None:
     """State context should be skipped when tool call args match current state."""
-
-    agent = RecordingAgent()
+    captured_messages: list[Any] = []
+    agent = _create_mock_chat_agent(tools=[], capture_messages=captured_messages)
     orchestrator = DefaultOrchestrator()
 
     input_data = {
@@ -283,9 +295,9 @@ async def test_state_context_not_injected_when_tool_call_matches_state() -> None
     async for _event in orchestrator.run(context):
         pass
 
-    assert agent.seen_messages is not None
+    assert len(captured_messages) > 0
     state_messages = []
-    for msg in agent.seen_messages:
+    for msg in captured_messages:
         role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
         if role_value != "system":
             continue

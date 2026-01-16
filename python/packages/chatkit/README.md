@@ -4,7 +4,7 @@ This package provides an integration layer between Microsoft Agent Framework
 and [OpenAI ChatKit (Python)](https://github.com/openai/chatkit-python/).
 Specifically, it mirrors the [Agent SDK integration](https://github.com/openai/chatkit-python/blob/main/docs/server.md#agents-sdk-integration), and provides the following helpers:
 
-- `stream_agent_response`: A helper to convert a streamed `AgentRunResponseUpdate`
+- `stream_agent_response`: A helper to convert a streamed `AgentResponseUpdate`
   from a Microsoft Agent Framework agent that implements `AgentProtocol` to ChatKit events.
 - `ThreadItemConverter`: A extendable helper class to convert ChatKit thread items to
   `ChatMessage` objects that can be consumed by an Agent Framework agent.

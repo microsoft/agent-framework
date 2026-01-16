@@ -23,7 +23,7 @@ AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Get anthropic client to create agents.
 AIAgent agent = new AnthropicClient { APIKey = apiKey }
-    .CreateAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
+    .AsAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
 AgentThread thread = await agent.GetNewThreadAsync();
@@ -31,7 +31,7 @@ Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?",
 
 // Streaming agent interaction with function tools.
 thread = await agent.GetNewThreadAsync();
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
 {
     Console.WriteLine(update);
 }

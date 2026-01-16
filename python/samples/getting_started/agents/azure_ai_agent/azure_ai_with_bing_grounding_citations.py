@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, CitationAnnotation, HostedWebSearchTool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import CitationAnnotation, HostedWebSearchTool
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -34,11 +34,12 @@ async def main() -> None:
         description="Search the web for current information using Bing",
     )
 
-    # 2. Use AzureAIAgentClient as async context manager for automatic cleanup
+    # 2. Use AzureAIAgentsProvider for agent creation and management
     async with (
-        AzureAIAgentClient(credential=AzureCliCredential()) as client,
-        ChatAgent(
-            chat_client=client,
+        AzureCliCredential() as credential,
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="BingSearchAgent",
             instructions=(
                 "You are a helpful assistant that can search the web for current information. "
@@ -46,8 +47,8 @@ async def main() -> None:
                 "well-sourced answers. Always cite your sources when possible."
             ),
             tools=bing_search_tool,
-        ) as agent,
-    ):
+        )
+
         # 3. Demonstrate agent capabilities with web search
         print("=== Azure AI Agent with Bing Grounding Search ===\n")
 

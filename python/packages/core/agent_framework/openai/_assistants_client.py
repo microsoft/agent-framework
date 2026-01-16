@@ -2,8 +2,15 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
-from typing import Any, cast
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+)
+from typing import Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -22,7 +29,12 @@ from pydantic import ValidationError
 
 from .._clients import BaseChatClient
 from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
+from .._tools import (
+    AIFunction,
+    HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    use_function_invocation,
+)
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -35,7 +47,6 @@ from .._types import (
     MCPServerToolCallContent,
     Role,
     TextContent,
-    ToolMode,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -45,19 +56,162 @@ from ..exceptions import ServiceInitializationError
 from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
 
 
-__all__ = ["OpenAIAssistantsClient"]
+__all__ = [
+    "AssistantToolResources",
+    "OpenAIAssistantsClient",
+    "OpenAIAssistantsOptions",
+]
+
+
+# region OpenAI Assistants Options TypedDict
+
+
+class VectorStoreToolResource(TypedDict, total=False):
+    """Vector store configuration for file search tool resources."""
+
+    vector_store_ids: list[str]
+    """IDs of vector stores attached to this assistant."""
+
+
+class CodeInterpreterToolResource(TypedDict, total=False):
+    """Code interpreter tool resource configuration."""
+
+    file_ids: list[str]
+    """File IDs accessible by the code interpreter tool. Max 20 files per assistant."""
+
+
+class AssistantToolResources(TypedDict, total=False):
+    """Tool resources attached to the assistant.
+
+    See: https://platform.openai.com/docs/api-reference/assistants/createAssistant#assistants-createassistant-tool_resources
+    """
+
+    code_interpreter: CodeInterpreterToolResource
+    """Resources for code interpreter tool, including file IDs."""
+
+    file_search: VectorStoreToolResource
+    """Resources for file search tool, including vector store IDs."""
+
+
+class OpenAIAssistantsOptions(ChatOptions, total=False):
+    """OpenAI Assistants API-specific options dict.
+
+    Extends base ChatOptions with Assistants API-specific parameters
+    for creating and running assistants.
+
+    See: https://platform.openai.com/docs/api-reference/assistants
+
+    Keys:
+        # Inherited from ChatOptions:
+        model_id: The model to use for the assistant,
+            translates to ``model`` in OpenAI API.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``max_completion_tokens`` in OpenAI API.
+        tools: List of tools (functions, code_interpreter, file_search).
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls,
+            translates to ``parallel_tool_calls`` in OpenAI API.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+
+        # Options not supported in Assistants API (inherited but unused):
+        stop: Not supported.
+        seed: Not supported (use assistant-level configuration instead).
+        frequency_penalty: Not supported.
+        presence_penalty: Not supported.
+        user: Not supported.
+        store: Not supported.
+
+        # Assistants-specific options:
+        name: Name of the assistant.
+        description: Description of the assistant.
+        instructions: System instructions for the assistant.
+        tool_resources: Resources for tools (file IDs, vector stores).
+        reasoning_effort: Effort level for o-series reasoning models.
+        conversation_id: Thread ID to continue conversation in.
+    """
+
+    # Assistants-specific options
+    name: str
+    """Name of the assistant (max 256 characters)."""
+
+    description: str
+    """Description of the assistant (max 512 characters)."""
+
+    tool_resources: AssistantToolResources
+    """Tool-specific resources like file IDs and vector stores."""
+
+    reasoning_effort: Literal["low", "medium", "high"]
+    """Effort level for o-series reasoning models (o1, o3-mini).
+    Higher effort = more reasoning time and potentially better results."""
+
+    conversation_id: str  # type: ignore[misc]
+    """Thread ID to continue a conversation in an existing thread."""
+
+    # OpenAI/ChatOptions fields not supported in Assistants API
+    stop: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    seed: None  # type: ignore[misc]
+    """Not supported in Assistants API (use assistant-level configuration)."""
+
+    frequency_penalty: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    presence_penalty: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Assistants API."""
+
+
+ASSISTANTS_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "max_tokens": "max_completion_tokens",
+    "allow_multiple_tool_calls": "parallel_tool_calls",
+}
+"""Maps ChatOptions keys to OpenAI Assistants API parameter names."""
+
+TOpenAIAssistantsOptions = TypeVar(
+    "TOpenAIAssistantsOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIAssistantsOptions",
+    covariant=True,
+)
+
+
+# endregion
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
+class OpenAIAssistantsClient(
+    OpenAIConfigMixin,
+    BaseChatClient[TOpenAIAssistantsOptions],
+    Generic[TOpenAIAssistantsOptions],
+):
     """OpenAI Assistants client."""
 
     def __init__(
@@ -118,6 +272,18 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
                 # Or loading from a .env file
                 client = OpenAIAssistantsClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.openai import OpenAIAssistantsOptions
+
+
+                class MyOptions(OpenAIAssistantsOptions, total=False):
+                    my_custom_option: str
+
+
+                client: OpenAIAssistantsClient[MyOptions] = OpenAIAssistantsClient(model_id="gpt-4")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             openai_settings = OpenAISettings(
@@ -159,7 +325,12 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         """Async context manager exit - clean up any assistants we created."""
         await self.close()
 
@@ -171,34 +342,32 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
-            output_format_type=chat_options.response_format,
+            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
+            output_format_type=options.get("response_format"),
         )
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # prepare
-        run_options, tool_results = self._prepare_options(messages, chat_options, **kwargs)
+        run_options, tool_results = self._prepare_options(messages, options, **kwargs)
 
         # Get the thread ID
-        thread_id: str | None = (
-            chat_options.conversation_id
-            if chat_options.conversation_id is not None
-            else run_options.get("conversation_id", self.thread_id)
-        )
+        thread_id: str | None = options.get("conversation_id", run_options.get("conversation_id", self.thread_id))
 
         if thread_id is None and tool_results is not None:
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
@@ -256,7 +425,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
             stream = client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
-                run_id=tool_run_id, thread_id=thread_run.thread_id, tool_outputs=tool_outputs
+                run_id=tool_run_id,
+                thread_id=thread_run.thread_id,
+                tool_outputs=tool_outputs,
             )
             final_thread_id = thread_run.thread_id
         else:
@@ -408,7 +579,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     function_name = tool_call.function.name
                     function_arguments = json.loads(tool_call.function.arguments)
                     contents.append(
-                        FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments)
+                        FunctionCallContent(
+                            call_id=call_id,
+                            name=function_name,
+                            arguments=function_arguments,
+                        )
                     )
 
         return contents
@@ -416,59 +591,75 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions | None,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent] | None]:
+        from .._types import validate_tool_mode
+
         run_options: dict[str, Any] = {**kwargs}
 
-        if chat_options is not None:
-            run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.model_id
-            run_options["top_p"] = chat_options.top_p
-            run_options["temperature"] = chat_options.temperature
+        # Extract options from the dict
+        max_tokens = options.get("max_tokens")
+        model_id = options.get("model_id")
+        top_p = options.get("top_p")
+        temperature = options.get("temperature")
+        allow_multiple_tool_calls = options.get("allow_multiple_tool_calls")
+        tool_choice = options.get("tool_choice")
+        tools = options.get("tools")
+        response_format = options.get("response_format")
 
-            if chat_options.allow_multiple_tool_calls is not None:
-                run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
+        if max_tokens is not None:
+            run_options["max_completion_tokens"] = max_tokens
+        if model_id is not None:
+            run_options["model"] = model_id
+        if top_p is not None:
+            run_options["top_p"] = top_p
+        if temperature is not None:
+            run_options["temperature"] = temperature
 
-            if chat_options.tool_choice is not None:
-                tool_definitions: list[MutableMapping[str, Any]] = []
-                if chat_options.tool_choice != "none" and chat_options.tools is not None:
-                    for tool in chat_options.tools:
-                        if isinstance(tool, AIFunction):
-                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                        elif isinstance(tool, HostedCodeInterpreterTool):
-                            tool_definitions.append({"type": "code_interpreter"})
-                        elif isinstance(tool, HostedFileSearchTool):
-                            params: dict[str, Any] = {
-                                "type": "file_search",
-                            }
-                            if tool.max_results is not None:
-                                params["max_num_results"] = tool.max_results
-                            tool_definitions.append(params)
-                        elif isinstance(tool, MutableMapping):
-                            tool_definitions.append(tool)
+        if allow_multiple_tool_calls is not None:
+            run_options["parallel_tool_calls"] = allow_multiple_tool_calls
 
-                if len(tool_definitions) > 0:
-                    run_options["tools"] = tool_definitions
-
-                if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = chat_options.tool_choice.mode
-                elif (
-                    isinstance(chat_options.tool_choice, ToolMode)
-                    and chat_options.tool_choice == "required"
-                    and chat_options.tool_choice.required_function_name is not None
-                ):
-                    run_options["tool_choice"] = {
-                        "type": "function",
-                        "function": {"name": chat_options.tool_choice.required_function_name},
+        tool_mode = validate_tool_mode(tool_choice)
+        tool_definitions: list[MutableMapping[str, Any]] = []
+        if tool_mode["mode"] != "none" and tools is not None:
+            for tool in tools:
+                if isinstance(tool, AIFunction):
+                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+                elif isinstance(tool, HostedCodeInterpreterTool):
+                    tool_definitions.append({"type": "code_interpreter"})
+                elif isinstance(tool, HostedFileSearchTool):
+                    params: dict[str, Any] = {
+                        "type": "file_search",
                     }
+                    if tool.max_results is not None:
+                        params["max_num_results"] = tool.max_results
+                    tool_definitions.append(params)
+                elif isinstance(tool, MutableMapping):
+                    tool_definitions.append(tool)
 
-            if chat_options.response_format is not None:
+        if len(tool_definitions) > 0:
+            run_options["tools"] = tool_definitions
+
+        if (mode := tool_mode["mode"]) == "required" and (
+            func_name := tool_mode.get("required_function_name")
+        ) is not None:
+            run_options["tool_choice"] = {
+                "type": "function",
+                "function": {"name": func_name},
+            }
+        else:
+            run_options["tool_choice"] = mode
+
+        if response_format is not None:
+            if isinstance(response_format, dict):
+                run_options["response_format"] = response_format
+            else:
                 run_options["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {
-                        "name": chat_options.response_format.__name__,
-                        "schema": chat_options.response_format.model_json_schema(),
+                        "name": response_format.__name__,
+                        "schema": response_format.model_json_schema(),
                     },
                 }
 

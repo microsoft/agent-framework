@@ -10,11 +10,12 @@ from typing_extensions import Never
 
 from agent_framework import AgentProtocol, ChatMessage, Role
 
-from ._agent_executor import AgentExecutorRequest, AgentExecutorResponse
+from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._agent_utils import resolve_agent_id
 from ._checkpoint import CheckpointStorage
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
-from ._orchestration_request_info import RequestInfoInterceptor
+from ._orchestration_request_info import AgentApprovalExecutor
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -78,7 +79,7 @@ class _AggregateAgentConversations(Executor):
       [ single_user_prompt?, agent1_final_assistant, agent2_final_assistant, ... ]
 
     - Extracts a single user prompt (first user message seen across results).
-    - For each result, selects the final assistant message (prefers agent_run_response.messages).
+    - For each result, selects the final assistant message (prefers agent_response.messages).
     - Avoids duplicating the same user message per agent.
     """
 
@@ -106,7 +107,7 @@ class _AggregateAgentConversations(Executor):
         assistant_replies: list[ChatMessage] = []
 
         for r in results:
-            resp_messages = list(getattr(r.agent_run_response, "messages", []) or [])
+            resp_messages = list(getattr(r.agent_response, "messages", []) or [])
             conv = r.full_conversation if r.full_conversation is not None else resp_messages
 
             logger.debug(
@@ -212,7 +213,7 @@ class ConcurrentBuilder:
         # Custom aggregator via callback (sync or async). The callback receives
         # list[AgentExecutorResponse] and its return value becomes the workflow's output.
         def summarize(results: list[AgentExecutorResponse]) -> str:
-            return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+            return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_aggregator(summarize).build()
@@ -222,7 +223,7 @@ class ConcurrentBuilder:
         class MyAggregator(Executor):
             @handler
             async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
-                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+                await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
         workflow = (
@@ -247,6 +248,7 @@ class ConcurrentBuilder:
         self._aggregator_factory: Callable[[], Executor] | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._request_info_enabled: bool = False
+        self._request_info_filter: set[str] | None = None
 
     def register_participants(
         self,
@@ -414,7 +416,7 @@ class ConcurrentBuilder:
             class CustomAggregator(Executor):
                 @handler
                 async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext) -> None:
-                    await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+                    await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(CustomAggregator()).build()
@@ -422,7 +424,7 @@ class ConcurrentBuilder:
 
             # Callback-based aggregator (string result)
             async def summarize(results: list[AgentExecutorResponse]) -> str:
-                return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+                return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
@@ -430,7 +432,7 @@ class ConcurrentBuilder:
 
             # Callback-based aggregator (yield result)
             async def summarize(results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
-                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+                await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
@@ -461,24 +463,67 @@ class ConcurrentBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def with_request_info(self) -> "ConcurrentBuilder":
-        """Enable request info before aggregation in the workflow.
+    def with_request_info(
+        self,
+        *,
+        agents: Sequence[str | AgentProtocol] | None = None,
+    ) -> "ConcurrentBuilder":
+        """Enable request info after agent participant responses.
 
-        When enabled, the workflow pauses after all parallel agents complete,
-        emitting a RequestInfoEvent that allows the caller to review and optionally
-        modify the combined results before aggregation. The caller provides feedback
-        via the standard response_handler/request_info pattern.
+        This enables human-in-the-loop (HIL) scenarios for the sequential orchestration.
+        When enabled, the workflow pauses after each agent participant runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and optionally
+        inject guidance for the agent participant to iterate. The caller provides input via
+        the standard response_handler/request_info pattern.
 
-        Note:
-            Unlike SequentialBuilder and GroupChatBuilder, ConcurrentBuilder does not
-            support per-agent filtering since all agents run in parallel and results
-            are collected together. The pause occurs once with all agent outputs received.
+        Simulated flow with HIL:
+        Input -> [Agent Participant <-> Request Info] -> [Agent Participant <-> Request Info] -> ...
+
+        Note: This is only available for agent participants. Executor participants can incorporate
+        request info handling in their own implementation if desired.
+
+        Args:
+            agents: Optional list of agents names or agent factories to enable request info for.
+                    If None, enables HIL for all agent participants.
 
         Returns:
-            self: The builder instance for fluent chaining.
+            Self for fluent chaining
         """
+        from ._orchestration_request_info import resolve_request_info_filter
+
         self._request_info_enabled = True
+        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
+
         return self
+
+    def _resolve_participants(self) -> list[Executor]:
+        """Resolve participant instances into Executor objects."""
+        participants: list[Executor | AgentProtocol] = []
+        if self._participant_factories:
+            # Resolve the participant factories now. This doesn't break the factory pattern
+            # since the Sequential builder still creates new instances per workflow build.
+            for factory in self._participant_factories:
+                p = factory()
+                participants.append(p)
+        else:
+            participants = self._participants
+
+        executors: list[Executor] = []
+        for p in participants:
+            if isinstance(p, Executor):
+                executors.append(p)
+            elif isinstance(p, AgentProtocol):
+                if self._request_info_enabled and (
+                    not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
+                ):
+                    # Handle request info enabled agents
+                    executors.append(AgentApprovalExecutor(p))
+                else:
+                    executors.append(AgentExecutor(p))
+            else:
+                raise TypeError(f"Participants must be AgentProtocol or Executor instances. Got {type(p).__name__}.")
+
+        return executors
 
     def build(self) -> Workflow:
         r"""Build and validate the concurrent workflow.
@@ -521,29 +566,15 @@ class ConcurrentBuilder:
             )
         )
 
-        participants: list[Executor | AgentProtocol] = []
-        if self._participant_factories:
-            # Resolve the participant factories now. This doesn't break the factory pattern
-            # since the Concurrent builder still creates new instances per workflow build.
-            for factory in self._participant_factories:
-                p = factory()
-                participants.append(p)
-        else:
-            participants = self._participants
+        # Resolve participants and participant factories to executors
+        participants: list[Executor] = self._resolve_participants()
 
         builder = WorkflowBuilder()
         builder.set_start_executor(dispatcher)
+        # Fan-out for parallel execution
         builder.add_fan_out_edges(dispatcher, participants)
-
-        if self._request_info_enabled:
-            # Insert interceptor between fan-in and aggregator
-            # participants -> fan-in -> interceptor -> aggregator
-            request_info_interceptor = RequestInfoInterceptor(executor_id="request_info")
-            builder.add_fan_in_edges(participants, request_info_interceptor)
-            builder.add_edge(request_info_interceptor, aggregator)
-        else:
-            # Direct fan-in to aggregator
-            builder.add_fan_in_edges(participants, aggregator)
+        # Direct fan-in to aggregator
+        builder.add_fan_in_edges(participants, aggregator)
 
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)

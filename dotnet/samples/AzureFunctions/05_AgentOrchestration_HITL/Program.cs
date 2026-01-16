@@ -29,7 +29,7 @@ const string WriterInstructions =
     You write engaging, informative, and well-structured content that follows best practices for readability and accuracy.
     """;
 
-AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterInstructions, WriterName);
+AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstructions, WriterName);
 
 using IHost app = FunctionsApplication
     .CreateBuilder(args)

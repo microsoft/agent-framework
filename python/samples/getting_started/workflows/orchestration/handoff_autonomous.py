@@ -5,7 +5,7 @@ import logging
 from typing import cast
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatAgent,
     ChatMessage,
@@ -13,6 +13,7 @@ from agent_framework import (
     HostedWebSearchTool,
     WorkflowEvent,
     WorkflowOutputEvent,
+    resolve_agent_id,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -21,7 +22,7 @@ logging.basicConfig(level=logging.ERROR)
 
 """Sample: Autonomous handoff workflow with agent iteration.
 
-This sample demonstrates `with_interaction_mode("autonomous")`, where agents continue
+This sample demonstrates `.with_autonomous_mode()`, where agents continue
 iterating on their task until they explicitly invoke a handoff tool. This allows
 specialists to perform long-running autonomous work (research, coding, analysis)
 without prematurely returning control to the coordinator or user.
@@ -35,7 +36,7 @@ Prerequisites:
 
 Key Concepts:
     - Autonomous interaction mode: agents iterate until they handoff
-    - Turn limits: use `with_interaction_mode("autonomous", autonomous_turn_limit=N)` to cap total iterations
+    - Turn limits: use `.with_autonomous_mode(turn_limits={agent_name: N})` to cap iterations per agent
 """
 
 
@@ -53,7 +54,7 @@ def create_agents(
 
     research_agent = chat_client.create_agent(
         instructions=(
-            "You are a research specialist that explores topics thoroughly on the Microsoft Learn Site."
+            "You are a research specialist that explores topics thoroughly using web search. "
             "When given a research task, break it down into multiple aspects and explore each one. "
             "Continue your research across multiple responses - don't try to finish everything in one "
             "response. After each response, think about what else needs to be explored. When you have "
@@ -81,7 +82,7 @@ last_response_id: str | None = None
 def _display_event(event: WorkflowEvent) -> None:
     """Print the final conversation snapshot from workflow output events."""
     if isinstance(event, AgentRunUpdateEvent) and event.data:
-        update: AgentRunResponseUpdate = event.data
+        update: AgentResponseUpdate = event.data
         if not update.text:
             return
         global last_response_id
@@ -112,11 +113,21 @@ async def main() -> None:
             name="autonomous_iteration_handoff",
             participants=[coordinator, research_agent, summary_agent],
         )
-        .set_coordinator(coordinator)
+        .with_start_agent(coordinator)
         .add_handoff(coordinator, [research_agent, summary_agent])
-        .add_handoff(research_agent, coordinator)  # Research can hand back to coordinator
-        .add_handoff(summary_agent, coordinator)
-        .with_interaction_mode("autonomous", autonomous_turn_limit=15)
+        .add_handoff(research_agent, [coordinator])  # Research can hand back to coordinator
+        .add_handoff(summary_agent, [coordinator])
+        .with_autonomous_mode(
+            # You can set turn limits per agent to allow some agents to go longer.
+            # If a limit is not set, the agent will get an default limit: 50.
+            # Internally, handoff prefers agent names as the agent identifiers if set.
+            # Otherwise, it falls back to agent IDs.
+            turn_limits={
+                resolve_agent_id(coordinator): 5,
+                resolve_agent_id(research_agent): 10,
+                resolve_agent_id(summary_agent): 5,
+            }
+        )
         .with_termination_condition(
             # Terminate after coordinator provides 5 assistant responses
             lambda conv: sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role.value == "assistant")
@@ -133,10 +144,10 @@ async def main() -> None:
     """
     Expected behavior:
         - Coordinator routes to research_agent.
-        - Research agent iterates multiple times, exploring different aspects of renewable energy.
+        - Research agent iterates multiple times, exploring different aspects of Microsoft Agent Framework.
         - Each iteration adds to the conversation without returning to coordinator.
         - After thorough research, research_agent calls handoff to coordinator.
-        - Coordinator provides final summary.
+        - Coordinator routes to summary_agent for final summary.
 
     In autonomous mode, agents continue working until they invoke a handoff tool,
     allowing the research_agent to perform 3-4+ responses before handing off.

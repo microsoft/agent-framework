@@ -3,18 +3,20 @@
 import uuid
 from typing import cast
 
-from agent_framework._agents import ChatAgent
-from agent_framework._types import AgentRunResponse, ChatMessage, Role
-from agent_framework._workflows import (
+from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    AgentResponse,
+    ChatAgent,
+    ChatClientProtocol,
+    ChatMessage,
     FunctionExecutor,
+    Role,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
 )
-from agent_framework.openai import OpenAIChatClient
 from loguru import logger
 from tau2.data_model.simulation import SimulationRun, TerminationReason  # type: ignore[import-untyped]
 from tau2.data_model.tasks import Task  # type: ignore[import-untyped]
@@ -122,7 +124,7 @@ class TaskRunner:
             f"{'<blue>assistant</blue>' if is_from_agent else '<green>user</green>'}</bold>, "
             f"routing to {'<green>user</green>' if is_from_agent else '<blue>assistant</blue>'}:"
         )
-        log_messages(response.agent_run_response.messages)
+        log_messages(response.agent_response.messages)
 
         if self.step_count >= self.max_steps:
             logger.info(f"Max steps ({self.max_steps}) reached - terminating conversation")
@@ -130,7 +132,7 @@ class TaskRunner:
             # Terminate the workflow
             return False
 
-        response_text = response.agent_run_response.text
+        response_text = response.agent_response.text
         if is_from_agent and self._is_agent_stop(response_text):
             logger.info("Agent requested stop - terminating conversation")
             self.termination_reason = TerminationReason.AGENT_STOP
@@ -142,7 +144,7 @@ class TaskRunner:
             # The final user message won't appear in the assistant's message store,
             # because it will never arrive there.
             # We need to store it because it's needed for evaluation.
-            self._final_user_message = flip_messages(response.agent_run_response.messages)
+            self._final_user_message = flip_messages(response.agent_response.messages)
             return False
 
         return True
@@ -156,7 +158,7 @@ class TaskRunner:
         """Check if user wants to stop the conversation."""
         return STOP in text or TRANSFER in text or OUT_OF_SCOPE in text
 
-    def assistant_agent(self, assistant_chat_client: OpenAIChatClient) -> ChatAgent:
+    def assistant_agent(self, assistant_chat_client: ChatClientProtocol) -> ChatAgent:
         """Create an assistant agent.
 
         Users can override this method to provide a custom assistant agent.
@@ -205,7 +207,7 @@ class TaskRunner:
             ),
         )
 
-    def user_simulator(self, user_simuator_chat_client: OpenAIChatClient, task: Task) -> ChatAgent:
+    def user_simulator(self, user_simuator_chat_client: ChatClientProtocol, task: Task) -> ChatAgent:
         """Create a user simulator agent.
 
         Users can override this method to provide a custom user simulator agent.
@@ -253,7 +255,7 @@ class TaskRunner:
         """
         # Flip message roles for proper conversation flow
         # Assistant messages become user messages and vice versa
-        flipped = flip_messages(response.agent_run_response.messages)
+        flipped = flip_messages(response.agent_response.messages)
 
         # Determine source to route to correct target
         is_from_agent = response.executor_id == ASSISTANT_AGENT_ID
@@ -301,8 +303,8 @@ class TaskRunner:
     async def run(
         self,
         task: Task,
-        assistant_chat_client: OpenAIChatClient,
-        user_simuator_chat_client: OpenAIChatClient,
+        assistant_chat_client: ChatClientProtocol,
+        user_simulator_chat_client: ChatClientProtocol,
     ) -> list[ChatMessage]:
         """Run a tau2 task using workflow-based agent orchestration.
 
@@ -317,18 +319,18 @@ class TaskRunner:
         Args:
             task: Tau2 task containing scenario, policy, and evaluation criteria
             assistant_chat_client: LLM client for the assistant agent
-            user_simuator_chat_client: LLM client for the user simulator
+            user_simulator_chat_client: LLM client for the user simulator
 
         Returns:
             Complete conversation history as ChatMessage list for evaluation
         """
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore[unused-ignore]
         logger.info(f"Assistant chat client: {assistant_chat_client}")
-        logger.info(f"User simulator chat client: {user_simuator_chat_client}")
+        logger.info(f"User simulator chat client: {user_simulator_chat_client}")
 
         # STEP 1: Create agents
         assistant_agent = self.assistant_agent(assistant_chat_client)
-        user_simulator_agent = self.user_simulator(user_simuator_chat_client, task)
+        user_simulator_agent = self.user_simulator(user_simulator_chat_client, task)
 
         # STEP 2: Create the conversation workflow
         workflow = self.build_conversation_workflow(assistant_agent, user_simulator_agent)
@@ -340,7 +342,7 @@ class TaskRunner:
         first_message = ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)
         initial_greeting = AgentExecutorResponse(
             executor_id=ASSISTANT_AGENT_ID,
-            agent_run_response=AgentRunResponse(messages=[first_message]),
+            agent_response=AgentResponse(messages=[first_message]),
             full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
         )
 

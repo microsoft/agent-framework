@@ -16,12 +16,12 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 /// <summary>
-/// Extension methods for <see cref="AgentRunResponseUpdate"/>.
+/// Extension methods for <see cref="AgentResponseUpdate"/>.
 /// </summary>
-internal static class AgentRunResponseUpdateExtensions
+internal static class AgentResponseUpdateExtensions
 {
     /// <summary>
-    /// Converts a stream of <see cref="AgentRunResponseUpdate"/> to stream of <see cref="StreamingResponseEvent"/>.
+    /// Converts a stream of <see cref="AgentResponseUpdate"/> to stream of <see cref="StreamingResponseEvent"/>.
     /// </summary>
     /// <param name="updates">The agent run response updates.</param>
     /// <param name="request">The create response request.</param>
@@ -29,7 +29,7 @@ internal static class AgentRunResponseUpdateExtensions
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A stream of response events.</returns>
     public static async IAsyncEnumerable<StreamingResponseEvent> ToStreamingResponseAsync(
-        this IAsyncEnumerable<AgentRunResponseUpdate> updates,
+        this IAsyncEnumerable<AgentResponseUpdate> updates,
         CreateResponse request,
         AgentInvocationContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -48,7 +48,7 @@ internal static class AgentRunResponseUpdateExtensions
         // Track active item IDs by executor ID to pair invoked/completed/failed events
         Dictionary<string, string> executorItemIds = [];
 
-        AgentRunResponseUpdate? previousUpdate = null;
+        AgentResponseUpdate? previousUpdate = null;
         StreamingEventGenerator? generator = null;
         while (await updateEnumerator.MoveNextAsync().ConfigureAwait(false))
         {
@@ -279,7 +279,7 @@ internal static class AgentRunResponseUpdateExtensions
         }
     }
 
-    private static bool IsSameMessage(AgentRunResponseUpdate? first, AgentRunResponseUpdate? second)
+    private static bool IsSameMessage(AgentResponseUpdate? first, AgentResponseUpdate? second)
     {
         return IsSameValue(first?.MessageId, second?.MessageId)
             && IsSameValue(first?.AuthorName, second?.AuthorName)

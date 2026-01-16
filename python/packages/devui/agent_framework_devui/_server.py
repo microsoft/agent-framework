@@ -248,9 +248,9 @@ class DevServer:
                                 except Exception as e:
                                     logger.warning(f"Error closing credential for {entity_info.id}: {e}")
 
-                # Close MCP tools (framework tracks them in _local_mcp_tools)
-                if entity_obj and hasattr(entity_obj, "_local_mcp_tools"):
-                    for mcp_tool in entity_obj._local_mcp_tools:
+                # Close MCP tools (framework tracks them in mcp_tools)
+                if entity_obj and hasattr(entity_obj, "mcp_tools"):
+                    for mcp_tool in entity_obj.mcp_tools:
                         if hasattr(mcp_tool, "close") and callable(mcp_tool.close):
                             try:
                                 if inspect.iscoroutinefunction(mcp_tool.close):

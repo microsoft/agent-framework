@@ -12,33 +12,33 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 /// <summary>
 /// Extension methods for converting agent responses to ChatCompletion models.
 /// </summary>
-internal static class AgentRunResponseExtensions
+internal static class AgentResponseExtensions
 {
-    public static ChatCompletion ToChatCompletion(this AgentRunResponse agentRunResponse, CreateChatCompletion request)
+    public static ChatCompletion ToChatCompletion(this AgentResponse agentResponse, CreateChatCompletion request)
     {
-        IList<ChatCompletionChoice> choices = agentRunResponse.ToChoices();
+        IList<ChatCompletionChoice> choices = agentResponse.ToChoices();
 
         return new ChatCompletion
         {
             Id = IdGenerator.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13),
             Choices = choices,
-            Created = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+            Created = (agentResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
             Model = request.Model,
-            Usage = agentRunResponse.Usage.ToCompletionUsage(),
+            Usage = agentResponse.Usage.ToCompletionUsage(),
             ServiceTier = request.ServiceTier ?? "default"
         };
     }
 
-    public static List<ChatCompletionChoice> ToChoices(this AgentRunResponse agentRunResponse)
+    public static List<ChatCompletionChoice> ToChoices(this AgentResponse agentResponse)
     {
         var chatCompletionChoices = new List<ChatCompletionChoice>();
         var index = 0;
 
-        var finishReason = (agentRunResponse.RawRepresentation is ChatResponse { FinishReason: not null } chatResponse)
+        var finishReason = (agentResponse.RawRepresentation is ChatResponse { FinishReason: not null } chatResponse)
             ? chatResponse.FinishReason.ToString()
             : "stop"; // "stop" is a natural stop point; returning this by-default
 
-        foreach (var message in agentRunResponse.Messages)
+        foreach (var message in agentResponse.Messages)
         {
             foreach (var content in message.Contents)
             {

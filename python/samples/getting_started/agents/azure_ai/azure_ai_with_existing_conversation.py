@@ -4,7 +4,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -12,7 +12,7 @@ from pydantic import Field
 """
 Azure AI Agent Existing Conversation Example
 
-This sample demonstrates usage of AzureAIClient with existing conversation created on service side.
+This sample demonstrates usage of AzureAIProjectAgentProvider with existing conversation created on service side.
 """
 
 
@@ -24,9 +24,9 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def example_with_client() -> None:
-    """Example shows how to specify existing conversation ID when initializing Azure AI Client."""
-    print("=== Azure AI Agent With Existing Conversation and Client ===")
+async def example_with_conversation_id() -> None:
+    """Example shows how to use existing conversation ID with the provider."""
+    print("=== Azure AI Agent With Existing Conversation ===")
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
@@ -37,24 +37,23 @@ async def example_with_client() -> None:
         conversation_id = conversation.id
         print(f"Conversation ID: {conversation_id}")
 
-        async with AzureAIClient(
-            project_client=project_client,
-            # Specify conversation ID on client level
-            conversation_id=conversation_id,
-        ).create_agent(
+        provider = AzureAIProjectAgentProvider(project_client=project_client)
+        agent = await provider.create_agent(
             name="BasicAgent",
             instructions="You are a helpful agent.",
             tools=get_weather,
-        ) as agent:
-            query = "What's the weather like in Seattle?"
-            print(f"User: {query}")
-            result = await agent.run(query)
-            print(f"Agent: {result.text}\n")
+        )
 
-            query = "What was my last question?"
-            print(f"User: {query}")
-            result = await agent.run(query)
-            print(f"Agent: {result.text}\n")
+        # Pass conversation_id at run level
+        query = "What's the weather like in Seattle?"
+        print(f"User: {query}")
+        result = await agent.run(query, conversation_id=conversation_id)
+        print(f"Agent: {result.text}\n")
+
+        query = "What was my last question?"
+        print(f"User: {query}")
+        result = await agent.run(query, conversation_id=conversation_id)
+        print(f"Agent: {result.text}\n")
 
 
 async def example_with_thread() -> None:
@@ -63,12 +62,14 @@ async def example_with_thread() -> None:
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
-        AzureAIClient(project_client=project_client).create_agent(
+    ):
+        provider = AzureAIProjectAgentProvider(project_client=project_client)
+        agent = await provider.create_agent(
             name="BasicAgent",
             instructions="You are a helpful agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         # Create a conversation using OpenAI client
         openai_client = project_client.get_openai_client()
         conversation = await openai_client.conversations.create()
@@ -90,7 +91,7 @@ async def example_with_thread() -> None:
 
 
 async def main() -> None:
-    await example_with_client()
+    await example_with_conversation_id()
     await example_with_thread()
 
 

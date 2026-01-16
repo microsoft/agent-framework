@@ -65,7 +65,7 @@ internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHost
             }
 
             // Stream the output to the console as it is generated.
-            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
+            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
             {
                 Console.Write(update);
             }
