@@ -41,7 +41,7 @@ const string WriterInstructions =
     You write engaging, informative, and well-structured content that follows best practices for readability and accuracy.
     """;
 
-AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterInstructions, WriterName);
+AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstructions, WriterName);
 
 // Orchestrator function
 static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context, ContentGenerationInput input)

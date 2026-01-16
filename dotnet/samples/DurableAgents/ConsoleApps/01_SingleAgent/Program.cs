@@ -33,7 +33,7 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
-AIAgent agent = client.GetChatClient(deploymentName).CreateAIAgent(JokerInstructions, JokerName);
+AIAgent agent = client.GetChatClient(deploymentName).AsAIAgent(JokerInstructions, JokerName);
 
 // Configure the console app to host the AI agent.
 IHost host = Host.CreateDefaultBuilder(args)

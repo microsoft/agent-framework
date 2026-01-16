@@ -42,7 +42,7 @@ const string WriterAgentInstructions =
     You write engaging, informative, and well-structured content that follows best practices for readability and accuracy.
     """;
 
-AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterAgentInstructions, WriterAgentName);
+AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterAgentInstructions, WriterAgentName);
 
 // Agent that can start content generation workflows using tools
 const string PublisherAgentName = "Publisher";
@@ -252,7 +252,7 @@ IHost host = Host.CreateDefaultBuilder(args)
                 // Define the agent that can start orchestrations from tool calls
                 options.AddAIAgentFactory(PublisherAgentName, sp =>
                 {
-                    return client.GetChatClient(deploymentName).CreateAIAgent(
+                    return client.GetChatClient(deploymentName).AsAIAgent(
                         instructions: PublisherAgentInstructions,
                         name: PublisherAgentName,
                         services: sp,

@@ -48,8 +48,8 @@ const string EmailAssistantAgentInstructions =
     Return your response as JSON with a 'response' field containing the reply.
     """;
 
-AIAgent spamDetectionAgent = client.GetChatClient(deploymentName).CreateAIAgent(SpamDetectionAgentInstructions, SpamDetectionAgentName);
-AIAgent emailAssistantAgent = client.GetChatClient(deploymentName).CreateAIAgent(EmailAssistantAgentInstructions, EmailAssistantAgentName);
+AIAgent spamDetectionAgent = client.GetChatClient(deploymentName).AsAIAgent(SpamDetectionAgentInstructions, SpamDetectionAgentName);
+AIAgent emailAssistantAgent = client.GetChatClient(deploymentName).AsAIAgent(EmailAssistantAgentInstructions, EmailAssistantAgentName);
 
 // Orchestrator function
 static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context, Email email)

@@ -41,7 +41,7 @@ const string WriterInstructions =
     when given an improved sentence you polish it further.
     """;
 
-AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterInstructions, WriterName);
+AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstructions, WriterName);
 
 // Orchestrator function
 static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context)

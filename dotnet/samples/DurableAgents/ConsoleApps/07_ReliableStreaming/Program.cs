@@ -203,7 +203,7 @@ IHost host = Host.CreateDefaultBuilder(args)
                 // Define the Travel Planner agent with tools for weather and events
                 options.AddAIAgentFactory(TravelPlannerName, sp =>
                 {
-                    return client.GetChatClient(deploymentName).CreateAIAgent(
+                    return client.GetChatClient(deploymentName).AsAIAgent(
                         instructions: TravelPlannerInstructions,
                         name: TravelPlannerName,
                         services: sp,
