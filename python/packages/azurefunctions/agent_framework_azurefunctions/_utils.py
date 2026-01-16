@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict, fields, is_dataclass
-from typing import Any
+import types
+from typing import Any, Union, get_args, get_origin
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -330,13 +331,50 @@ def reconstruct_agent_executor_response(data: dict[str, Any]) -> AgentExecutorRe
 def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> Any:
     """Attempt to reconstruct a message to match one of the handler's expected types.
 
+    Handles:
+    - Dicts with __type__ metadata -> reconstructs to original dataclass/Pydantic model
+    - Lists (from fan-in) -> recursively reconstructs each item
+    - Union types (T | U) -> tries each type in the union
+    - AgentExecutorRequest/Response -> special handling for nested ChatMessage objects
+
     Args:
-        data: The serialized message data (could be dict, str, etc.)
+        data: The serialized message data (could be dict, str, list, etc.)
         input_types: List of message types the executor can accept
 
     Returns:
         Reconstructed message if possible, otherwise the original data
     """
+    # Flatten union types in input_types (e.g., T | U becomes [T, U])
+    flattened_types: list[type[Any]] = []
+    for input_type in input_types:
+        origin = get_origin(input_type)
+        # Handle both typing.Union and types.UnionType (Python 3.10+ | syntax)
+        if origin is Union or isinstance(input_type, types.UnionType):
+            # This is a Union type (T | U), extract the component types
+            flattened_types.extend(get_args(input_type))
+        else:
+            flattened_types.append(input_type)
+
+    # Handle lists (fan-in aggregation) - recursively reconstruct each item
+    if isinstance(data, list):
+        # Extract element types from list[T] annotations in input_types if possible
+        element_types: list[type[Any]] = []
+        for input_type in input_types:
+            origin = get_origin(input_type)
+            if origin is list:
+                args = get_args(input_type)
+                if args:
+                    # Handle union types inside list[T | U]
+                    for arg in args:
+                        arg_origin = get_origin(arg)
+                        if arg_origin is Union or isinstance(arg, types.UnionType):
+                            element_types.extend(get_args(arg))
+                        else:
+                            element_types.append(arg)
+        
+        # Recursively reconstruct each item in the list
+        return [reconstruct_message_for_handler(item, element_types or flattened_types) for item in data]
+
     if not isinstance(data, dict):
         return data
 
@@ -363,7 +401,7 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
     # Try to match against input types by checking dict keys vs dataclass fields
     # Filter out metadata keys when comparing
     data_keys = {k for k in data.keys() if not k.startswith("__")}
-    for msg_type in input_types:
+    for msg_type in flattened_types:
         if is_dataclass(msg_type):
             # Check if the dict keys match the dataclass fields
             field_names = {f.name for f in fields(msg_type)}
