@@ -951,6 +951,308 @@ public class ExecutorRouteGeneratorTests
 
     #endregion
 
+    #region Protocol-Only Generation Tests
+
+    [Fact]
+    public void ProtocolOnly_SendsMessage_WithManualRoutes_GeneratesConfigureSentTypes()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class BroadcastMessage { }
+
+            [SendsMessage(typeof(BroadcastMessage))]
+            public partial class TestExecutor : Executor
+            {
+                public TestExecutor() : base("test") { }
+
+                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                {
+                    return routeBuilder;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Should NOT generate ConfigureRoutes (user has manual implementation)
+        generated.Should().NotContain("protected override RouteBuilder ConfigureRoutes");
+
+        // Should generate ConfigureSentTypes
+        generated.Should().Contain("protected override ISet<Type> ConfigureSentTypes()");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
+    }
+
+    [Fact]
+    public void ProtocolOnly_YieldsOutput_WithManualRoutes_GeneratesConfigureYieldTypes()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class OutputMessage { }
+
+            [YieldsOutput(typeof(OutputMessage))]
+            public partial class TestExecutor : Executor
+            {
+                public TestExecutor() : base("test") { }
+
+                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                {
+                    return routeBuilder;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Should NOT generate ConfigureRoutes (user has manual implementation)
+        generated.Should().NotContain("protected override RouteBuilder ConfigureRoutes");
+
+        // Should generate ConfigureYieldTypes
+        generated.Should().Contain("protected override ISet<Type> ConfigureYieldTypes()");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.OutputMessage))");
+    }
+
+    [Fact]
+    public void ProtocolOnly_BothAttributes_WithManualRoutes_GeneratesBothOverrides()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class SendMessage { }
+            public class YieldMessage { }
+
+            [SendsMessage(typeof(SendMessage))]
+            [YieldsOutput(typeof(YieldMessage))]
+            public partial class TestExecutor : Executor
+            {
+                public TestExecutor() : base("test") { }
+
+                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                {
+                    return routeBuilder;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Should NOT generate ConfigureRoutes
+        generated.Should().NotContain("protected override RouteBuilder ConfigureRoutes");
+
+        // Should generate both protocol overrides
+        generated.Should().Contain("protected override ISet<Type> ConfigureSentTypes()");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.SendMessage))");
+        generated.Should().Contain("protected override ISet<Type> ConfigureYieldTypes()");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.YieldMessage))");
+    }
+
+    [Fact]
+    public void ProtocolOnly_MultipleSendsMessageAttributes_GeneratesAllTypes()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class MessageA { }
+            public class MessageB { }
+            public class MessageC { }
+
+            [SendsMessage(typeof(MessageA))]
+            [SendsMessage(typeof(MessageB))]
+            [SendsMessage(typeof(MessageC))]
+            public partial class TestExecutor : Executor
+            {
+                public TestExecutor() : base("test") { }
+
+                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                {
+                    return routeBuilder;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.MessageA))");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.MessageB))");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.MessageC))");
+    }
+
+    [Fact]
+    public void ProtocolOnly_NonPartialClass_ProducesDiagnostic()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class BroadcastMessage { }
+
+            [SendsMessage(typeof(BroadcastMessage))]
+            public class TestExecutor : Executor
+            {
+                public TestExecutor() : base("test") { }
+
+                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                {
+                    return routeBuilder;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        // Should produce MAFGENWF003 diagnostic (class must be partial)
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF003");
+        result.RunResult.GeneratedTrees.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProtocolOnly_NonExecutorClass_ProducesDiagnostic()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class BroadcastMessage { }
+
+            [SendsMessage(typeof(BroadcastMessage))]
+            public partial class NotAnExecutor
+            {
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        // Should produce MAFGENWF004 diagnostic (must derive from Executor)
+        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF004");
+        result.RunResult.GeneratedTrees.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProtocolOnly_NestedClass_GeneratesCorrectPartialHierarchy()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class BroadcastMessage { }
+
+            public partial class OuterClass
+            {
+                [SendsMessage(typeof(BroadcastMessage))]
+                public partial class TestExecutor : Executor
+                {
+                    public TestExecutor() : base("test") { }
+
+                    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                    {
+                        return routeBuilder;
+                    }
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Verify partial declarations are present
+        generated.Should().Contain("partial class OuterClass");
+        generated.Should().Contain("partial class TestExecutor");
+
+        // Verify protocol types are generated
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
+    }
+
+    [Fact]
+    public void ProtocolOnly_GenericExecutor_GeneratesCorrectly()
+    {
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class BroadcastMessage { }
+
+            [SendsMessage(typeof(BroadcastMessage))]
+            public partial class GenericExecutor<T> : Executor where T : class
+            {
+                public GenericExecutor() : base("generic") { }
+
+                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                {
+                    return routeBuilder;
+                }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        generated.Should().Contain("partial class GenericExecutor<T>");
+        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
+    }
+
+    #endregion
+
     #region Generic Executor Tests
 
     [Fact]

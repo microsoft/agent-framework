@@ -19,8 +19,8 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Analysis;
 /// <remarks>
 /// Analysis is split into two phases for efficiency with incremental generators:
 /// <list type="number">
-/// <item><see cref="AnalyzeMethod"/> - Called per method, extracts data and performs method-level validation only.</item>
-/// <item><see cref="CombineMethodResults"/> - Groups methods by class and performs class-level validation once.</item>
+/// <item><see cref="AnalyzeHandlerMethod"/> - Called per method, extracts data and performs method-level validation only.</item>
+/// <item><see cref="CombineHandlerMethodResults"/> - Groups methods by class and performs class-level validation once.</item>
 /// </list>
 /// This avoids redundant class validation when multiple handlers exist in the same class.
 /// </remarks>
@@ -41,10 +41,10 @@ internal static class SemanticAnalyzer
     /// </summary>
     /// <remarks>
     /// This method only extracts raw data and performs method-level validation.
-    /// Class-level validation is deferred to <see cref="CombineMethodResults"/> to avoid
+    /// Class-level validation is deferred to <see cref="CombineHandlerMethodResults"/> to avoid
     /// redundant validation when a class has multiple handler methods.
     /// </remarks>
-    public static MethodAnalysisResult AnalyzeMethod(
+    public static MethodAnalysisResult AnalyzeHandlerMethod(
         GeneratorAttributeSyntaxContext context,
         CancellationToken cancellationToken)
     {
@@ -107,7 +107,7 @@ internal static class SemanticAnalyzer
     /// Combines multiple MethodAnalysisResults for the same class into an AnalysisResult.
     /// Performs class-level validation once (instead of per-method) for efficiency.
     /// </summary>
-    public static AnalysisResult CombineMethodResults(IEnumerable<MethodAnalysisResult> methodResults)
+    public static AnalysisResult CombineHandlerMethodResults(IEnumerable<MethodAnalysisResult> methodResults)
     {
         List<MethodAnalysisResult> methods = methodResults.ToList();
         if (methods.Count == 0)
@@ -169,7 +169,7 @@ internal static class SemanticAnalyzer
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
-        ExecutorInfo executorInfo = new ExecutorInfo(
+        ExecutorInfo executorInfo = new(
             first.Namespace,
             first.ClassName,
             first.GenericParameters,
@@ -179,6 +179,144 @@ internal static class SemanticAnalyzer
             new ImmutableEquatableArray<HandlerInfo>(handlers),
             first.ClassSendTypes,
             first.ClassYieldTypes);
+
+        if (allDiagnostics.Count > 0)
+        {
+            return AnalysisResult.WithInfoAndDiagnostics(executorInfo, allDiagnostics.ToImmutable());
+        }
+
+        return AnalysisResult.Success(executorInfo);
+    }
+
+    /// <summary>
+    /// Analyzes a class with [SendsMessage] or [YieldsOutput] attribute found by ForAttributeWithMetadataName.
+    /// Returns ClassProtocolInfo entries for each attribute instance (handles multiple attributes of same type).
+    /// </summary>
+    /// <param name="context">The generator attribute syntax context.</param>
+    /// <param name="attributeKind">Whether this is a Send or Yield attribute.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The analysis results for the class protocol attributes.</returns>
+    public static ImmutableArray<ClassProtocolInfo> AnalyzeClassProtocolAttribute(
+        GeneratorAttributeSyntaxContext context,
+        ProtocolAttributeKind attributeKind,
+        CancellationToken cancellationToken)
+    {
+        // The target should be a class
+        if (context.TargetSymbol is not INamedTypeSymbol classSymbol)
+        {
+            return ImmutableArray<ClassProtocolInfo>.Empty;
+        }
+
+        // Extract class-level info (same for all attributes)
+        string classKey = GetClassKey(classSymbol);
+        bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
+        bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
+        bool hasManualConfigureRoutes = HasConfigureRoutesDefined(classSymbol);
+
+        string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
+            ? null
+            : classSymbol.ContainingNamespace?.ToDisplayString();
+        string className = classSymbol.Name;
+        string? genericParameters = GetGenericParameters(classSymbol);
+        bool isNested = classSymbol.ContainingType != null;
+        string containingTypeChain = GetContainingTypeChain(classSymbol);
+        DiagnosticLocationInfo? classLocation = GetClassLocation(classSymbol, cancellationToken);
+
+        // Extract a ClassProtocolInfo for each attribute instance
+        ImmutableArray<ClassProtocolInfo>.Builder results = ImmutableArray.CreateBuilder<ClassProtocolInfo>();
+
+        foreach (AttributeData attr in context.Attributes)
+        {
+            if (attr.ConstructorArguments.Length > 0 &&
+                attr.ConstructorArguments[0].Value is INamedTypeSymbol typeSymbol)
+            {
+                string typeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                results.Add(new ClassProtocolInfo(
+                    classKey,
+                    @namespace,
+                    className,
+                    genericParameters,
+                    isNested,
+                    containingTypeChain,
+                    isPartialClass,
+                    derivesFromExecutor,
+                    hasManualConfigureRoutes,
+                    classLocation,
+                    typeName,
+                    attributeKind));
+            }
+        }
+
+        return results.ToImmutable();
+    }
+
+    /// <summary>
+    /// Combines ClassProtocolInfo results into an AnalysisResult for classes that only have protocol attributes
+    /// (no [MessageHandler] methods). This generates only ConfigureSentTypes/ConfigureYieldTypes overrides.
+    /// </summary>
+    /// <param name="protocolInfos">The protocol info entries for the class.</param>
+    /// <returns>The combined analysis result.</returns>
+    public static AnalysisResult CombineProtocolOnlyResults(IEnumerable<ClassProtocolInfo> protocolInfos)
+    {
+        List<ClassProtocolInfo> protocols = protocolInfos.ToList();
+        if (protocols.Count == 0)
+        {
+            return AnalysisResult.Empty;
+        }
+
+        // All entries should have same class info - take from first
+        ClassProtocolInfo first = protocols[0];
+        Location classLocation = first.ClassLocation?.ToRoslynLocation() ?? Location.None;
+
+        ImmutableArray<Diagnostic>.Builder allDiagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+
+        // Class-level validation
+        if (!first.DerivesFromExecutor)
+        {
+            allDiagnostics.Add(Diagnostic.Create(
+                DiagnosticDescriptors.NotAnExecutor,
+                classLocation,
+                first.ClassName,
+                first.ClassName));
+            return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
+        }
+
+        if (!first.IsPartialClass)
+        {
+            allDiagnostics.Add(Diagnostic.Create(
+                DiagnosticDescriptors.ClassMustBePartial,
+                classLocation,
+                first.ClassName));
+            return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
+        }
+
+        // Collect send and yield types
+        ImmutableArray<string>.Builder sendTypes = ImmutableArray.CreateBuilder<string>();
+        ImmutableArray<string>.Builder yieldTypes = ImmutableArray.CreateBuilder<string>();
+
+        foreach (ClassProtocolInfo protocol in protocols)
+        {
+            if (protocol.AttributeKind == ProtocolAttributeKind.Send)
+            {
+                sendTypes.Add(protocol.TypeName);
+            }
+            else
+            {
+                yieldTypes.Add(protocol.TypeName);
+            }
+        }
+
+        // Create ExecutorInfo with no handlers but with protocol types
+        ExecutorInfo executorInfo = new(
+            first.Namespace,
+            first.ClassName,
+            first.GenericParameters,
+            first.IsNested,
+            first.ContainingTypeChain,
+            BaseHasConfigureRoutes: false, // Not relevant for protocol-only
+            Handlers: ImmutableEquatableArray<HandlerInfo>.Empty,
+            ClassSendTypes: new ImmutableEquatableArray<string>(sendTypes.ToImmutable()),
+            ClassYieldTypes: new ImmutableEquatableArray<string>(yieldTypes.ToImmutable()));
 
         if (allDiagnostics.Count > 0)
         {
@@ -510,7 +648,7 @@ internal static class SemanticAnalyzer
     /// </example>
     private static string GetContainingTypeChain(INamedTypeSymbol classSymbol)
     {
-        List<string> chain = new List<string>();
+        List<string> chain = new();
         INamedTypeSymbol? current = classSymbol.ContainingType;
 
         while (current != null)

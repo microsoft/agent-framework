@@ -62,14 +62,24 @@ internal static class SourceBuilder
         sb.AppendLine($"{indent}{{");
 
         string memberIndent = indent + "    ";
+        bool hasContent = false;
 
-        GenerateConfigureRoutes(sb, info, memberIndent);
+        // Only generate ConfigureRoutes if there are handlers
+        if (info.Handlers.Count > 0)
+        {
+            GenerateConfigureRoutes(sb, info, memberIndent);
+            hasContent = true;
+        }
 
         // Only generate protocol overrides if [SendsMessage] or [YieldsOutput] attributes are present.
         // Without these attributes, we rely on the base class defaults.
         if (info.ShouldGenerateProtocolOverrides)
         {
-            sb.AppendLine();
+            if (hasContent)
+            {
+                sb.AppendLine();
+            }
+
             GenerateConfigureSentTypes(sb, info, memberIndent);
             sb.AppendLine();
             GenerateConfigureYieldTypes(sb, info, memberIndent);
