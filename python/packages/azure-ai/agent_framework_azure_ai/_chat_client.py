@@ -4,18 +4,21 @@ import ast
 import json
 import re
 import sys
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
+    ChatAgent,
     ChatMessage,
+    ChatMessageStoreProtocol,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
     Contents,
+    ContextProvider,
     DataContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
@@ -23,6 +26,7 @@ from agent_framework import (
     FunctionResultContent,
     HostedFileContent,
     HostedMCPTool,
+    Middleware,
     Role,
     TextContent,
     TextSpanRegion,
@@ -1162,3 +1166,58 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             The service URL for the chat client, or None if not set.
         """
         return self.agents_client._config.endpoint  # type: ignore
+
+    def as_agent(
+        self,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        default_options: TAzureAIAgentOptions | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> ChatAgent[TAzureAIAgentOptions]:
+        """Convert this chat client to a ChatAgent.
+
+        This method creates a ChatAgent instance with this client pre-configured.
+        It does NOT create an agent on the Azure AI service - the actual agent
+        will be created on the server during the first invocation (run).
+
+        For creating and managing persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.AzureAIAgentsProvider` instead.
+
+        Keyword Args:
+            id: The unique identifier for the agent. Will be created automatically if not provided.
+            name: The name of the agent.
+            description: A brief description of the agent's purpose.
+            instructions: Optional instructions for the agent.
+            tools: The tools to use for the request.
+            default_options: A TypedDict containing chat options.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+            context_provider: Context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
+            kwargs: Any additional keyword arguments.
+
+        Returns:
+            A ChatAgent instance configured with this chat client.
+        """
+        return super().as_agent(
+            id=id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )
