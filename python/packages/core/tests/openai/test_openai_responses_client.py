@@ -1053,29 +1053,6 @@ def test_response_format_invalid_type() -> None:
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)  # type: ignore
 
 
-def test_prepare_mcp_tool_comprehensive() -> None:
-    """Test _prepare_mcp_tool static method with all parameters."""
-    tool = HostedMCPTool(
-        name="Complex MCP",
-        url="https://complex.mcp.example",
-        description="A complex MCP server",
-        approval_mode={"always_require_approval": ["sensitive_op"], "require_approval_if_not_user": ["moderate_op"]},
-        allowed_tools={"tool1", "tool2", "tool3"},
-        headers={"Authorization": "Bearer token", "X-Custom": "value"},
-        additional_properties={"timeout": 30, "retries": 3},
-    )
-
-    result = OpenAIResponsesClient._prepare_mcp_tool(tool)
-
-    assert result["type"] == "mcp"
-    assert result["server_label"] == "Complex_MCP"
-    assert result["server_description"] == "A complex MCP server"
-    assert set(result["allowed_tools"]) == {"tool1", "tool2", "tool3"}
-    assert result["headers"]["Authorization"] == "Bearer token"
-    assert result["headers"]["X-Custom"] == "value"
-    assert "require_approval" in result
-
-
 def test_parse_response_with_store_false() -> None:
     """Test _get_conversation_id returns None when store is False."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

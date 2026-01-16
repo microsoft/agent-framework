@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -7,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
+from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
 from pytest import param
 
@@ -500,8 +503,6 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
 
 def test_parse_text_reasoning_content_from_response(openai_unit_test_env: dict[str, str]) -> None:
     """Test that TextReasoningContent is correctly parsed from OpenAI response with reasoning_details."""
-    from openai.types.chat.chat_completion import ChatCompletion, Choice
-    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     client = OpenAIChatClient()
 
@@ -918,19 +919,14 @@ def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> N
     # Create a mock error during streaming
     mock_error = Exception("Streaming error")
 
-    async def mock_stream_error():
-        raise mock_error
-
     with (
-        patch.object(client.client.chat.completions, "create", return_value=mock_stream_error()),
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(ServiceResponseException),
     ):
 
         async def consume_stream():
             async for _ in client._inner_get_streaming_response(messages=messages, options={}):  # type: ignore
                 pass
-
-        import asyncio
 
         asyncio.run(consume_stream())
 
