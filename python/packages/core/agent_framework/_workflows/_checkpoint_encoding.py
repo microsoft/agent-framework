@@ -92,6 +92,16 @@ def encode_checkpoint_value(value: Any) -> Any:
                 return _CYCLE_SENTINEL
             stack.add(oid)
             try:
+                # Check for reserved marker keys that could cause deserialization issues
+                has_model_marker = MODEL_MARKER in v_dict
+                has_dataclass_marker = DATACLASS_MARKER in v_dict
+                has_value_key = "value" in v_dict
+                if (has_model_marker or has_dataclass_marker) and has_value_key:
+                    marker = MODEL_MARKER if has_model_marker else DATACLASS_MARKER
+                    raise ValueError(
+                        f"Cannot encode dict containing reserved checkpoint marker key '{marker}' "
+                        f"with 'value' key. These keys are reserved for polymorphic serialization."
+                    )
                 json_dict: dict[str, Any] = {}
                 for k_any, val_any in v_dict.items():  # type: ignore[assignment]
                     k_str: str = str(k_any)
@@ -146,6 +156,12 @@ def decode_checkpoint_value(value: Any) -> Any:
                     cls = None
 
                 if cls is not None:
+                    # Verify the class actually supports the model protocol
+                    if not _class_supports_model_protocol(cls):
+                        logger.debug(
+                            f"Class {type_key} does not support model protocol; returning raw value"
+                        )
+                        return decoded_payload
                     if strategy == "to_dict" and hasattr(cls, "from_dict"):
                         with contextlib.suppress(Exception):
                             return cls.from_dict(decoded_payload)
@@ -169,6 +185,12 @@ def decode_checkpoint_value(value: Any) -> Any:
                     if module is None:
                         module = importlib.import_module(module_name)
                     cls_dc: Any = getattr(module, class_name)
+                    # Verify the class is actually a dataclass type (not an instance)
+                    if not isinstance(cls_dc, type) or not is_dataclass(cls_dc):
+                        logger.debug(
+                            f"Class {type_key_dc} is not a dataclass type; returning raw value"
+                        )
+                        return decoded_raw
                     constructed = _instantiate_checkpoint_dataclass(cls_dc, decoded_raw)
                     if constructed is not None:
                         return constructed
@@ -188,6 +210,22 @@ def decode_checkpoint_value(value: Any) -> Any:
     return value
 
 
+def _class_supports_model_protocol(cls: type[Any]) -> bool:
+    """Check if a class type supports the model serialization protocol.
+
+    Checks for pairs of serialization/deserialization methods:
+    - to_dict/from_dict
+    - to_json/from_json
+    """
+    has_to_dict = hasattr(cls, "to_dict") and callable(getattr(cls, "to_dict", None))
+    has_from_dict = hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict", None))
+
+    has_to_json = hasattr(cls, "to_json") and callable(getattr(cls, "to_json", None))
+    has_from_json = hasattr(cls, "from_json") and callable(getattr(cls, "from_json", None))
+
+    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
+
+
 def _supports_model_protocol(obj: object) -> bool:
     """Detect objects that expose dictionary serialization hooks."""
     try:
@@ -195,13 +233,7 @@ def _supports_model_protocol(obj: object) -> bool:
     except Exception:
         return False
 
-    has_to_dict = hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None))  # type: ignore[arg-type]
-    has_from_dict = hasattr(obj_type, "from_dict") and callable(getattr(obj_type, "from_dict", None))
-
-    has_to_json = hasattr(obj, "to_json") and callable(getattr(obj, "to_json", None))  # type: ignore[arg-type]
-    has_from_json = hasattr(obj_type, "from_json") and callable(getattr(obj_type, "from_json", None))
-
-    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
+    return _class_supports_model_protocol(obj_type)
 
 
 def _import_qualified_name(qualname: str) -> type[Any] | None:
