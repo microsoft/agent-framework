@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ag_ui.core import (
@@ -53,11 +53,18 @@ from ._orchestration._tooling import (
     merge_tools,
     register_additional_client_tools,
 )
-from ._utils import convert_agui_tools_to_agent_framework, generate_event_id, get_role_value
+from ._utils import (
+    convert_agui_tools_to_agent_framework,
+    generate_event_id,
+    get_conversation_id_from_update,
+    get_role_value,
+)
 
 if TYPE_CHECKING:
     from ._agent import AgentConfig
     from ._confirmation_strategies import ConfirmationStrategy
+    from ._events import AgentFrameworkEventBridge
+    from ._orchestration._state_manager import StateManager
 
 
 logger = logging.getLogger(__name__)
@@ -92,6 +99,8 @@ class ExecutionContext:
         self._last_message = None
         self._run_id: str | None = None
         self._thread_id: str | None = None
+        self._supplied_run_id: str | None = None
+        self._supplied_thread_id: str | None = None
 
     @property
     def messages(self):
@@ -126,24 +135,64 @@ class ExecutionContext:
         return self._last_message
 
     @property
+    def supplied_run_id(self) -> str | None:
+        """Get the supplied run ID, if any."""
+        if self._supplied_run_id is None:
+            self._supplied_run_id = self.input_data.get("run_id") or self.input_data.get("runId")
+        return self._supplied_run_id
+
+    @property
     def run_id(self) -> str:
-        """Get or generate run ID."""
+        """Get supplied run ID or generate a new run ID."""
+        if self._run_id:
+            return self._run_id
+
+        if self.supplied_run_id:
+            self._run_id = self.supplied_run_id
+
         if self._run_id is None:
-            self._run_id = self.input_data.get("run_id") or self.input_data.get("runId") or str(uuid.uuid4())
-        # This should never be None after the if block above, but satisfy type checkers
-        if self._run_id is None:  # pragma: no cover
-            raise RuntimeError("Failed to initialize run_id")
+            self._run_id = str(uuid.uuid4())
+
         return self._run_id
 
     @property
+    def supplied_thread_id(self) -> str | None:
+        """Get the supplied thread ID, if any."""
+        if self._supplied_thread_id is None:
+            self._supplied_thread_id = self.input_data.get("thread_id") or self.input_data.get("threadId")
+        return self._supplied_thread_id
+
+    @property
     def thread_id(self) -> str:
-        """Get or generate thread ID."""
+        """Get supplied thread ID or generate a new thread ID."""
+        if self._thread_id:
+            return self._thread_id
+
+        if self.supplied_thread_id:
+            self._thread_id = self.supplied_thread_id
+
         if self._thread_id is None:
-            self._thread_id = self.input_data.get("thread_id") or self.input_data.get("threadId") or str(uuid.uuid4())
-        # This should never be None after the if block above, but satisfy type checkers
-        if self._thread_id is None:  # pragma: no cover
-            raise RuntimeError("Failed to initialize thread_id")
+            self._thread_id = str(uuid.uuid4())
+
         return self._thread_id
+
+    def update_run_id(self, new_run_id: str) -> None:
+        """Update the run ID in the context.
+
+        Args:
+            new_run_id: The new run ID to set
+        """
+        self._supplied_run_id = new_run_id
+        self._run_id = new_run_id
+
+    def update_thread_id(self, new_thread_id: str) -> None:
+        """Update the thread ID in the context.
+
+        Args:
+            new_thread_id: The new thread ID to set
+        """
+        self._supplied_thread_id = new_thread_id
+        self._thread_id = new_thread_id
 
 
 class Orchestrator(ABC):
@@ -297,6 +346,28 @@ class DefaultOrchestrator(Orchestrator):
         """
         return True
 
+    def _create_initial_events(
+        self, event_bridge: "AgentFrameworkEventBridge", state_manager: "StateManager"
+    ) -> Sequence[BaseEvent]:
+        """Generate initial events for the run.
+
+        Args:
+            event_bridge: Event bridge for creating events
+        Returns:
+            Initial AG-UI events
+        """
+        events: list[BaseEvent] = [event_bridge.create_run_started_event()]
+
+        predict_event = state_manager.predict_state_event()
+        if predict_event:
+            events.append(predict_event)
+
+        snapshot_event = state_manager.initial_snapshot_event(event_bridge)
+        if snapshot_event:
+            events.append(snapshot_event)
+
+        return events
+
     async def run(
         self,
         context: ExecutionContext,
@@ -342,17 +413,11 @@ class DefaultOrchestrator(Orchestrator):
             approval_tool_name=approval_tool_name,
         )
 
-        yield event_bridge.create_run_started_event()
+        if context.config.use_service_thread:
+            thread = AgentThread(service_thread_id=context.supplied_thread_id)
+        else:
+            thread = AgentThread()
 
-        predict_event = state_manager.predict_state_event()
-        if predict_event:
-            yield predict_event
-
-        snapshot_event = state_manager.initial_snapshot_event(event_bridge)
-        if snapshot_event:
-            yield snapshot_event
-
-        thread = AgentThread()
         thread.metadata = {  # type: ignore[attr-defined]
             "ag_ui_thread_id": context.thread_id,
             "ag_ui_run_id": context.run_id,
@@ -363,6 +428,8 @@ class DefaultOrchestrator(Orchestrator):
         provider_messages = context.messages or []
         snapshot_messages = context.snapshot_messages
         if not provider_messages:
+            for event in self._create_initial_events(event_bridge, state_manager):
+                yield event
             logger.warning("No messages provided in AG-UI input")
             yield event_bridge.create_run_finished_event()
             return
@@ -554,13 +621,41 @@ class DefaultOrchestrator(Orchestrator):
                     confirmation_message = strategy.on_state_rejected()
 
             message_id = generate_event_id()
+            for event in self._create_initial_events(event_bridge, state_manager):
+                yield event
             yield TextMessageStartEvent(message_id=message_id, role="assistant")
             yield TextMessageContentEvent(message_id=message_id, delta=confirmation_message)
             yield TextMessageEndEvent(message_id=message_id)
             yield event_bridge.create_run_finished_event()
             return
 
+        should_recreate_event_bridge = False
         async for update in context.agent.run_stream(messages_to_run, **run_kwargs):
+            conv_id = get_conversation_id_from_update(update)
+            if conv_id and conv_id != context.thread_id:
+                context.update_thread_id(conv_id)
+                should_recreate_event_bridge = True
+
+            if update.response_id and update.response_id != context.run_id:
+                context.update_run_id(update.response_id)
+                should_recreate_event_bridge = True
+
+            if should_recreate_event_bridge:
+                event_bridge = AgentFrameworkEventBridge(
+                    run_id=context.run_id,
+                    thread_id=context.thread_id,
+                    predict_state_config=context.config.predict_state_config,
+                    current_state=current_state,
+                    skip_text_content=skip_text_content,
+                    require_confirmation=context.config.require_confirmation,
+                    approval_tool_name=approval_tool_name,
+                )
+                should_recreate_event_bridge = False
+
+            if update_count == 0:
+                for event in self._create_initial_events(event_bridge, state_manager):
+                    yield event
+
             update_count += 1
             logger.info(f"[STREAM] Received update #{update_count} from agent")
             if all_updates is not None:
@@ -671,6 +766,11 @@ class DefaultOrchestrator(Orchestrator):
                     yield TextMessageContentEvent(message_id=message_id, delta=response_dict["message"])
                     yield TextMessageEndEvent(message_id=message_id)
                     logger.info(f"Emitted conversational message with length={len(response_dict['message'])}")
+
+        if all_updates is not None and len(all_updates) == 0:
+            logger.info("No updates received from agent - emitting initial events")
+            for event in self._create_initial_events(event_bridge, state_manager):
+                yield event
 
         logger.info(f"[FINALIZE] Checking for unclosed message. current_message_id={event_bridge.current_message_id}")
         if event_bridge.current_message_id:

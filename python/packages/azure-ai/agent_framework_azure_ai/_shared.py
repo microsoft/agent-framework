@@ -501,6 +501,7 @@ def create_text_format_config(
         return ResponseTextFormatConfigurationJsonSchema(
             name=response_format.__name__,
             schema=schema,
+            strict=True,
         )
 
     if isinstance(response_format, Mapping):

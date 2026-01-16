@@ -10,7 +10,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AIFunction, Role, ToolProtocol
+from agent_framework import AgentResponseUpdate, AIFunction, ChatResponseUpdate, Role, ToolProtocol
 
 # Role mapping constants
 AGUI_TO_FRAMEWORK_ROLE: dict[str, Role] = {
@@ -259,3 +259,17 @@ def convert_tools_to_agui_format(
             continue
 
     return results if results else None
+
+
+def get_conversation_id_from_update(update: AgentResponseUpdate) -> str | None:
+    """Extract conversation ID from AgentResponseUpdate metadata.
+
+    Args:
+        update: AgentRunResponseUpdate instance
+    Returns:
+        Conversation ID if present, else None
+
+    """
+    if isinstance(update.raw_representation, ChatResponseUpdate):
+        return update.raw_representation.conversation_id
+    return None

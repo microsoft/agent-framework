@@ -660,6 +660,7 @@ class OpenAIAssistantsClient(
                     "json_schema": {
                         "name": response_format.__name__,
                         "schema": response_format.model_json_schema(),
+                        "strict": True,
                     },
                 }
 

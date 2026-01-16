@@ -784,6 +784,27 @@ def test_prepare_options_with_mapping_tool(mock_async_openai: MagicMock) -> None
     assert run_options["tool_choice"] == "auto"
 
 
+def test_prepare_options_with_pydantic_response_format(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options sets strict=True for Pydantic response_format."""
+    from pydantic import BaseModel, ConfigDict
+
+    class TestResponse(BaseModel):
+        name: str
+        value: int
+        model_config = ConfigDict(extra="forbid")
+
+    chat_client = create_test_openai_assistants_client(mock_async_openai)
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    options = {"response_format": TestResponse}
+
+    run_options, _ = chat_client._prepare_options(messages, options)  # type: ignore
+
+    assert "response_format" in run_options
+    assert run_options["response_format"]["type"] == "json_schema"
+    assert run_options["response_format"]["json_schema"]["name"] == "TestResponse"
+    assert run_options["response_format"]["json_schema"]["strict"] is True
+
+
 def test_prepare_options_with_system_message(mock_async_openai: MagicMock) -> None:
     """Test _prepare_options with system message converted to instructions."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)

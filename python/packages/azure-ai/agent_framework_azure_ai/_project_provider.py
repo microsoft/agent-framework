@@ -358,6 +358,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             agent_name=details.name,
             agent_version=details.version,
             agent_description=details.description,
+            model_deployment_name=details.definition.model,
         )
 
         # Merge tools: hosted tools from definition + user-provided function tools
