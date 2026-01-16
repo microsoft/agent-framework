@@ -95,7 +95,7 @@ internal sealed class WorkflowRunner
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
             }
             else
             {

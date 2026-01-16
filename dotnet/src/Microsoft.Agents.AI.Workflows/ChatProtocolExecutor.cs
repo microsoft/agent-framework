@@ -29,6 +29,12 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     private static readonly Func<List<ChatMessage>> s_initFunction = () => [];
     private readonly ChatRole? _stringMessageChatRole;
 
+    private static readonly StatefulExecutorOptions s_baseExecutorOptions = new()
+    {
+        AutoSendMessageHandlerResultObject = false,
+        AutoYieldOutputHandlerResultObject = false
+    };
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatProtocolExecutor"/> class.
     /// </summary>
@@ -36,7 +42,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// <param name="options">Optional configuration settings for the executor. If null, default options are used.</param>
     /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
     protected ChatProtocolExecutor(string id, ChatProtocolExecutorOptions? options = null, bool declareCrossRunShareable = false)
-        : base(id, () => [], declareCrossRunShareable: declareCrossRunShareable)
+        : base(id, () => [], s_baseExecutorOptions, declareCrossRunShareable)
     {
         this._stringMessageChatRole = options?.StringMessageChatRole;
     }
