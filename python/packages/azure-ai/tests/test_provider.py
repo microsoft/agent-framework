@@ -86,7 +86,7 @@ def test_provider_init_with_credential_and_endpoint(
     mock_azure_credential: MagicMock,
 ) -> None:
     """Test AzureAIProjectAgentProvider initialization with credential and endpoint."""
-    with patch("agent_framework_azure_ai._provider.AIProjectClient") as mock_ai_project_client:
+    with patch("agent_framework_azure_ai._project_provider.AIProjectClient") as mock_ai_project_client:
         mock_client = MagicMock()
         mock_ai_project_client.return_value = mock_client
 
@@ -104,7 +104,7 @@ def test_provider_init_with_credential_and_endpoint(
 
 def test_provider_init_missing_endpoint() -> None:
     """Test AzureAIProjectAgentProvider initialization when endpoint is missing."""
-    with patch("agent_framework_azure_ai._provider.AzureAISettings") as mock_settings:
+    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
         mock_settings.return_value.project_endpoint = None
         mock_settings.return_value.model_deployment_name = "test-model"
 
@@ -127,7 +127,7 @@ async def test_provider_create_agent(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test AzureAIProjectAgentProvider.create_agent method."""
-    with patch("agent_framework_azure_ai._provider.AzureAISettings") as mock_settings:
+    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
         mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
         mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
 
@@ -165,7 +165,7 @@ async def test_provider_create_agent_with_env_model(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test AzureAIProjectAgentProvider.create_agent uses model from env var."""
-    with patch("agent_framework_azure_ai._provider.AzureAISettings") as mock_settings:
+    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
         mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
         mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
 
@@ -197,7 +197,7 @@ async def test_provider_create_agent_with_env_model(
 
 async def test_provider_create_agent_missing_model(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider.create_agent raises when model is missing."""
-    with patch("agent_framework_azure_ai._provider.AzureAISettings") as mock_settings:
+    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
         mock_settings.return_value.project_endpoint = "https://test.com"
         mock_settings.return_value.model_deployment_name = None
 
@@ -317,21 +317,31 @@ def test_provider_as_agent(mock_project_client: MagicMock) -> None:
     mock_agent_version.definition.top_p = 0.9
     mock_agent_version.definition.tools = []
 
-    agent = provider.as_agent(mock_agent_version)
+    with patch("agent_framework_azure_ai._project_provider.AzureAIClient") as mock_azure_ai_client:
+        agent = provider.as_agent(mock_agent_version)
 
-    assert isinstance(agent, ChatAgent)
-    assert agent.name == "test-agent"
-    assert agent.description == "Test Agent"
+        assert isinstance(agent, ChatAgent)
+        assert agent.name == "test-agent"
+        assert agent.description == "Test Agent"
+
+        # Verify AzureAIClient was called with correct parameters
+        mock_azure_ai_client.assert_called_once()
+        call_kwargs = mock_azure_ai_client.call_args[1]
+        assert call_kwargs["project_client"] is mock_project_client
+        assert call_kwargs["agent_name"] == "test-agent"
+        assert call_kwargs["agent_version"] == "1.0"
+        assert call_kwargs["agent_description"] == "Test Agent"
+        assert call_kwargs["model_deployment_name"] == "gpt-4"
 
 
 async def test_provider_context_manager(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider async context manager."""
-    with patch("agent_framework_azure_ai._provider.AIProjectClient") as mock_ai_project_client:
+    with patch("agent_framework_azure_ai._project_provider.AIProjectClient") as mock_ai_project_client:
         mock_client = MagicMock()
         mock_client.close = AsyncMock()
         mock_ai_project_client.return_value = mock_client
 
-        with patch("agent_framework_azure_ai._provider.AzureAISettings") as mock_settings:
+        with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
             mock_settings.return_value.project_endpoint = "https://test.com"
             mock_settings.return_value.model_deployment_name = "test-model"
 
@@ -355,12 +365,12 @@ async def test_provider_context_manager_with_provided_client(mock_project_client
 
 async def test_provider_close_method(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider.close method."""
-    with patch("agent_framework_azure_ai._provider.AIProjectClient") as mock_ai_project_client:
+    with patch("agent_framework_azure_ai._project_provider.AIProjectClient") as mock_ai_project_client:
         mock_client = MagicMock()
         mock_client.close = AsyncMock()
         mock_ai_project_client.return_value = mock_client
 
-        with patch("agent_framework_azure_ai._provider.AzureAISettings") as mock_settings:
+        with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
             mock_settings.return_value.project_endpoint = "https://test.com"
             mock_settings.return_value.model_deployment_name = "test-model"
 
@@ -368,6 +378,24 @@ async def test_provider_close_method(mock_project_client: MagicMock) -> None:
             await provider.close()
 
             mock_client.close.assert_called_once()
+
+
+def test_create_text_format_config_sets_strict_for_pydantic_models() -> None:
+    """Test that create_text_format_config sets strict=True for Pydantic models."""
+    from pydantic import BaseModel
+
+    from agent_framework_azure_ai._shared import create_text_format_config
+
+    class TestSchema(BaseModel):
+        subject: str
+        summary: str
+
+    result = create_text_format_config(TestSchema)
+
+    # Verify strict=True is set
+    assert result["strict"] is True
+    assert result["name"] == "TestSchema"
+    assert "schema" in result
 
 
 @pytest.mark.flaky

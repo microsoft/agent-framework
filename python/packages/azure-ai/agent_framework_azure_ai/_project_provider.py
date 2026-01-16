@@ -24,7 +24,7 @@ from azure.ai.projects.models import (
     PromptAgentDefinitionText,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from ._client import AzureAIClient
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
@@ -156,7 +156,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        response_format: type[BaseModel] | MutableMapping[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -174,8 +173,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 environment variable if not provided.
             instructions: Instructions for the agent.
             description: A description of the agent.
-            response_format: The format of the response. Can be a Pydantic model for structured
-                output, or a dict with JSON schema configuration.
             tools: Tools to make available to the agent.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
@@ -196,12 +193,18 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
 
+        # Extract response_format from default_options if present
+        opts = dict(default_options) if default_options else {}
+        response_format = opts.get("response_format")
+
         args: dict[str, Any] = {"model": resolved_model}
 
         if instructions:
             args["instructions"] = instructions
-        if response_format:
-            args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
+        if response_format and isinstance(response_format, (type, dict)):
+            args["text"] = PromptAgentDefinitionText(
+                format=create_text_format_config(response_format)  # type: ignore[arg-type]
+            )
 
         # Normalize tools once and reuse for both Azure AI API and ChatAgent
         normalized_tools = normalize_tools(tools)
@@ -217,7 +220,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         return self._to_chat_agent_from_details(
             created_agent,
             normalized_tools,
-            response_format=response_format,
             default_options=default_options,
             middleware=middleware,
             context_provider=context_provider,
@@ -333,7 +335,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         self,
         details: AgentVersionDetails,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
-        response_format: type[BaseModel] | MutableMapping[str, Any] | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
@@ -344,8 +345,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             details: The AgentVersionDetails containing the agent definition.
             provided_tools: User-provided tools (including function implementations).
                 These are merged with hosted tools from the definition.
-            response_format: The response format. Can be a Pydantic model for structured
-                output parsing, or a dict with JSON schema for service-side formatting.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
@@ -359,6 +358,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             agent_name=details.name,
             agent_version=details.version,
             agent_description=details.description,
+            model_deployment_name=details.definition.model,
         )
 
         # Merge tools: hosted tools from definition + user-provided function tools
@@ -374,7 +374,6 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             instructions=details.definition.instructions,
             model_id=details.definition.model,
             tools=merged_tools,
-            response_format=response_format,
             default_options=default_options,  # type: ignore[arg-type]
             middleware=middleware,
             context_provider=context_provider,
