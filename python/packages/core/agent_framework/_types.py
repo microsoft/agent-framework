@@ -2495,6 +2495,22 @@ def prepare_messages(
     return return_messages
 
 
+def normalize_messages(
+    messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+) -> list[ChatMessage]:
+    """Normalize message inputs to a list of ChatMessage objects."""
+    if messages is None:
+        return []
+
+    if isinstance(messages, str):
+        return [ChatMessage(role=Role.USER, text=messages)]
+
+    if isinstance(messages, ChatMessage):
+        return [messages]
+
+    return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
+
+
 def prepend_instructions_to_messages(
     messages: list[ChatMessage],
     instructions: str | Sequence[str] | None,
