@@ -55,7 +55,7 @@ async def main() -> None:
         # Create coordinator agent with writer as a tool
         coordinator = await provider.create_agent(
             name="CoordinatorAgent",
-            instructions="You coordinate with specialized agents. Delegate writing tasks to the creative_writer tool. ",
+            instructions="You coordinate with specialized agents. Delegate writing tasks to the creative_writer tool.",
             tools=[writer_tool],
             middleware=[logging_middleware],
         )
