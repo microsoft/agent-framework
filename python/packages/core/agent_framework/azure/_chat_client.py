@@ -275,6 +275,9 @@ class AzureOpenAIChatClient(
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
         message = choice.message if isinstance(choice, Choice) else choice.delta
+        # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
+        if message is None:  # type: ignore
+            return None
         if hasattr(message, "refusal") and message.refusal:
             return TextContent(text=message.refusal, raw_representation=choice)
         if not message.content:
