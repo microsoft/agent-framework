@@ -164,6 +164,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
+        **kwargs: Any,
     ) -> "ChatAgent[TOptions_co]":
         """Create a new agent on the Azure AI service and return a local ChatAgent wrapper.
 
@@ -178,6 +179,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
             context_provider: Context provider to include during agent invocation.
+            **kwargs: Additional parameters passed to PromptAgentDefinition.
 
         Returns:
             ChatAgent: A ChatAgent instance configured with the created agent.
@@ -210,6 +212,9 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         normalized_tools = normalize_tools(tools)
         if normalized_tools:
             args["tools"] = to_azure_ai_tools(normalized_tools)
+
+        # Merge any additional kwargs into args
+        args.update(kwargs)
 
         created_agent = await self._project_client.agents.create_version(
             agent_name=name,
