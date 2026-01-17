@@ -42,23 +42,23 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new CopilotStudioAgentThread();
+    public sealed override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentThread());
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
     /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public AgentThread GetNewThread(string conversationId)
-        => new CopilotStudioAgentThread() { ConversationId = conversationId };
+    public ValueTask<AgentThread> GetNewThreadAsync(string conversationId)
+        => new(new CopilotStudioAgentThread() { ConversationId = conversationId });
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions));
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -68,7 +68,7 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not CopilotStudioAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
@@ -88,7 +88,7 @@ public class CopilotStudioAgent : AIAgent
         // TODO: Review list of ChatResponse properties to ensure we set all availble values.
         // Setting ResponseId and MessageId end up being particularly important for streaming consumers
         // so that they can tell things like response boundaries.
-        return new AgentRunResponse(responseMessagesList)
+        return new AgentResponse(responseMessagesList)
         {
             AgentId = this.Id,
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
@@ -96,7 +96,7 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -106,7 +106,8 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid thread to work with.
         // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
+
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not CopilotStudioAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
@@ -124,7 +125,7 @@ public class CopilotStudioAgent : AIAgent
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
-            yield return new AgentRunResponseUpdate(message.Role, message.Contents)
+            yield return new AgentResponseUpdate(message.Role, message.Contents)
             {
                 AgentId = this.Id,
                 AdditionalProperties = message.AdditionalProperties,

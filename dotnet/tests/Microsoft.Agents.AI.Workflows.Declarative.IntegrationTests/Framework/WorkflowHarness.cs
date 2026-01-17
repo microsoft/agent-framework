@@ -142,7 +142,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     Console.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
                     break;
 
-                case AgentRunResponseEvent responseEvent:
+                case AgentResponseEvent responseEvent:
                     if (!string.IsNullOrEmpty(responseEvent.Response.Text))
                     {
                         Console.WriteLine($"AGENT: {responseEvent.Response.AgentId}: {responseEvent.Response.Text}");

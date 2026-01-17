@@ -9,7 +9,7 @@ invoked during durable entity execution.
 from dataclasses import dataclass
 from typing import Protocol
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+from agent_framework import AgentResponse, AgentResponseUpdate
 
 
 @dataclass(frozen=True)
@@ -27,14 +27,14 @@ class AgentResponseCallbackProtocol(Protocol):
 
     async def on_streaming_response_update(
         self,
-        update: AgentRunResponseUpdate,
+        update: AgentResponseUpdate,
         context: AgentCallbackContext,
     ) -> None:
         """Handle a streaming response update emitted by the agent."""
 
     async def on_agent_response(
         self,
-        response: AgentRunResponse,
+        response: AgentResponse,
         context: AgentCallbackContext,
     ) -> None:
         """Handle the final agent response."""

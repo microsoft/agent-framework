@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentRunResponse, AgentThread, ChatMessage
+from agent_framework import AgentResponse, AgentThread, ChatMessage
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
 from agent_framework_azurefunctions import AgentFunctionApp, DurableAIAgent
@@ -39,7 +39,7 @@ def _create_entity_task(task_id: int = 1) -> TaskBase:
 
 
 class TestAgentResponseHelpers:
-    """Tests for helper utilities that prepare AgentRunResponse values."""
+    """Tests for helper utilities that prepare AgentResponse values."""
 
     @staticmethod
     def _create_agent_task() -> AgentTask:
@@ -48,7 +48,7 @@ class TestAgentResponseHelpers:
 
     def test_load_agent_response_from_instance(self) -> None:
         task = self._create_agent_task()
-        response = AgentRunResponse(messages=[ChatMessage(role="assistant", text='{"foo": "bar"}')])
+        response = AgentResponse(messages=[ChatMessage(role="assistant", text='{"foo": "bar"}')])
 
         loaded = task._load_agent_response(response)
 
@@ -57,7 +57,7 @@ class TestAgentResponseHelpers:
 
     def test_load_agent_response_from_serialized(self) -> None:
         task = self._create_agent_task()
-        serialized = AgentRunResponse(messages=[ChatMessage(role="assistant", text="structured")]).to_dict()
+        serialized = AgentResponse(messages=[ChatMessage(role="assistant", text="structured")]).to_dict()
         serialized["value"] = {"answer": 42}
 
         loaded = task._load_agent_response(serialized)
@@ -65,7 +65,7 @@ class TestAgentResponseHelpers:
         assert loaded is not None
         assert loaded.value == {"answer": 42}
         loaded_dict = loaded.to_dict()
-        assert loaded_dict["type"] == "agent_run_response"
+        assert loaded_dict["type"] == "agent_response"
 
     def test_load_agent_response_rejects_none(self) -> None:
         task = self._create_agent_task()
@@ -86,7 +86,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -94,9 +94,9 @@ class TestAgentResponseHelpers:
         # Call try_set_value
         task.try_set_value(entity_task)
 
-        # Verify task completed successfully with AgentRunResponse
+        # Verify task completed successfully with AgentResponse
         assert task.state == TaskState.SUCCEEDED
-        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result, AgentResponse)
         assert task.result.text == "Test response"
 
     def test_try_set_value_failure(self) -> None:
@@ -128,9 +128,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentRunResponse(
-            messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]
-        ).to_dict()
+        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -140,7 +138,7 @@ class TestAgentResponseHelpers:
 
         # Verify task completed and value was parsed
         assert task.state == TaskState.SUCCEEDED
-        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result, AgentResponse)
         assert isinstance(task.result.value, TestSchema)
         assert task.result.value.answer == "42"
 
@@ -152,7 +150,7 @@ class TestAgentResponseHelpers:
             name: str
 
         task = self._create_agent_task()
-        response = AgentRunResponse(messages=[ChatMessage(role="assistant", text='{"name": "test"}')])
+        response = AgentResponse(messages=[ChatMessage(role="assistant", text='{"name": "test"}')])
 
         # Value should be None initially
         assert response.value is None
@@ -173,7 +171,7 @@ class TestAgentResponseHelpers:
 
         task = self._create_agent_task()
         existing_value = SampleSchema(name="existing")
-        response = AgentRunResponse(
+        response = AgentResponse(
             messages=[ChatMessage(role="assistant", text='{"name": "new"}')],
             value=existing_value,
         )
@@ -218,12 +216,10 @@ class TestDurableAIAgent:
         assert hasattr(agent, "id")
         assert hasattr(agent, "name")
         assert hasattr(agent, "description")
-        assert hasattr(agent, "display_name")
 
         # Verify values
         assert agent.name == "TestAgent"
         assert agent.description == "Durable agent proxy for TestAgent"
-        assert agent.display_name == "TestAgent"
         assert agent.id is not None  # Auto-generated UUID
 
     def test_get_new_thread(self) -> None:
@@ -295,7 +291,7 @@ class TestDurableAIAgent:
         call_args = mock_context.call_entity.call_args
         entity_id, operation, request = call_args[0]
 
-        assert operation == "run_agent"
+        assert operation == "run"
         assert request["message"] == "Test message"
         assert request["enable_tool_calls"] is True
         assert "correlationId" in request
@@ -368,7 +364,7 @@ class TestDurableAIAgent:
         # Create thread and call
         thread = agent.get_new_thread()
 
-        task = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
+        task = agent.run(messages="Test message", thread=thread, options={"response_format": SampleSchema})
 
         assert isinstance(task, AgentTask)
         assert task.children[0] == entity_task

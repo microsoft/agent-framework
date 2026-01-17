@@ -178,14 +178,14 @@ async def main() -> None:
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_providers=provider,
+        context_provider=provider,
     )
 
     # Teach a user preference; the agent writes this to the provider's memory
@@ -220,14 +220,14 @@ async def main() -> None:
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
             "Before answering, always check for stored context"
         ),
         tools=search_flights,
-        context_providers=provider,
+        context_provider=provider,
     )
     # Invoke the tool; outputs become part of memory/context
     query = "Are there any flights from new york city (jfk) to la? Give me details"

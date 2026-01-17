@@ -303,12 +303,12 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
 
     public JsonElement ReceivedForwardedProperties { get; private set; }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -324,7 +324,7 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
 
         // Always return a text response
         string messageId = Guid.NewGuid().ToString("N");
-        yield return new AgentRunResponseUpdate
+        yield return new AgentResponseUpdate
         {
             MessageId = messageId,
             Role = ChatRole.Assistant,
@@ -334,12 +334,11 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override AgentThread GetNewThread() => new FakeInMemoryAgentThread();
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentThread());
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
-    }
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions));
 
     private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
     {

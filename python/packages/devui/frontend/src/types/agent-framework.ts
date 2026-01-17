@@ -208,7 +208,7 @@ export interface UsageDetails {
 }
 
 // Agent run response update (streaming)
-export interface AgentRunResponseUpdate {
+export interface AgentResponseUpdate {
   contents: Contents[];
   role?: Role;
   author_name?: string;
@@ -222,7 +222,7 @@ export interface AgentRunResponseUpdate {
 }
 
 // Agent run response (final)
-export interface AgentRunResponse {
+export interface AgentResponse {
   messages: ChatMessage[];
   response_id?: string;
   created_at?: CreatedAtT;
@@ -269,8 +269,7 @@ export interface AgentThread {
 export interface WorkflowEvent {
   type?: string; // Event class name like "WorkflowOutputEvent", "WorkflowCompletedEvent", "ExecutorInvokedEvent", etc.
   data?: unknown;
-  executor_id?: string; // Present for executor-related events
-  source_executor_id?: string; // Present for WorkflowOutputEvent
+  executor_id?: string; // Present for executor-related events and WorkflowOutputEvent
 }
 
 export interface WorkflowStartedEvent extends WorkflowEvent {
@@ -286,7 +285,7 @@ export interface WorkflowCompletedEvent extends WorkflowEvent {
 export interface WorkflowOutputEvent extends WorkflowEvent {
   // Event-specific data for workflow output (new)
   readonly event_type: "workflow_output";
-  source_executor_id: string; // ID of executor that yielded the output
+  executor_id: string; // ID of executor that yielded the output
 }
 
 export interface WorkflowWarningEvent extends WorkflowEvent {
@@ -302,11 +301,11 @@ export interface ExecutorEvent extends WorkflowEvent {
 }
 
 export interface AgentRunUpdateEvent extends ExecutorEvent {
-  data?: AgentRunResponseUpdate;
+  data?: AgentResponseUpdate;
 }
 
 export interface AgentRunEvent extends ExecutorEvent {
-  data?: AgentRunResponse;
+  data?: AgentResponse;
 }
 
 // Span event structure (from OpenTelemetry)

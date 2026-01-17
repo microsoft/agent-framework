@@ -40,7 +40,7 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="assistant",
         instructions="You are a helpful math tutor.",
     )

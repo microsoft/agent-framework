@@ -3,8 +3,8 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent, CitationAnnotation
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import CitationAnnotation
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
@@ -41,6 +41,7 @@ async def main() -> None:
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
+        AzureAIAgentsProvider(agents_client=agents_client) as provider,
     ):
         ai_search_conn_id = ""
         async for connection in project_client.connections.list():
@@ -48,7 +49,8 @@ async def main() -> None:
                 ai_search_conn_id = connection.id
                 break
 
-        # 1. Create Azure AI agent with the search tool
+        # 1. Create Azure AI agent with the search tool using SDK directly
+        # (Azure AI Search tool requires special tool_resources configuration)
         azure_ai_agent = await agents_client.create_agent(
             model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             name="HotelSearchAgent",
@@ -70,47 +72,42 @@ async def main() -> None:
             },
         )
 
-        # 2. Create chat client with the existing agent
-        chat_client = AzureAIAgentClient(agents_client=agents_client, agent_id=azure_ai_agent.id)
-
         try:
-            async with ChatAgent(
-                chat_client=chat_client,
-                # Additional instructions for this specific conversation
-                instructions=("You are a helpful agent that uses the search tool and index to find hotel information."),
-            ) as agent:
-                print("This agent uses raw Azure AI Search tool to search hotel data.\n")
+            # 2. Use provider.as_agent() to wrap the existing agent
+            agent = provider.as_agent(agent=azure_ai_agent)
 
-                # 3. Simulate conversation with the agent
-                user_input = (
-                    "Use Azure AI search knowledge tool to find detailed information about a winter hotel."
-                    " Use the search tool and index."  # You can modify prompt to force tool usage
-                )
-                print(f"User: {user_input}")
-                print("Agent: ", end="", flush=True)
+            print("This agent uses raw Azure AI Search tool to search hotel data.\n")
 
-                # Stream the response and collect citations
-                citations: list[CitationAnnotation] = []
-                async for chunk in agent.run_stream(user_input):
-                    if chunk.text:
-                        print(chunk.text, end="", flush=True)
+            # 3. Simulate conversation with the agent
+            user_input = (
+                "Use Azure AI search knowledge tool to find detailed information about a winter hotel."
+                " Use the search tool and index."  # You can modify prompt to force tool usage
+            )
+            print(f"User: {user_input}")
+            print("Agent: ", end="", flush=True)
 
-                    # Collect citations from Azure AI Search responses
-                    for content in getattr(chunk, "contents", []):
-                        annotations = getattr(content, "annotations", [])
-                        if annotations:
-                            citations.extend(annotations)
+            # Stream the response and collect citations
+            citations: list[CitationAnnotation] = []
+            async for chunk in agent.run_stream(user_input):
+                if chunk.text:
+                    print(chunk.text, end="", flush=True)
 
-                print()
+                # Collect citations from Azure AI Search responses
+                for content in getattr(chunk, "contents", []):
+                    annotations = getattr(content, "annotations", [])
+                    if annotations:
+                        citations.extend(annotations)
 
-                # Display collected citation
-                if citations:
-                    print("\n\nCitation:")
-                    for i, citation in enumerate(citations, 1):
-                        print(f"[{i}] {citation.url}")
+            print()
 
-                print("\n" + "=" * 50 + "\n")
-                print("Hotel search conversation completed!")
+            # Display collected citation
+            if citations:
+                print("\n\nCitation:")
+                for i, citation in enumerate(citations, 1):
+                    print(f"[{i}] {citation.url}")
+
+            print("\n" + "=" * 50 + "\n")
+            print("Hotel search conversation completed!")
 
         finally:
             # Clean up the agent manually

@@ -2,13 +2,13 @@
 
 import asyncio
 import random
+import sys
 from collections.abc import AsyncIterable, MutableSequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Role,
@@ -16,6 +16,12 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions_co
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 """
 Custom Chat Client Implementation Example
@@ -27,7 +33,7 @@ showing integration with ChatAgent and both streaming and non-streaming response
 
 @use_function_invocation
 @use_chat_middleware
-class EchoingChatClient(BaseChatClient):
+class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """A custom chat client that echoes messages back with modifications.
 
     This demonstrates how to implement a custom chat client by extending BaseChatClient
@@ -46,11 +52,12 @@ class EchoingChatClient(BaseChatClient):
         super().__init__(**kwargs)
         self.prefix = prefix
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         """Echo back the user's message with a prefix."""
@@ -77,16 +84,17 @@ class EchoingChatClient(BaseChatClient):
             response_id=f"echo-resp-{random.randint(1000, 9999)}",
         )
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Stream back the echoed message character by character."""
         # Get the complete response first
-        response = await self._inner_get_response(messages=messages, chat_options=chat_options, **kwargs)
+        response = await self._inner_get_response(messages=messages, options=options, **kwargs)
 
         if response.messages:
             response_text = response.messages[0].text or ""
@@ -117,13 +125,12 @@ async def main() -> None:
     print(f"Direct response: {direct_response.messages[0].text}")
 
     # Create an agent using the custom chat client
-    echo_agent = echo_client.create_agent(
+    echo_agent = echo_client.as_agent(
         name="EchoAgent",
         instructions="You are a helpful assistant that echoes back what users say.",
     )
 
     print(f"\nAgent Name: {echo_agent.name}")
-    print(f"Agent Display Name: {echo_agent.display_name}")
 
     # Test non-streaming with agent
     query = "This is a test message"

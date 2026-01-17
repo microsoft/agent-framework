@@ -11,11 +11,47 @@ from typing import Any
 
 
 class ConfirmationStrategy(ABC):
-    """Strategy for generating confirmation messages during human-in-the-loop flows."""
+    """Strategy for generating confirmation messages during human-in-the-loop flows.
 
+    Subclasses must define the message properties. The methods use those properties
+    by default, but can be overridden for complete customization.
+    """
+
+    @property
     @abstractmethod
+    def approval_header(self) -> str:
+        """Header for approval accepted message. Must be overridden."""
+        ...
+
+    @property
+    @abstractmethod
+    def approval_footer(self) -> str:
+        """Footer for approval accepted message. Must be overridden."""
+        ...
+
+    @property
+    @abstractmethod
+    def rejection_message(self) -> str:
+        """Message when user rejects. Must be overridden."""
+        ...
+
+    @property
+    @abstractmethod
+    def state_confirmed_message(self) -> str:
+        """Message when state is confirmed. Must be overridden."""
+        ...
+
+    @property
+    @abstractmethod
+    def state_rejected_message(self) -> str:
+        """Message when state is rejected. Must be overridden."""
+        ...
+
     def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
         """Generate message when user approves function execution.
+
+        Default implementation uses header/footer properties.
+        Override for complete customization.
 
         Args:
             steps: List of approved steps with 'description', 'status', etc.
@@ -23,9 +59,13 @@ class ConfirmationStrategy(ABC):
         Returns:
             Message to display to user
         """
-        ...
+        enabled_steps = [s for s in steps if s.get("status") == "enabled"]
+        message_parts = [self.approval_header.format(count=len(enabled_steps))]
+        for i, step in enumerate(enabled_steps, 1):
+            message_parts.append(f"{i}. {step['description']}\n")
+        message_parts.append(self.approval_footer)
+        return "".join(message_parts)
 
-    @abstractmethod
     def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
         """Generate message when user rejects function execution.
 
@@ -35,141 +75,143 @@ class ConfirmationStrategy(ABC):
         Returns:
             Message to display to user
         """
-        ...
+        return self.rejection_message
 
-    @abstractmethod
     def on_state_confirmed(self) -> str:
         """Generate message when user confirms predictive state changes.
 
         Returns:
             Message to display to user
         """
-        ...
+        return self.state_confirmed_message
 
-    @abstractmethod
     def on_state_rejected(self) -> str:
         """Generate message when user rejects predictive state changes.
 
         Returns:
             Message to display to user
         """
-        ...
+        return self.state_rejected_message
 
 
 class DefaultConfirmationStrategy(ConfirmationStrategy):
-    """Generic confirmation messages suitable for most agents.
+    """Generic confirmation messages suitable for most agents."""
 
-    This preserves the original behavior from v1.
-    """
+    @property
+    def approval_header(self) -> str:
+        return "Executing {count} approved steps:\n\n"
 
-    def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
-        """Generate generic approval message with step list."""
-        enabled_steps = [s for s in steps if s.get("status") == "enabled"]
+    @property
+    def approval_footer(self) -> str:
+        return "\nAll steps completed successfully!"
 
-        message_parts = [f"Executing {len(enabled_steps)} approved steps:\n\n"]
-
-        for i, step in enumerate(enabled_steps, 1):
-            message_parts.append(f"{i}. {step['description']}\n")
-
-        message_parts.append("\nAll steps completed successfully!")
-
-        return "".join(message_parts)
-
-    def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
-        """Generate generic rejection message."""
+    @property
+    def rejection_message(self) -> str:
         return "No problem! What would you like me to change about the plan?"
 
-    def on_state_confirmed(self) -> str:
-        """Generate generic state confirmation message."""
+    @property
+    def state_confirmed_message(self) -> str:
         return "Changes confirmed and applied successfully!"
 
-    def on_state_rejected(self) -> str:
-        """Generate generic state rejection message."""
+    @property
+    def state_rejected_message(self) -> str:
         return "No problem! What would you like me to change?"
 
 
 class TaskPlannerConfirmationStrategy(ConfirmationStrategy):
     """Domain-specific confirmation messages for task planning agents."""
 
-    def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
-        """Generate task-specific approval message."""
-        enabled_steps = [s for s in steps if s.get("status") == "enabled"]
+    @property
+    def approval_header(self) -> str:
+        return "Executing your requested tasks:\n\n"
 
-        message_parts = ["Executing your requested tasks:\n\n"]
+    @property
+    def approval_footer(self) -> str:
+        return "\nAll tasks completed successfully!"
 
-        for i, step in enumerate(enabled_steps, 1):
-            message_parts.append(f"{i}. {step['description']}\n")
-
-        message_parts.append("\nAll tasks completed successfully!")
-
-        return "".join(message_parts)
-
-    def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
-        """Generate task-specific rejection message."""
+    @property
+    def rejection_message(self) -> str:
         return "No problem! Let me revise the plan. What would you like me to change?"
 
-    def on_state_confirmed(self) -> str:
-        """Task planners typically don't use state confirmation."""
+    @property
+    def state_confirmed_message(self) -> str:
         return "Tasks confirmed and ready to execute!"
 
-    def on_state_rejected(self) -> str:
-        """Task planners typically don't use state confirmation."""
+    @property
+    def state_rejected_message(self) -> str:
         return "No problem! How should I adjust the task list?"
 
 
 class RecipeConfirmationStrategy(ConfirmationStrategy):
     """Domain-specific confirmation messages for recipe agents."""
 
-    def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
-        """Generate recipe-specific approval message."""
-        enabled_steps = [s for s in steps if s.get("status") == "enabled"]
+    @property
+    def approval_header(self) -> str:
+        return "Updating your recipe:\n\n"
 
-        message_parts = ["Updating your recipe:\n\n"]
+    @property
+    def approval_footer(self) -> str:
+        return "\nRecipe updated successfully!"
 
-        for i, step in enumerate(enabled_steps, 1):
-            message_parts.append(f"{i}. {step['description']}\n")
-
-        message_parts.append("\nRecipe updated successfully!")
-
-        return "".join(message_parts)
-
-    def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
-        """Generate recipe-specific rejection message."""
+    @property
+    def rejection_message(self) -> str:
         return "No problem! What ingredients or steps should I change?"
 
-    def on_state_confirmed(self) -> str:
-        """Generate recipe-specific state confirmation message."""
+    @property
+    def state_confirmed_message(self) -> str:
         return "Recipe changes applied successfully!"
 
-    def on_state_rejected(self) -> str:
-        """Generate recipe-specific state rejection message."""
+    @property
+    def state_rejected_message(self) -> str:
         return "No problem! What would you like me to adjust in the recipe?"
 
 
 class DocumentWriterConfirmationStrategy(ConfirmationStrategy):
     """Domain-specific confirmation messages for document writing agents."""
 
-    def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
-        """Generate document-specific approval message."""
-        enabled_steps = [s for s in steps if s.get("status") == "enabled"]
+    @property
+    def approval_header(self) -> str:
+        return "Applying your edits:\n\n"
 
-        message_parts = ["Applying your edits:\n\n"]
+    @property
+    def approval_footer(self) -> str:
+        return "\nDocument updated successfully!"
 
-        for i, step in enumerate(enabled_steps, 1):
-            message_parts.append(f"{i}. {step['description']}\n")
-
-        message_parts.append("\nDocument updated successfully!")
-
-        return "".join(message_parts)
-
-    def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
-        """Generate document-specific rejection message."""
+    @property
+    def rejection_message(self) -> str:
         return "No problem! Which changes should I keep or modify?"
 
-    def on_state_confirmed(self) -> str:
-        """Generate document-specific state confirmation message."""
+    @property
+    def state_confirmed_message(self) -> str:
         return "Document edits applied!"
 
-    def on_state_rejected(self) -> str:
-        """Generate document-specific state rejection message."""
+    @property
+    def state_rejected_message(self) -> str:
         return "No problem! What should I change about the document?"
+
+
+def apply_confirmation_strategy(
+    strategy: ConfirmationStrategy | None,
+    accepted: bool,
+    steps: list[dict[str, Any]],
+) -> str:
+    """Apply a confirmation strategy to generate a message.
+
+    This helper consolidates the pattern used in multiple orchestrators.
+
+    Args:
+        strategy: Strategy to use, or None for default
+        accepted: Whether the user approved
+        steps: List of steps (may be empty for state confirmations)
+
+    Returns:
+        Generated message string
+    """
+    if strategy is None:
+        strategy = DefaultConfirmationStrategy()
+
+    if not steps:
+        # State confirmation (no steps)
+        return strategy.on_state_confirmed() if accepted else strategy.on_state_rejected()
+    # Step-based approval
+    return strategy.on_approval_accepted(steps) if accepted else strategy.on_approval_rejected(steps)

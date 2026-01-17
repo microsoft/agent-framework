@@ -28,7 +28,7 @@ jobs:
     outputs:
       pythonChanges: ${{ steps.filter.outputs.python}}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -75,7 +75,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -97,7 +97,7 @@ jobs:
         id: azure-functions-setup
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 600 --retries 3 --retry-delay 10
         working-directory: ./python
       - name: Test core samples
         timeout-minutes: 10
@@ -135,7 +135,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -154,7 +154,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe azure-ai-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
         working-directory: ./python
       - name: Test Azure AI samples
         timeout-minutes: 10

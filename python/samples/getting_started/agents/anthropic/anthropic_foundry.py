@@ -28,7 +28,7 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).create_agent(
+    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[
@@ -38,10 +38,12 @@ async def main() -> None:
             ),
             HostedWebSearchTool(),
         ],
-        # anthropic needs a value for the max_tokens parameter
-        # we set it to 1024, but you can override like this:
-        max_tokens=20000,
-        additional_chat_options={"thinking": {"type": "enabled", "budget_tokens": 10000}},
+        default_options={
+            # anthropic needs a value for the max_tokens parameter
+            # we set it to 1024, but you can override like this:
+            "max_tokens": 20000,
+            "thinking": {"type": "enabled", "budget_tokens": 10000},
+        },
     )
 
     query = "Can you compare Python decorators with C# attributes?"

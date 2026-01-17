@@ -29,12 +29,12 @@ public sealed partial class ChatClientAgent
     /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <remarks>
     /// This overload is useful when the agent has sufficient context from previous messages in the thread
     /// or from its initial configuration to generate a meaningful response without additional input.
     /// </remarks>
-    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
@@ -57,13 +57,13 @@ public sealed partial class ChatClientAgent
     /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
     /// <remarks>
     /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role
     /// before being sent to the agent. This is a convenience method for simple text-based interactions.
     /// </remarks>
-    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         string message,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -91,9 +91,9 @@ public sealed partial class ChatClientAgent
     /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
-    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         ChatMessage message,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -121,7 +121,7 @@ public sealed partial class ChatClientAgent
     /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <typeparam name="T">The type of structured output to request.</typeparam>
     /// <remarks>
     /// <para>
@@ -134,7 +134,7 @@ public sealed partial class ChatClientAgent
     /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
     /// </para>
     /// </remarks>
-    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -152,9 +152,12 @@ public sealed partial class ChatClientAgent
                 ct).ConfigureAwait(false);
         }
 
-        static ChatClientAgentRunResponse<T> CreateResponse(ChatResponse<T> chatResponse)
+        static ChatClientAgentResponse<T> CreateResponse(ChatResponse<T> chatResponse)
         {
-            return new ChatClientAgentRunResponse<T>(chatResponse);
+            return new ChatClientAgentResponse<T>(chatResponse)
+            {
+                ContinuationToken = WrapContinuationToken(chatResponse.ContinuationToken)
+            };
         }
 
         return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);

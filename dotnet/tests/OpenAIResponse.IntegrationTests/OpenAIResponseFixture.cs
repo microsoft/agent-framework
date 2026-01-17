@@ -12,13 +12,13 @@ using OpenAI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
 
-namespace OpenAIResponse.IntegrationTests;
+namespace ResponseResult.IntegrationTests;
 
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
 
-    private OpenAIResponseClient _openAIResponseClient = null!;
+    private ResponsesClient _openAIResponseClient = null!;
     private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
@@ -50,7 +50,12 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+        if (typedThread.MessageStore is null)
+        {
+            return [];
+        }
+
+        return (await typedThread.MessageStore.InvokingAsync(new([]))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -77,7 +82,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
                     {
                         Instructions = instructions,
                         Tools = aiTools,
-                        RawRepresentationFactory = new Func<IChatClient, object>(_ => new ResponseCreationOptions() { StoredOutputEnabled = store })
+                        RawRepresentationFactory = new Func<IChatClient, object>(_ => new CreateResponseOptions() { StoredOutputEnabled = store })
                     },
                 });
 
@@ -92,7 +97,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
     public async Task InitializeAsync()
     {
         this._openAIResponseClient = new OpenAIClient(s_config.ApiKey)
-            .GetOpenAIResponseClient(s_config.ChatModelId);
+            .GetResponsesClient(s_config.ChatModelId);
 
         this._agent = await this.CreateChatClientAgentAsync();
     }

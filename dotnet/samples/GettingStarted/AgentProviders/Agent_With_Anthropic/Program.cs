@@ -26,7 +26,7 @@ AnthropicClient? client = (resource is null)
         ? new AnthropicFoundryClient(new AnthropicFoundryApiKeyCredentials(apiKey, resource)) // If an apiKey is provided, use Foundry with ApiKey authentication
         : new AnthropicFoundryClient(new AnthropicAzureTokenCredential(new AzureCliCredential(), resource)); // Otherwise, use Foundry with Azure Client authentication
 
-AIAgent agent = client.CreateAIAgent(model: deploymentName, instructions: JokerInstructions, name: JokerName);
+AIAgent agent = client.AsAIAgent(model: deploymentName, instructions: JokerInstructions, name: JokerName);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

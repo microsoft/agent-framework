@@ -98,7 +98,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
 @executor(id="to_analysis_result")
 async def to_analysis_result(response: AgentExecutorResponse, ctx: WorkflowContext[AnalysisResult]) -> None:
-    parsed = AnalysisResultAgent.model_validate_json(response.agent_run_response.text)
+    parsed = AnalysisResultAgent.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{email_id}")
     await ctx.send_message(
@@ -125,7 +125,7 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -140,7 +140,7 @@ async def summarize_email(analysis: AnalysisResult, ctx: WorkflowContext[AgentEx
 
 @executor(id="merge_summary")
 async def merge_summary(response: AgentExecutorResponse, ctx: WorkflowContext[AnalysisResult]) -> None:
-    summary = EmailSummaryModel.model_validate_json(response.agent_run_response.text)
+    summary = EmailSummaryModel.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{email_id}")
     # Build an AnalysisResult mirroring to_analysis_result but with summary
@@ -183,32 +183,32 @@ async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, 
 
 def create_email_analysis_agent() -> ChatAgent:
     """Creates the email analysis agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
             "and 'reason' (string)."
         ),
         name="email_analysis_agent",
-        response_format=AnalysisResultAgent,
+        default_options={"response_format": AnalysisResultAgent},
     )
 
 
 def create_email_assistant_agent() -> ChatAgent:
     """Creates the email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 
 def create_email_summary_agent() -> ChatAgent:
     """Creates the email summary agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an assistant that helps users summarize emails."),
         name="email_summary_agent",
-        response_format=EmailSummaryModel,
+        default_options={"response_format": EmailSummaryModel},
     )
 
 
@@ -243,7 +243,8 @@ async def main() -> None:
     )
 
     workflow = (
-        workflow_builder.set_start_executor("store_email")
+        workflow_builder
+        .set_start_executor("store_email")
         .add_edge("store_email", "email_analysis_agent")
         .add_edge("email_analysis_agent", "to_analysis_result")
         .add_multi_selection_edge_group(

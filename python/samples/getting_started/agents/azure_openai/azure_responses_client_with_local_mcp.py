@@ -37,7 +37,7 @@ async def main():
         credential=credential,
     )
 
-    agent: ChatAgent = responses_client.create_agent(
+    agent: ChatAgent = responses_client.as_agent(
         name="DocsAgent",
         instructions=("You are a helpful assistant that can help with Microsoft documentation questions."),
     )

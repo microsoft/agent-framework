@@ -121,7 +121,7 @@ public class AgentExtensionsTests
     public async Task CreateFromAgent_WhenFunctionInvokedAsync_CallsAgentRunAsync()
     {
         // Arrange
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
 
         var aiFunction = testAgent.AsAIFunction();
@@ -139,7 +139,7 @@ public class AgentExtensionsTests
     public async Task CreateFromAgent_WhenFunctionInvokedWithCancellationTokenAsync_PassesCancellationTokenAsync()
     {
         // Arrange
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
         using var cancellationTokenSource = new CancellationTokenSource();
         var cancellationToken = cancellationTokenSource.Token;
@@ -257,7 +257,7 @@ public class AgentExtensionsTests
     public async Task CreateFromAgent_InvokeWithComplexResponseFromAgentAsync_ReturnsCorrectResponseAsync()
     {
         // Arrange
-        var expectedResponse = new AgentRunResponse
+        var expectedResponse = new AgentResponse
         {
             AgentId = "agent-123",
             ResponseId = "response-456",
@@ -307,10 +307,10 @@ public class AgentExtensionsTests
     /// </summary>
     private sealed class TestAgent : AIAgent
     {
-        private readonly AgentRunResponse? _responseToReturn;
+        private readonly AgentResponse? _responseToReturn;
         private readonly Exception? _exceptionToThrow;
 
-        public TestAgent(string? name, string? description, AgentRunResponse responseToReturn)
+        public TestAgent(string? name, string? description, AgentResponse responseToReturn)
         {
             this.Name = name;
             this.Description = description;
@@ -324,10 +324,10 @@ public class AgentExtensionsTests
             this._exceptionToThrow = exceptionToThrow;
         }
 
-        public override AgentThread GetNewThread()
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public override string? Name { get; }
@@ -337,7 +337,7 @@ public class AgentExtensionsTests
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -355,14 +355,14 @@ public class AgentExtensionsTests
             return Task.FromResult(this._responseToReturn!);
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await this.RunAsync(messages, thread, options, cancellationToken);
-            foreach (var update in response.ToAgentRunResponseUpdates())
+            foreach (var update in response.ToAgentResponseUpdates())
             {
                 yield return update;
             }

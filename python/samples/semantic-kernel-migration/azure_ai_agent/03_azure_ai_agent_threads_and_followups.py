@@ -10,7 +10,7 @@ async def run_semantic_kernel() -> None:
 
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()
-        definition = await client.agents.create_agent(
+        definition = await client.agents.as_agent(
             model=settings.model_deployment_name,
             name="Planner",
             instructions="Track follow-up questions within the same thread.",
@@ -38,7 +38,7 @@ async def run_agent_framework() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="Planner",
             instructions="Track follow-up questions within the same thread.",
         ) as agent,

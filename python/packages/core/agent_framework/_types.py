@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, cast, overload
+from typing import Any, ClassVar, Literal, TypedDict, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -29,17 +29,20 @@ else:
 
 
 __all__ = [
-    "AgentRunResponse",
-    "AgentRunResponseUpdate",
+    "AgentResponse",
+    "AgentResponseUpdate",
     "AnnotatedRegions",
     "Annotations",
     "BaseAnnotation",
     "BaseContent",
     "ChatMessage",
+    "ChatOptions",  # Backward compatibility alias
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
     "CitationAnnotation",
+    "CodeInterpreterToolCallContent",
+    "CodeInterpreterToolResultContent",
     "Contents",
     "DataContent",
     "ErrorContent",
@@ -50,6 +53,10 @@ __all__ = [
     "FunctionResultContent",
     "HostedFileContent",
     "HostedVectorStoreContent",
+    "ImageGenerationToolCallContent",
+    "ImageGenerationToolResultContent",
+    "MCPServerToolCallContent",
+    "MCPServerToolResultContent",
     "Role",
     "TextContent",
     "TextReasoningContent",
@@ -58,7 +65,13 @@ __all__ = [
     "UriContent",
     "UsageContent",
     "UsageDetails",
+    "merge_chat_options",
+    "normalize_tools",
     "prepare_function_call_results",
+    "prepend_instructions_to_messages",
+    "validate_chat_options",
+    "validate_tool_mode",
+    "validate_tools",
 ]
 
 logger = get_logger("agent_framework")
@@ -101,7 +114,7 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
     Raises:
         ContentError if parsing fails
     """
-    content_type = str(content_data.get("type"))
+    content_type: str | None = content_data.get("type", None)
     match content_type:
         case "text":
             return TextContent.from_dict(content_data)
@@ -121,12 +134,26 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
             return HostedFileContent.from_dict(content_data)
         case "hosted_vector_store":
             return HostedVectorStoreContent.from_dict(content_data)
+        case "code_interpreter_tool_call":
+            return CodeInterpreterToolCallContent.from_dict(content_data)
+        case "code_interpreter_tool_result":
+            return CodeInterpreterToolResultContent.from_dict(content_data)
+        case "image_generation_tool_call":
+            return ImageGenerationToolCallContent.from_dict(content_data)
+        case "image_generation_tool_result":
+            return ImageGenerationToolResultContent.from_dict(content_data)
+        case "mcp_server_tool_call":
+            return MCPServerToolCallContent.from_dict(content_data)
+        case "mcp_server_tool_result":
+            return MCPServerToolResultContent.from_dict(content_data)
         case "function_approval_request":
             return FunctionApprovalRequestContent.from_dict(content_data)
         case "function_approval_response":
             return FunctionApprovalResponseContent.from_dict(content_data)
         case "text_reasoning":
             return TextReasoningContent.from_dict(content_data)
+        case None:
+            raise ContentError("Content type is missing")
         case _:
             raise ContentError(f"Unknown content type '{content_type}'")
 
@@ -162,7 +189,7 @@ _T = TypeVar("_T")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TToolMode = TypeVar("TToolMode", bound="ToolMode")
-TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentRunResponse")
+TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentResponse")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -789,8 +816,9 @@ class TextReasoningContent(BaseContent):
 
     def __init__(
         self,
-        text: str,
+        text: str | None,
         *,
+        protected_data: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
@@ -802,6 +830,16 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
+            protected_data: This property is used to store data from a provider that should be roundtripped back to the
+                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
+                information that is only intended to be sent back to the provider and not displayed to the user. It's
+                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
+                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
+
+                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
+                to only be understood by the provider that created it. The data is often represented as a more complex
+                object, so it should be serialized to a string before storing so that the whole object is easily
+                serializable without loss.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -814,6 +852,7 @@ class TextReasoningContent(BaseContent):
             **kwargs,
         )
         self.text = text
+        self.protected_data = protected_data
         self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
@@ -846,13 +885,18 @@ class TextReasoningContent(BaseContent):
         else:
             annotations = self.annotations + other.annotations
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        protected_data = other.protected_data or self.protected_data
+
         # Create new instance using from_dict for proper deserialization
         result_dict = {
-            "text": self.text + other.text,
+            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
             "type": "text_reasoning",
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
             "raw_representation": raw_representation,
+            "protected_data": protected_data,
         }
         return TextReasoningContent.from_dict(result_dict)
 
@@ -869,7 +913,9 @@ class TextReasoningContent(BaseContent):
             raise TypeError("Incompatible type")
 
         # Concatenate text
-        self.text += other.text
+        if self.text is not None or other.text is not None:
+            self.text = (self.text or "") + (other.text or "")
+        # if both are None, should keep as None
 
         # Merge additional properties (self takes precedence)
         if self.additional_properties is None:
@@ -887,6 +933,11 @@ class TextReasoningContent(BaseContent):
             self.raw_representation = (
                 self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
             ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        if other.protected_data is not None:
+            self.protected_data = other.protected_data
 
         # Merge annotations
         if other.annotations:
@@ -924,6 +975,10 @@ class DataContent(BaseContent):
             # Create from binary data
             image_data = b"raw image bytes"
             data_content = DataContent(data=image_data, media_type="image/png")
+
+            # Create from base64-encoded string
+            base64_string = "iVBORw0KGgoAAAANS..."
+            data_content = DataContent(data=base64_string, media_type="image/png")
 
             # Create from data URI
             data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
@@ -986,11 +1041,38 @@ class DataContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
 
+    @overload
+    def __init__(
+        self,
+        *,
+        data: str,
+        media_type: str,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a DataContent instance with base64-encoded string data.
+
+        Important:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use ``UriContent`` for online resources.
+
+        Keyword Args:
+            data: The base64-encoded string data represented by this instance.
+                The data is used directly to construct a data URI.
+            media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+
     def __init__(
         self,
         *,
         uri: str | None = None,
-        data: bytes | None = None,
+        data: bytes | str | None = None,
         media_type: str | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1006,8 +1088,9 @@ class DataContent(BaseContent):
         Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
-            data: The binary data represented by this instance.
-                The data is transformed into a base64-encoded data URI.
+            data: The binary data or base64-encoded string represented by this instance.
+                If bytes, the data is transformed into a base64-encoded data URI.
+                If str, it is assumed to be already base64-encoded and used directly.
             media_type: The media type of the data.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
@@ -1017,7 +1100,9 @@ class DataContent(BaseContent):
         if uri is None:
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-            uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
+
+            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
+            uri = f"data:{media_type};base64,{base64_data}"
 
         # Validate URI format and extract media type if not provided
         validated_uri = self._validate_uri(uri)
@@ -1547,6 +1632,8 @@ class HostedFileContent(BaseContent):
         self,
         file_id: str,
         *,
+        media_type: str | None = None,
+        name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1555,6 +1642,8 @@ class HostedFileContent(BaseContent):
 
         Args:
             file_id: The identifier of the hosted file.
+            media_type: Optional media type of the hosted file.
+            name: Optional display name of the hosted file.
 
         Keyword Args:
             additional_properties: Optional additional properties associated with the content.
@@ -1567,7 +1656,13 @@ class HostedFileContent(BaseContent):
             **kwargs,
         )
         self.file_id = file_id
+        self.media_type = media_type
+        self.name = name
         self.type: Literal["hosted_file"] = "hosted_file"
+
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
+        """Returns a boolean indicating if the media type has the specified top-level media type."""
+        return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
 class HostedVectorStoreContent(BaseContent):
@@ -1614,6 +1709,234 @@ class HostedVectorStoreContent(BaseContent):
         )
         self.vector_store_id = vector_store_id
         self.type: Literal["hosted_vector_store"] = "hosted_vector_store"
+
+
+class CodeInterpreterToolCallContent(BaseContent):
+    """Represents a code interpreter tool call invocation by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        call_id: str | None = None,
+        inputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.inputs: list["Contents"] | None = None
+        if inputs:
+            normalized_inputs: Sequence["Contents | MutableMapping[str, Any]"] = (
+                inputs
+                if isinstance(inputs, Sequence) and not isinstance(inputs, (str, bytes, MutableMapping))
+                else [inputs]
+            )
+            self.inputs = _parse_content_list(list(normalized_inputs))
+        self.type: Literal["code_interpreter_tool_call"] = "code_interpreter_tool_call"
+
+
+class CodeInterpreterToolResultContent(BaseContent):
+    """Represents the result of a code interpreter tool invocation by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        call_id: str | None = None,
+        outputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.outputs: list["Contents"] | None = None
+        if outputs:
+            normalized_outputs: Sequence["Contents | MutableMapping[str, Any]"] = (
+                outputs
+                if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
+                else [outputs]
+            )
+            self.outputs = _parse_content_list(list(normalized_outputs))
+        self.type: Literal["code_interpreter_tool_result"] = "code_interpreter_tool_result"
+
+
+class ImageGenerationToolCallContent(BaseContent):
+    """Represents the invocation of an image generation tool call by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        image_id: str | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes an ImageGenerationToolCallContent instance.
+
+        Keyword Args:
+            image_id: The identifier of the image to be generated.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+
+        """
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.image_id = image_id
+        self.type: Literal["image_generation_tool_call"] = "image_generation_tool_call"
+
+
+class ImageGenerationToolResultContent(BaseContent):
+    """Represents the result of an image generation tool call invocation by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        image_id: str | None = None,
+        outputs: DataContent | UriContent | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes an ImageGenerationToolResultContent instance.
+
+        Keyword Args:
+            image_id: The identifier of the generated image.
+            outputs: The outputs of the image generation tool call.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+
+        """
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.image_id = image_id
+        self.outputs: DataContent | UriContent | None = outputs
+        self.type: Literal["image_generation_tool_result"] = "image_generation_tool_result"
+
+
+class MCPServerToolCallContent(BaseContent):
+    """Represents a tool call request to a MCP server."""
+
+    def __init__(
+        self,
+        call_id: str,
+        tool_name: str,
+        server_name: str | None = None,
+        *,
+        arguments: str | Mapping[str, Any] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a MCPServerToolCallContent instance.
+
+        Args:
+            call_id: The tool call identifier.
+            tool_name: The name of the tool requested.
+            server_name: The name of the MCP server where the tool is hosted.
+
+        Keyword Args:
+            arguments: The arguments requested to be provided to the tool,
+                can be a string to allow gradual completion of the args.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not call_id:
+            raise ValueError("call_id must be a non-empty string.")
+        if not tool_name:
+            raise ValueError("tool_name must be a non-empty string.")
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.tool_name = tool_name
+        self.name = tool_name
+        self.server_name = server_name
+        self.arguments = arguments
+        self.type: Literal["mcp_server_tool_call"] = "mcp_server_tool_call"
+
+    def parse_arguments(self) -> dict[str, Any] | None:
+        """Returns the parsed arguments for the MCP server tool call, if any."""
+        if isinstance(self.arguments, str):
+            # If arguments are a string, try to parse it as JSON
+            try:
+                loaded = json.loads(self.arguments)
+                if isinstance(loaded, dict):
+                    return loaded  # type:ignore
+                return {"raw": loaded}
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": self.arguments}
+        return cast(dict[str, Any] | None, self.arguments)
+
+
+class MCPServerToolResultContent(BaseContent):
+    """Represents the result of a MCP server tool call."""
+
+    def __init__(
+        self,
+        call_id: str,
+        *,
+        output: Any | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a MCPServerToolResultContent instance.
+
+        Args:
+            call_id: The identifier of the tool call for which this is the result.
+
+        Keyword Args:
+            output: The output of the MCP server tool call.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not call_id:
+            raise ValueError("call_id must be a non-empty string.")
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.output: Any | None = output
+        self.type: Literal["mcp_server_tool_result"] = "mcp_server_tool_result"
 
 
 class BaseUserInputRequest(BaseContent):
@@ -1676,7 +1999,7 @@ class FunctionApprovalResponseContent(BaseContent):
         approved: bool,
         *,
         id: str,
-        function_call: FunctionCallContent | MutableMapping[str, Any],
+        function_call: FunctionCallContent | MCPServerToolCallContent | MutableMapping[str, Any],
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1704,8 +2027,12 @@ class FunctionApprovalResponseContent(BaseContent):
         self.id = id
         self.approved = approved
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
+        self.function_call: FunctionCallContent | MCPServerToolCallContent
         if isinstance(function_call, MutableMapping):
-            self.function_call = FunctionCallContent.from_dict(function_call)
+            if function_call.get("type") == "mcp_server_tool_call":
+                self.function_call = MCPServerToolCallContent.from_dict(function_call)
+            else:
+                self.function_call = FunctionCallContent.from_dict(function_call)
         else:
             self.function_call = function_call
         # Override the type for this specific subclass
@@ -1763,6 +2090,7 @@ class FunctionApprovalRequestContent(BaseContent):
             **kwargs,
         )
         self.id = id
+        self.function_call: FunctionCallContent
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
         if isinstance(function_call, MutableMapping):
             self.function_call = FunctionCallContent.from_dict(function_call)
@@ -1794,6 +2122,12 @@ Contents = (
     | UsageContent
     | HostedFileContent
     | HostedVectorStoreContent
+    | CodeInterpreterToolCallContent
+    | CodeInterpreterToolResultContent
+    | ImageGenerationToolCallContent
+    | ImageGenerationToolResultContent
+    | MCPServerToolCallContent
+    | MCPServerToolResultContent
     | FunctionApprovalRequestContent
     | FunctionApprovalResponseContent
 )
@@ -1809,6 +2143,9 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
         return content.model_dump()
     if hasattr(content, "to_dict"):
         return content.to_dict(exclude={"raw_representation", "additional_properties"})
+    # Handle objects with text attribute (e.g., MCP TextContent)
+    if hasattr(content, "text") and isinstance(content.text, str):
+        return content.text
     return content
 
 
@@ -1816,13 +2153,14 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
     """Prepare the values of the function call results."""
     if isinstance(content, Contents):
         # For BaseContent objects, use to_dict and serialize to JSON
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+        # Use default=str to handle datetime and other non-JSON-serializable objects
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
 
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):
         return dumpable
-    # fallback
-    return json.dumps(dumpable)
+    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
+    return json.dumps(dumpable, default=str)
 
 
 # region Chat Response constants
@@ -2126,7 +2464,7 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+    messages: str | ChatMessage | Sequence[str | ChatMessage], system_instructions: str | Sequence[str] | None = None
 ) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
@@ -2157,11 +2495,54 @@ def prepare_messages(
     return return_messages
 
 
+def prepend_instructions_to_messages(
+    messages: list[ChatMessage],
+    instructions: str | Sequence[str] | None,
+    role: Role | Literal["system", "user", "assistant"] = "system",
+) -> list[ChatMessage]:
+    """Prepend instructions to a list of messages with a specified role.
+
+    This is a helper method for chat clients that need to add instructions
+    from options as messages. Different providers support different roles for
+    instructions (e.g., OpenAI uses "system", some providers might use "user").
+
+    Args:
+        messages: The existing list of ChatMessage objects.
+        instructions: The instructions to prepend. Can be a single string or a sequence of strings.
+        role: The role to use for the instruction messages. Defaults to "system".
+
+    Returns:
+        A new list with instruction messages prepended.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import prepend_instructions_to_messages, ChatMessage
+
+            messages = [ChatMessage(role="user", text="Hello")]
+            instructions = "You are a helpful assistant"
+
+            # Prepend as system message (default)
+            messages_with_instructions = prepend_instructions_to_messages(messages, instructions)
+
+            # Or use a different role
+            messages_with_user_instructions = prepend_instructions_to_messages(messages, instructions, role="user")
+    """
+    if instructions is None:
+        return messages
+
+    if isinstance(instructions, str):
+        instructions = [instructions]
+
+    instruction_messages = [ChatMessage(role=role, text=instr) for instr in instructions]
+    return [*instruction_messages, *messages]
+
+
 # region ChatResponse
 
 
 def _process_update(
-    response: "ChatResponse | AgentRunResponse", update: "ChatResponseUpdate | AgentRunResponseUpdate"
+    response: "ChatResponse | AgentResponse", update: "ChatResponseUpdate | AgentResponseUpdate"
 ) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
@@ -2189,27 +2570,30 @@ def _process_update(
     if update.message_id:
         message.message_id = update.message_id
     for content in update.contents:
-        if (
-            isinstance(content, FunctionCallContent)
-            and len(message.contents) > 0
-            and isinstance(message.contents[-1], FunctionCallContent)
-        ):
+        # Fast path: get type attribute (most content will have it)
+        content_type = getattr(content, "type", None)
+        # Slow path: only check for dict if type is None
+        if content_type is None and isinstance(content, (dict, MutableMapping)):
             try:
-                message.contents[-1] += content
-            except AdditionItemMismatch:
-                message.contents.append(content)
-        elif isinstance(content, UsageContent):
-            if response.usage_details is None:
-                response.usage_details = UsageDetails()
-            response.usage_details += content.details
-        elif isinstance(content, (dict, MutableMapping)):
-            try:
-                cont = _parse_content(content)
-                message.contents.append(cont)
+                content = _parse_content(content)
+                content_type = content.type
             except ContentError as exc:
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-        else:
-            message.contents.append(content)
+                continue
+        match content_type:
+            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
+            case "function_call" if message.contents and message.contents[-1].type == "function_call":
+                try:
+                    message.contents[-1] += content  # type: ignore[operator]
+                except AdditionItemMismatch:
+                    message.contents.append(content)
+            case "usage":
+                if response.usage_details is None:
+                    response.usage_details = UsageDetails()
+                # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                response.usage_details += content.details  # type: ignore[union-attr, arg-type]
+            case _:
+                message.contents.append(content)
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id
@@ -2262,7 +2646,7 @@ def _coalesce_text_content(
     contents.extend(coalesced_contents)
 
 
-def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
+def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, TextContent)
@@ -2511,7 +2895,7 @@ class ChatResponse(SerializationMixin):
         cls: type[TChatResponse],
         updates: AsyncIterable["ChatResponseUpdate"],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: type[BaseModel] | Mapping[str, Any] | None = None,
     ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2536,7 +2920,7 @@ class ChatResponse(SerializationMixin):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
+        if output_format_type and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
             msg.try_parse_value(output_format_type)
         return msg
 
@@ -2550,7 +2934,7 @@ class ChatResponse(SerializationMixin):
 
     def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
         """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
+        if self.value is None and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
             try:
                 self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             except ValidationError as ex:
@@ -2684,10 +3068,10 @@ class ChatResponseUpdate(SerializationMixin):
         return self.text
 
 
-# region AgentRunResponse
+# region AgentResponse
 
 
-class AgentRunResponse(SerializationMixin):
+class AgentResponse(SerializationMixin):
     """Represents the response to an Agent run request.
 
     Provides one or more response messages and metadata about the response.
@@ -2697,11 +3081,11 @@ class AgentRunResponse(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentRunResponse, ChatMessage
+            from agent_framework import AgentResponse, ChatMessage
 
             # Create agent response
             msg = ChatMessage(role="assistant", text="Task completed successfully.")
-            response = AgentRunResponse(messages=[msg], response_id="run_123")
+            response = AgentResponse(messages=[msg], response_id="run_123")
             print(response.text)  # "Task completed successfully."
 
             # Access user input requests
@@ -2709,20 +3093,20 @@ class AgentRunResponse(SerializationMixin):
             print(len(user_requests))  # 0
 
             # Combine streaming updates
-            updates = [...]  # List of AgentRunResponseUpdate objects
-            response = AgentRunResponse.from_agent_run_response_updates(updates)
+            updates = [...]  # List of AgentResponseUpdate objects
+            response = AgentResponse.from_agent_run_response_updates(updates)
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
-            # {'type': 'agent_run_response', 'messages': [...], 'response_id': 'run_123',
+            # {'type': 'agent_response', 'messages': [...], 'response_id': 'run_123',
             #  'additional_properties': {}}
-            restored_response = AgentRunResponse.from_dict(response_dict)
+            restored_response = AgentResponse.from_dict(response_dict)
             print(restored_response.response_id)  # "run_123"
 
             # Serialization - to_json and from_json
             response_json = response.to_json()
-            # '{"type": "agent_run_response", "messages": [...], "response_id": "run_123", ...}'
-            restored_from_json = AgentRunResponse.from_json(response_json)
+            # '{"type": "agent_response", "messages": [...], "response_id": "run_123", ...}'
+            restored_from_json = AgentResponse.from_json(response_json)
             print(restored_from_json.text)  # "Task completed successfully."
     """
 
@@ -2744,7 +3128,7 @@ class AgentRunResponse(SerializationMixin):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an AgentRunResponse.
+        """Initialize an AgentResponse.
 
         Keyword Args:
             messages: The list of chat messages in the response.
@@ -2802,14 +3186,14 @@ class AgentRunResponse(SerializationMixin):
     @classmethod
     def from_agent_run_response_updates(
         cls: type[TAgentRunResponse],
-        updates: Sequence["AgentRunResponseUpdate"],
+        updates: Sequence["AgentResponseUpdate"],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentRunResponse.
+        """Joins multiple updates into a single AgentResponse.
 
         Args:
-            updates: A sequence of AgentRunResponseUpdate objects to combine.
+            updates: A sequence of AgentResponseUpdate objects to combine.
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
@@ -2825,14 +3209,14 @@ class AgentRunResponse(SerializationMixin):
     @classmethod
     async def from_agent_response_generator(
         cls: type[TAgentRunResponse],
-        updates: AsyncIterable["AgentRunResponseUpdate"],
+        updates: AsyncIterable["AgentResponseUpdate"],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentRunResponse.
+        """Joins multiple updates into a single AgentResponse.
 
         Args:
-            updates: An async iterable of AgentRunResponseUpdate objects to combine.
+            updates: An async iterable of AgentResponseUpdate objects to combine.
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data
@@ -2857,19 +3241,19 @@ class AgentRunResponse(SerializationMixin):
                 logger.debug("Failed to parse value from agent run response text: %s", ex)
 
 
-# region AgentRunResponseUpdate
+# region AgentResponseUpdate
 
 
-class AgentRunResponseUpdate(SerializationMixin):
+class AgentResponseUpdate(SerializationMixin):
     """Represents a single streaming response chunk from an Agent.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentRunResponseUpdate, TextContent
+            from agent_framework import AgentResponseUpdate, TextContent
 
             # Create an agent run update
-            update = AgentRunResponseUpdate(
+            update = AgentResponseUpdate(
                 contents=[TextContent(text="Processing...")],
                 role="assistant",
                 response_id="run_123",
@@ -2881,15 +3265,15 @@ class AgentRunResponseUpdate(SerializationMixin):
 
             # Serialization - to_dict and from_dict
             update_dict = update.to_dict()
-            # {'type': 'agent_run_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
+            # {'type': 'agent_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
             #  'role': {'type': 'role', 'value': 'assistant'}, 'response_id': 'run_123'}
-            restored_update = AgentRunResponseUpdate.from_dict(update_dict)
+            restored_update = AgentResponseUpdate.from_dict(update_dict)
             print(restored_update.response_id)  # "run_123"
 
             # Serialization - to_json and from_json
             update_json = update.to_json()
-            # '{"type": "agent_run_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
-            restored_from_json = AgentRunResponseUpdate.from_json(update_json)
+            # '{"type": "agent_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
+            restored_from_json = AgentResponseUpdate.from_json(update_json)
             print(restored_from_json.text)  # "Processing..."
     """
 
@@ -2909,7 +3293,7 @@ class AgentRunResponseUpdate(SerializationMixin):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an AgentRunResponseUpdate.
+        """Initialize an AgentResponseUpdate.
 
         Keyword Args:
             contents: Optional list of BaseContent items or dicts to include in the update.
@@ -2967,372 +3351,369 @@ class AgentRunResponseUpdate(SerializationMixin):
 # region ChatOptions
 
 
-class ToolMode(SerializationMixin, metaclass=EnumLike):
-    """Defines if and how tools are used in a chat request.
+class ToolMode(TypedDict, total=False):
+    """Tool choice mode for the chat options.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import ToolMode
-
-            # Use predefined tool modes
-            auto_mode = ToolMode.AUTO  # Model decides when to use tools
-            required_mode = ToolMode.REQUIRED_ANY  # Model must use a tool
-            none_mode = ToolMode.NONE  # No tools allowed
-
-            # Require a specific function
-            specific_mode = ToolMode.REQUIRED(function_name="get_weather")
-            print(specific_mode.required_function_name)  # "get_weather"
-
-            # Compare modes
-            print(auto_mode == "auto")  # True
+    Fields:
+        mode: One of "auto", "required", or "none".
+        required_function_name: Optional function name when `mode == "required"`.
     """
 
-    # Constants configuration for EnumLike metaclass
-    _constants: ClassVar[dict[str, tuple[str, ...]]] = {
-        "AUTO": ("auto",),
-        "REQUIRED_ANY": ("required",),
-        "NONE": ("none",),
-    }
-
-    # Type annotations for constants
-    AUTO: "ToolMode"
-    REQUIRED_ANY: "ToolMode"
-    NONE: "ToolMode"
-
-    def __init__(
-        self,
-        mode: Literal["auto", "required", "none"] = "none",
-        *,
-        required_function_name: str | None = None,
-    ) -> None:
-        """Initialize ToolMode.
-
-        Args:
-            mode: The tool mode - "auto", "required", or "none".
-
-        Keyword Args:
-            required_function_name: Optional function name for required mode.
-        """
-        self.mode = mode
-        self.required_function_name = required_function_name
-
-    @classmethod
-    def REQUIRED(cls, function_name: str | None = None) -> "ToolMode":
-        """Returns a ToolMode that requires the specified function to be called."""
-        return cls(mode="required", required_function_name=function_name)
-
-    def __eq__(self, other: object) -> bool:
-        """Checks equality with another ToolMode or string."""
-        if isinstance(other, str):
-            return self.mode == other
-        if isinstance(other, ToolMode):
-            return self.mode == other.mode and self.required_function_name == other.required_function_name
-        return False
-
-    def __hash__(self) -> int:
-        """Return hash of the ToolMode for use in sets and dicts."""
-        return hash((self.mode, self.required_function_name))
-
-    def serialize_model(self) -> str:
-        """Serializes the ToolMode to just the mode string."""
-        return self.mode
-
-    def __str__(self) -> str:
-        """Returns the string representation of the mode."""
-        return self.mode
-
-    def __repr__(self) -> str:
-        """Returns the string representation of the ToolMode."""
-        if self.required_function_name:
-            return f"ToolMode(mode={self.mode!r}, required_function_name={self.required_function_name!r})"
-        return f"ToolMode(mode={self.mode!r})"
+    mode: Literal["auto", "required", "none"]
+    required_function_name: str
 
 
-class ChatOptions(SerializationMixin):
-    """Common request settings for AI services.
+# region TypedDict-based Chat Options
+
+
+class ChatOptions(TypedDict, total=False):
+    """Common request settings for AI services as a TypedDict.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    These options represent the common denominator across chat providers.
+    Individual implementations may raise errors for unsupported options.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatOptions, ai_function
+            from agent_framework import ChatOptions, ToolMode
 
-            # Create basic chat options
-            options = ChatOptions(
-                model_id="gpt-4",
-                temperature=0.7,
-                max_tokens=1000,
-            )
-
+            # Type-safe options
+            options: ChatOptions = {
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "model_id": "gpt-4",
+            }
 
             # With tools
-            @ai_function
-            def get_weather(location: str) -> str:
-                '''Get weather for a location.'''
-                return f"Weather in {location}"
+            options_with_tools: ChatOptions = {
+                "model_id": "gpt-4",
+                "tool_choice": "auto",
+                "temperature": 0.7,
+            }
 
-
-            options = ChatOptions(
-                model_id="gpt-4",
-                tools=get_weather,
-                tool_choice="auto",
-            )
-
-            # Require a specific tool to be called
-            options_required = ChatOptions(
-                model_id="gpt-4",
-                tools=get_weather,
-                tool_choice=ToolMode.REQUIRED(function_name="get_weather"),
-            )
-
-            # Combine options
-            base_options = ChatOptions(temperature=0.5)
-            extended_options = ChatOptions(max_tokens=500, tools=get_weather)
-            combined = base_options & extended_options
+            # Used with Unpack for function signatures
+            # async def get_response(self, **options: Unpack[ChatOptions]) -> ChatResponse:
     """
 
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"_tools"}  # Internal field, use .tools property
+    # Model selection
+    model_id: str
 
-    def __init__(
-        self,
-        *,
-        model_id: str | None = None,
-        allow_multiple_tool_calls: bool | None = None,
-        conversation_id: str | None = None,
-        frequency_penalty: float | None = None,
-        instructions: str | None = None,
-        logit_bias: MutableMapping[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: MutableMapping[str, str] | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None,
-        tools: ToolProtocol
+    # Generation parameters
+    temperature: float
+    top_p: float
+    max_tokens: int
+    stop: str | Sequence[str]
+    seed: int
+    logit_bias: dict[str | int, float]
+
+    # Penalty parameters
+    frequency_penalty: float
+    presence_penalty: float
+
+    # Tool configuration (forward reference to avoid circular import)
+    tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
+    tool_choice: ToolMode | Literal["auto", "required", "none"]
+    allow_multiple_tool_calls: bool
+
+    # Response configuration
+    response_format: type[BaseModel] | dict[str, Any]
+
+    # Metadata
+    metadata: dict[str, Any]
+    user: str
+    store: bool
+    conversation_id: str
+
+    # System/instructions
+    instructions: str
+
+
+# region Chat Options Utility Functions
+
+
+async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize chat options dictionary.
+
+    Validates numeric constraints and converts types as needed.
+
+    Args:
+        options: The options dictionary to validate.
+
+    Returns:
+        The validated and normalized options dictionary.
+
+    Raises:
+        ValueError: If any option value is invalid.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import validate_chat_options
+
+            options = await validate_chat_options({
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            })
+    """
+    result = dict(options)  # Make a copy
+
+    # Validate numeric constraints
+    if (freq_pen := result.get("frequency_penalty")) is not None:
+        if not (-2.0 <= freq_pen <= 2.0):
+            raise ValueError("frequency_penalty must be between -2.0 and 2.0")
+        result["frequency_penalty"] = float(freq_pen)
+
+    if (pres_pen := result.get("presence_penalty")) is not None:
+        if not (-2.0 <= pres_pen <= 2.0):
+            raise ValueError("presence_penalty must be between -2.0 and 2.0")
+        result["presence_penalty"] = float(pres_pen)
+
+    if (temp := result.get("temperature")) is not None:
+        if not (0.0 <= temp <= 2.0):
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        result["temperature"] = float(temp)
+
+    if (top_p := result.get("top_p")) is not None:
+        if not (0.0 <= top_p <= 1.0):
+            raise ValueError("top_p must be between 0.0 and 1.0")
+        result["top_p"] = float(top_p)
+
+    if (max_tokens := result.get("max_tokens")) is not None and max_tokens <= 0:
+        raise ValueError("max_tokens must be greater than 0")
+
+    # Validate and normalize tools
+    if "tools" in result:
+        result["tools"] = await validate_tools(result["tools"])
+
+    return result
+
+
+def normalize_tools(
+    tools: (
+        ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        """Initialize ChatOptions.
+        | None
+    ),
+) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    """Normalize tools into a list.
 
-        Keyword Args:
-            model_id: The AI model ID to use.
-            allow_multiple_tool_calls: Whether to allow multiple tool calls.
-            conversation_id: The conversation ID.
-            frequency_penalty: The frequency penalty (must be between -2.0 and 2.0).
-            instructions: the instructions, will be turned into a system or equivalent message.
-            logit_bias: The logit bias mapping.
-            max_tokens: The maximum number of tokens (must be > 0).
-            metadata: Metadata mapping.
-            presence_penalty: The presence penalty (must be between -2.0 and 2.0).
-            response_format: Structured output response format schema. Must be a valid Pydantic model.
-            seed: Random seed for reproducibility.
-            stop: Stop sequences.
-            store: Whether to store the conversation.
-            temperature: The temperature (must be between 0.0 and 2.0).
-            tool_choice: The tool choice mode.
-            tools: List of available tools.
-            top_p: The top-p value (must be between 0.0 and 1.0).
-            user: The user ID.
-            additional_properties: Provider-specific additional properties, can also be passed as kwargs.
-            **kwargs: Additional properties to include in additional_properties.
-        """
-        # Validate numeric constraints and convert types as needed
-        if frequency_penalty is not None:
-            if not (-2.0 <= frequency_penalty <= 2.0):
-                raise ValueError("frequency_penalty must be between -2.0 and 2.0")
-            frequency_penalty = float(frequency_penalty)
-        if presence_penalty is not None:
-            if not (-2.0 <= presence_penalty <= 2.0):
-                raise ValueError("presence_penalty must be between -2.0 and 2.0")
-            presence_penalty = float(presence_penalty)
-        if temperature is not None:
-            if not (0.0 <= temperature <= 2.0):
-                raise ValueError("temperature must be between 0.0 and 2.0")
-            temperature = float(temperature)
-        if top_p is not None:
-            if not (0.0 <= top_p <= 1.0):
-                raise ValueError("top_p must be between 0.0 and 1.0")
-            top_p = float(top_p)
-        if max_tokens is not None and max_tokens <= 0:
-            raise ValueError("max_tokens must be greater than 0")
+    Converts callables to AIFunction objects and ensures all tools are either
+    ToolProtocol instances or MutableMappings.
 
-        if additional_properties is None:
-            additional_properties = {}
-        if kwargs:
-            additional_properties.update(kwargs)
+    Args:
+        tools: Tools to normalize - can be a single tool, callable, or sequence.
 
-        self.additional_properties = cast(dict[str, Any], additional_properties)
-        self.model_id = model_id
-        self.allow_multiple_tool_calls = allow_multiple_tool_calls
-        self.conversation_id = conversation_id
-        self.frequency_penalty = frequency_penalty
-        self.instructions = instructions
-        self.logit_bias = logit_bias
-        self.max_tokens = max_tokens
-        self.metadata = metadata
-        self.presence_penalty = presence_penalty
-        self.response_format = response_format
-        self.seed = seed
-        self.stop = stop
-        self.store = store
-        self.temperature = temperature
-        self.tool_choice = self._validate_tool_mode(tool_choice)
-        self._tools = self._validate_tools(tools)
-        self.top_p = top_p
-        self.user = user
+    Returns:
+        Normalized list of tools.
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatOptions":
-        """Create a runtime-safe copy without deep-copying tool instances."""
-        clone = type(self).__new__(type(self))
-        memo[id(self)] = clone
-        for key, value in self.__dict__.items():
-            if key == "_tools":
-                setattr(clone, key, list(value) if value is not None else None)
-                continue
-            if key in {"logit_bias", "metadata", "additional_properties"}:
-                setattr(clone, key, self._safe_deepcopy_mapping(value, memo))
-                continue
-            setattr(clone, key, self._safe_deepcopy_value(value, memo))
-        return clone
+    Examples:
+        .. code-block:: python
 
-    @staticmethod
-    def _safe_deepcopy_mapping(
-        value: MutableMapping[str, Any] | None, memo: dict[int, Any]
-    ) -> MutableMapping[str, Any] | None:
-        """Deep copy helper that falls back to a shallow copy for problematic mappings."""
-        if value is None:
-            return None
-        try:
-            return deepcopy(value, memo)  # type: ignore[arg-type]
-        except Exception:
-            return dict(value)
+            from agent_framework import normalize_tools, ai_function
 
-    @staticmethod
-    def _safe_deepcopy_value(value: Any, memo: dict[int, Any]) -> Any:
-        """Deep copy helper that avoids failing on non-copyable instances."""
-        try:
-            return deepcopy(value, memo)
-        except Exception:
-            return value
 
-    @property
-    def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
-        """Return the tools that are specified."""
-        return self._tools
+            @ai_function
+            def my_tool(x: int) -> int:
+                return x * 2
 
-    @tools.setter
-    def tools(
-        self,
-        new_tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None,
-    ) -> None:
-        """Set the tools."""
-        self._tools = self._validate_tools(new_tools)
 
-    @classmethod
-    def _validate_tools(
-        cls,
-        tools: (
-            ToolProtocol
-            | Callable[..., Any]
-            | MutableMapping[str, Any]
-            | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-            | None
-        ),
-    ) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
-        """Parse the tools field."""
-        if not tools:
-            return None
-        if not isinstance(tools, Sequence):
-            if not isinstance(tools, (ToolProtocol, MutableMapping)):
-                return [ai_function(tools)]
-            return [tools]
-        return [tool if isinstance(tool, (ToolProtocol, MutableMapping)) else ai_function(tool) for tool in tools]
+            # Single tool
+            tools = normalize_tools(my_tool)
 
-    @classmethod
-    def _validate_tool_mode(
-        cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ToolMode | None:
-        """Validates the tool_choice field to ensure it is a valid ToolMode."""
-        if not tool_choice:
-            return None
-        if isinstance(tool_choice, str):
-            match tool_choice:
-                case "auto":
-                    return ToolMode.AUTO
-                case "required":
-                    return ToolMode.REQUIRED_ANY
-                case "none":
-                    return ToolMode.NONE
-                case _:
-                    raise ContentError(f"Invalid tool choice: {tool_choice}")
-        if isinstance(tool_choice, (dict, Mapping)):
-            return ToolMode.from_dict(tool_choice)  # type: ignore
-        return tool_choice
-
-    def __and__(self, other: object) -> "ChatOptions":
-        """Combines two ChatOptions instances.
-
-        The values from the other ChatOptions take precedence.
-        List and dicts are combined.
-        """
-        if not isinstance(other, ChatOptions):
-            return self
-        other_tools = other.tools
-        # tool_choice has a specialized serialize method. Save it here so we can fix it later.
-        tool_choice = other.tool_choice or self.tool_choice
-        # response_format is a class type that can't be serialized. Save it here so we can restore it later.
-        response_format = self.response_format
-        # Start with a shallow copy of self that preserves tool objects
-        combined = ChatOptions.from_dict(self.to_dict())
-        combined.tool_choice = self.tool_choice
-        combined.tools = list(self.tools) if self.tools else None
-        combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
-        combined.metadata = dict(self.metadata) if self.metadata else None
-        combined.response_format = response_format
-
-        # Apply scalar and mapping updates from the other options
-        updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
-        logit_bias = updated_data.pop("logit_bias", {})
-        metadata = updated_data.pop("metadata", {})
-        additional_properties: dict[str, Any] = updated_data.pop("additional_properties", {})
-
-        for key, value in updated_data.items():
-            setattr(combined, key, value)
-
-        combined.tool_choice = tool_choice
-        # Preserve response_format from other if it exists, otherwise keep self's
-        if other.response_format is not None:
-            combined.response_format = other.response_format
-        if other.instructions:
-            combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
-
-        combined.logit_bias = (
-            {**(combined.logit_bias or {}), **logit_bias} if logit_bias or combined.logit_bias else None
-        )
-        combined.metadata = {**(combined.metadata or {}), **metadata} if metadata or combined.metadata else None
-        if combined.additional_properties and additional_properties:
-            combined.additional_properties.update(additional_properties)
+            # List of tools
+            tools = normalize_tools([my_tool, another_tool])
+    """
+    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+    if not tools:
+        return final_tools
+    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
+        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
+        if not isinstance(tools, (ToolProtocol, MutableMapping)):
+            return [ai_function(tools)]
+        return [tools]
+    for tool in tools:
+        if isinstance(tool, (ToolProtocol, MutableMapping)):
+            final_tools.append(tool)
         else:
-            if additional_properties:
-                combined.additional_properties = additional_properties
-        if other_tools:
-            if combined.tools is None:
-                combined.tools = list(other_tools)
+            # Convert callable to AIFunction
+            final_tools.append(ai_function(tool))
+    return final_tools
+
+
+async def validate_tools(
+    tools: (
+        ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None
+    ),
+) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    """Validate and normalize tools into a list.
+
+    Converts callables to AIFunction objects, expands MCP tools to their constituent
+    functions (connecting them if needed), and ensures all tools are either ToolProtocol
+    instances or MutableMappings.
+
+    Args:
+        tools: Tools to validate - can be a single tool, callable, or sequence.
+
+    Returns:
+        Normalized list of tools, or None if no tools provided.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import validate_tools, ai_function
+
+
+            @ai_function
+            def my_tool(x: int) -> int:
+                return x * 2
+
+
+            # Single tool
+            tools = await validate_tools(my_tool)
+
+            # List of tools
+            tools = await validate_tools([my_tool, another_tool])
+    """
+    # Use normalize_tools for common sync logic (converts callables to AIFunction)
+    normalized = normalize_tools(tools)
+
+    # Handle MCP tool expansion (async-only)
+    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+    for tool in normalized:
+        # Import MCPTool here to avoid circular imports
+        from ._mcp import MCPTool
+
+        if isinstance(tool, MCPTool):
+            # Expand MCP tools to their constituent functions
+            if not tool.is_connected:
+                await tool.connect()
+            final_tools.extend(tool.functions)  # type: ignore
+        else:
+            final_tools.append(tool)
+
+    return final_tools
+
+
+def validate_tool_mode(
+    tool_choice: ToolMode | Literal["auto", "required", "none"] | None,
+) -> ToolMode:
+    """Validate and normalize tool_choice to a ToolMode dict.
+
+    Args:
+        tool_choice: The tool choice value to validate.
+
+    Returns:
+        A ToolMode dict (contains keys: "mode", and optionally "required_function_name").
+
+    Raises:
+        ContentError: If the tool_choice string is invalid.
+    """
+    if not tool_choice:
+        return {"mode": "none"}
+    if isinstance(tool_choice, str):
+        if tool_choice not in ("auto", "required", "none"):
+            raise ContentError(f"Invalid tool choice: {tool_choice}")
+        return {"mode": tool_choice}
+    if "mode" not in tool_choice:
+        raise ContentError("tool_choice dict must contain 'mode' key")
+    if tool_choice["mode"] not in ("auto", "required", "none"):
+        raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
+    if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
+        raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
+    return tool_choice
+
+
+def merge_chat_options(
+    base: dict[str, Any] | None,
+    override: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge two chat options dictionaries.
+
+    Values from override take precedence over base.
+    Lists and dicts are combined (not replaced).
+    Instructions are concatenated with newlines.
+
+    Args:
+        base: The base options dictionary.
+        override: The override options dictionary.
+
+    Returns:
+        A new merged options dictionary.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import merge_chat_options
+
+            base = {"temperature": 0.5, "model_id": "gpt-4"}
+            override = {"temperature": 0.7, "max_tokens": 1000}
+            merged = merge_chat_options(base, override)
+            # {"temperature": 0.7, "model_id": "gpt-4", "max_tokens": 1000}
+    """
+    if not base:
+        return dict(override) if override else {}
+    if not override:
+        return dict(base)
+
+    result: dict[str, Any] = {}
+
+    # Copy base values (shallow copy for simple values, dict copy for dicts)
+    for key, value in base.items():
+        if isinstance(value, dict):
+            result[key] = dict(value)
+        elif isinstance(value, list):
+            result[key] = list(value)
+        else:
+            result[key] = value
+
+    # Apply overrides
+    for key, value in override.items():
+        if value is None:
+            continue
+
+        if key == "instructions":
+            # Concatenate instructions
+            base_instructions = result.get("instructions")
+            if base_instructions:
+                result["instructions"] = f"{base_instructions}\n{value}"
             else:
-                for tool in other_tools:
-                    if tool not in combined.tools:
-                        combined.tools.append(tool)
-        return combined
+                result["instructions"] = value
+        elif key == "tools":
+            # Merge tools lists
+            base_tools = result.get("tools")
+            if base_tools and value:
+                # Add tools that aren't already present
+                merged_tools = list(base_tools)
+                for tool in value if isinstance(value, list) else [value]:
+                    if tool not in merged_tools:
+                        merged_tools.append(tool)
+                result["tools"] = merged_tools
+            elif value:
+                result["tools"] = list(value) if isinstance(value, list) else [value]
+        elif key in ("logit_bias", "metadata", "additional_properties"):
+            # Merge dicts
+            base_dict = result.get(key)
+            if base_dict and isinstance(value, dict):
+                result[key] = {**base_dict, **value}
+            elif value:
+                result[key] = dict(value) if isinstance(value, dict) else value
+        elif key == "tool_choice":
+            # tool_choice from override takes precedence
+            result["tool_choice"] = value if value else result.get("tool_choice")
+        elif key == "response_format":
+            # response_format from override takes precedence if set
+            result["response_format"] = value
+        else:
+            # Simple override
+            result[key] = value
+
+    return result

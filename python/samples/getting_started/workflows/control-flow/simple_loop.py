@@ -106,7 +106,7 @@ class ParseJudgeResponse(Executor):
 
     @handler
     async def parse(self, response: AgentExecutorResponse, ctx: WorkflowContext[NumberSignal]) -> None:
-        text = response.agent_run_response.text.strip().upper()
+        text = response.agent_response.text.strip().upper()
         if "MATCHED" in text:
             await ctx.send_message(NumberSignal.MATCHED)
         elif "ABOVE" in text and "BELOW" not in text:
@@ -117,7 +117,7 @@ class ParseJudgeResponse(Executor):
 
 def create_judge_agent() -> ChatAgent:
     """Create a judge agent that evaluates guesses."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
         name="judge_agent",
     )

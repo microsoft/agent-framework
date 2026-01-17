@@ -45,7 +45,7 @@ async def main():
     # Applying the ai_function decorator to one of the methods of the class
     add_function = ai_function(description="Add two numbers.")(tools.add)
 
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="ToolAgent",
         instructions="Use the provided tools.",
     )

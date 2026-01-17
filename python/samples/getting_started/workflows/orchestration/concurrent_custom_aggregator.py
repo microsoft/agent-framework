@@ -17,7 +17,7 @@ to synthesize a concise, consolidated summary from the experts' outputs.
 The workflow completes when all participants become idle.
 
 Demonstrates:
-- ConcurrentBuilder().participants([...]).with_custom_aggregator(callback)
+- ConcurrentBuilder().participants([...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
 - Aggregation implemented via an LLM call (chat_client.get_response)
 - Workflow output yielded with the synthesized summary string
@@ -30,21 +30,21 @@ Prerequisites:
 async def main() -> None:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = chat_client.create_agent(
+    researcher = chat_client.as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
         ),
         name="researcher",
     )
-    marketer = chat_client.create_agent(
+    marketer = chat_client.as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
         ),
         name="marketer",
     )
-    legal = chat_client.create_agent(
+    legal = chat_client.as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -58,7 +58,7 @@ async def main() -> None:
         expert_sections: list[str] = []
         for r in results:
             try:
-                messages = getattr(r.agent_run_response, "messages", [])
+                messages = getattr(r.agent_response, "messages", [])
                 final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}:\n{final_text}")
             except Exception as e:

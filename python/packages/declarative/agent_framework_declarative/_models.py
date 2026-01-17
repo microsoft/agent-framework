@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
-import sys
 from collections.abc import MutableMapping
+from contextvars import ContextVar
 from typing import Any, Literal, TypeVar, Union
 
 from agent_framework import get_logger
@@ -10,16 +10,20 @@ from agent_framework._serialization import SerializationMixin
 try:
     from powerfx import Engine
 
-    engine = Engine()
-except ImportError:
+    engine: Engine | None = Engine()
+except (ImportError, RuntimeError):
+    # ImportError: powerfx package not installed
+    # RuntimeError: .NET runtime not available or misconfigured
     engine = None
 
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
-else:
-    from typing_extensions import overload  # pragma: no cover
+from typing import overload
 
 logger = get_logger("agent_framework.declarative")
+
+# Context variable for safe_mode setting.
+# When True (default), environment variables are NOT accessible in PowerFx expressions.
+# When False, environment variables CAN be accessed via Env symbol in PowerFx.
+_safe_mode_context: ContextVar[bool] = ContextVar("safe_mode", default=True)
 
 
 @overload
@@ -49,12 +53,15 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         )
         return value
     try:
+        safe_mode = _safe_mode_context.get()
+        if safe_mode:
+            return engine.eval(value[1:])
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.debug("PowerFx evaluation failed for value '%s': %s", value, exc)
+            logger.debug(f"PowerFx evaluation failed for value '{value}': {exc}")
         else:
-            logger.debug("PowerFx evaluation failed for value (first five characters shown) '%s': %s", value[:5], exc)
+            logger.debug(f"PowerFx evaluation failed for value (first five characters shown) '{value[:5]}': {exc}")
         return value
 
 
@@ -99,7 +106,7 @@ class Property(SerializationMixin):
         # Only dispatch if we're being called on the base Property class
         if cls is not Property:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
         # Filter out 'type' (if it exists) field which is not a Property parameter
         value.pop("type", None)
@@ -109,7 +116,7 @@ class Property(SerializationMixin):
         if kind == "object":
             return ObjectProperty.from_dict(value, dependencies=dependencies)
         # Default to Property for kind="property" or empty
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
 class ArrayProperty(Property):
@@ -152,7 +159,7 @@ class ObjectProperty(Property):
         default: Any | None = None,
         example: Any | None = None,
         enum: list[Any] | None = None,
-        properties: list[Property] | dict[str, Property] | None = None,
+        properties: list[Property] | dict[str, dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -184,7 +191,7 @@ class PropertySchema(SerializationMixin):
         self,
         examples: list[dict[str, Any]] | None = None,
         strict: bool = False,
-        properties: list[Property] | dict[str, Property] | None = None,
+        properties: list[Property] | dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.examples = examples or []
         self.strict = strict
@@ -209,7 +216,7 @@ class PropertySchema(SerializationMixin):
         # Filter out 'kind', 'type', 'name', and 'description' fields that may appear in YAML
         # but aren't PropertySchema params
         kwargs = {k: v for k, v in value.items() if k not in ("type", "kind", "name", "description")}
-        return SerializationMixin.from_dict.__func__(cls, kwargs, dependencies=dependencies)  # type: ignore[misc]
+        return SerializationMixin.from_dict.__func__(cls, kwargs, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
     def to_json_schema(self) -> dict[str, Any]:
         """Get a schema out of this PropertySchema to create pydantic models."""
@@ -251,26 +258,26 @@ class Connection(SerializationMixin):
         # Only dispatch if we're being called on the base Connection class
         if cls is not Connection:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
         kind = value.get("kind", "").lower()
         if kind == "reference":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 ReferenceConnection, value, dependencies=dependencies
             )
         if kind == "remote":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 RemoteConnection, value, dependencies=dependencies
             )
         if kind in ("key", "apikey"):
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 ApiKeyConnection, value, dependencies=dependencies
             )
         if kind == "anonymous":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 AnonymousConnection, value, dependencies=dependencies
             )
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
 class ReferenceConnection(Connection):
@@ -489,13 +496,13 @@ class AgentDefinition(SerializationMixin):
         # Only dispatch if we're being called on the base AgentDefinition class
         if cls is not AgentDefinition:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
         kind = value.get("kind", "")
         if kind == "Prompt" or kind == "Agent":
             return PromptAgent.from_dict(value, dependencies=dependencies)
         # Default to AgentDefinition
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
 TTool = TypeVar("TTool", bound="Tool")
@@ -535,39 +542,39 @@ class Tool(SerializationMixin):
         # Only dispatch if we're being called on the base Tool class
         if cls is not Tool:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
         kind = value.get("kind", "")
         if kind == "function":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 FunctionTool, value, dependencies=dependencies
             )
         if kind == "custom":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 CustomTool, value, dependencies=dependencies
             )
         if kind == "web_search":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 WebSearchTool, value, dependencies=dependencies
             )
         if kind == "file_search":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 FileSearchTool, value, dependencies=dependencies
             )
         if kind == "mcp":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 McpTool, value, dependencies=dependencies
             )
         if kind == "openapi":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 OpenApiTool, value, dependencies=dependencies
             )
         if kind == "code_interpreter":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 CodeInterpreterTool, value, dependencies=dependencies
             )
         # Default to base Tool class
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
 class FunctionTool(Tool):
@@ -865,18 +872,18 @@ class Resource(SerializationMixin):
         # Only dispatch if we're being called on the base Resource class
         if cls is not Resource:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
         kind = value.get("kind", "")
         if kind == "model":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 ModelResource, value, dependencies=dependencies
             )
         if kind == "tool":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
                 ToolResource, value, dependencies=dependencies
             )
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
 class ModelResource(Resource):

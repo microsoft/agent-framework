@@ -14,7 +14,7 @@ var maxTokens = 4096;
 var thinkingTokens = 2048;
 
 var agent = new AnthropicClient(new ClientOptions { APIKey = apiKey })
-    .CreateAIAgent(
+    .AsAIAgent(
         model: model,
         clientFactory: (chatClient) => chatClient
             .AsBuilder()

@@ -39,6 +39,13 @@ from agent_framework_declarative._models import (
 
 pytestmark = pytest.mark.skipif(sys.version_info >= (3, 14), reason="Skipping on Python 3.14+")
 
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
 
 @pytest.mark.parametrize(
     "yaml_content,expected_type,expected_attributes",
@@ -454,3 +461,234 @@ def test_agent_schema_dispatch_agent_samples(yaml_file: Path, agent_samples_dir:
     result = agent_schema_dispatch(yaml.safe_load(content))
     # Result can be None for unknown kinds, but should not raise exceptions
     assert result is not None, f"agent_schema_dispatch returned None for {yaml_file.relative_to(agent_samples_dir)}"
+
+
+class TestAgentFactoryCreateFromDict:
+    """Tests for AgentFactory.create_agent_from_dict method."""
+
+    def test_create_agent_from_dict_parses_prompt_agent(self):
+        """Test that create_agent_from_dict correctly parses a PromptAgent definition."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "description": "A test agent",
+            "instructions": "You are a helpful assistant.",
+        }
+
+        # Use a pre-configured chat client to avoid needing model
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_dict(agent_def)
+
+        assert agent is not None
+
+    def test_create_agent_from_dict_matches_yaml(self):
+        """Test that create_agent_from_dict produces same result as create_agent_from_yaml."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+description: A test agent
+instructions: You are a helpful assistant.
+"""
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "description": "A test agent",
+            "instructions": "You are a helpful assistant.",
+        }
+
+        # Use a pre-configured chat client to avoid needing model
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+
+        # Create from YAML string
+        agent_from_yaml = factory.create_agent_from_yaml(yaml_content)
+
+        # Create from dict
+        agent_from_dict = factory.create_agent_from_dict(agent_def)
+
+        # Both should produce agents with same name
+        assert agent_from_yaml.name == agent_from_dict.name
+        assert agent_from_yaml.description == agent_from_dict.description
+
+    def test_create_agent_from_dict_invalid_kind_raises(self):
+        """Test that non-PromptAgent kind raises DeclarativeLoaderError."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._loader import DeclarativeLoaderError
+
+        # Resource kind (not PromptAgent)
+        agent_def = {
+            "kind": "Resource",
+            "name": "TestResource",
+        }
+
+        factory = AgentFactory()
+        with pytest.raises(DeclarativeLoaderError, match="Only definitions for a PromptAgent are supported"):
+            factory.create_agent_from_dict(agent_def)
+
+    def test_create_agent_from_dict_without_model_or_client_raises(self):
+        """Test that missing both model and chat_client raises DeclarativeLoaderError."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._loader import DeclarativeLoaderError
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "instructions": "You are helpful.",
+        }
+
+        factory = AgentFactory()
+        with pytest.raises(DeclarativeLoaderError, match="ChatClient must be provided"):
+            factory.create_agent_from_dict(agent_def)
+
+
+class TestAgentFactorySafeMode:
+    """Tests for AgentFactory safe_mode parameter."""
+
+    def test_agent_factory_safe_mode_default_is_true(self):
+        """Test that safe_mode is True by default."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        factory = AgentFactory()
+        assert factory.safe_mode is True
+
+    def test_agent_factory_safe_mode_can_be_set_false(self):
+        """Test that safe_mode can be explicitly set to False."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        factory = AgentFactory(safe_mode=False)
+        assert factory.safe_mode is False
+
+    def test_agent_factory_safe_mode_blocks_env_in_yaml(self, monkeypatch):
+        """Test that safe_mode=True blocks environment variable access in YAML parsing."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative._loader import AgentFactory
+
+        monkeypatch.setenv("TEST_MODEL_ID", "gpt-4-from-env")
+
+        # Create a mock chat client to avoid needing real provider
+        mock_client = MagicMock()
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: =Env.TEST_DESCRIPTION
+instructions: Hello world
+"""
+        monkeypatch.setenv("TEST_DESCRIPTION", "Description from env")
+
+        # With safe_mode=True (default), Env access should fail and return original value
+        factory = AgentFactory(chat_client=mock_client, safe_mode=True)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # The description should NOT be resolved from env (PowerFx fails, returns original)
+        assert agent.description == "=Env.TEST_DESCRIPTION"
+
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+    def test_agent_factory_safe_mode_false_allows_env_in_yaml(self, monkeypatch):
+        """Test that safe_mode=False allows environment variable access in YAML parsing."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative._loader import AgentFactory
+
+        monkeypatch.setenv("TEST_DESCRIPTION", "Description from env")
+
+        # Create a mock chat client to avoid needing real provider
+        mock_client = MagicMock()
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: =Env.TEST_DESCRIPTION
+instructions: Hello world
+"""
+
+        # With safe_mode=False, Env access should work
+        factory = AgentFactory(chat_client=mock_client, safe_mode=False)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # The description should be resolved from env
+        assert agent.description == "Description from env"
+
+    def test_agent_factory_safe_mode_with_api_key_connection(self, monkeypatch):
+        """Test safe_mode with API key connection containing env variable."""
+        from agent_framework_declarative._models import _safe_mode_context
+
+        monkeypatch.setenv("MY_API_KEY", "secret-key-123")
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: Test agent
+instructions: Hello
+model:
+  id: gpt-4
+  provider: OpenAI
+  apiType: Chat
+  connection:
+    kind: key
+    apiKey: =Env.MY_API_KEY
+"""
+
+        # Manually trigger the YAML parsing to check the context is set correctly
+        import yaml as yaml_module
+
+        from agent_framework_declarative._models import agent_schema_dispatch
+
+        token = _safe_mode_context.set(True)  # Ensure we're in safe mode
+        try:
+            result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+
+            # The API key should NOT be resolved (still has the PowerFx expression)
+            assert result.model.connection.apiKey == "=Env.MY_API_KEY"
+        finally:
+            _safe_mode_context.reset(token)
+
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+    def test_agent_factory_safe_mode_false_resolves_api_key(self, monkeypatch):
+        """Test safe_mode=False resolves API key from environment."""
+        from agent_framework_declarative._models import _safe_mode_context
+
+        monkeypatch.setenv("MY_API_KEY", "secret-key-123")
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: Test agent
+instructions: Hello
+model:
+  id: gpt-4
+  provider: OpenAI
+  apiType: Chat
+  connection:
+    kind: key
+    apiKey: =Env.MY_API_KEY
+"""
+
+        # With safe_mode=False, the API key should be resolved
+        import yaml as yaml_module
+
+        from agent_framework_declarative._models import agent_schema_dispatch
+
+        token = _safe_mode_context.set(False)  # Disable safe mode
+        try:
+            result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+
+            # The API key should be resolved from environment
+            assert result.model.connection.apiKey == "secret-key-123"
+        finally:
+            _safe_mode_context.reset(token)

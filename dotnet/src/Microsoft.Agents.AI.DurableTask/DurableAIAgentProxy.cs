@@ -11,25 +11,25 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    public override AgentThread DeserializeThread(
+    public override ValueTask<AgentThread> DeserializeThreadAsync(
         JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions);
+        return ValueTask.FromResult<AgentThread>(DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions));
     }
 
-    public override AgentThread GetNewThread()
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
     {
-        return new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!));
+        return ValueTask.FromResult<AgentThread>(new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!)));
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
         if (thread is not DurableAgentThread durableThread)
         {
             throw new ArgumentException(
@@ -64,13 +64,13 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         if (isFireAndForget)
         {
             // If the request is fire and forget, return an empty response.
-            return new AgentRunResponse();
+            return new AgentResponse();
         }
 
         return await agentRunHandle.ReadAgentResponseAsync(cancellationToken);
     }
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
