@@ -5,8 +5,8 @@ from typing import Any
 
 from agent_framework import (
     AgentExecutor,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -35,10 +35,10 @@ class _CountingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         self.call_count += 1
-        return AgentRunResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, text=f"Response #{self.call_count}: {self.display_name}")]
+        return AgentResponse(
+            messages=[ChatMessage(role=Role.ASSISTANT, text=f"Response #{self.call_count}: {self.name}")]
         )
 
     async def run_stream(  # type: ignore[override]
@@ -47,9 +47,9 @@ class _CountingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
-        yield AgentRunResponseUpdate(contents=[TextContent(text=f"Response #{self.call_count}: {self.display_name}")])
+        yield AgentResponseUpdate(contents=[TextContent(text=f"Response #{self.call_count}: {self.name}")])
 
 
 async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:

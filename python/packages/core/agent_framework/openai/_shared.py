@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
 from typing import Any, ClassVar, Union
 
@@ -24,7 +24,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._types import ChatOptions
+from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -43,7 +43,7 @@ RESPONSE_TYPE = Union[
     _legacy_response.HttpxBinaryResponseContent,
 ]
 
-OPTION_TYPE = Union[ChatOptions, dict[str, Any]]
+OPTION_TYPE = dict[str, Any]
 
 
 __all__ = ["OpenAISettings"]
@@ -63,7 +63,7 @@ def _check_openai_version_for_callable_api_key() -> None:
             raise ServiceInitializationError(
                 f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
                 f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
-                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=0.1.118 "
+                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=1.0.0 "
                 f"to allow newer OpenAI versions."
             )
     except ServiceInitializationError:
@@ -160,16 +160,16 @@ class OpenAIBase(SerializationMixin):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    async def initialize_client(self) -> None:
+    async def _initialize_client(self) -> None:
         """Initialize OpenAI client asynchronously.
 
         Override in subclasses to initialize the OpenAI client asynchronously.
         """
         pass
 
-    async def ensure_client(self) -> AsyncOpenAI:
+    async def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client is initialized."""
-        await self.initialize_client()
+        await self._initialize_client()
         if self.client is None:
             raise ServiceInitializationError("OpenAI client is not initialized")
 
@@ -276,3 +276,74 @@ class OpenAIConfigMixin(OpenAIBase):
         # Ensure additional_properties and middleware are passed through kwargs to BaseChatClient
         # These are consumed by BaseChatClient.__init__ via kwargs
         super().__init__(**args, **kwargs)
+
+
+def to_assistant_tools(
+    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Convert Agent Framework tools to OpenAI Assistants API format.
+
+    Args:
+        tools: Normalized tools (from ChatOptions.tools).
+
+    Returns:
+        List of tool definitions for OpenAI Assistants API.
+    """
+    if not tools:
+        return []
+
+    tool_definitions: list[dict[str, Any]] = []
+
+    for tool in tools:
+        if isinstance(tool, AIFunction):
+            tool_definitions.append(tool.to_json_schema_spec())
+        elif isinstance(tool, HostedCodeInterpreterTool):
+            tool_definitions.append({"type": "code_interpreter"})
+        elif isinstance(tool, HostedFileSearchTool):
+            params: dict[str, Any] = {"type": "file_search"}
+            if tool.max_results is not None:
+                params["file_search"] = {"max_num_results": tool.max_results}
+            tool_definitions.append(params)
+        elif isinstance(tool, MutableMapping):
+            # Pass through raw dict definitions
+            tool_definitions.append(dict(tool))
+
+    return tool_definitions
+
+
+def from_assistant_tools(
+    assistant_tools: list[Any] | None,
+) -> list[ToolProtocol]:
+    """Convert OpenAI Assistant tools to Agent Framework format.
+
+    This converts hosted tools (code_interpreter, file_search) from an OpenAI
+    Assistant definition back to Agent Framework tool instances.
+
+    Note: Function tools are skipped - user must provide implementations separately.
+
+    Args:
+        assistant_tools: Tools from OpenAI Assistant object (assistant.tools).
+
+    Returns:
+        List of Agent Framework tool instances for hosted tools.
+    """
+    if not assistant_tools:
+        return []
+
+    tools: list[ToolProtocol] = []
+
+    for tool in assistant_tools:
+        if hasattr(tool, "type"):
+            tool_type = tool.type
+        elif isinstance(tool, dict):
+            tool_type = tool.get("type")
+        else:
+            tool_type = None
+
+        if tool_type == "code_interpreter":
+            tools.append(HostedCodeInterpreterTool())
+        elif tool_type == "file_search":
+            tools.append(HostedFileSearchTool())
+        # Skip function tools - user must provide implementations
+
+    return tools

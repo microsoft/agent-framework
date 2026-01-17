@@ -11,7 +11,7 @@ var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? throw ne
 var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-haiku-4-5";
 
 AIAgent agent = new AnthropicClient(new ClientOptions { APIKey = apiKey })
-    .CreateAIAgent(model: model, instructions: "You are good at telling jokes.", name: "Joker");
+    .AsAIAgent(model: model, instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 var response = await agent.RunAsync("Tell me a joke about a pirate.");

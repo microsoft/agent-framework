@@ -17,8 +17,8 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDe
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     BaseChatClient,
     ChatAgent,
     ChatClientProtocol,
@@ -193,7 +193,7 @@ async def test_cmc(
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=False,
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -212,11 +212,11 @@ async def test_cmc_with_logit_bias(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    await azure_chat_client.get_response(messages=chat_history, logit_bias=token_bias)
+    await azure_chat_client.get_response(messages=chat_history, options={"logit_bias": token_bias})
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         stream=False,
         logit_bias=token_bias,
     )
@@ -237,11 +237,11 @@ async def test_cmc_with_stop(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    await azure_chat_client.get_response(messages=chat_history, stop=stop)
+    await azure_chat_client.get_response(messages=chat_history, options={"stop": stop})
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         stream=False,
         stop=stop,
     )
@@ -300,7 +300,7 @@ async def test_azure_on_your_data(
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
-        additional_properties={"extra_body": expected_data_settings},
+        options={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
@@ -311,7 +311,7 @@ async def test_azure_on_your_data(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(messages_out),  # type: ignore
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -370,7 +370,7 @@ async def test_azure_on_your_data_string(
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
-        additional_properties={"extra_body": expected_data_settings},
+        options={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
@@ -381,7 +381,7 @@ async def test_azure_on_your_data_string(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(messages_out),  # type: ignore
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -429,7 +429,7 @@ async def test_azure_on_your_data_fail(
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
-        additional_properties={"extra_body": expected_data_settings},
+        options={"extra_body": expected_data_settings},
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
@@ -438,7 +438,7 @@ async def test_azure_on_your_data_fail(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(messages_out),  # type: ignore
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -584,7 +584,7 @@ async def test_get_streaming(
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=True,
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
         # `OpenAIChatCompletionBase._inner_get_streaming_response`.
         # To ensure consistency, we align the arguments here accordingly.
@@ -652,13 +652,12 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
 
     assert response is not None
     assert isinstance(response, ChatResponse)
-    assert "scientists" in response.text
+    assert "Emily" in response.text or "David" in response.text
 
 
 @pytest.mark.flaky
@@ -693,7 +692,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
 
-    assert "scientists" in full_message
+    assert "Emily" in full_message or "David" in full_message
 
 
 @pytest.mark.flaky
@@ -709,8 +708,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     # Test that the client can be used to get a response
     response = azure_chat_client.get_streaming_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
     full_message: str = ""
     async for chunk in response:
@@ -720,7 +718,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
             if isinstance(content, TextContent) and content.text:
                 full_message += content.text
 
-    assert "scientists" in full_message
+    assert "Emily" in full_message or "David" in full_message
 
 
 @pytest.mark.flaky
@@ -733,7 +731,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
         # Test basic run
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
 
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert response.text is not None
         assert len(response.text) > 0
         assert "response test" in response.text.lower()
@@ -749,7 +747,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
         # Test streaming run
         full_text = ""
         async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
-            assert isinstance(chunk, AgentRunResponseUpdate)
+            assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
 
@@ -771,13 +769,13 @@ async def test_azure_openai_chat_client_agent_thread_persistence():
         # First interaction
         response1 = await agent.run("My name is Alice. Remember this.", thread=thread)
 
-        assert isinstance(response1, AgentRunResponse)
+        assert isinstance(response1, AgentResponse)
         assert response1.text is not None
 
         # Second interaction - test memory
         response2 = await agent.run("What is my name?", thread=thread)
 
-        assert isinstance(response2, AgentRunResponse)
+        assert isinstance(response2, AgentResponse)
         assert response2.text is not None
         assert "alice" in response2.text.lower()
 
@@ -797,7 +795,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
         thread = first_agent.get_new_thread()
         first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # Preserve the thread for reuse
@@ -812,7 +810,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
             # Reuse the preserved thread
             second_response = await second_agent.run("What is my name?", thread=preserved_thread)
 
-            assert isinstance(second_response, AgentRunResponse)
+            assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "alice" in second_response.text.lower()
 
@@ -830,7 +828,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         # First run - agent-level tool should be available
         first_response = await agent.run("What's the weather like in Chicago?")
 
-        assert isinstance(first_response, AgentRunResponse)
+        assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
         assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
@@ -838,7 +836,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
 
-        assert isinstance(second_response, AgentRunResponse)
+        assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])

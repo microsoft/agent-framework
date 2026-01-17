@@ -26,8 +26,8 @@ namespace Microsoft.Agents.AI;
 /// <item><description>Chat history reduction, e.g. where messages needs to be summarized or truncated to reduce the size.</description></item>
 /// </list>
 /// An <see cref="AgentThread"/> is always constructed by an <see cref="AIAgent"/> so that the <see cref="AIAgent"/>
-/// can attach any necessary behaviors to the <see cref="AgentThread"/>. See the <see cref="AIAgent.GetNewThread()"/>
-/// and <see cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?)"/> methods for more information.
+/// can attach any necessary behaviors to the <see cref="AgentThread"/>. See the <see cref="AIAgent.GetNewThreadAsync(System.Threading.CancellationToken)"/>
+/// and <see cref="AIAgent.DeserializeThreadAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> methods for more information.
 /// </para>
 /// <para>
 /// Because of these behaviors, an <see cref="AgentThread"/> may not be reusable across different agents, since each agent
@@ -37,13 +37,13 @@ namespace Microsoft.Agents.AI;
 /// To support conversations that may need to survive application restarts or separate service requests, an <see cref="AgentThread"/> can be serialized
 /// and deserialized, so that it can be saved in a persistent store.
 /// The <see cref="AgentThread"/> provides the <see cref="Serialize(JsonSerializerOptions?)"/> method to serialize the thread to a
-/// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?)"/> method
+/// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeThreadAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method
 /// can be used to deserialize the thread.
 /// </para>
 /// </remarks>
 /// <seealso cref="AIAgent"/>
-/// <seealso cref="AIAgent.GetNewThread()"/>
-/// <seealso cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?)"/>
+/// <seealso cref="AIAgent.GetNewThreadAsync(System.Threading.CancellationToken)"/>
+/// <seealso cref="AIAgent.DeserializeThreadAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/>
 public abstract class AgentThread
 {
     /// <summary>
@@ -68,7 +68,7 @@ public abstract class AgentThread
     /// <exception cref="ArgumentNullException"><paramref name="serviceType"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="AgentThread"/>,
-    /// including itself or any services it might be wrapping. For example, to access the <see cref="AgentThreadMetadata"/> for the instance,
+    /// including itself or any services it might be wrapping. For example, to access a <see cref="ChatMessageStore"/> if available for the instance,
     /// <see cref="GetService"/> may be used to request it.
     /// </remarks>
     public virtual object? GetService(Type serviceType, object? serviceKey = null)

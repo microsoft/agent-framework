@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// Derived classes can override specific methods to add custom behavior while maintaining compatibility with the agent interface.
 /// </para>
 /// </remarks>
-public class DelegatingAIAgent : AIAgent
+public abstract class DelegatingAIAgent : AIAgent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAIAgent"/> class with the specified inner agent.
@@ -54,7 +54,7 @@ public class DelegatingAIAgent : AIAgent
     protected AIAgent InnerAgent { get; }
 
     /// <inheritdoc />
-    public override string Id => this.InnerAgent.Id;
+    protected override string? IdCore => this.InnerAgent.Id;
 
     /// <inheritdoc />
     public override string? Name => this.InnerAgent.Name;
@@ -74,14 +74,14 @@ public class DelegatingAIAgent : AIAgent
     }
 
     /// <inheritdoc />
-    public override AgentThread GetNewThread() => this.InnerAgent.GetNewThread();
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) => this.InnerAgent.GetNewThreadAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.DeserializeThreadAsync(serializedThread, jsonSerializerOptions, cancellationToken);
 
     /// <inheritdoc />
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -89,7 +89,7 @@ public class DelegatingAIAgent : AIAgent
         => this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
 
     /// <inheritdoc />
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

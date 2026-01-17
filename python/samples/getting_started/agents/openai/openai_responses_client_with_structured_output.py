@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponse
+from agent_framework import AgentResponse
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import BaseModel
 
@@ -25,7 +25,7 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming example ===")
 
     # Create an OpenAI Responses agent
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )
@@ -35,7 +35,7 @@ async def non_streaming_example() -> None:
     print(f"User: {query}")
 
     # Get structured response from the agent using response_format parameter
-    result = await agent.run(query, response_format=OutputStruct)
+    result = await agent.run(query, options={"response_format": OutputStruct})
 
     # Access the structured output directly from the response value
     if result.value:
@@ -51,7 +51,7 @@ async def streaming_example() -> None:
     print("=== Streaming example ===")
 
     # Create an OpenAI Responses agent
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )
@@ -60,17 +60,17 @@ async def streaming_example() -> None:
     query = "Tell me about Tokyo, Japan"
     print(f"User: {query}")
 
-    # Get structured response from streaming agent using AgentRunResponse.from_agent_response_generator
-    # This method collects all streaming updates and combines them into a single AgentRunResponse
-    result = await AgentRunResponse.from_agent_response_generator(
-        agent.run_stream(query, response_format=OutputStruct),
+    # Get structured response from streaming agent using AgentResponse.from_agent_response_generator
+    # This method collects all streaming updates and combines them into a single AgentResponse
+    result = await AgentResponse.from_agent_response_generator(
+        agent.run_stream(query, options={"response_format": OutputStruct}),
         output_format_type=OutputStruct,
     )
 
     # Access the structured output directly from the response value
     if result.value:
         structured_data: OutputStruct = result.value  # type: ignore
-        print("Structured Output (from streaming with AgentRunResponse.from_agent_response_generator):")
+        print("Structured Output (from streaming with AgentResponse.from_agent_response_generator):")
         print(f"City: {structured_data.city}")
         print(f"Description: {structured_data.description}")
     else:

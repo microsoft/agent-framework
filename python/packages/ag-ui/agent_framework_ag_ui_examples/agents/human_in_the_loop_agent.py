@@ -3,6 +3,7 @@
 """Human-in-the-loop agent demonstrating step customization (Feature 5)."""
 
 from enum import Enum
+from typing import Any
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from pydantic import BaseModel, Field
@@ -42,7 +43,7 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return f"Generated {len(steps)} execution steps for the task."
 
 
-def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
+def human_in_the_loop_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
     """Create a human-in-the-loop agent using tool-based approach for predictive state.
 
     Args:
@@ -75,8 +76,10 @@ def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
     9. "Calibrate systems"
     10. "Final testing"
 
-    After calling the function, provide a brief acknowledgment like:
-    "I've created a plan with 10 steps. You can customize which steps to enable before I proceed."
+    IMPORTANT: When you call generate_task_steps, the user will be shown the steps and asked to approve.
+    Do NOT output any text along with the function call - just call the function.
+    After the user approves and the function executes, THEN provide a brief acknowledgment like:
+    "The plan has been created with X steps selected."
     """,
         chat_client=chat_client,
         tools=[generate_task_steps],

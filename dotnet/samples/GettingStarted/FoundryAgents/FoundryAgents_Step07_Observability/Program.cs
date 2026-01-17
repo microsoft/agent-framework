@@ -38,12 +38,12 @@ AIAgent agent = aiProjectClient.CreateAIAgent(name: JokerName, model: deployment
     .Build();
 
 // Invoke the agent and output the text result.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Invoke the agent with streaming support.
-thread = agent.GetNewThread();
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+thread = await agent.GetNewThreadAsync();
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
     Console.WriteLine(update);
 }

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from agent_framework import HostedCodeInterpreterTool, HostedFileContent
-from agent_framework.anthropic import AnthropicClient
+from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 
 logger = logging.getLogger(__name__)
 """
@@ -22,7 +22,7 @@ This sample demonstrates using Anthropic with:
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    client = AnthropicClient(additional_beta_flags=["skills-2025-10-02"])
+    client = AnthropicClient[AnthropicChatOptions](additional_beta_flags=["skills-2025-10-02"])
 
     # List Anthropic-managed Skills
     skills = await client.anthropic_client.beta.skills.list(source="anthropic", betas=["skills-2025-10-02"])
@@ -31,12 +31,12 @@ async def main() -> None:
 
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
         tools=HostedCodeInterpreterTool(),
-        max_tokens=20000,
-        additional_chat_options={
+        default_options={
+            "max_tokens": 20000,
             "thinking": {"type": "enabled", "budget_tokens": 10000},
             "container": {"skills": [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]},
         },

@@ -177,7 +177,7 @@ internal sealed class WorkflowRunner
                     Console.ResetColor();
                     break;
 
-                case AgentRunUpdateEvent streamEvent:
+                case AgentResponseUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
                         hasStreamed = false;
@@ -230,7 +230,7 @@ internal sealed class WorkflowRunner
                     }
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     try
                     {
                         if (hasStreamed)

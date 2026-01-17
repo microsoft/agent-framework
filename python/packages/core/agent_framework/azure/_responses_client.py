@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypedDict
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 
 from agent_framework import use_chat_middleware, use_function_invocation
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 
 from ._shared import (
@@ -18,13 +19,37 @@ from ._shared import (
     AzureOpenAISettings,
 )
 
-TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="AzureOpenAIResponsesClient")
+if TYPE_CHECKING:
+    from agent_framework.openai._responses_client import OpenAIResponsesOptions
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
+__all__ = ["AzureOpenAIResponsesClient"]
+
+
+TAzureOpenAIResponsesOptions = TypeVar(
+    "TAzureOpenAIResponsesOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
+    covariant=True,
+)
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
-class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient):
+class AzureOpenAIResponsesClient(
+    AzureOpenAIConfigMixin,
+    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
+    Generic[TAzureOpenAIResponsesOptions],
+):
     """Azure Responses completion class."""
 
     def __init__(
@@ -95,6 +120,18 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
 
                 # Or loading from a .env file
                 client = AzureOpenAIResponsesClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIResponsesOptions
+
+
+                class MyOptions(AzureOpenAIResponsesOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIResponsesClient[MyOptions] = AzureOpenAIResponsesClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)
@@ -144,3 +181,10 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
             client=async_client,
             instruction_role=instruction_role,
         )
+
+    @override
+    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("deployment_name must be a non-empty string")
+            run_options["model"] = self.model_id

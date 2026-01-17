@@ -4,7 +4,15 @@ import asyncio
 import inspect
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from functools import wraps
 from time import perf_counter, time_ns
 from typing import (
@@ -16,7 +24,9 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    TypedDict,
     TypeVar,
+    Union,
     cast,
     get_args,
     get_origin,
@@ -25,7 +35,6 @@ from typing import (
 
 from opentelemetry.metrics import Histogram
 from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
-from pydantic.fields import FieldInfo
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -50,21 +59,12 @@ if TYPE_CHECKING:
         FunctionCallContent,
     )
 
-if sys.version_info >= (3, 12):
-    from typing import (
-        TypedDict,  # pragma: no cover
-        override,  # type: ignore # pragma: no cover
-    )
-else:
-    from typing_extensions import (
-        TypedDict,  # pragma: no cover
-        override,  # type: ignore[import] # pragma: no cover
-    )
+from typing import overload
 
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import overload  # pragma: no cover
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 logger = get_logger()
 
@@ -74,6 +74,7 @@ __all__ = [
     "FunctionInvocationConfiguration",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
+    "HostedImageGenerationTool",
     "HostedMCPSpecificApproval",
     "HostedMCPTool",
     "HostedWebSearchTool",
@@ -87,7 +88,7 @@ logger = get_logger()
 FUNCTION_INVOKING_CHAT_CLIENT_MARKER: Final[str] = "__function_invoking_chat_client__"
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
+TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 # region Helpers
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
@@ -120,7 +121,13 @@ def _parse_inputs(
     if inputs is None:
         return []
 
-    from ._types import BaseContent, DataContent, HostedFileContent, HostedVectorStoreContent, UriContent
+    from ._types import (
+        BaseContent,
+        DataContent,
+        HostedFileContent,
+        HostedVectorStoreContent,
+        UriContent,
+    )
 
     parsed_inputs: list["Contents"] = []
     if not isinstance(inputs, list):
@@ -323,6 +330,41 @@ class HostedWebSearchTool(BaseTool):
         if description is not None:
             args["description"] = description
         super().__init__(**args)
+
+
+class HostedImageGenerationToolOptions(TypedDict, total=False):
+    """Options for HostedImageGenerationTool."""
+
+    count: int
+    image_size: str
+    media_type: str
+    model_id: str
+    response_format: Literal["uri", "data", "hosted"]
+    streaming_count: int
+
+
+class HostedImageGenerationTool(BaseTool):
+    """Represents a hosted tool that can be specified to an AI service to enable it to perform image generation."""
+
+    def __init__(
+        self,
+        *,
+        options: HostedImageGenerationToolOptions | None = None,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize a HostedImageGenerationTool."""
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
+
+        self.options = options
+        super().__init__(
+            name="image_generation",
+            description=description or "",
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):
@@ -574,7 +616,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram", "_cached_parameters"}
 
     def __init__(
         self,
@@ -616,6 +658,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.func = func
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
+        self._cached_parameters: dict[str, Any] | None = None  # Cache for model_json_schema()
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
             raise ValueError("max_invocations must be at least 1 or None.")
@@ -628,6 +671,12 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["ai_function"] = "ai_function"
         self._forward_runtime_kwargs: bool = False
+        if self.func:
+            sig = inspect.signature(self.func)
+            for param in sig.parameters.values():
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    self._forward_runtime_kwargs = True
+                    break
 
     @property
     def declaration_only(self) -> bool:
@@ -777,8 +826,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             else:
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                    from ._types import prepare_function_call_results
+
                     try:
-                        json_result = json.dumps(result)
+                        json_result = prepare_function_call_results(result)
                     except (TypeError, OverflowError):
                         span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
                         logger.debug("Function result: <non-serializable result>")
@@ -797,8 +848,11 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         Returns:
             A dictionary containing the JSON schema for the function's parameters.
+            The result is cached after the first call for performance.
         """
-        return self.input_model.model_json_schema()
+        if self._cached_parameters is None:
+            self._cached_parameters = self.input_model.model_json_schema()
+        return self._cached_parameters
 
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a AIFunction to the JSON Schema function specification format.
@@ -820,7 +874,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
         if (exclude and "input_model" in exclude) or not self.input_model:
             return as_dict
-        as_dict["input_model"] = self.input_model.model_json_schema()
+        as_dict["input_model"] = self.parameters()  # Use cached parameters()
         return as_dict
 
 
@@ -881,6 +935,8 @@ def _parse_annotation(annotation: Any) -> Any:
     If the second annotation (after the type) is a string, then we convert that to a Pydantic Field description.
     The rest are returned as-is, allowing for multiple annotations.
 
+    Literal types are returned as-is to preserve their enum-like values.
+
     Args:
         annotation: The type annotation to parse.
 
@@ -889,6 +945,12 @@ def _parse_annotation(annotation: Any) -> Any:
     """
     origin = get_origin(annotation)
     if origin is not None:
+        # Literal types should be returned as-is - their args are the allowed values,
+        # not type annotations to be parsed. For example, Literal["Data", "Security"]
+        # has args ("Data", "Security") which are the valid string values.
+        if origin is Literal:
+            return annotation
+
         args = get_args(annotation)
         # For other generics, return the origin type (e.g., list for List[int])
         if len(args) > 1 and isinstance(args[1], str):
@@ -916,6 +978,7 @@ def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[B
         )
         for pname, param in sig.parameters.items()
         if pname not in {"self", "cls"}
+        and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
     }
     return create_model(f"{name}_input", **fields)  # type: ignore[call-overload, no-any-return]
 
@@ -930,6 +993,208 @@ TYPE_MAPPING = {
     "object": dict,
     "null": type(None),
 }
+
+
+def _build_pydantic_model_from_json_schema(
+    model_name: str,
+    schema: Mapping[str, Any],
+) -> type[BaseModel]:
+    """Creates a Pydantic model from JSON Schema with support for $refs, nested objects, and typed arrays.
+
+    Args:
+        model_name: The name of the model to be created.
+        schema: The JSON Schema definition (should contain 'properties', 'required', '$defs', etc.).
+
+    Returns:
+        The dynamically created Pydantic model class.
+    """
+    properties = schema.get("properties")
+    required = schema.get("required", [])
+    definitions = schema.get("$defs", {})
+
+    # Check if 'properties' is missing or not a dictionary
+    if not properties:
+        return create_model(f"{model_name}_input")
+
+    def _resolve_literal_type(prop_details: dict[str, Any]) -> type | None:
+        """Check if property should be a Literal type (const or enum).
+
+        Args:
+            prop_details: The JSON Schema property details
+
+        Returns:
+            Literal type if const or enum is present, None otherwise
+        """
+        # const → Literal["value"]
+        if "const" in prop_details:
+            return Literal[prop_details["const"]]  # type: ignore
+
+        # enum → Literal["a", "b", ...]
+        if "enum" in prop_details and isinstance(prop_details["enum"], list):
+            enum_values = prop_details["enum"]
+            if enum_values:
+                return Literal[tuple(enum_values)]  # type: ignore
+
+        return None
+
+    def _resolve_type(prop_details: dict[str, Any], parent_name: str = "") -> type:
+        """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
+
+        Args:
+            prop_details: The JSON Schema property details
+            parent_name: Name to use for creating nested models (for uniqueness)
+
+        Returns:
+            Python type annotation (could be int, str, list[str], or a nested Pydantic model)
+        """
+        # Handle oneOf + discriminator (polymorphic objects)
+        if "oneOf" in prop_details and "discriminator" in prop_details:
+            discriminator = prop_details["discriminator"]
+            disc_field = discriminator.get("propertyName")
+
+            variants = []
+            for variant in prop_details["oneOf"]:
+                if "$ref" in variant:
+                    ref = variant["$ref"]
+                    if ref.startswith("#/$defs/"):
+                        def_name = ref.split("/")[-1]
+                        resolved = definitions.get(def_name)
+                        if resolved:
+                            variant_model = _resolve_type(
+                                resolved,
+                                parent_name=f"{parent_name}_{def_name}",
+                            )
+                            variants.append(variant_model)
+
+            if variants and disc_field:
+                return Annotated[
+                    Union[tuple(variants)],  # type: ignore
+                    Field(discriminator=disc_field),
+                ]
+
+        # Handle $ref by resolving the reference
+        if "$ref" in prop_details:
+            ref = prop_details["$ref"]
+            # Extract the reference path (e.g., "#/$defs/CustomerIdParam" -> "CustomerIdParam")
+            if ref.startswith("#/$defs/"):
+                def_name = ref.split("/")[-1]
+                if def_name in definitions:
+                    # Resolve the reference and use its type
+                    resolved = definitions[def_name]
+                    return _resolve_type(resolved, def_name)
+            # If we can't resolve the ref, default to dict for safety
+            return dict
+
+        # Map JSON Schema types to Python types
+        json_type = prop_details.get("type", "string")
+        match json_type:
+            case "integer":
+                return int
+            case "number":
+                return float
+            case "boolean":
+                return bool
+            case "array":
+                # Handle typed arrays
+                items_schema = prop_details.get("items")
+                if items_schema and isinstance(items_schema, dict):
+                    # Recursively resolve the item type
+                    item_type = _resolve_type(items_schema, f"{parent_name}_item")
+                    # Return list[ItemType] instead of bare list
+                    return list[item_type]  # type: ignore
+                # If no items schema or invalid, return bare list
+                return list
+            case "object":
+                # Handle nested objects by creating a nested Pydantic model
+                nested_properties = prop_details.get("properties")
+                nested_required = prop_details.get("required", [])
+
+                if nested_properties and isinstance(nested_properties, dict):
+                    # Create the name for the nested model
+                    nested_model_name = f"{parent_name}_nested" if parent_name else "NestedModel"
+
+                    # Recursively build field definitions for the nested model
+                    nested_field_definitions: dict[str, Any] = {}
+                    for nested_prop_name, nested_prop_details in nested_properties.items():
+                        nested_prop_details = (
+                            json.loads(nested_prop_details)
+                            if isinstance(nested_prop_details, str)
+                            else nested_prop_details
+                        )
+
+                        # Check for Literal types first (const/enum)
+                        literal_type = _resolve_literal_type(nested_prop_details)
+                        if literal_type is not None:
+                            nested_python_type = literal_type
+                        else:
+                            nested_python_type = _resolve_type(
+                                nested_prop_details,
+                                f"{nested_model_name}_{nested_prop_name}",
+                            )
+                        nested_description = nested_prop_details.get("description", "")
+
+                        # Build field kwargs for nested property
+                        nested_field_kwargs: dict[str, Any] = {}
+                        if nested_description:
+                            nested_field_kwargs["description"] = nested_description
+
+                        # Create field definition
+                        if nested_prop_name in nested_required:
+                            nested_field_definitions[nested_prop_name] = (
+                                (
+                                    nested_python_type,
+                                    Field(**nested_field_kwargs),
+                                )
+                                if nested_field_kwargs
+                                else (nested_python_type, ...)
+                            )
+                        else:
+                            nested_field_kwargs["default"] = nested_prop_details.get("default", None)
+                            nested_field_definitions[nested_prop_name] = (
+                                nested_python_type,
+                                Field(**nested_field_kwargs),
+                            )
+
+                    # Create and return the nested Pydantic model
+                    return create_model(nested_model_name, **nested_field_definitions)  # type: ignore
+
+                # If no properties defined, return bare dict
+                return dict
+            case _:
+                return str  # default
+
+    field_definitions: dict[str, Any] = {}
+    for prop_name, prop_details in properties.items():
+        prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
+
+        # Check for Literal types first (const/enum)
+        literal_type = _resolve_literal_type(prop_details)
+        if literal_type is not None:
+            python_type = literal_type
+        else:
+            python_type = _resolve_type(prop_details, f"{model_name}_{prop_name}")
+        description = prop_details.get("description", "")
+
+        # Build field kwargs (description, etc.)
+        field_kwargs: dict[str, Any] = {}
+        if description:
+            field_kwargs["description"] = description
+
+        # Create field definition for create_model
+        if prop_name in required:
+            if field_kwargs:
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, ...)
+        else:
+            default_value = prop_details.get("default", None)
+            field_kwargs["default"] = default_value
+            if field_kwargs and any(k != "default" for k in field_kwargs):
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, default_value)
+
+    return create_model(f"{model_name}_input", **field_definitions)
 
 
 def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any]) -> type[BaseModel]:
@@ -948,29 +1213,8 @@ def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any
             f"JSON schema for tool '{tool_name}' must contain a 'properties' key of type dict. "
             f"Got: {schema_json.get('properties', None)}"
         )
-    # Extract field definitions with type annotations
-    field_definitions: dict[str, tuple[type, FieldInfo]] = {}
-    for field_name, field_schema in schema_json["properties"].items():
-        field_args: dict[str, Any] = {}
-        if (field_description := field_schema.get("description", None)) is not None:
-            field_args["description"] = field_description
-        if (field_default := field_schema.get("default", None)) is not None:
-            field_args["default"] = field_default
-        field_type = field_schema.get("type", None)
-        if field_type is None:
-            raise ValueError(
-                f"Missing 'type' for field '{field_name}' in JSON schema. "
-                f"Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
-            )
-        python_type = TYPE_MAPPING.get(field_type)
-        if python_type is None:
-            raise ValueError(
-                f"Unsupported type '{field_type}' for field '{field_name}' in JSON schema. "
-                f"Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
-            )
-        field_definitions[field_name] = (python_type, Field(**field_args))
 
-    return create_model(f"{tool_name}_input", **field_definitions)  # type: ignore[call-overload, no-any-return]
+    return _build_pydantic_model_from_json_schema(tool_name, schema_json)
 
 
 @overload
@@ -1218,6 +1462,35 @@ class FunctionInvocationConfiguration(SerializationMixin):
         self.include_detailed_errors = include_detailed_errors
 
 
+class FunctionExecutionResult:
+    """Internal wrapper pairing function output with loop control signals.
+
+    Function execution produces two distinct concerns: the semantic result (returned to
+    the LLM as FunctionResultContent) and control flow decisions (whether middleware
+    requested early termination). This wrapper keeps control signals out of user-facing
+    content types while allowing _try_execute_function_calls to communicate both.
+
+    Not exposed to users.
+
+    Attributes:
+        content: The FunctionResultContent or other content from the function execution.
+        terminate: If True, the function invocation loop should exit immediately without
+            another LLM call. Set when middleware sets context.terminate=True.
+    """
+
+    __slots__ = ("content", "terminate")
+
+    def __init__(self, content: "Contents", terminate: bool = False) -> None:
+        """Initialize FunctionExecutionResult.
+
+        Args:
+            content: The content from the function execution.
+            terminate: Whether to terminate the function calling loop.
+        """
+        self.content = content
+        self.terminate = terminate
+
+
 async def _auto_invoke_function(
     function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
     custom_args: dict[str, Any] | None = None,
@@ -1227,7 +1500,7 @@ async def _auto_invoke_function(
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
-) -> "Contents":
+) -> "FunctionExecutionResult | Contents":
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
     Args:
@@ -1242,19 +1515,17 @@ async def _auto_invoke_function(
         middleware_pipeline: Optional middleware pipeline to apply during execution.
 
     Returns:
-        A FunctionResultContent containing the result or exception.
+        A FunctionExecutionResult wrapping the content and terminate signal,
+        or a Contents object for approval/hosted tool scenarios.
 
     Raises:
         KeyError: If the requested function is not found in the tool map.
     """
-    from ._types import (
-        FunctionResultContent,
-    )
-
     # Note: The scenarios for approval_mode="always_require", declaration_only, and
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
+    from ._types import FunctionCallContent, FunctionResultContent
 
     tool: AIFunction[BaseModel, Any] | None = None
     if function_call_content.type == "function_call":
@@ -1262,19 +1533,24 @@ async def _auto_invoke_function(
         # Tool should exist because _try_execute_function_calls validates this
         if tool is None:
             exc = KeyError(f'Function "{function_call_content.name}" not found.')
-            return FunctionResultContent(
-                call_id=function_call_content.call_id,
-                result=f'Error: Requested function "{function_call_content.name}" not found.',
-                exception=exc,
+            return FunctionExecutionResult(
+                content=FunctionResultContent(
+                    call_id=function_call_content.call_id,
+                    result=f'Error: Requested function "{function_call_content.name}" not found.',
+                    exception=exc,
+                )
             )
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
         # and never reach this function, so we only handle approved=True cases here.
-        tool = tool_map.get(function_call_content.function_call.name)
+        inner_call = function_call_content.function_call
+        if not isinstance(inner_call, FunctionCallContent):
+            return function_call_content
+        tool = tool_map.get(inner_call.name)
         if tool is None:
             # we assume it is a hosted tool
             return function_call_content
-        function_call_content = function_call_content.function_call
+        function_call_content = inner_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1290,7 +1566,9 @@ async def _auto_invoke_function(
         message = "Error: Argument parsing failed."
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
-        return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+        return FunctionExecutionResult(
+            content=FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+        )
 
     if not middleware_pipeline or (
         not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
@@ -1302,15 +1580,19 @@ async def _auto_invoke_function(
                 tool_call_id=function_call_content.call_id,
                 **runtime_kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
             )
-            return FunctionResultContent(
-                call_id=function_call_content.call_id,
-                result=function_result,
+            return FunctionExecutionResult(
+                content=FunctionResultContent(
+                    call_id=function_call_content.call_id,
+                    result=function_result,
+                )
             )
         except Exception as exc:
             message = "Error: Function failed."
             if config.include_detailed_errors:
                 message = f"{message} Exception: {exc}"
-            return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+            return FunctionExecutionResult(
+                content=FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+            )
     # Execute through middleware pipeline if available
     from ._middleware import FunctionInvocationContext
 
@@ -1334,15 +1616,20 @@ async def _auto_invoke_function(
             context=middleware_context,
             final_handler=final_function_handler,
         )
-        return FunctionResultContent(
-            call_id=function_call_content.call_id,
-            result=function_result,
+        return FunctionExecutionResult(
+            content=FunctionResultContent(
+                call_id=function_call_content.call_id,
+                result=function_result,
+            ),
+            terminate=middleware_context.terminate,
         )
     except Exception as exc:
         message = "Error: Function failed."
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
-        return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+        return FunctionExecutionResult(
+            content=FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+        )
 
 
 def _get_tool_map(
@@ -1373,7 +1660,7 @@ async def _try_execute_function_calls(
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
-) -> Sequence["Contents"]:
+) -> tuple[Sequence["Contents"], bool]:
     """Execute multiple function calls concurrently.
 
     Args:
@@ -1385,9 +1672,11 @@ async def _try_execute_function_calls(
         middleware_pipeline: Optional middleware pipeline to apply during execution.
 
     Returns:
-        A list of Contents containing the results of each function call,
-        or the approval requests if any function requires approval,
-        or the original function calls if any are declaration only.
+        A tuple of:
+        - A list of Contents containing the results of each function call,
+          or the approval requests if any function requires approval,
+          or the original function calls if any are declaration only.
+        - A boolean indicating whether to terminate the function calling loop.
     """
     from ._types import FunctionApprovalRequestContent, FunctionCallContent
 
@@ -1410,17 +1699,20 @@ async def _try_execute_function_calls(
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Contents, not Approval Responses.
-        return [
-            FunctionApprovalRequestContent(id=fcc.call_id, function_call=fcc)
-            for fcc in function_calls
-            if isinstance(fcc, FunctionCallContent)
-        ]
+        return (
+            [
+                FunctionApprovalRequestContent(id=fcc.call_id, function_call=fcc)
+                for fcc in function_calls
+                if isinstance(fcc, FunctionCallContent)
+            ],
+            False,
+        )
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
-        return [fcc for fcc in function_calls if isinstance(fcc, FunctionCallContent)]
+        return ([fcc for fcc in function_calls if isinstance(fcc, FunctionCallContent)], False)
 
     # Run all function calls concurrently
-    return await asyncio.gather(*[
+    execution_results = await asyncio.gather(*[
         _auto_invoke_function(
             function_call_content=function_call,  # type: ignore[arg-type]
             custom_args=custom_args,
@@ -1432,6 +1724,20 @@ async def _try_execute_function_calls(
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
+
+    # Unpack FunctionExecutionResult wrappers and check for terminate signal
+    contents: list[Contents] = []
+    should_terminate = False
+    for result in execution_results:
+        if isinstance(result, FunctionExecutionResult):
+            contents.append(result.content)
+            if result.terminate:
+                should_terminate = True
+        else:
+            # Direct Contents (e.g., from hosted tools)
+            contents.append(result)
+
+    return (contents, should_terminate)
 
 
 def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
@@ -1449,19 +1755,19 @@ def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None)
         kwargs["conversation_id"] = conversation_id
 
 
-def _extract_tools(kwargs: dict[str, Any]) -> Any:
-    """Extract tools from kwargs or chat_options.
+def _extract_tools(options: dict[str, Any] | None) -> Any:
+    """Extract tools from options dict.
+
+    Args:
+        options: The options dict containing chat options.
 
     Returns:
         ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] |
         Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None
     """
-    from ._types import ChatOptions
-
-    tools = kwargs.get("tools")
-    if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-        tools = chat_options.tools
-    return tools
+    if options and isinstance(options, dict):
+        return options.get("tools")
+    return None
 
 
 def _collect_approval_responses(
@@ -1554,6 +1860,8 @@ def _handle_function_calls_response(
         async def function_invocation_wrapper(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> "ChatResponse":
             from ._middleware import extract_and_merge_function_middleware
@@ -1565,12 +1873,8 @@ def _handle_function_calls_response(
                 prepare_messages,
             )
 
-            # Extract and merge function middleware from chat client with kwargs pipeline
-            extract_and_merge_function_middleware(self, **kwargs)
-
-            # Extract the middleware pipeline before calling the underlying function
-            # because the underlying function may not preserve it in kwargs
-            stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+            # Extract and merge function middleware from chat client with kwargs
+            stored_middleware_pipeline = extract_and_merge_function_middleware(self, kwargs)
 
             # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
             config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
@@ -1583,20 +1887,15 @@ def _handle_function_calls_response(
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
 
-            # If tools are provided but tool_choice is not set, default to "auto" for function invocation
-            tools = _extract_tools(kwargs)
-            if tools and kwargs.get("tool_choice") is None:
-                kwargs["tool_choice"] = "auto"
-
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
-                    tools = _extract_tools(kwargs)
+                    tools = _extract_tools(options)
                     # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Contents] = []
                     if approved_responses:
-                        approved_function_results = await _try_execute_function_calls(
+                        results, _ = await _try_execute_function_calls(
                             custom_args=kwargs,
                             attempt_idx=attempt_idx,
                             function_calls=approved_responses,
@@ -1604,6 +1903,7 @@ def _handle_function_calls_response(
                             middleware_pipeline=stored_middleware_pipeline,
                             config=config,
                         )
+                        approved_function_results = list(results)
                         if any(
                             fcr.exception is not None
                             for fcr in approved_function_results
@@ -1621,7 +1921,10 @@ def _handle_function_calls_response(
                             break
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
-                response = await func(self, messages=prepped_messages, **kwargs)
+                # Filter out internal framework kwargs before passing to clients.
+                # Also exclude tools and tool_choice since they are now in options dict.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
+                response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
                 # if there are function calls, we will handle them first
                 function_results = {
                     it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -1637,11 +1940,11 @@ def _handle_function_calls_response(
                     prepped_messages = []
 
                 # we load the tools here, since middleware might have changed them compared to before calling func.
-                tools = _extract_tools(kwargs)
+                tools = _extract_tools(options)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
-                    function_call_results: list[Contents] = await _try_execute_function_calls(
+                    function_call_results, should_terminate = await _try_execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
@@ -1664,6 +1967,17 @@ def _handle_function_calls_response(
                         return response
                     if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
                         # the function calls are already in the response, so we just continue
+                        return response
+
+                    # Check if middleware signaled to terminate the loop (context.terminate=True)
+                    # This allows middleware to short-circuit the tool loop without another LLM call
+                    if should_terminate:
+                        # Add tool results to response and return immediately without calling LLM again
+                        result_message = ChatMessage(role="tool", contents=function_call_results)
+                        response.messages.append(result_message)
+                        if fcc_messages:
+                            for msg in reversed(fcc_messages):
+                                response.messages.insert(0, msg)
                         return response
 
                     if any(
@@ -1709,8 +2023,13 @@ def _handle_function_calls_response(
                 return response
 
             # Failsafe: give up on tools, ask model for plain answer
-            kwargs["tool_choice"] = "none"
-            response = await func(self, messages=prepped_messages, **kwargs)
+            if options is None:
+                options = {}
+            options["tool_choice"] = "none"
+
+            # Filter out internal framework kwargs before passing to clients.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+            response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
             if fcc_messages:
                 for msg in reversed(fcc_messages):
                     response.messages.insert(0, msg)
@@ -1742,6 +2061,8 @@ def _handle_function_calls_streaming_response(
         async def streaming_function_invocation_wrapper(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
             """Wrap the inner get streaming response method to handle tool calls."""
@@ -1755,12 +2076,8 @@ def _handle_function_calls_streaming_response(
                 prepare_messages,
             )
 
-            # Extract and merge function middleware from chat client with kwargs pipeline
-            extract_and_merge_function_middleware(self, **kwargs)
-
-            # Extract the middleware pipeline before calling the underlying function
-            # because the underlying function may not preserve it in kwargs
-            stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+            # Extract and merge function middleware from chat client with kwargs
+            stored_middleware_pipeline = extract_and_merge_function_middleware(self, kwargs)
 
             # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
             config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
@@ -1774,12 +2091,12 @@ def _handle_function_calls_streaming_response(
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
-                    tools = _extract_tools(kwargs)
+                    tools = _extract_tools(options)
                     # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Contents] = []
                     if approved_responses:
-                        approved_function_results = await _try_execute_function_calls(
+                        results, _ = await _try_execute_function_calls(
                             custom_args=kwargs,
                             attempt_idx=attempt_idx,
                             function_calls=approved_responses,
@@ -1787,6 +2104,7 @@ def _handle_function_calls_streaming_response(
                             middleware_pipeline=stored_middleware_pipeline,
                             config=config,
                         )
+                        approved_function_results = list(results)
                         if any(
                             fcr.exception is not None
                             for fcr in approved_function_results
@@ -1797,7 +2115,9 @@ def _handle_function_calls_streaming_response(
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
-                async for update in func(self, messages=prepped_messages, **kwargs):
+                # Filter out internal framework kwargs before passing to clients.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+                async for update in func(self, messages=prepped_messages, options=options, **filtered_kwargs):
                     all_updates.append(update)
                     yield update
 
@@ -1835,11 +2155,11 @@ def _handle_function_calls_streaming_response(
                     prepped_messages = []
 
                 # we load the tools here, since middleware might have changed them compared to before calling func.
-                tools = _extract_tools(kwargs)
+                tools = _extract_tools(options)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
-                    function_call_results: list[Contents] = await _try_execute_function_calls(
+                    function_call_results, should_terminate = await _try_execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
@@ -1866,6 +2186,13 @@ def _handle_function_calls_streaming_response(
                         return
                     if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
                         # the function calls were already yielded.
+                        return
+
+                    # Check if middleware signaled to terminate the loop (context.terminate=True)
+                    # This allows middleware to short-circuit the tool loop without another LLM call
+                    if should_terminate:
+                        # Yield tool results and return immediately without calling LLM again
+                        yield ChatResponseUpdate(contents=function_call_results, role="tool")
                         return
 
                     if any(
@@ -1907,8 +2234,12 @@ def _handle_function_calls_streaming_response(
                 return
 
             # Failsafe: give up on tools, ask model for plain answer
-            kwargs["tool_choice"] = "none"
-            async for update in func(self, messages=prepped_messages, **kwargs):
+            if options is None:
+                options = {}
+            options["tool_choice"] = "none"
+            # Filter out internal framework kwargs before passing to clients.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+            async for update in func(self, messages=prepped_messages, options=options, **filtered_kwargs):
                 yield update
 
         return streaming_function_invocation_wrapper

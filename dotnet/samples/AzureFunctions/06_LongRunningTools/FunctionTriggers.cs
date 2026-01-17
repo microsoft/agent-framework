@@ -20,13 +20,13 @@ public static class FunctionTriggers
 
         // Get the writer agent
         DurableAIAgent writerAgent = context.GetAgent("Writer");
-        AgentThread writerThread = writerAgent.GetNewThread();
+        AgentThread writerThread = await writerAgent.GetNewThreadAsync();
 
         // Set initial status
         context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
 
         // Step 1: Generate initial content
-        AgentRunResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
+        AgentResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
             message: $"Write a short article about '{input.Topic}'.",
             thread: writerThread);
         GeneratedContent content = writerResponse.Result;

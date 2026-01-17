@@ -7,8 +7,8 @@ import pytest
 
 from agent_framework import (
     AgentExecutor,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -29,11 +29,11 @@ class DummyAgent(BaseAgent):
                     norm.append(m)
                 elif isinstance(m, str):
                     norm.append(ChatMessage(role=Role.USER, text=m))
-        return AgentRunResponse(messages=norm)
+        return AgentResponse(messages=norm)
 
     async def run_stream(self, messages=None, *, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
         # Minimal async generator
-        yield AgentRunResponseUpdate()
+        yield AgentResponseUpdate()
 
 
 def test_builder_accepts_agents_directly():
@@ -245,7 +245,8 @@ def test_register_multiple_executors():
 
     # Build workflow with edges using registered names
     workflow = (
-        builder.set_start_executor("ExecutorA")
+        builder
+        .set_start_executor("ExecutorA")
         .add_edge("ExecutorA", "ExecutorB")
         .add_edge("ExecutorB", "ExecutorC")
         .build()
@@ -291,6 +292,20 @@ def test_register_duplicate_name_raises_error():
     # Registering second executor with same name should raise ValueError
     with pytest.raises(ValueError, match="already registered"):
         builder.register_executor(lambda: MockExecutor(id="executor_2"), name="MyExecutor")
+
+
+def test_register_duplicate_id_raises_error():
+    """Test that registering duplicate id raises an error."""
+    builder = WorkflowBuilder()
+
+    # Register first executor
+    builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor1")
+    builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor2")
+    builder.set_start_executor("MyExecutor1")
+
+    # Registering second executor with same ID should raise ValueError
+    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been created."):
+        builder.build()
 
 
 def test_register_agent_basic():
@@ -412,7 +427,8 @@ def test_register_with_fan_in_edges():
     # Add fan-in edges using registered names
     # Both Source1 and Source2 need to be reachable, so connect Source1 to Source2
     workflow = (
-        builder.set_start_executor("Source1")
+        builder
+        .set_start_executor("Source1")
         .add_edge("Source1", "Source2")
         .add_fan_in_edges(["Source1", "Source2"], "Aggregator")
         .build()
@@ -483,7 +499,13 @@ def test_mixing_eager_and_lazy_initialization_error():
     builder.register_executor(lambda: MockExecutor(id="Lazy"), name="Lazy")
 
     # Mixing eager and lazy should raise an error during add_edge
-    with pytest.raises(ValueError, match="Both source and target must be either names"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Both source and target must be either registered factory names \(str\) "
+            r"or Executor/AgentProtocol instances\."
+        ),
+    ):
         builder.add_edge(eager_executor, "Lazy")
 
 

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
+using Moq.Protected;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -18,8 +19,8 @@ public class AIAgentTests
 {
     private readonly Mock<AIAgent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
-    private readonly AgentRunResponse _invokeResponse;
-    private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
+    private readonly AgentResponse _invokeResponse;
+    private readonly List<AgentResponseUpdate> _invokeStreamingResponses = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIAgentTests"/> class.
@@ -28,23 +29,25 @@ public class AIAgentTests
     {
         this._agentThreadMock = new Mock<AgentThread>(MockBehavior.Strict);
 
-        this._invokeResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
-        this._invokeStreamingResponses.Add(new AgentRunResponseUpdate(ChatRole.Assistant, "Hi"));
+        this._invokeResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
+        this._invokeStreamingResponses.Add(new AgentResponseUpdate(ChatRole.Assistant, "Hi"));
 
         this._agentMock = new Mock<AIAgent> { CallBase = true };
         this._agentMock
-            .Setup(x => x.RunAsync(
-                It.IsAny<IReadOnlyCollection<ChatMessage>>(),
-                this._agentThreadMock.Object,
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(this._invokeResponse);
         this._agentMock
-            .Setup(x => x.RunStreamingAsync(
-                It.IsAny<IReadOnlyCollection<ChatMessage>>(),
-                this._agentThreadMock.Object,
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(this._invokeStreamingResponses));
     }
 
@@ -64,13 +67,14 @@ public class AIAgentTests
         Assert.Equal(this._invokeResponse, response);
 
         // Verify that the mocked method was called with the expected parameters
-        this._agentMock.Verify(
-            x => x.RunAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(messages => messages.Count == 0),
-                this._agentThreadMock.Object,
-                options,
-                cancellationToken),
-            Times.Once);
+        this._agentMock
+            .Protected()
+            .Verify<Task<AgentResponse>>("RunCoreAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(messages => !messages.Any()),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentRunOptions?>(o => o == options),
+                ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
     /// <summary>
@@ -90,13 +94,14 @@ public class AIAgentTests
         Assert.Equal(this._invokeResponse, response);
 
         // Verify that the mocked method was called with the expected parameters
-        this._agentMock.Verify(
-            x => x.RunAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(messages => messages.Count == 1 && messages.First().Text == Message),
-                this._agentThreadMock.Object,
-                options,
-                cancellationToken),
-            Times.Once);
+        this._agentMock
+            .Protected()
+            .Verify<Task<AgentResponse>>("RunCoreAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First().Text == Message),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentRunOptions?>(o => o == options),
+                ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
     /// <summary>
@@ -116,13 +121,14 @@ public class AIAgentTests
         Assert.Equal(this._invokeResponse, response);
 
         // Verify that the mocked method was called with the expected parameters
-        this._agentMock.Verify(
-            x => x.RunAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(messages => messages.Count == 1 && messages.First() == message),
-                this._agentThreadMock.Object,
-                options,
-                cancellationToken),
-            Times.Once);
+        this._agentMock
+            .Protected()
+            .Verify<Task<AgentResponse>>("RunCoreAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First() == message),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentRunOptions?>(o => o == options),
+                ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
     /// <summary>
@@ -144,13 +150,14 @@ public class AIAgentTests
         }
 
         // Verify that the mocked method was called with the expected parameters
-        this._agentMock.Verify(
-            x => x.RunStreamingAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(messages => messages.Count == 0),
-                this._agentThreadMock.Object,
-                options,
-                cancellationToken),
-            Times.Once);
+        this._agentMock
+            .Protected()
+            .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(messages => !messages.Any()),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentRunOptions?>(o => o == options),
+                ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
     /// <summary>
@@ -173,13 +180,14 @@ public class AIAgentTests
         }
 
         // Verify that the mocked method was called with the expected parameters
-        this._agentMock.Verify(
-            x => x.RunStreamingAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(messages => messages.Count == 1 && messages.First().Text == Message),
-                this._agentThreadMock.Object,
-                options,
-                cancellationToken),
-            Times.Once);
+        this._agentMock
+            .Protected()
+            .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First().Text == Message),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentRunOptions?>(o => o == options),
+                ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
     /// <summary>
@@ -202,23 +210,42 @@ public class AIAgentTests
         }
 
         // Verify that the mocked method was called with the expected parameters
-        this._agentMock.Verify(
-            x => x.RunStreamingAsync(
-                It.Is<IReadOnlyCollection<ChatMessage>>(messages => messages.Count == 1 && messages.First() == message),
-                this._agentThreadMock.Object,
-                options,
-                cancellationToken),
-            Times.Once);
+        this._agentMock
+            .Protected()
+            .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First() == message),
+                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentRunOptions?>(o => o == options),
+                ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
     [Fact]
     public void ValidateAgentIDIsIdempotent()
     {
+        // Arrange
         var agent = new MockAgent();
 
+        // Act
         string id = agent.Id;
+
+        // Assert
         Assert.NotNull(id);
         Assert.Equal(id, agent.Id);
+    }
+
+    [Fact]
+    public void ValidateAgentIDCanBeProvidedByDerivedAgentClass()
+    {
+        // Arrange
+        var agent = new MockAgent(id: "test-agent-id");
+
+        // Act
+        string id = agent.Id;
+
+        // Assert
+        Assert.NotNull(id);
+        Assert.Equal("test-agent-id", id);
     }
 
     #region GetService Method Tests
@@ -344,20 +371,27 @@ public class AIAgentTests
 
     private sealed class MockAgent : AIAgent
     {
-        public override AgentThread GetNewThread()
+        public MockAgent(string? id = null)
+        {
+            this.IdCore = id;
+        }
+
+        protected override string? IdCore { get; }
+
+        public override async ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,

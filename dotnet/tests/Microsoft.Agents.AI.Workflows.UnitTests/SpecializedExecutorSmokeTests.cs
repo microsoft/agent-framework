@@ -19,7 +19,7 @@ public class SpecializedExecutorSmokeTests
 {
     public class TestAIAgent(List<ChatMessage>? messages = null, string? id = null, string? name = null) : AIAgent
     {
-        public override string Id => id ?? base.Id;
+        protected override string? IdCore => id;
         public override string? Name => name;
 
         public static List<ChatMessage> ToChatMessages(params string[] messages)
@@ -51,32 +51,32 @@ public class SpecializedExecutorSmokeTests
             return result;
         }
 
-        public override AgentThread GetNewThread()
-            => new TestAgentThread();
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+            => new(new TestAgentThread());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => new TestAgentThread();
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new TestAgentThread());
 
         public static TestAIAgent FromStrings(params string[] messages) =>
             new(ToChatMessages(messages));
 
         public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new AgentRunResponse(this.Messages)
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AgentResponse(this.Messages)
             {
                 AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N")
             });
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             string responseId = Guid.NewGuid().ToString("N");
             foreach (ChatMessage message in this.Messages)
             {
                 foreach (AIContent content in message.Contents)
                 {
-                    yield return new AgentRunResponseUpdate()
+                    yield return new AgentResponseUpdate()
                     {
                         AgentId = this.Id,
                         MessageId = message.MessageId,

@@ -35,11 +35,11 @@ async def main() -> None:
     local_mem0_client = AsyncMemory()
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_providers=Mem0Provider(user_id=user_id, mem0_client=local_mem0_client),
+            context_provider=Mem0Provider(user_id=user_id, mem0_client=local_mem0_client),
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.

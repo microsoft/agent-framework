@@ -91,7 +91,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         AgentRecord agentRecord = GetAgentRecordByName(aiProjectClient, name, cancellationToken);
 
-        return GetAIAgent(
+        return AsAIAgent(
             aiProjectClient,
             agentRecord,
             tools,
@@ -125,7 +125,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         AgentRecord agentRecord = await GetAgentRecordByNameAsync(aiProjectClient, name, cancellationToken).ConfigureAwait(false);
 
-        return GetAIAgent(
+        return AsAIAgent(
             aiProjectClient,
             agentRecord,
             tools,
@@ -143,7 +143,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentRecord"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentRecord agentRecord,
         IList<AITool>? tools = null,
@@ -174,7 +174,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the provided version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentVersion"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentVersion agentVersion,
         IList<AITool>? tools = null,
@@ -400,7 +400,7 @@ public static partial class AzureAIProjectChatClientExtensions
         };
 
         // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is ResponseCreationOptions respCreationOptions)
+        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
         {
             agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
         }
@@ -466,7 +466,7 @@ public static partial class AzureAIProjectChatClientExtensions
         };
 
         // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is ResponseCreationOptions respCreationOptions)
+        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
         {
             agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
         }

@@ -2,37 +2,34 @@
 
 import ast
 import json
-import os
 import re
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, TypeVar
+from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     BaseChatClient,
+    ChatAgent,
     ChatMessage,
+    ChatMessageStoreProtocol,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
     Contents,
+    ContextProvider,
     DataContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
-    HostedCodeInterpreterTool,
     HostedFileContent,
-    HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
-    HostedWebSearchTool,
+    Middleware,
     Role,
     TextContent,
     TextSpanRegion,
-    ToolMode,
     ToolProtocol,
     UriContent,
     UsageContent,
@@ -42,8 +39,8 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.observability import use_observability
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.observability import use_instrumentation
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
     Agent,
@@ -53,16 +50,13 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
-    BingCustomSearchTool,
-    BingGroundingTool,
-    CodeInterpreterToolDefinition,
-    FileSearchTool,
     FunctionName,
     FunctionToolDefinition,
     ListSortOrder,
-    McpTool,
     MessageDeltaChunk,
     MessageDeltaTextContent,
+    MessageDeltaTextFileCitationAnnotation,
+    MessageDeltaTextFilePathAnnotation,
     MessageDeltaTextUrlCitationAnnotation,
     MessageImageUrlParam,
     MessageInputContentBlock,
@@ -88,10 +82,18 @@ from azure.ai.agents.models import (
     ToolOutput,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from ._shared import AzureAISettings
+from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
@@ -100,14 +102,106 @@ else:
 
 logger = get_logger("agent_framework.azure")
 
+__all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 
-TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
+
+# region Azure AI Agent Options TypedDict
+
+
+class AzureAIAgentOptions(ChatOptions, total=False):
+    """Azure AI Foundry Agent Service-specific options dict.
+
+    Extends base ChatOptions with Azure AI Agent Service parameters.
+    Azure AI Agents provides a managed agent runtime with built-in
+    tools for code interpreter, file search, and web search.
+
+    See: https://learn.microsoft.com/azure/ai-services/agents/
+
+    Keys:
+        # Inherited from ChatOptions:
+        model_id: The model deployment name,
+            translates to ``model`` in Azure AI API.
+        temperature: Sampling temperature between 0 and 2.
+        top_p: Nucleus sampling parameter.
+        max_tokens: Maximum number of tokens to generate,
+            translates to ``max_completion_tokens`` in Azure AI API.
+        tools: List of tools available to the agent.
+        tool_choice: How the model should use tools.
+        allow_multiple_tool_calls: Whether to allow parallel tool calls,
+            translates to ``parallel_tool_calls`` in Azure AI API.
+        response_format: Structured output schema.
+        metadata: Request metadata for tracking.
+        instructions: System instructions for the agent.
+
+        # Options not supported in Azure AI Agent Service:
+        stop: Not supported.
+        seed: Not supported.
+        frequency_penalty: Not supported.
+        presence_penalty: Not supported.
+        user: Not supported.
+        store: Not supported.
+        logit_bias: Not supported.
+
+        # Azure AI Agent-specific options:
+        conversation_id: Thread ID to continue conversation in.
+        tool_resources: Resources for tools (file IDs, vector stores).
+    """
+
+    # Azure AI Agent-specific options
+    conversation_id: str  # type: ignore[misc]
+    """Thread ID to continue a conversation in an existing thread."""
+
+    tool_resources: dict[str, Any]
+    """Tool-specific resources for code_interpreter and file_search.
+    For code_interpreter: {"file_ids": ["file-abc123"]}
+    For file_search: {"vector_store_ids": ["vs-abc123"]}
+    """
+
+    # ChatOptions fields not supported in Azure AI Agent Service
+    stop: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    seed: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    frequency_penalty: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    presence_penalty: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+    logit_bias: None  # type: ignore[misc]
+    """Not supported in Azure AI Agent Service."""
+
+
+AZURE_AI_AGENT_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "max_tokens": "max_completion_tokens",
+    "allow_multiple_tool_calls": "parallel_tool_calls",
+}
+"""Maps ChatOptions keys to Azure AI Agents API parameter names."""
+
+TAzureAIAgentOptions = TypeVar(
+    "TAzureAIAgentOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="AzureAIAgentOptions",
+    covariant=True,
+)
+
+
+# endregion
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
-class AzureAIAgentClient(BaseChatClient):
+class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIAgentOptions]):
     """Azure AI Agent Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -160,19 +254,31 @@ class AzureAIAgentClient(BaseChatClient):
 
                 # Using environment variables
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=<model name>
                 credential = DefaultAzureCredential()
                 client = AzureAIAgentClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIAgentClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
-                    model_deployment_name="gpt-4",
+                    model_deployment_name="<model name>",
                     credential=credential,
                 )
 
                 # Or loading from a .env file
                 client = AzureAIAgentClient(credential=credential, env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework_azure_ai import AzureAIAgentOptions
+
+
+                class MyOptions(AzureAIAgentOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureAIAgentClient[MyOptions] = AzureAIAgentClient(credential=credential)
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -238,60 +344,34 @@ class AzureAIAgentClient(BaseChatClient):
         await self._cleanup_agent_if_needed()
         await self._close_client_if_needed()
 
-    @classmethod
-    def from_settings(cls: type[TAzureAIAgentClient], settings: dict[str, Any]) -> TAzureAIAgentClient:
-        """Initialize a AzureAIAgentClient from a dictionary of settings.
-
-        Args:
-            settings: A dictionary of settings for the service.
-        """
-        return cls(
-            agents_client=settings.get("agents_client"),
-            agent_id=settings.get("agent_id"),
-            thread_id=settings.get("thread_id"),
-            project_endpoint=settings.get("project_endpoint"),
-            model_deployment_name=settings.get("model_deployment_name"),
-            agent_name=settings.get("agent_name"),
-            credential=settings.get("credential"),
-            env_file_path=settings.get("env_file_path"),
-            should_cleanup_agent=settings.get("should_cleanup_agent", True),
-        )
-
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
-            output_format_type=chat_options.response_format,
+            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
+            output_format_type=options.get("response_format"),
         )
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # Extract necessary state from messages and options
-        run_options, required_action_results = await self._create_run_options(messages, chat_options, **kwargs)
-
-        # Get the thread ID
-        thread_id: str | None = (
-            chat_options.conversation_id
-            if chat_options.conversation_id is not None
-            else run_options.get("conversation_id", self.thread_id)
-        )
-
-        # Determine which agent to use and create if needed
+        # prepare
+        run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
         agent_id = await self._get_agent_id_or_create(run_options)
 
-        # Process and yield each update from the stream
+        # execute and process
         async for update in self._process_stream(
-            *(await self._create_agent_stream(thread_id, agent_id, run_options, required_action_results))
+            *(await self._create_agent_stream(agent_id, run_options, required_action_results))
         ):
             yield update
 
@@ -340,7 +420,6 @@ class AzureAIAgentClient(BaseChatClient):
 
     async def _create_agent_stream(
         self,
-        thread_id: str | None,
         agent_id: str,
         run_options: dict[str, Any],
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
@@ -350,14 +429,14 @@ class AzureAIAgentClient(BaseChatClient):
         Returns:
             tuple: (stream, final_thread_id)
         """
+        thread_id = run_options.pop("thread_id", None)
+
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
         stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any]
         handler: AsyncAgentEventHandler[Any] = AsyncAgentEventHandler()
-        tool_run_id, tool_outputs, tool_approvals = self._convert_required_action_to_tool_output(
-            required_action_results
-        )
+        tool_run_id, tool_outputs, tool_approvals = self._prepare_tool_outputs_for_azure_ai(required_action_results)
 
         if (
             thread_run is not None
@@ -419,19 +498,11 @@ class AzureAIAgentClient(BaseChatClient):
 
         # No thread ID was provided, so create a new thread.
         thread = await self.agents_client.threads.create(
-            tool_resources=run_options.get("tool_resources"), metadata=run_options.get("metadata")
+            tool_resources=run_options.get("tool_resources"),
+            metadata=run_options.get("metadata"),
+            messages=run_options.get("additional_messages"),
         )
-        thread_id = thread.id
-        # workaround for: https://github.com/Azure/azure-sdk-for-python/issues/42805
-        # this occurs when otel is enabled
-        # once fixed, in the function above, readd:
-        # `messages=run_options.pop("additional_messages")`
-        for msg in run_options.pop("additional_messages", []):
-            await self.agents_client.messages.create(
-                thread_id=thread_id, role=msg.role, content=msg.content, metadata=msg.metadata
-            )
-        # and remove until here.
-        return thread_id
+        return thread.id
 
     def _extract_url_citations(
         self, message_delta_chunk: MessageDeltaChunk, azure_search_tool_calls: list[dict[str, Any]]
@@ -470,6 +541,45 @@ class AzureAIAgentClient(BaseChatClient):
                         url_citations.append(citation)
 
         return url_citations
+
+    def _extract_file_path_contents(self, message_delta_chunk: MessageDeltaChunk) -> list[HostedFileContent]:
+        """Extract file references from MessageDeltaChunk annotations.
+
+        Code interpreter generates files that are referenced via file path or file citation
+        annotations in the message content. This method extracts those file IDs and returns
+        them as HostedFileContent objects.
+
+        Handles two annotation types:
+        - MessageDeltaTextFilePathAnnotation: Contains file_path.file_id
+        - MessageDeltaTextFileCitationAnnotation: Contains file_citation.file_id
+
+        Args:
+            message_delta_chunk: The message delta chunk to process
+
+        Returns:
+            List of HostedFileContent objects for any files referenced in annotations
+        """
+        file_contents: list[HostedFileContent] = []
+
+        for content in message_delta_chunk.delta.content:
+            if isinstance(content, MessageDeltaTextContent) and content.text and content.text.annotations:
+                for annotation in content.text.annotations:
+                    if isinstance(annotation, MessageDeltaTextFilePathAnnotation):
+                        # Extract file_id from the file_path annotation
+                        file_path = getattr(annotation, "file_path", None)
+                        if file_path is not None:
+                            file_id = getattr(file_path, "file_id", None)
+                            if file_id:
+                                file_contents.append(HostedFileContent(file_id=file_id))
+                    elif isinstance(annotation, MessageDeltaTextFileCitationAnnotation):
+                        # Extract file_id from the file_citation annotation
+                        file_citation = getattr(annotation, "file_citation", None)
+                        if file_citation is not None:
+                            file_id = getattr(file_citation, "file_id", None)
+                            if file_id:
+                                file_contents.append(HostedFileContent(file_id=file_id))
+
+        return file_contents
 
     def _get_real_url_from_citation_reference(
         self, citation_url: str, azure_search_tool_calls: list[dict[str, Any]]
@@ -530,6 +640,9 @@ class AzureAIAgentClient(BaseChatClient):
                         # Extract URL citations from the delta chunk
                         url_citations = self._extract_url_citations(event_data, azure_search_tool_calls)
 
+                        # Extract file path contents from code interpreter outputs
+                        file_contents = self._extract_file_path_contents(event_data)
+
                         # Create contents with citations if any exist
                         citation_content: list[Contents] = []
                         if event_data.text or url_citations:
@@ -537,6 +650,9 @@ class AzureAIAgentClient(BaseChatClient):
                             if url_citations:
                                 text_content_obj.annotations = url_citations
                             citation_content.append(text_content_obj)
+
+                        # Add file contents from file path annotations
+                        citation_content.extend(file_contents)
 
                         yield ChatResponseUpdate(
                             role=role,
@@ -564,7 +680,7 @@ class AzureAIAgentClient(BaseChatClient):
                                     "submit_tool_outputs",
                                     "submit_tool_approval",
                                 ]:
-                                    function_call_contents = self._create_function_call_contents(
+                                    function_call_contents = self._parse_function_calls_from_azure_ai(
                                         event_data, response_id
                                     )
                                     if function_call_contents:
@@ -706,8 +822,8 @@ class AzureAIAgentClient(BaseChatClient):
         except Exception as ex:
             logger.debug(f"Failed to capture Azure AI Search tool call: {ex}")
 
-    def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
-        """Create function call contents from a tool action event."""
+    def _parse_function_calls_from_azure_ai(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
+        """Parse function call contents from an Azure AI tool action event."""
         if isinstance(event_data, ThreadRun) and event_data.required_action is not None:
             if isinstance(event_data.required_action, SubmitToolOutputsAction):
                 return [
@@ -754,131 +870,207 @@ class AzureAIAgentClient(BaseChatClient):
             self._agent_definition = await self.agents_client.get_agent(self.agent_id)
         return self._agent_definition
 
-    def _prepare_tool_choice(self, chat_options: ChatOptions) -> None:
-        """Prepare the tools and tool choice for the chat options.
-
-        Args:
-            chat_options: The chat options to prepare.
-        """
-        chat_tool_mode = chat_options.tool_choice
-        if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
-            chat_options.tools = None
-            chat_options.tool_choice = ToolMode.NONE
-            return
-
-        chat_options.tool_choice = chat_tool_mode
-
-    async def _create_run_options(
+    async def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions | None,
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent | FunctionApprovalResponseContent] | None]:
-        run_options: dict[str, Any] = {**kwargs}
-
         agent_definition = await self._load_agent_definition_if_needed()
 
-        if chat_options is not None:
-            run_options["max_completion_tokens"] = chat_options.max_tokens
-            if chat_options.model_id is not None:
-                run_options["model"] = chat_options.model_id
-            else:
-                run_options["model"] = self.model_id
-            run_options["top_p"] = chat_options.top_p
-            run_options["temperature"] = chat_options.temperature
-            run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
+        # Build run_options from options dict, excluding specific keys
+        exclude_keys = {
+            "type",
+            "instructions",  # handled via messages
+            "tools",  # handled separately
+            "tool_choice",  # handled separately
+            "response_format",  # handled separately
+            "additional_properties",  # handled separately
+            "frequency_penalty",  # not supported
+            "presence_penalty",  # not supported
+            "user",  # not supported
+            "stop",  # not supported
+            "logit_bias",  # not supported
+            "seed",  # not supported
+            "store",  # not supported
+        }
+        run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
-            tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+        # Translation between ChatOptions and Azure AI Agents API
+        translations = {
+            "model_id": "model",
+            "allow_multiple_tool_calls": "parallel_tool_calls",
+            "max_tokens": "max_completion_tokens",
+        }
+        for old_key, new_key in translations.items():
+            if old_key in run_options and old_key != new_key:
+                run_options[new_key] = run_options.pop(old_key)
 
-            # Add tools from existing agent
-            if agent_definition is not None:
-                # Don't include function tools, since they will be passed through chat_options.tools
-                agent_tools = [tool for tool in agent_definition.tools if not isinstance(tool, FunctionToolDefinition)]
-                if agent_tools:
-                    tool_definitions.extend(agent_tools)
-                if agent_definition.tool_resources:
-                    run_options["tool_resources"] = agent_definition.tool_resources
+        # model id fallback
+        if not run_options.get("model"):
+            run_options["model"] = self.model_id
 
-            if chat_options.tool_choice is not None:
-                if chat_options.tool_choice != "none" and chat_options.tools:
-                    # Add run tools
-                    tool_definitions.extend(await self._prep_tools(chat_options.tools, run_options))
+        # tools and tool_choice
+        if tool_definitions := await self._prepare_tool_definitions_and_resources(
+            options, agent_definition, run_options
+        ):
+            run_options["tools"] = tool_definitions
 
-                    # Handle MCP tool resources for approval mode
-                    mcp_tools = [tool for tool in chat_options.tools if isinstance(tool, HostedMCPTool)]
-                    if mcp_tools:
-                        mcp_resources = []
-                        for mcp_tool in mcp_tools:
-                            server_label = mcp_tool.name.replace(" ", "_")
-                            mcp_resource: dict[str, Any] = {"server_label": server_label}
+        if tool_choice := self._prepare_tool_choice_mode(options):
+            run_options["tool_choice"] = tool_choice
 
-                            # Add headers if they exist
-                            if mcp_tool.headers:
-                                mcp_resource["headers"] = mcp_tool.headers
-
-                            if mcp_tool.approval_mode is not None:
-                                match mcp_tool.approval_mode:
-                                    case str():
-                                        # Map agent framework approval modes to Azure AI approval modes
-                                        approval_mode = (
-                                            "always" if mcp_tool.approval_mode == "always_require" else "never"
-                                        )
-                                        mcp_resource["require_approval"] = approval_mode
-                                    case _:
-                                        if "always_require_approval" in mcp_tool.approval_mode:
-                                            mcp_resource["require_approval"] = {
-                                                "always": mcp_tool.approval_mode["always_require_approval"]
-                                            }
-                                        elif "never_require_approval" in mcp_tool.approval_mode:
-                                            mcp_resource["require_approval"] = {
-                                                "never": mcp_tool.approval_mode["never_require_approval"]
-                                            }
-
-                            mcp_resources.append(mcp_resource)
-
-                        # Add MCP resources to tool_resources
-                        if "tool_resources" not in run_options:
-                            run_options["tool_resources"] = {}
-                        run_options["tool_resources"]["mcp"] = mcp_resources
-
-                if chat_options.tool_choice == "none":
-                    run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
-                elif chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = AgentsToolChoiceOptionMode.AUTO
-                elif (
-                    isinstance(chat_options.tool_choice, ToolMode)
-                    and chat_options.tool_choice == "required"
-                    and chat_options.tool_choice.required_function_name is not None
-                ):
-                    run_options["tool_choice"] = AgentsNamedToolChoice(
-                        type=AgentsNamedToolChoiceType.FUNCTION,
-                        function=FunctionName(name=chat_options.tool_choice.required_function_name),
-                    )
-
-            if tool_definitions:
-                run_options["tools"] = tool_definitions
-
-            if chat_options.response_format is not None:
+        # response format
+        response_format = options.get("response_format")
+        if response_format is not None:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                # Pydantic model - convert to Azure format
                 run_options["response_format"] = ResponseFormatJsonSchemaType(
                     json_schema=ResponseFormatJsonSchema(
-                        name=chat_options.response_format.__name__,
-                        schema=chat_options.response_format.model_json_schema(),
+                        name=response_format.__name__,
+                        schema=response_format.model_json_schema(),
                     )
                 )
+            elif isinstance(response_format, Mapping):
+                # Runtime JSON schema dict - pass through as-is
+                run_options["response_format"] = response_format
+            else:
+                raise ServiceInvalidRequestError(
+                    "response_format must be a Pydantic BaseModel class or a dict with runtime JSON schema."
+                )
 
+        # messages
+        additional_messages, instructions, required_action_results = self._prepare_messages(messages)
+        if additional_messages:
+            run_options["additional_messages"] = additional_messages
+
+        # Add instruction from existing agent at the beginning
+        if (
+            agent_definition is not None
+            and agent_definition.instructions
+            and agent_definition.instructions not in instructions
+        ):
+            instructions.insert(0, agent_definition.instructions)
+
+        if instructions:
+            run_options["instructions"] = "\n".join(instructions)
+
+        # thread_id resolution (conversation_id takes precedence, then kwargs, then instance default)
+        run_options["thread_id"] = options.get("conversation_id") or kwargs.get("conversation_id") or self.thread_id
+
+        return run_options, required_action_results
+
+    def _prepare_tool_choice_mode(
+        self, options: Mapping[str, Any]
+    ) -> AgentsToolChoiceOptionMode | AgentsNamedToolChoice | None:
+        """Prepare the tool choice mode for Azure AI Agents API."""
+        tool_choice = options.get("tool_choice")
+        if tool_choice is None:
+            return None
+        if tool_choice == "none":
+            return AgentsToolChoiceOptionMode.NONE
+        if tool_choice == "auto":
+            return AgentsToolChoiceOptionMode.AUTO
+        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") == "required":
+            req_fn = tool_choice.get("required_function_name")
+            if req_fn:
+                return AgentsNamedToolChoice(
+                    type=AgentsNamedToolChoiceType.FUNCTION,
+                    function=FunctionName(name=str(req_fn)),
+                )
+        return None
+
+    async def _prepare_tool_definitions_and_resources(
+        self,
+        options: Mapping[str, Any],
+        agent_definition: Agent | None,
+        run_options: dict[str, Any],
+    ) -> list[ToolDefinition | dict[str, Any]]:
+        """Prepare tool definitions and resources for the run options."""
+        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+
+        # Add tools from existing agent (exclude function tools - passed via options.get("tools"))
+        if agent_definition is not None:
+            agent_tools = [tool for tool in agent_definition.tools if not isinstance(tool, FunctionToolDefinition)]
+            if agent_tools:
+                tool_definitions.extend(agent_tools)
+            if agent_definition.tool_resources:
+                run_options["tool_resources"] = agent_definition.tool_resources
+
+        # Add run tools if tool_choice allows
+        tool_choice = options.get("tool_choice")
+        tools = options.get("tools")
+        if tool_choice is not None and tool_choice != "none" and tools:
+            tool_definitions.extend(to_azure_ai_agent_tools(tools, run_options))
+
+            # Handle MCP tool resources
+            mcp_resources = self._prepare_mcp_resources(tools)
+            if mcp_resources:
+                if "tool_resources" not in run_options:
+                    run_options["tool_resources"] = {}
+                run_options["tool_resources"]["mcp"] = mcp_resources
+
+        return tool_definitions
+
+    def _prepare_mcp_resources(
+        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
+    ) -> list[dict[str, Any]]:
+        """Prepare MCP tool resources for approval mode configuration."""
+        mcp_tools = [tool for tool in tools if isinstance(tool, HostedMCPTool)]
+        if not mcp_tools:
+            return []
+
+        mcp_resources: list[dict[str, Any]] = []
+        for mcp_tool in mcp_tools:
+            server_label = mcp_tool.name.replace(" ", "_")
+            mcp_resource: dict[str, Any] = {"server_label": server_label}
+
+            if mcp_tool.headers:
+                mcp_resource["headers"] = mcp_tool.headers
+
+            if mcp_tool.approval_mode is not None:
+                match mcp_tool.approval_mode:
+                    case str():
+                        # Map agent framework approval modes to Azure AI approval modes
+                        approval_mode = "always" if mcp_tool.approval_mode == "always_require" else "never"
+                        mcp_resource["require_approval"] = approval_mode
+                    case _:
+                        if "always_require_approval" in mcp_tool.approval_mode:
+                            mcp_resource["require_approval"] = {
+                                "always": mcp_tool.approval_mode["always_require_approval"]
+                            }
+                        elif "never_require_approval" in mcp_tool.approval_mode:
+                            mcp_resource["require_approval"] = {
+                                "never": mcp_tool.approval_mode["never_require_approval"]
+                            }
+
+            mcp_resources.append(mcp_resource)
+
+        return mcp_resources
+
+    def _prepare_messages(
+        self, messages: MutableSequence[ChatMessage]
+    ) -> tuple[
+        list[ThreadMessageOptions] | None,
+        list[str],
+        list[FunctionResultContent | FunctionApprovalResponseContent] | None,
+    ]:
+        """Prepare messages for Azure AI Agents API.
+
+        System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
+        All other messages are added 1:1, treating assistant messages as agent messages
+        and everything else as user messages.
+
+        Returns:
+            Tuple of (additional_messages, instructions, required_action_results)
+        """
         instructions: list[str] = []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
-
         additional_messages: list[ThreadMessageOptions] | None = None
 
-        # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
-        # All other messages are added 1:1, treating assistant messages as agent messages
-        # and everything else as user messages.
         for chat_message in messages:
             if chat_message.role.value in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if isinstance(content, TextContent)]:
                     instructions.append(text_content.text)
-
                 continue
 
             message_contents: list[MessageInputContentBlock] = []
@@ -895,7 +1087,7 @@ class AzureAIAgentClient(BaseChatClient):
                 elif isinstance(content.raw_representation, MessageInputContentBlock):
                     message_contents.append(content.raw_representation)
 
-            if len(message_contents) > 0:
+            if message_contents:
                 if additional_messages is None:
                     additional_messages = []
                 additional_messages.append(
@@ -905,102 +1097,13 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        if additional_messages is not None:
-            run_options["additional_messages"] = additional_messages
+        return additional_messages, instructions, required_action_results
 
-        # Add instruction from existing agent at the beginning
-        if (
-            agent_definition is not None
-            and agent_definition.instructions
-            and agent_definition.instructions not in instructions
-        ):
-            instructions.insert(0, agent_definition.instructions)
-
-        if len(instructions) > 0:
-            run_options["instructions"] = "".join(instructions)
-
-        return run_options, required_action_results
-
-    async def _prep_tools(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
-    ) -> list[ToolDefinition | dict[str, Any]]:
-        """Prepare tool definitions for the run options."""
-        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
-        for tool in tools:
-            match tool:
-                case AIFunction():
-                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                case HostedWebSearchTool():
-                    additional_props = tool.additional_properties or {}
-                    config_args: dict[str, Any] = {}
-                    if count := additional_props.get("count"):
-                        config_args["count"] = count
-                    if freshness := additional_props.get("freshness"):
-                        config_args["freshness"] = freshness
-                    if market := additional_props.get("market"):
-                        config_args["market"] = market
-                    if set_lang := additional_props.get("set_lang"):
-                        config_args["set_lang"] = set_lang
-                    # Bing Grounding
-                    connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
-                    # Custom Bing Search
-                    custom_connection_id = additional_props.get("custom_connection_id") or os.getenv(
-                        "BING_CUSTOM_CONNECTION_ID"
-                    )
-                    custom_instance_name = additional_props.get("custom_instance_name") or os.getenv(
-                        "BING_CUSTOM_INSTANCE_NAME"
-                    )
-                    bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if (connection_id) and not custom_connection_id and not custom_instance_name:
-                        if connection_id:
-                            conn_id = connection_id
-                        else:
-                            raise ServiceInitializationError("Parameter connection_id is not provided.")
-                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
-                    if custom_connection_id and custom_instance_name:
-                        bing_search = BingCustomSearchTool(
-                            connection_id=custom_connection_id,
-                            instance_name=custom_instance_name,
-                            **config_args,
-                        )
-                    if not bing_search:
-                        raise ServiceInitializationError(
-                            "Bing search tool requires either 'connection_id' for Bing Grounding "
-                            "or both 'custom_connection_id' and 'custom_instance_name' for Custom Bing Search. "
-                            "These can be provided via additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_ID', "
-                            "'BING_CUSTOM_INSTANCE_NAME'"
-                        )
-                    tool_definitions.extend(bing_search.definitions)
-                case HostedCodeInterpreterTool():
-                    tool_definitions.append(CodeInterpreterToolDefinition())
-                case HostedMCPTool():
-                    mcp_tool = McpTool(
-                        server_label=tool.name.replace(" ", "_"),
-                        server_url=str(tool.url),
-                        allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
-                    )
-                    tool_definitions.extend(mcp_tool.definitions)
-                case HostedFileSearchTool():
-                    vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
-                    if vector_stores:
-                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
-                        tool_definitions.extend(file_search.definitions)
-                        # Set tool_resources for file search to work properly with Azure AI
-                        if run_options is not None and "tool_resources" not in run_options:
-                            run_options["tool_resources"] = file_search.resources
-                case ToolDefinition():
-                    tool_definitions.append(tool)
-                case dict():
-                    tool_definitions.append(tool)
-                case _:
-                    raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
-        return tool_definitions
-
-    def _convert_required_action_to_tool_output(
+    def _prepare_tool_outputs_for_azure_ai(
         self,
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None,
     ) -> tuple[str | None, list[ToolOutput] | None, list[ToolApproval] | None]:
+        """Prepare function results and approvals for submission to the Azure AI API."""
         run_id: str | None = None
         tool_outputs: list[ToolOutput] | None = None
         tool_approvals: list[ToolApproval] | None = None
@@ -1063,3 +1166,59 @@ class AzureAIAgentClient(BaseChatClient):
             The service URL for the chat client, or None if not set.
         """
         return self.agents_client._config.endpoint  # type: ignore
+
+    @override
+    def as_agent(
+        self,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        default_options: TAzureAIAgentOptions | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> ChatAgent[TAzureAIAgentOptions]:
+        """Convert this chat client to a ChatAgent.
+
+        This method creates a ChatAgent instance with this client pre-configured.
+        It does NOT create an agent on the Azure AI service - the actual agent
+        will be created on the server during the first invocation (run).
+
+        For creating and managing persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.AzureAIAgentsProvider` instead.
+
+        Keyword Args:
+            id: The unique identifier for the agent. Will be created automatically if not provided.
+            name: The name of the agent.
+            description: A brief description of the agent's purpose.
+            instructions: Optional instructions for the agent.
+            tools: The tools to use for the request.
+            default_options: A TypedDict containing chat options.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+            context_provider: Context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
+            kwargs: Any additional keyword arguments.
+
+        Returns:
+            A ChatAgent instance configured with this chat client.
+        """
+        return super().as_agent(
+            id=id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )

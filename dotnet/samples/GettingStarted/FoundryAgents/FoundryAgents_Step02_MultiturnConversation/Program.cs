@@ -26,17 +26,17 @@ AgentVersion agentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName:
 AIAgent jokerAgent = aiProjectClient.GetAIAgent(agentVersion);
 
 // Invoke the agent with a multi-turn conversation, where the context is preserved in the thread object.
-AgentThread thread = jokerAgent.GetNewThread();
+AgentThread thread = await jokerAgent.GetNewThreadAsync();
 Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", thread));
 Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread));
 
 // Invoke the agent with a multi-turn conversation and streaming, where the context is preserved in the thread object.
-thread = jokerAgent.GetNewThread();
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+thread = await jokerAgent.GetNewThreadAsync();
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
     Console.WriteLine(update);
 }
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
 {
     Console.WriteLine(update);
 }

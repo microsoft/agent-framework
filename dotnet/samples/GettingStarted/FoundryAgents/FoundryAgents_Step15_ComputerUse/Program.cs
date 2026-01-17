@@ -73,7 +73,7 @@ internal sealed class Program
         Dictionary<string, byte[]> screenshots = ComputerUseUtil.LoadScreenshotAssets();
 
         ChatOptions chatOptions = new();
-        ResponseCreationOptions responseCreationOptions = new()
+        CreateResponseOptions responseCreationOptions = new()
         {
             TruncationMode = ResponseTruncationMode.Auto
         };
@@ -83,7 +83,7 @@ internal sealed class Program
             AllowBackgroundResponses = true,
         };
 
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync();
 
         ChatMessage message = new(ChatRole.User, [
             new TextContent("I need you to help me search for 'OpenAI news'. Please type 'OpenAI news' and submit the search. Once you see search results, the task is complete."),
@@ -93,7 +93,7 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        AgentRunResponse runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
+        AgentResponse response = await agent.RunAsync(message, thread: thread, options: runOptions);
 
         // Main interaction loop
         const int MaxIterations = 10;
@@ -105,7 +105,7 @@ internal sealed class Program
         while (true)
         {
             // Poll until the response is complete.
-            while (runResponse.ContinuationToken is { } token)
+            while (response.ContinuationToken is { } token)
             {
                 // Wait before polling again.
                 await Task.Delay(TimeSpan.FromSeconds(2));
@@ -113,10 +113,10 @@ internal sealed class Program
                 // Continue with the token.
                 runOptions.ContinuationToken = token;
 
-                runResponse = await agent.RunAsync(thread, runOptions);
+                response = await agent.RunAsync(thread, runOptions);
             }
 
-            Console.WriteLine($"Agent response received (ID: {runResponse.ResponseId})");
+            Console.WriteLine($"Agent response received (ID: {response.ResponseId})");
 
             if (iteration >= MaxIterations)
             {
@@ -128,7 +128,7 @@ internal sealed class Program
             Console.WriteLine($"\n--- Iteration {iteration} ---");
 
             // Check for computer calls in the response
-            IEnumerable<ComputerCallResponseItem> computerCallResponseItems = runResponse.Messages
+            IEnumerable<ComputerCallResponseItem> computerCallResponseItems = response.Messages
                 .SelectMany(x => x.Contents)
                 .Where(c => c.RawRepresentation is ComputerCallResponseItem and not null)
                 .Select(c => (ComputerCallResponseItem)c.RawRepresentation!);
@@ -137,7 +137,7 @@ internal sealed class Program
             if (firstComputerCall is null)
             {
                 Console.WriteLine("No computer call actions found. Ending interaction.");
-                Console.WriteLine($"Final Response: {runResponse}");
+                Console.WriteLine($"Final Response: {response}");
                 break;
             }
 
@@ -168,7 +168,7 @@ internal sealed class Program
 
             // Follow-up message with action result and new screenshot
             message = new(ChatRole.User, [content]);
-            runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
+            response = await agent.RunAsync(message, thread: thread, options: runOptions);
         }
     }
 }

@@ -25,6 +25,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter_file_generation.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter_file_generation.py) | Azure AI Agent with Code Interpreter File Generation Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py) | Azure AI Agent with Existing Thread Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
@@ -47,6 +48,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_ai/azure_ai_with_bing_custom_search.py`](./getting_started/agents/azure_ai/azure_ai_with_bing_custom_search.py) | Azure AI Agent with Bing Custom Search Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_browser_automation.py`](./getting_started/agents/azure_ai/azure_ai_with_browser_automation.py) | Azure AI Agent with Browser Automation Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter_file_generation.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter_file_generation.py) | Azure AI Agent with Code Interpreter File Generation Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_existing_conversation.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_conversation.py) | Azure AI Agent with Existing Conversation Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
@@ -97,9 +99,15 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 ### Ollama
 
+The recommended way to use Ollama is via the native `OllamaChatClient` from the `agent-framework-ollama` package.
+
 | File | Description |
 |------|-------------|
-| [`getting_started/agents/ollama/ollama_with_openai_chat_client.py`](./getting_started/agents/ollama/ollama_with_openai_chat_client.py) | Ollama with OpenAI Chat Client Example |
+| [`getting_started/agents/ollama/ollama_agent_basic.py`](./getting_started/agents/ollama/ollama_agent_basic.py) | Basic Ollama Agent with native Ollama Chat Client |
+| [`getting_started/agents/ollama/ollama_agent_reasoning.py`](./getting_started/agents/ollama/ollama_agent_reasoning.py) | Ollama Agent with reasoning capabilities |
+| [`getting_started/agents/ollama/ollama_chat_client.py`](./getting_started/agents/ollama/ollama_chat_client.py) | Direct usage of Ollama Chat Client |
+| [`getting_started/agents/ollama/ollama_chat_multimodal.py`](./getting_started/agents/ollama/ollama_chat_multimodal.py) | Ollama Chat Client with multimodal (image) input |
+| [`getting_started/agents/ollama/ollama_with_openai_chat_client.py`](./getting_started/agents/ollama/ollama_with_openai_chat_client.py) | Alternative: Ollama via OpenAI Chat Client |
 
 ### OpenAI
 
@@ -146,6 +154,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/chat_client/openai_chat_client.py`](./getting_started/chat_client/openai_chat_client.py) | OpenAI Chat Client Direct Usage Example |
 | [`getting_started/chat_client/openai_responses_client.py`](./getting_started/chat_client/openai_responses_client.py) | OpenAI Responses Client Direct Usage Example |
 
+
 ## Context Providers
 
 ### Mem0
@@ -169,6 +178,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/context_providers/simple_context_provider.py`](./getting_started/context_providers/simple_context_provider.py) | Simple context provider implementation example |
+| [`getting_started/context_providers/aggregate_context_provider.py`](./getting_started/context_providers/aggregate_context_provider.py) | Shows how to combine multiple context providers using an AggregateContextProvider |
 
 ## DevUI
 
@@ -220,13 +230,14 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/multimodal_input/azure_responses_multimodal.py`](./getting_started/multimodal_input/azure_responses_multimodal.py) | Azure OpenAI Responses with multimodal (image) input example |
 | [`getting_started/multimodal_input/openai_chat_multimodal.py`](./getting_started/multimodal_input/openai_chat_multimodal.py) | OpenAI Chat with multimodal (image) input example |
 
+
 ## Azure Functions
 
 | Sample | Description |
 |--------|-------------|
 | [`getting_started/azure_functions/01_single_agent/`](./getting_started/azure_functions/01_single_agent/) | Host a single agent in Azure Functions with Durable Extension HTTP endpoints and per-session state. |
 | [`getting_started/azure_functions/02_multi_agent/`](./getting_started/azure_functions/02_multi_agent/) | Register multiple agents in one function app with dedicated run routes and a health check endpoint. |
-| [`getting_started/azure_functions/03_callbacks/`](./getting_started/azure_functions/03_callbacks/) | Capture streaming response telemetry via Durable Extension callbacks exposed through HTTP APIs. |
+| [`getting_started/azure_functions/03_reliable_streaming/`](./getting_started/azure_functions/03_reliable_streaming/) | Implement reliable streaming for durable agents using Redis Streams with cursor-based resumption. |
 | [`getting_started/azure_functions/04_single_agent_orchestration_chaining/`](./getting_started/azure_functions/04_single_agent_orchestration_chaining/) | Chain sequential agent executions inside a durable orchestration while preserving the shared thread context. |
 | [`getting_started/azure_functions/05_multi_agent_orchestration_concurrency/`](./getting_started/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
 | [`getting_started/azure_functions/06_multi_agent_orchestration_conditionals/`](./getting_started/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |
@@ -239,10 +250,10 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/observability/advanced_manual_setup_console_output.py`](./getting_started/observability/advanced_manual_setup_console_output.py) | Advanced manual observability setup with console output |
 | [`getting_started/observability/advanced_zero_code.py`](./getting_started/observability/advanced_zero_code.py) | Zero-code observability setup example |
 | [`getting_started/observability/agent_observability.py`](./getting_started/observability/agent_observability.py) | Agent observability example |
+| [`getting_started/observability/agent_with_foundry_tracing.py`](./getting_started/observability/agent_with_foundry_tracing.py) | Any chat client setup with Azure Foundry Observability |
 | [`getting_started/observability/azure_ai_agent_observability.py`](./getting_started/observability/azure_ai_agent_observability.py) | Azure AI agent observability example |
-| [`getting_started/observability/azure_ai_chat_client_with_observability.py`](./getting_started/observability/azure_ai_chat_client_with_observability.py) | Azure AI chat client with observability example |
-| [`getting_started/observability/setup_observability_with_env_var.py`](./getting_started/observability/setup_observability_with_env_var.py) | Setup observability using environment variables |
-| [`getting_started/observability/setup_observability_with_parameters.py`](./getting_started/observability/setup_observability_with_parameters.py) | Setup observability using parameters |
+| [`getting_started/observability/configure_otel_providers_with_env_var.py`](./getting_started/observability/configure_otel_providers_with_env_var.py) | Setup observability using environment variables |
+| [`getting_started/observability/configure_otel_providers_with_parameters.py`](./getting_started/observability/configure_otel_providers_with_parameters.py) | Setup observability using parameters |
 | [`getting_started/observability/workflow_observability.py`](./getting_started/observability/workflow_observability.py) | Workflow observability example |
 
 ## Threads

@@ -24,7 +24,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     private const string ImageReference = "https://sample-files.com/downloads/images/jpg/web_optimized_1200x800_97kb.jpg";
 
     [Theory]
-    [InlineData(ImageReference, "image/jpeg")]
+    [InlineData(ImageReference, "image/jpeg", Skip = "Failing consistently in the agent service api")]
     [InlineData(PdfReference, "application/pdf", Skip = "Not currently supported by agent service api")]
     public async Task ValidateFileUrlAsync(string fileSource, string mediaType)
     {
@@ -84,7 +84,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         WorkflowEvents workflowEvents = await harness.RunWorkflowAsync(inputMessage).ConfigureAwait(false);
         ConversationUpdateEvent conversationEvent = Assert.Single(workflowEvents.ConversationEvents);
         this.Output.WriteLine("CONVERSATION: " + conversationEvent.ConversationId);
-        AgentRunResponseEvent agentResponseEvent = Assert.Single(workflowEvents.AgentResponseEvents);
+        AgentResponseEvent agentResponseEvent = Assert.Single(workflowEvents.AgentResponseEvents);
         this.Output.WriteLine("RESPONSE: " + agentResponseEvent.Response.Text);
         Assert.NotEmpty(agentResponseEvent.Response.Text);
     }

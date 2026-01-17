@@ -45,12 +45,12 @@ class EmailPayload(BaseModel):
 def _create_agents() -> list[Any]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    spam_agent = chat_client.create_agent(
+    spam_agent = chat_client.as_agent(
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = chat_client.create_agent(
+    email_agent = chat_client.as_agent(
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )
@@ -99,7 +99,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     spam_result_raw = yield spam_agent.run(
         messages=spam_prompt,
         thread=spam_thread,
-        response_format=SpamDetectionResult,
+        options={"response_format": SpamDetectionResult},
     )
 
     spam_result = cast(SpamDetectionResult, spam_result_raw.value)
@@ -120,7 +120,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     email_result_raw = yield email_agent.run(
         messages=email_prompt,
         thread=email_thread,
-        response_format=EmailResponse,
+        options={"response_format": EmailResponse},
     )
 
     email_result = cast(EmailResponse, email_result_raw.value)

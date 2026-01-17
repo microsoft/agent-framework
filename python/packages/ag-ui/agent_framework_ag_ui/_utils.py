@@ -3,18 +3,113 @@
 """Utility functions for AG-UI integration."""
 
 import copy
+import json
 import uuid
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AIFunction, ToolProtocol
+from agent_framework import AgentResponseUpdate, AIFunction, ChatResponseUpdate, Role, ToolProtocol
+
+# Role mapping constants
+AGUI_TO_FRAMEWORK_ROLE: dict[str, Role] = {
+    "user": Role.USER,
+    "assistant": Role.ASSISTANT,
+    "system": Role.SYSTEM,
+}
+
+FRAMEWORK_TO_AGUI_ROLE: dict[Role, str] = {
+    Role.USER: "user",
+    Role.ASSISTANT: "assistant",
+    Role.SYSTEM: "system",
+}
+
+ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool"}
 
 
 def generate_event_id() -> str:
     """Generate a unique event ID."""
     return str(uuid.uuid4())
+
+
+def safe_json_parse(value: Any) -> dict[str, Any] | None:
+    """Safely parse a value as JSON dict.
+
+    Args:
+        value: String or dict to parse
+
+    Returns:
+        Parsed dict or None if parsing fails
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def get_role_value(message: Any) -> str:
+    """Extract role string from a message object.
+
+    Handles both enum roles (with .value) and string roles.
+
+    Args:
+        message: Message object with role attribute
+
+    Returns:
+        Role as lowercase string, or empty string if not found
+    """
+    role = getattr(message, "role", None)
+    if role is None:
+        return ""
+    if hasattr(role, "value"):
+        return str(role.value)
+    return str(role)
+
+
+def normalize_agui_role(raw_role: Any) -> str:
+    """Normalize an AG-UI role to a standard role string.
+
+    Args:
+        raw_role: Raw role value from AG-UI message
+
+    Returns:
+        Normalized role string (user, assistant, system, or tool)
+    """
+    if not isinstance(raw_role, str):
+        return "user"
+    role = raw_role.lower()
+    if role == "developer":
+        return "system"
+    if role in ALLOWED_AGUI_ROLES:
+        return role
+    return "user"
+
+
+def extract_state_from_tool_args(
+    args: dict[str, Any] | None,
+    tool_arg_name: str,
+) -> Any:
+    """Extract state value from tool arguments based on config.
+
+    Args:
+        args: Parsed tool arguments dict
+        tool_arg_name: Name of the argument to extract, or "*" for entire args
+
+    Returns:
+        Extracted state value, or None if not found
+    """
+    if not args:
+        return None
+    if tool_arg_name == "*":
+        return args
+    return args.get(tool_arg_name)
 
 
 def merge_state(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
@@ -164,3 +259,17 @@ def convert_tools_to_agui_format(
             continue
 
     return results if results else None
+
+
+def get_conversation_id_from_update(update: AgentResponseUpdate) -> str | None:
+    """Extract conversation ID from AgentResponseUpdate metadata.
+
+    Args:
+        update: AgentRunResponseUpdate instance
+    Returns:
+        Conversation ID if present, else None
+
+    """
+    if isinstance(update.raw_representation, ChatResponseUpdate):
+        return update.raw_representation.conversation_id
+    return None

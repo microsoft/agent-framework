@@ -64,10 +64,10 @@ internal sealed class HandoffAgentExecutor(
         routeBuilder.AddHandler<HandoffState>(async (handoffState, context, cancellationToken) =>
         {
             string? requestedHandoff = null;
-            List<AgentRunResponseUpdate> updates = [];
+            List<AgentResponseUpdate> updates = [];
             List<ChatMessage> allMessages = handoffState.Messages;
 
-            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName);
+            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
             await foreach (var update in this._agent.RunStreamingAsync(allMessages,
                                                                        options: this._agentOptions,
@@ -82,10 +82,10 @@ internal sealed class HandoffAgentExecutor(
                     {
                         requestedHandoff = fcc.Name;
                         await AddUpdateAsync(
-                                new AgentRunResponseUpdate
+                                new AgentResponseUpdate
                                 {
                                     AgentId = this._agent.Id,
-                                    AuthorName = this._agent.DisplayName,
+                                    AuthorName = this._agent.Name ?? this._agent.Id,
                                     Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
                                     CreatedAt = DateTimeOffset.UtcNow,
                                     MessageId = Guid.NewGuid().ToString("N"),
@@ -98,18 +98,18 @@ internal sealed class HandoffAgentExecutor(
                 }
             }
 
-            allMessages.AddRange(updates.ToAgentRunResponse().Messages);
+            allMessages.AddRange(updates.ToAgentResponse().Messages);
 
             roleChanges.ResetUserToAssistantForChangedRoles();
 
             await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
+            async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
             {
                 updates.Add(update);
                 if (handoffState.TurnToken.EmitEvents is true)
                 {
-                    await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                    await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
                 }
             }
         });

@@ -19,7 +19,7 @@ async def main():
         description="Get the current time in ISO 8601 format.",
     )
 
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="DeclarationOnlyToolAgent",
         instructions="You are a helpful agent that uses tools.",
         tools=function_declaration,
@@ -34,7 +34,7 @@ async def main():
 Expected result:
 User: What is the current time?
 Result: {
-  "type": "agent_run_response",
+  "type": "agent_response",
   "messages": [
     {
       "type": "chat_message",

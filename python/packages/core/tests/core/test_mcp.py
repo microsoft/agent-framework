@@ -9,7 +9,7 @@ import pytest
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl, ValidationError
+from pydantic import AnyUrl, BaseModel, ValidationError
 
 from agent_framework import (
     ChatMessage,
@@ -24,14 +24,14 @@ from agent_framework import (
 )
 from agent_framework._mcp import (
     MCPTool,
-    _ai_content_to_mcp_types,
-    _chat_message_to_mcp_types,
     _get_input_model_from_mcp_prompt,
     _get_input_model_from_mcp_tool,
-    _mcp_call_tool_result_to_ai_contents,
-    _mcp_prompt_message_to_chat_message,
-    _mcp_type_to_ai_content,
     _normalize_mcp_name,
+    _parse_content_from_mcp,
+    _parse_contents_from_mcp_tool_result,
+    _parse_message_from_mcp,
+    _prepare_content_for_mcp,
+    _prepare_message_for_mcp,
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
@@ -60,7 +60,7 @@ def test_normalize_mcp_name():
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
-    ai_content = _mcp_prompt_message_to_chat_message(mcp_message)
+    ai_content = _parse_message_from_mcp(mcp_message)
 
     assert isinstance(ai_content, ChatMessage)
     assert ai_content.role.value == "user"
@@ -70,22 +70,26 @@ def test_mcp_prompt_message_to_ai_content():
     assert ai_content.raw_representation == mcp_message
 
 
-def test_mcp_call_tool_result_to_ai_contents():
+def test_parse_contents_from_mcp_tool_result():
     """Test conversion from MCP tool result to AI contents."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="data:image/png;base64,xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data="xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data=b"abc", mimeType="image/webp"),
         ]
     )
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
-    assert len(ai_contents) == 2
+    assert len(ai_contents) == 3
     assert isinstance(ai_contents[0], TextContent)
     assert ai_contents[0].text == "Result text"
     assert isinstance(ai_contents[1], DataContent)
     assert ai_contents[1].uri == "data:image/png;base64,xyz"
     assert ai_contents[1].media_type == "image/png"
+    assert isinstance(ai_contents[2], DataContent)
+    assert ai_contents[2].uri == "data:image/webp;base64,abc"
+    assert ai_contents[2].media_type == "image/webp"
 
 
 def test_mcp_call_tool_result_with_meta_error():
@@ -96,7 +100,7 @@ def test_mcp_call_tool_result_with_meta_error():
         _meta={"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"},
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -127,7 +131,7 @@ def test_mcp_call_tool_result_with_meta_arbitrary_data():
         },
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -149,7 +153,7 @@ def test_mcp_call_tool_result_with_meta_merging_existing_properties():
     text_content = types.TextContent(type="text", text="Test content")
     mcp_result = types.CallToolResult(content=[text_content], _meta={"newField": "newValue", "isError": False})
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     content = ai_contents[0]
@@ -165,7 +169,7 @@ def test_mcp_call_tool_result_with_meta_none():
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="No meta test")])
     # No _meta field set
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -183,11 +187,11 @@ def test_mcp_call_tool_result_regression_successful_workflow():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Success message"),
-            types.ImageContent(type="image", data="data:image/jpeg;base64,abc123", mimeType="image/jpeg"),
+            types.ImageContent(type="image", data="abc123", mimeType="image/jpeg"),
         ]
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     # Verify basic conversion still works correctly
     assert len(ai_contents) == 2
@@ -209,7 +213,7 @@ def test_mcp_call_tool_result_regression_successful_workflow():
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Sample text"
@@ -218,8 +222,9 @@ def test_mcp_content_types_to_ai_content_text():
 
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
-    mcp_content = types.ImageContent(type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg")
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    mcp_content = types.ImageContent(type="image", data="abc", mimeType="image/jpeg")
+    mcp_content = types.ImageContent(type="image", data=b"abc", mimeType="image/jpeg")
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:image/jpeg;base64,abc"
@@ -229,8 +234,8 @@ def test_mcp_content_types_to_ai_content_image():
 
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
-    mcp_content = types.AudioContent(type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav")
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    mcp_content = types.AudioContent(type="audio", data="def", mimeType="audio/wav")
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:audio/wav;base64,def"
@@ -246,7 +251,7 @@ def test_mcp_content_types_to_ai_content_resource_link():
         name="test_resource",
         mimeType="application/json",
     )
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, UriContent)
     assert ai_content.uri == "https://example.com/resource"
@@ -262,7 +267,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_text():
         text="Embedded text content",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=text_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Embedded text content"
@@ -278,7 +283,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
         blob="data:application/octet-stream;base64,dGVzdCBkYXRh",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=blob_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:application/octet-stream;base64,dGVzdCBkYXRh"
@@ -289,7 +294,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
 def test_ai_content_to_mcp_content_types_text():
     """Test conversion of AI text content to MCP content."""
     ai_content = TextContent(text="Sample text")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.TextContent)
     assert mcp_content.type == "text"
@@ -299,7 +304,7 @@ def test_ai_content_to_mcp_content_types_text():
 def test_ai_content_to_mcp_content_types_data_image():
     """Test conversion of AI data content to MCP content."""
     ai_content = DataContent(uri="data:image/png;base64,xyz", media_type="image/png")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.ImageContent)
     assert mcp_content.type == "image"
@@ -310,7 +315,7 @@ def test_ai_content_to_mcp_content_types_data_image():
 def test_ai_content_to_mcp_content_types_data_audio():
     """Test conversion of AI data content to MCP content."""
     ai_content = DataContent(uri="data:audio/mpeg;base64,xyz", media_type="audio/mpeg")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.AudioContent)
     assert mcp_content.type == "audio"
@@ -324,7 +329,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
         uri="data:application/octet-stream;base64,xyz",
         media_type="application/octet-stream",
     )
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.EmbeddedResource)
     assert mcp_content.type == "resource"
@@ -335,7 +340,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
 def test_ai_content_to_mcp_content_types_uri():
     """Test conversion of AI URI content to MCP content."""
     ai_content = UriContent(uri="https://example.com/resource", media_type="application/json")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.ResourceLink)
     assert mcp_content.type == "resource_link"
@@ -343,7 +348,7 @@ def test_ai_content_to_mcp_content_types_uri():
     assert mcp_content.mimeType == "application/json"
 
 
-def test_chat_message_to_mcp_types():
+def test_prepare_message_for_mcp():
     message = ChatMessage(
         role="user",
         contents=[
@@ -351,128 +356,366 @@ def test_chat_message_to_mcp_types():
             DataContent(uri="data:image/png;base64,xyz", media_type="image/png"),
         ],
     )
-    mcp_contents = _chat_message_to_mcp_types(message)
+    mcp_contents = _prepare_message_for_mcp(message)
     assert len(mcp_contents) == 2
     assert isinstance(mcp_contents[0], types.TextContent)
     assert isinstance(mcp_contents[1], types.ImageContent)
 
 
-def test_get_input_model_from_mcp_tool():
-    """Test creation of input model from MCP tool."""
-    tool = types.Tool(
-        name="test_tool",
-        description="A test tool",
-        inputSchema={
-            "type": "object",
-            "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
-            "required": ["param1"],
-        },
-    )
-    model = _get_input_model_from_mcp_tool(tool)
-
-    # Create an instance to verify the model works
-    instance = model(param1="test", param2=42)
-    assert instance.param1 == "test"
-    assert instance.param2 == 42
-
-    # Test validation
-    with pytest.raises(ValidationError):  # Missing required param1
-        model(param2=42)
-
-
-def test_get_input_model_from_mcp_tool_with_nested_object():
-    """Test creation of input model from MCP tool with nested object property."""
-    tool = types.Tool(
-        name="get_customer_detail",
-        description="Get customer details",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "params": {
-                    "type": "object",
-                    "properties": {"customer_id": {"type": "integer"}},
-                    "required": ["customer_id"],
+@pytest.mark.parametrize(
+    "test_id,input_schema,valid_data,expected_values,invalid_data,validation_check",
+    [
+        # Basic types with required/optional fields
+        (
+            "basic_types",
+            {
+                "type": "object",
+                "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
+                "required": ["param1"],
+            },
+            {"param1": "test", "param2": 42},
+            {"param1": "test", "param2": 42},
+            {"param2": 42},  # Missing required param1
+            None,
+        ),
+        # Nested object
+        (
+            "nested_object",
+            {
+                "type": "object",
+                "properties": {
+                    "params": {
+                        "type": "object",
+                        "properties": {"customer_id": {"type": "integer"}},
+                        "required": ["customer_id"],
+                    }
+                },
+                "required": ["params"],
+            },
+            {"params": {"customer_id": 251}},
+            {"params.customer_id": 251},
+            {"params": {}},  # Missing required customer_id
+            lambda instance: isinstance(instance.params, BaseModel),
+        ),
+        # $ref resolution
+        (
+            "ref_schema",
+            {
+                "type": "object",
+                "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
+                "required": ["params"],
+                "$defs": {
+                    "CustomerIdParam": {
+                        "type": "object",
+                        "properties": {"customer_id": {"type": "integer"}},
+                        "required": ["customer_id"],
+                    }
+                },
+            },
+            {"params": {"customer_id": 251}},
+            {"params.customer_id": 251},
+            {"params": {}},  # Missing required customer_id
+            lambda instance: isinstance(instance.params, BaseModel),
+        ),
+        # Array of strings (typed)
+        (
+            "array_of_strings",
+            {
+                "type": "object",
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "description": "List of tags",
+                        "items": {"type": "string"},
+                    }
+                },
+                "required": ["tags"],
+            },
+            {"tags": ["tag1", "tag2", "tag3"]},
+            {"tags": ["tag1", "tag2", "tag3"]},
+            None,  # No validation error test for this case
+            None,
+        ),
+        # Array of integers (typed)
+        (
+            "array_of_integers",
+            {
+                "type": "object",
+                "properties": {
+                    "numbers": {
+                        "type": "array",
+                        "description": "List of integers",
+                        "items": {"type": "integer"},
+                    }
+                },
+                "required": ["numbers"],
+            },
+            {"numbers": [1, 2, 3]},
+            {"numbers": [1, 2, 3]},
+            None,
+            None,
+        ),
+        # Array of objects (complex nested)
+        (
+            "array_of_objects",
+            {
+                "type": "object",
+                "properties": {
+                    "users": {
+                        "type": "array",
+                        "description": "List of users",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer", "description": "User ID"},
+                                "name": {"type": "string", "description": "User name"},
+                            },
+                            "required": ["id", "name"],
+                        },
+                    }
+                },
+                "required": ["users"],
+            },
+            {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]},
+            {"users[0].id": 1, "users[0].name": "Alice", "users[1].id": 2, "users[1].name": "Bob"},
+            {"users": [{"id": 1}]},  # Missing required 'name'
+            lambda instance: all(isinstance(user, BaseModel) for user in instance.users),
+        ),
+        # Deeply nested objects (3+ levels)
+        (
+            "deeply_nested",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "object",
+                        "properties": {
+                            "filters": {
+                                "type": "object",
+                                "properties": {
+                                    "date_range": {
+                                        "type": "object",
+                                        "properties": {
+                                            "start": {"type": "string"},
+                                            "end": {"type": "string"},
+                                        },
+                                        "required": ["start", "end"],
+                                    },
+                                    "categories": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": ["date_range"],
+                            }
+                        },
+                        "required": ["filters"],
+                    }
+                },
+                "required": ["query"],
+            },
+            {
+                "query": {
+                    "filters": {
+                        "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
+                        "categories": ["tech", "science"],
+                    }
                 }
             },
-            "required": ["params"],
-        },
-    )
-    model = _get_input_model_from_mcp_tool(tool)
+            {
+                "query.filters.date_range.start": "2024-01-01",
+                "query.filters.date_range.end": "2024-12-31",
+                "query.filters.categories": ["tech", "science"],
+            },
+            {"query": {"filters": {"date_range": {}}}},  # Missing required start and end
+            None,
+        ),
+        # Complex $ref with nested structure
+        (
+            "ref_nested_structure",
+            {
+                "type": "object",
+                "properties": {"order": {"$ref": "#/$defs/OrderParams"}},
+                "required": ["order"],
+                "$defs": {
+                    "OrderParams": {
+                        "type": "object",
+                        "properties": {
+                            "customer": {"$ref": "#/$defs/Customer"},
+                            "items": {"type": "array", "items": {"$ref": "#/$defs/OrderItem"}},
+                        },
+                        "required": ["customer", "items"],
+                    },
+                    "Customer": {
+                        "type": "object",
+                        "properties": {"id": {"type": "integer"}, "email": {"type": "string"}},
+                        "required": ["id", "email"],
+                    },
+                    "OrderItem": {
+                        "type": "object",
+                        "properties": {"product_id": {"type": "string"}, "quantity": {"type": "integer"}},
+                        "required": ["product_id", "quantity"],
+                    },
+                },
+            },
+            {
+                "order": {
+                    "customer": {"id": 123, "email": "test@example.com"},
+                    "items": [{"product_id": "prod1", "quantity": 2}],
+                }
+            },
+            {
+                "order.customer.id": 123,
+                "order.customer.email": "test@example.com",
+                "order.items[0].product_id": "prod1",
+                "order.items[0].quantity": 2,
+            },
+            {"order": {"customer": {"id": 123}, "items": []}},  # Missing email
+            lambda instance: isinstance(instance.order.customer, BaseModel),
+        ),
+        # Mixed types (primitives, arrays, nested objects)
+        (
+            "mixed_types",
+            {
+                "type": "object",
+                "properties": {
+                    "simple_string": {"type": "string"},
+                    "simple_number": {"type": "integer"},
+                    "string_array": {"type": "array", "items": {"type": "string"}},
+                    "nested_config": {
+                        "type": "object",
+                        "properties": {
+                            "enabled": {"type": "boolean"},
+                            "options": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["enabled"],
+                    },
+                },
+                "required": ["simple_string", "nested_config"],
+            },
+            {
+                "simple_string": "test",
+                "simple_number": 42,
+                "string_array": ["a", "b"],
+                "nested_config": {"enabled": True, "options": ["opt1", "opt2"]},
+            },
+            {
+                "simple_string": "test",
+                "simple_number": 42,
+                "string_array": ["a", "b"],
+                "nested_config.enabled": True,
+                "nested_config.options": ["opt1", "opt2"],
+            },
+            None,
+            None,
+        ),
+        # Empty schema (no properties)
+        (
+            "empty_schema",
+            {"type": "object", "properties": {}},
+            {},
+            {},
+            None,
+            None,
+        ),
+        # All primitive types
+        (
+            "all_primitives",
+            {
+                "type": "object",
+                "properties": {
+                    "string_field": {"type": "string"},
+                    "integer_field": {"type": "integer"},
+                    "number_field": {"type": "number"},
+                    "boolean_field": {"type": "boolean"},
+                },
+            },
+            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+            None,
+            None,
+        ),
+        # Edge case: unresolvable $ref (fallback to dict)
+        (
+            "unresolvable_ref",
+            {
+                "type": "object",
+                "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
+                "$defs": {},
+            },
+            {"data": {"key": "value"}},
+            {"data": {"key": "value"}},
+            None,
+            None,
+        ),
+        # Edge case: array without items schema (fallback to bare list)
+        (
+            "array_no_items",
+            {
+                "type": "object",
+                "properties": {"items": {"type": "array"}},
+            },
+            {"items": [1, "two", 3.0]},
+            {"items": [1, "two", 3.0]},
+            None,
+            None,
+        ),
+        # Edge case: object without properties (fallback to dict)
+        (
+            "object_no_properties",
+            {
+                "type": "object",
+                "properties": {"config": {"type": "object"}},
+            },
+            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+            None,
+            None,
+        ),
+    ],
+)
+def test_get_input_model_from_mcp_tool_parametrized(
+    test_id, input_schema, valid_data, expected_values, invalid_data, validation_check
+):
+    """Parametrized test for JSON schema to Pydantic model conversion.
 
-    # Create an instance to verify the model works with nested objects
-    instance = model(params={"customer_id": 251})
-    assert instance.params == {"customer_id": 251}
-    assert isinstance(instance.params, dict)
+    This test covers various edge cases including:
+    - Basic types with required/optional fields
+    - Nested objects
+    - $ref resolution
+    - Typed arrays (strings, integers, objects)
+    - Deeply nested structures
+    - Complex $ref with nested structures
+    - Mixed types
 
-    # Verify model_dump produces the correct nested structure
-    dumped = instance.model_dump()
-    assert dumped == {"params": {"customer_id": 251}}
-
-
-def test_get_input_model_from_mcp_tool_with_ref_schema():
-    """Test creation of input model from MCP tool with $ref schema.
-
-    This simulates a FastMCP tool that uses Pydantic models with $ref in the schema.
-    The schema should be resolved and nested objects should be preserved.
+    To add a new test case, add a tuple to the parametrize decorator with:
+    - test_id: A descriptive name for the test case
+    - input_schema: The JSON schema (inputSchema dict)
+    - valid_data: Valid data to instantiate the model
+    - expected_values: Dict of expected values (supports dot notation for nested access)
+    - invalid_data: Invalid data to test validation errors (None to skip)
+    - validation_check: Optional callable to perform additional validation checks
     """
-    # This is similar to what FastMCP generates when you have:
-    # async def get_customer_detail(params: CustomerIdParam) -> CustomerDetail
-    tool = types.Tool(
-        name="get_customer_detail",
-        description="Get customer details",
-        inputSchema={
-            "type": "object",
-            "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
-            "required": ["params"],
-            "$defs": {
-                "CustomerIdParam": {
-                    "type": "object",
-                    "properties": {"customer_id": {"type": "integer"}},
-                    "required": ["customer_id"],
-                }
-            },
-        },
-    )
+    tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
     model = _get_input_model_from_mcp_tool(tool)
 
-    # Create an instance to verify the model works with $ref schemas
-    instance = model(params={"customer_id": 251})
-    assert instance.params == {"customer_id": 251}
-    assert isinstance(instance.params, dict)
+    # Test valid data
+    instance = model(**valid_data)
 
-    # Verify model_dump produces the correct nested structure
-    dumped = instance.model_dump()
-    assert dumped == {"params": {"customer_id": 251}}
+    # Check expected values
+    for field_path, expected_value in expected_values.items():
+        # Support dot notation and array indexing for nested access
+        current = instance
+        parts = field_path.replace("]", "").replace("[", ".").split(".")
+        for part in parts:
+            current = current[int(part)] if part.isdigit() else getattr(current, part)
+        assert current == expected_value, f"Field {field_path} = {current}, expected {expected_value}"
 
+    # Run additional validation checks if provided
+    if validation_check:
+        assert validation_check(instance), f"Validation check failed for {test_id}"
 
-def test_get_input_model_from_mcp_tool_with_simple_array():
-    """Test array with simple items schema (items schema should be preserved in json_schema_extra)."""
-    tool = types.Tool(
-        name="simple_array_tool",
-        description="Tool with simple array",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "tags": {
-                    "type": "array",
-                    "description": "List of tags",
-                    "items": {"type": "string"},  # Simple string array
-                }
-            },
-            "required": ["tags"],
-        },
-    )
-    model = _get_input_model_from_mcp_tool(tool)
-
-    # Create an instance
-    instance = model(tags=["tag1", "tag2", "tag3"])
-    assert instance.tags == ["tag1", "tag2", "tag3"]
-
-    # Verify JSON schema still preserves items for simple types
-    json_schema = model.model_json_schema()
-    tags_property = json_schema["properties"]["tags"]
-    assert "items" in tags_property
-    assert tags_property["items"]["type"] == "string"
+    # Test invalid data if provided
+    if invalid_data is not None:
+        with pytest.raises(ValidationError):
+            model(**invalid_data)
 
 
 def test_get_input_model_from_mcp_prompt():
@@ -1005,6 +1248,75 @@ async def test_streamable_http_integration():
         assert result[0].text is not None
 
 
+@pytest.mark.flaky
+@skip_if_mcp_integration_tests_disabled
+async def test_mcp_connection_reset_integration():
+    """Test that connection reset works correctly with a real MCP server.
+
+    This integration test verifies:
+    1. Initial connection and tool execution works
+    2. Simulating connection failure triggers automatic reconnection
+    3. Tool execution works after reconnection
+    4. Exit stack cleanup happens properly during reconnection
+    """
+    url = os.environ.get("LOCAL_MCP_URL")
+
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+
+    async with tool:
+        # Verify initial connection
+        assert tool.session is not None
+        assert tool.is_connected is True
+        assert len(tool.functions) > 0, "The MCP server should have at least one function."
+
+        # Get the first function and invoke it
+        func = tool.functions[0]
+        first_result = await func.invoke(query="What is Agent Framework?")
+        assert first_result is not None
+        assert len(first_result) > 0
+
+        # Store the original session and exit stack for comparison
+        original_session = tool.session
+        original_exit_stack = tool._exit_stack
+        original_call_tool = tool.session.call_tool
+
+        # Simulate connection failure by making call_tool raise ClosedResourceError once
+        call_count = 0
+
+        async def call_tool_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call fails with connection error
+                from anyio.streams.memory import ClosedResourceError
+
+                raise ClosedResourceError
+            # After reconnection, delegate to the original method
+            return await original_call_tool(*args, **kwargs)
+
+        tool.session.call_tool = call_tool_with_error
+
+        # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
+        second_result = await func.invoke(query="What is Agent Framework?")
+        assert second_result is not None
+        assert len(second_result) > 0
+
+        # Verify we have a new session and exit stack after reconnection
+        assert tool.session is not None
+        assert tool.session is not original_session, "Session should be replaced after reconnection"
+        assert tool._exit_stack is not original_exit_stack, "Exit stack should be replaced after reconnection"
+        assert tool.is_connected is True
+
+        # Verify tools are still available after reconnection
+        assert len(tool.functions) > 0
+
+        # Both results should be valid (we don't compare content as it may vary)
+        if hasattr(first_result[0], "text"):
+            assert first_result[0].text is not None
+        if hasattr(second_result[0], "text"):
+            assert second_result[0].text is not None
+
+
 async def test_mcp_tool_message_handler_notification():
     """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
     notifications."""
@@ -1269,24 +1581,18 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com",
-        headers={"Auth": "token"},
-        timeout=30.0,
-        sse_read_timeout=10.0,
         terminate_on_close=True,
-        custom_param="test",
     )
 
-    with patch("agent_framework._mcp.streamablehttp_client") as mock_http_client:
+    with patch("agent_framework._mcp.streamable_http_client") as mock_http_client:
         tool.get_mcp_client()
 
-        # Verify all parameters were passed
+        # Verify streamable_http_client was called with None for http_client
+        # (since we didn't provide one, the API will create its own)
         mock_http_client.assert_called_once_with(
             url="http://example.com",
-            headers={"Auth": "token"},
-            timeout=30.0,
-            sse_read_timeout=10.0,
+            http_client=None,
             terminate_on_close=True,
-            custom_param="test",
         )
 
 
@@ -1312,7 +1618,6 @@ def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
         )
 
 
-@pytest.mark.asyncio
 async def test_mcp_tool_deduplication():
     """Test that MCP tools are not duplicated in MCPTool"""
     from agent_framework._mcp import MCPTool
@@ -1374,7 +1679,6 @@ async def test_mcp_tool_deduplication():
     assert added_count == 1  # Only 1 new function added
 
 
-@pytest.mark.asyncio
 async def test_load_tools_prevents_multiple_calls():
     """Test that connect() prevents calling load_tools() multiple times"""
     from unittest.mock import AsyncMock, MagicMock
@@ -1390,6 +1694,7 @@ async def test_load_tools_prevents_multiple_calls():
     mock_session = AsyncMock()
     mock_tool_list = MagicMock()
     mock_tool_list.tools = []
+    mock_tool_list.nextCursor = None  # No pagination
     mock_session.list_tools = AsyncMock(return_value=mock_tool_list)
     mock_session.initialize = AsyncMock()
 
@@ -1413,7 +1718,6 @@ async def test_load_tools_prevents_multiple_calls():
     assert mock_session.list_tools.call_count == 1  # Still 1, not incremented
 
 
-@pytest.mark.asyncio
 async def test_load_prompts_prevents_multiple_calls():
     """Test that connect() prevents calling load_prompts() multiple times"""
     from unittest.mock import AsyncMock, MagicMock
@@ -1429,6 +1733,7 @@ async def test_load_prompts_prevents_multiple_calls():
     mock_session = AsyncMock()
     mock_prompt_list = MagicMock()
     mock_prompt_list.prompts = []
+    mock_prompt_list.nextCursor = None  # No pagination
     mock_session.list_prompts = AsyncMock(return_value=mock_prompt_list)
 
     tool.session = mock_session
@@ -1449,3 +1754,613 @@ async def test_load_prompts_prevents_multiple_calls():
         tool._prompts_loaded = True
 
     assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented
+
+
+async def test_mcp_streamable_http_tool_httpx_client_cleanup():
+    """Test that MCPStreamableHTTPTool properly passes through httpx clients."""
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from agent_framework import MCPStreamableHTTPTool
+
+    # Mock the streamable_http_client to avoid actual connections
+    with (
+        patch("agent_framework._mcp.streamable_http_client") as mock_client,
+        patch("agent_framework._mcp.ClientSession") as mock_session_class,
+    ):
+        # Setup mock context manager for streamable_http_client
+        mock_transport = (Mock(), Mock())
+        mock_context_manager = Mock()
+        mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+        mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+        mock_client.return_value = mock_context_manager
+
+        # Setup mock session
+        mock_session = Mock()
+        mock_session.initialize = AsyncMock()
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        # Test 1: Tool without provided client (passes None to streamable_http_client)
+        tool1 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+        )
+        await tool1.connect()
+        # When no client is provided, _httpx_client should be None
+        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+
+        # Test 2: Tool with user-provided client
+        user_client = Mock()
+        tool2 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+            http_client=user_client,
+        )
+        await tool2.connect()
+
+        # Verify the user-provided client was stored
+        assert tool2._httpx_client is user_client, "User-provided client should be stored"
+
+        # Verify streamable_http_client was called with the user's client
+        # Get the last call (should be from tool2.connect())
+        call_args = mock_client.call_args
+        assert call_args.kwargs["http_client"] is user_client, "User's client should be passed through"
+
+
+async def test_load_tools_with_pagination():
+    """Test that load_tools handles pagination correctly."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Create paginated responses
+    page1 = MagicMock()
+    page1.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+        types.Tool(
+            name="tool_2",
+            description="Second tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.tools = [
+        types.Tool(
+            name="tool_3",
+            description="Third tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page2.nextCursor = "cursor_page3"
+
+    page3 = MagicMock()
+    page3.tools = [
+        types.Tool(
+            name="tool_4",
+            description="Fourth tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page3.nextCursor = None  # No more pages
+
+    # Mock list_tools to return different pages based on params
+    async def mock_list_tools(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        if params.cursor == "cursor_page3":
+            return page3
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    # Load tools with pagination
+    await tool.load_tools()
+
+    # Verify all pages were fetched
+    assert mock_session.list_tools.call_count == 3
+    assert len(tool._functions) == 4
+    assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
+
+
+async def test_load_prompts_with_pagination():
+    """Test that load_prompts handles pagination correctly."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Create paginated responses
+    page1 = MagicMock()
+    page1.prompts = [
+        types.Prompt(
+            name="prompt_1",
+            description="First prompt",
+            arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
+        ),
+        types.Prompt(
+            name="prompt_2",
+            description="Second prompt",
+            arguments=[types.PromptArgument(name="arg2", description="Arg 2", required=True)],
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.prompts = [
+        types.Prompt(
+            name="prompt_3",
+            description="Third prompt",
+            arguments=[types.PromptArgument(name="arg3", description="Arg 3", required=False)],
+        ),
+    ]
+    page2.nextCursor = None  # No more pages
+
+    # Mock list_prompts to return different pages based on params
+    async def mock_list_prompts(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_prompts = AsyncMock(side_effect=mock_list_prompts)
+
+    # Load prompts with pagination
+    await tool.load_prompts()
+
+    # Verify all pages were fetched
+    assert mock_session.list_prompts.call_count == 2
+    assert len(tool._functions) == 3
+    assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2", "prompt_3"]
+
+
+async def test_load_tools_pagination_with_duplicates():
+    """Test that load_tools prevents duplicates across paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Create paginated responses with duplicate tool names
+    page1 = MagicMock()
+    page1.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+        types.Tool(
+            name="tool_2",
+            description="Second tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.tools = [
+        types.Tool(
+            name="tool_1",  # Duplicate from page1
+            description="Duplicate tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+        types.Tool(
+            name="tool_3",
+            description="Third tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page2.nextCursor = None
+
+    # Mock list_tools to return different pages
+    async def mock_list_tools(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    # Load tools with pagination
+    await tool.load_tools()
+
+    # Verify duplicates were skipped
+    assert mock_session.list_tools.call_count == 2
+    assert len(tool._functions) == 3
+    assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3"]
+
+
+async def test_load_prompts_pagination_with_duplicates():
+    """Test that load_prompts prevents duplicates across paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Create paginated responses with duplicate prompt names
+    page1 = MagicMock()
+    page1.prompts = [
+        types.Prompt(
+            name="prompt_1",
+            description="First prompt",
+            arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.prompts = [
+        types.Prompt(
+            name="prompt_1",  # Duplicate from page1
+            description="Duplicate prompt",
+            arguments=[types.PromptArgument(name="arg2", description="Arg 2", required=False)],
+        ),
+        types.Prompt(
+            name="prompt_2",
+            description="Second prompt",
+            arguments=[types.PromptArgument(name="arg3", description="Arg 3", required=True)],
+        ),
+    ]
+    page2.nextCursor = None
+
+    # Mock list_prompts to return different pages
+    async def mock_list_prompts(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_prompts = AsyncMock(side_effect=mock_list_prompts)
+
+    # Load prompts with pagination
+    await tool.load_prompts()
+
+    # Verify duplicates were skipped
+    assert mock_session.list_prompts.call_count == 2
+    assert len(tool._functions) == 2
+    assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2"]
+
+
+async def test_load_tools_pagination_exception_handling():
+    """Test that load_tools handles exceptions during pagination gracefully."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Mock list_tools to raise an exception on first call
+    mock_session.list_tools = AsyncMock(side_effect=RuntimeError("Connection error"))
+
+    # Load tools should raise the exception (not handled gracefully)
+    with pytest.raises(RuntimeError, match="Connection error"):
+        await tool.load_tools()
+
+    # Verify exception was raised on first call
+    assert mock_session.list_tools.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_load_prompts_pagination_exception_handling():
+    """Test that load_prompts handles exceptions during pagination gracefully."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Mock list_prompts to raise an exception on first call
+    mock_session.list_prompts = AsyncMock(side_effect=RuntimeError("Connection error"))
+
+    # Load prompts should raise the exception (not handled gracefully)
+    with pytest.raises(RuntimeError, match="Connection error"):
+        await tool.load_prompts()
+
+    # Verify exception was raised on first call
+    assert mock_session.list_prompts.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_load_tools_empty_pagination():
+    """Test that load_tools handles empty paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Create empty response
+    page1 = MagicMock()
+    page1.tools = []
+    page1.nextCursor = None
+
+    mock_session.list_tools = AsyncMock(return_value=page1)
+
+    # Load tools
+    await tool.load_tools()
+
+    # Verify
+    assert mock_session.list_tools.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_load_prompts_empty_pagination():
+    """Test that load_prompts handles empty paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Create empty response
+    page1 = MagicMock()
+    page1.prompts = []
+    page1.nextCursor = None
+
+    mock_session.list_prompts = AsyncMock(return_value=page1)
+
+    # Load prompts
+    await tool.load_prompts()
+
+    # Verify
+    assert mock_session.list_prompts.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_error():
+    """Test that verifies reconnection on ClosedResourceError for issue #2884.
+
+    This test verifies the fix for issue #2884: the tool tries operations optimistically
+    and only reconnects when ClosedResourceError is encountered, avoiding extra latency.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio.streams.memory import ClosedResourceError
+
+    from agent_framework._mcp import MCPStdioTool
+    from agent_framework.exceptions import ToolExecutionException
+
+    # Create a mock MCP tool
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=True,
+    )
+
+    # Mock the session
+    mock_session = MagicMock()
+    mock_session._request_id = 1
+    mock_session.call_tool = AsyncMock()
+
+    # Mock _exit_stack.aclose to track cleanup calls
+    original_exit_stack = tool._exit_stack
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock connect() to avoid trying to start actual process
+    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+
+        async def restore_session(*, reset=False):
+            if reset:
+                await original_exit_stack.aclose()
+            tool.session = mock_session
+            tool.is_connected = True
+            tool._tools_loaded = True
+
+        mock_connect.side_effect = restore_session
+
+        # Simulate initial connection
+        tool.session = mock_session
+        tool.is_connected = True
+        tool._tools_loaded = True
+
+        # First call should work - connection is valid
+        mock_session.call_tool.return_value = MagicMock(content=[])
+        result = await tool.call_tool("test_tool", arg1="value1")
+        assert result is not None
+
+        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
+        # Simulate ClosedResourceError on first call, then succeed
+        call_count = 0
+
+        async def call_tool_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClosedResourceError
+            return MagicMock(content=[])
+
+        mock_session.call_tool = call_tool_with_error
+
+        # This call should trigger reconnection after ClosedResourceError
+        result = await tool.call_tool("test_tool", arg1="value2")
+        assert result is not None
+        # Verify reconnect was attempted with reset=True
+        assert mock_connect.call_count >= 1
+        mock_connect.assert_called_with(reset=True)
+        # Verify _exit_stack.aclose was called during reconnection
+        original_exit_stack.aclose.assert_called()
+
+        # Test Case 2: Reconnection failure
+        # Reset counters
+        call_count = 0
+        mock_connect.reset_mock()
+        original_exit_stack.aclose.reset_mock()
+
+        # Make call_tool always raise ClosedResourceError
+        async def always_fail(*args, **kwargs):
+            raise ClosedResourceError
+
+        mock_session.call_tool = always_fail
+
+        # Change mock_connect to simulate failed reconnection
+        mock_connect.side_effect = Exception("Failed to reconnect")
+
+        # This should raise ToolExecutionException when reconnection fails
+        with pytest.raises(ToolExecutionException) as exc_info:
+            await tool.call_tool("test_tool", arg1="value3")
+
+        # Verify reconnection was attempted
+        assert mock_connect.call_count >= 1
+        # Verify error message indicates reconnection failure
+        assert "failed to reconnect" in str(exc_info.value).lower()
+
+
+async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
+    """Test that get_prompt also reconnects on ClosedResourceError.
+
+    This verifies that the fix for issue #2884 applies to get_prompt as well,
+    and that _exit_stack.aclose() is properly called during reconnection.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio.streams.memory import ClosedResourceError
+
+    from agent_framework._mcp import MCPStdioTool
+    from agent_framework.exceptions import ToolExecutionException
+
+    # Create a mock MCP tool
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_prompts=True,
+    )
+
+    # Mock the session
+    mock_session = MagicMock()
+    mock_session._request_id = 1
+    mock_session.get_prompt = AsyncMock()
+
+    # Mock _exit_stack.aclose to track cleanup calls
+    original_exit_stack = tool._exit_stack
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock connect() to avoid trying to start actual process
+    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+
+        async def restore_session(*, reset=False):
+            if reset:
+                await original_exit_stack.aclose()
+            tool.session = mock_session
+            tool.is_connected = True
+            tool._prompts_loaded = True
+
+        mock_connect.side_effect = restore_session
+
+        # Simulate initial connection
+        tool.session = mock_session
+        tool.is_connected = True
+        tool._prompts_loaded = True
+
+        # First call should work - connection is valid
+        mock_session.get_prompt.return_value = MagicMock(messages=[])
+        result = await tool.get_prompt("test_prompt", arg1="value1")
+        assert result is not None
+
+        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
+        # Simulate ClosedResourceError on first call, then succeed
+        call_count = 0
+
+        async def get_prompt_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClosedResourceError
+            return MagicMock(messages=[])
+
+        mock_session.get_prompt = get_prompt_with_error
+
+        # This call should trigger reconnection after ClosedResourceError
+        result = await tool.get_prompt("test_prompt", arg1="value2")
+        assert result is not None
+        # Verify reconnect was attempted with reset=True
+        assert mock_connect.call_count >= 1
+        mock_connect.assert_called_with(reset=True)
+        # Verify _exit_stack.aclose was called during reconnection
+        original_exit_stack.aclose.assert_called()
+
+        # Test Case 2: Reconnection failure
+        # Reset counters
+        call_count = 0
+        mock_connect.reset_mock()
+        original_exit_stack.aclose.reset_mock()
+
+        # Make get_prompt always raise ClosedResourceError
+        async def always_fail(*args, **kwargs):
+            raise ClosedResourceError
+
+        mock_session.get_prompt = always_fail
+
+        # Change mock_connect to simulate failed reconnection
+        mock_connect.side_effect = Exception("Failed to reconnect")
+
+        # This should raise ToolExecutionException when reconnection fails
+        with pytest.raises(ToolExecutionException) as exc_info:
+            await tool.get_prompt("test_prompt", arg1="value3")
+
+        # Verify reconnection was attempted
+        assert mock_connect.call_count >= 1
+        # Verify error message indicates reconnection failure
+        assert "failed to reconnect" in str(exc_info.value).lower()

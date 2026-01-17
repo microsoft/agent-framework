@@ -58,11 +58,11 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="DataAgent",
             instructions="You are a helpful data assistant. Use the data service tool to fetch information for users.",
             tools=unstable_data_service,
-            middleware=exception_handling_middleware,
+            middleware=[exception_handling_middleware],
         ) as agent,
     ):
         query = "Get user statistics"
