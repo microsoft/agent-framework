@@ -41,7 +41,7 @@ async def main() -> None:
         # Create a specialized writer agent
         writer = await provider.create_agent(
             name="WriterAgent",
-            instructions="You are a creative writer. Write short, engaging content. ",
+            instructions="You are a creative writer. Write short, engaging content.",
         )
 
         # Convert writer agent to a tool using as_tool()
