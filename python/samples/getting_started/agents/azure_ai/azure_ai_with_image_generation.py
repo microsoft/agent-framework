@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import tempfile
 from pathlib import Path
 
 import aiofiles
-from agent_framework import DataContent, HostedImageGenerationTool
+from agent_framework import HostedImageGenerationTool, ImageGenerationToolResultContent
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -32,7 +33,7 @@ async def main() -> None:
             tools=[
                 HostedImageGenerationTool(
                     options={
-                        "model": "gpt-image-1-mini",
+                        "model": "gpt-image-1",
                         "quality": "low",
                         "size": "1024x1024",
                     }
@@ -54,15 +55,14 @@ async def main() -> None:
         # Save the image to a file
         print("Downloading generated image...")
         image_data = [
-            content
+            content.outputs
             for content in result.messages[0].contents
-            if isinstance(content, DataContent) and content.media_type == "image/png"
+            if isinstance(content, ImageGenerationToolResultContent) and content.outputs is not None
         ]
         if image_data and image_data[0]:
-            # Save to the same directory as this script
+            # Save to the OS temporary directory
             filename = "microsoft.png"
-            current_dir = Path(__file__).parent.resolve()
-            file_path = current_dir / filename
+            file_path = Path(tempfile.gettempdir()) / filename
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(image_data[0].get_data_bytes())
 

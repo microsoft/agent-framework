@@ -10,6 +10,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
@@ -31,6 +32,7 @@ from azure.ai.projects.models import (
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     FunctionTool,
+    ImageGenTool,
     MCPTool,
     ResponseTextFormatConfigurationJsonObject,
     ResponseTextFormatConfigurationJsonSchema,
@@ -442,6 +444,16 @@ def to_azure_ai_tools(
                                 timezone=location.get("timezone"),
                             )
                     azure_tools.append(ws_tool)
+                case HostedImageGenerationTool():
+                    opts = tool.options or {}
+                    azure_tools.append(
+                        ImageGenTool(
+                            model=opts.get("model_id", "gpt-image-1"),
+                            size=opts.get("image_size"),
+                            output_format=opts.get("media_type"),
+                            partial_images=opts.get("streaming_count"),
+                        )
+                    )
                 case _:
                     logger.debug("Unsupported tool passed (type: %s)", type(tool))
         else:
