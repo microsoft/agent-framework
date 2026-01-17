@@ -421,7 +421,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(90));
 
             // Test the agent endpoint with a simple prompt
-            await this.WriteInputAsync(process, "Plan a 3-day trip to Seattle. Include daily activities.", testTimeoutCts.Token);
+            await this.WriteInputAsync(process, "Plan a 5-day trip to Seattle. Include daily activities.", testTimeoutCts.Token);
 
             // Read output from stdout - should stream in real-time
             // NOTE: The sample uses Console.Write() for streaming chunks, which means content may not be line-buffered.
@@ -442,6 +442,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
             // Read output with a reasonable timeout
             using CancellationTokenSource readTimeoutCts = this.CreateTestTimeoutCts();
+            DateTime? interruptTime = null;
             try
             {
                 while ((line = this.ReadLogLine(logs, readTimeoutCts.Token)) != null)
@@ -451,12 +452,6 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                     {
                         foundConversationStart = true;
                         continue;
-                    }
-
-                    // Look for completion message (if stream completes naturally)
-                    if (line.Contains("Conversation completed", StringComparison.OrdinalIgnoreCase))
-                    {
-                        break;
                     }
 
                     // Check if this is a content line (not prompts or status messages)
@@ -476,13 +471,20 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                     }
 
                     // Phase 2: Wait for enough content, then interrupt
-                    if (foundConversationStart && !interrupted && contentLinesBeforeInterrupt >= 5)
+                    // Interrupt after 2 lines to maximize chance of catching stream while active
+                    // (streams can complete very quickly, so we need to interrupt early)
+                    if (foundConversationStart && !interrupted && contentLinesBeforeInterrupt >= 2)
                     {
                         this._outputHelper.WriteLine($"Interrupting stream after {contentLinesBeforeInterrupt} content lines");
                         interrupted = true;
+                        interruptTime = DateTime.Now;
 
                         // Send Enter to interrupt the stream
                         await this.WriteInputAsync(process, string.Empty, testTimeoutCts.Token);
+
+                        // Give the cancellation token a moment to be processed
+                        // Use a longer delay to ensure cancellation propagates
+                        await Task.Delay(TimeSpan.FromMilliseconds(300), testTimeoutCts.Token);
                     }
 
                     // Phase 3: Look for "Last cursor" message after interrupt
@@ -508,11 +510,66 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                         contentLinesAfterResume++;
                     }
 
+                    // Look for completion message - but don't break if we interrupted and haven't found Last cursor yet
+                    // Allow some time after interrupt for the cancellation message to appear
+                    if (line.Contains("Conversation completed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // If we interrupted but haven't found Last cursor, wait a bit more
+                        if (interrupted && !foundLastCursor && interruptTime.HasValue)
+                        {
+                            TimeSpan timeSinceInterrupt = DateTime.Now - interruptTime.Value;
+                            if (timeSinceInterrupt < TimeSpan.FromSeconds(2))
+                            {
+                                // Continue reading for a bit more to catch the cancellation message
+                                this._outputHelper.WriteLine("Stream completed naturally, but waiting for Last cursor message after interrupt...");
+                                continue;
+                            }
+                        }
+
+                        // Only break if we've completed the test or if stream completed without interruption
+                        if (!interrupted || (resumed && foundResumeMessage && contentLinesAfterResume >= 5))
+                        {
+                            break;
+                        }
+                    }
+
                     // Stop once we've verified the interrupt/resume flow works
                     if (resumed && foundResumeMessage && contentLinesAfterResume >= 5)
                     {
                         this._outputHelper.WriteLine($"Successfully verified interrupt/resume: {contentLinesBeforeInterrupt} lines before, {contentLinesAfterResume} lines after");
                         break;
+                    }
+                }
+
+                // If we interrupted but didn't find Last cursor, wait a bit more for it to appear
+                if (interrupted && !foundLastCursor && interruptTime.HasValue)
+                {
+                    TimeSpan timeSinceInterrupt = DateTime.Now - interruptTime.Value;
+                    if (timeSinceInterrupt < TimeSpan.FromSeconds(3))
+                    {
+                        this._outputHelper.WriteLine("Waiting for Last cursor message after interrupt...");
+                        using CancellationTokenSource waitCts = new(TimeSpan.FromSeconds(2));
+                        try
+                        {
+                            while ((line = this.ReadLogLine(logs, waitCts.Token)) != null)
+                            {
+                                if (line.Contains("Last cursor", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    foundLastCursor = true;
+                                    if (!resumed)
+                                    {
+                                        this._outputHelper.WriteLine("Resuming stream from last cursor");
+                                        await this.WriteInputAsync(process, string.Empty, testTimeoutCts.Token);
+                                        resumed = true;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Timeout waiting for Last cursor
+                        }
                     }
                 }
             }
@@ -523,8 +580,16 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             }
 
             Assert.True(foundConversationStart, "Conversation start message not found.");
-            Assert.True(contentLinesBeforeInterrupt >= 5, $"Not enough content before interrupt (got {contentLinesBeforeInterrupt}).");
-            Assert.True(interrupted, "Stream was not interrupted.");
+            Assert.True(contentLinesBeforeInterrupt >= 2, $"Not enough content before interrupt (got {contentLinesBeforeInterrupt}).");
+
+            // If stream completed before interrupt could take effect, that's a timing issue
+            // but we should still verify we got the conversation started
+            if (!interrupted)
+            {
+                this._outputHelper.WriteLine("WARNING: Stream completed before interrupt could be sent. This may indicate the stream is too fast.");
+            }
+
+            Assert.True(interrupted, "Stream was not interrupted (may have completed too quickly).");
             Assert.True(foundLastCursor, "'Last cursor' message not found after interrupt.");
             Assert.True(resumed, "Stream was not resumed.");
             Assert.True(foundResumeMessage, "Resume message not found.");
@@ -569,6 +634,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                 "run", "-d",
                 "--name", "dts-emulator",
                 "-p", $"{DtsPort}:8080",
+                "-e", "DTS_USE_DYNAMIC_TASK_HUBS=true",
                 "mcr.microsoft.com/dts/dts-emulator:latest"
             ]);
         }
@@ -670,10 +736,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
     private async Task RunSampleTestAsync(string samplePath, Func<Process, BlockingCollection<OutputLog>, Task> testAction)
     {
+        // Generate a unique TaskHub name for this sample test to prevent cross-test interference
+        // when multiple tests run together and share the same DTS emulator.
+        string uniqueTaskHubName = $"sample-{Guid.NewGuid().ToString("N").Substring(0, 6)}";
+
         // Start the console app
         // Use BlockingCollection to safely read logs asynchronously captured from the process
         using BlockingCollection<OutputLog> logsContainer = [];
-        using Process appProcess = this.StartConsoleApp(samplePath, logsContainer);
+        using Process appProcess = this.StartConsoleApp(samplePath, logsContainer, uniqueTaskHubName);
         try
         {
             // Run the test
@@ -744,7 +814,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         return null;
     }
 
-    private Process StartConsoleApp(string samplePath, BlockingCollection<OutputLog> logs)
+    private Process StartConsoleApp(string samplePath, BlockingCollection<OutputLog> logs, string taskHubName)
     {
         ProcessStartInfo startInfo = new()
         {
@@ -762,12 +832,18 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
             throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
 
+        void SetAndLogEnvironmentVariable(string key, string value)
+        {
+            this._outputHelper.WriteLine($"Setting environment variable for {startInfo.FileName} sub-process: {key}={value}");
+            startInfo.EnvironmentVariables[key] = value;
+        }
+
         // Set required environment variables for the app
-        startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
-        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
-        startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
-            $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
-        startInfo.EnvironmentVariables["REDIS_CONNECTION_STRING"] = $"localhost:{RedisPort}";
+        SetAndLogEnvironmentVariable("AZURE_OPENAI_ENDPOINT", openAiEndpoint);
+        SetAndLogEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", openAiDeployment);
+        SetAndLogEnvironmentVariable("DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
+            $"Endpoint=http://localhost:{DtsPort};TaskHub={taskHubName};Authentication=None");
+        SetAndLogEnvironmentVariable("REDIS_CONNECTION_STRING", $"localhost:{RedisPort}");
 
         Process process = new() { StartInfo = startInfo };
 
