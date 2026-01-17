@@ -34,7 +34,6 @@ async def main() -> None:
                 HostedImageGenerationTool(
                     options={
                         "model": "gpt-image-1",
-                        "quality": "low",
                         "size": "1024x1024",
                     }
                 )

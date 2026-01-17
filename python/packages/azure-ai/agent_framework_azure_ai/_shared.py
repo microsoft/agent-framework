@@ -446,11 +446,15 @@ def to_azure_ai_tools(
                     azure_tools.append(ws_tool)
                 case HostedImageGenerationTool():
                     opts = tool.options or {}
+                    # Azure ImageGenTool requires the constant model "gpt-image-1"
+                    # Cast optional fields to expected Literal unions for mypy compliance
                     azure_tools.append(
                         ImageGenTool(
-                            model=opts.get("model_id", "gpt-image-1"),
-                            size=opts.get("image_size"),
-                            output_format=opts.get("media_type"),
+                            model="gpt-image-1",
+                            size=cast(
+                                Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None, opts.get("image_size")
+                            ),
+                            output_format=cast(Literal["png", "webp", "jpeg"] | None, opts.get("media_type")),
                             partial_images=opts.get("streaming_count"),
                         )
                     )
