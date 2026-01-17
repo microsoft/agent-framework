@@ -42,7 +42,7 @@ interface BackendEntityInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
+  context_provider?: string[];
   middleware?: string[];
   // Workflow-specific fields (present when type === "workflow")
   executors?: string[];
@@ -77,7 +77,7 @@ const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential b
 function getBackendUrl(): string {
   const stored = localStorage.getItem("devui_backend_url");
   if (stored) return stored;
-  
+
   return DEFAULT_API_BASE_URL;
 }
 
@@ -221,13 +221,13 @@ class ApiClient {
           instructions: entity.instructions,
           model_id: entity.model_id,
           chat_client_type: entity.chat_client_type,
-          context_providers: entity.context_providers,
+          context_provider: entity.context_provider,
           middleware: entity.middleware,
         };
       } else {
         // Workflow - prefer executors field, fall back to tools for backward compatibility
         const executorList = entity.executors || entity.tools || [];
-        
+
         // Determine start_executor_id: use entity value, or first executor if it's a string
         let startExecutorId = entity.start_executor_id || "";
         if (!startExecutorId && executorList.length > 0) {
@@ -236,7 +236,7 @@ class ApiClient {
             startExecutorId = firstExecutor;
           }
         }
-        
+
         return {
           id: entity.id,
           name: entity.name,
@@ -493,10 +493,10 @@ class ApiClient {
         if (!resumeResponseId) {
           currentResponseId = storedState.responseId;
         }
-        
+
         lastSequenceNumber = storedState.lastSequenceNumber;
         lastMessageId = storedState.lastMessageId;
-        
+
         // Replay stored events only if we're not explicitly resuming
         // (explicit resume means the caller already has the events)
         if (!resumeResponseId) {

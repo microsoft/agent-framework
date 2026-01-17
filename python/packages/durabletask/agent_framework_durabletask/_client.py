@@ -8,7 +8,7 @@ with durable agents via gRPC.
 
 from __future__ import annotations
 
-from agent_framework import AgentRunResponse, get_logger
+from agent_framework import AgentResponse, get_logger
 from durabletask.client import TaskHubGrpcClient
 
 from ._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
@@ -18,7 +18,7 @@ from ._shim import DurableAgentProvider, DurableAIAgent
 logger = get_logger("agent_framework.durabletask.client")
 
 
-class DurableAIAgentClient(DurableAgentProvider[AgentRunResponse]):
+class DurableAIAgentClient(DurableAgentProvider[AgentResponse]):
     """Client wrapper for interacting with durable agents externally.
 
     This class wraps a durabletask TaskHubGrpcClient and provides a convenient
@@ -68,7 +68,7 @@ class DurableAIAgentClient(DurableAgentProvider[AgentRunResponse]):
         self._executor = ClientAgentExecutor(self._client, self.max_poll_retries, self.poll_interval_seconds)
         logger.debug("[DurableAIAgentClient] Initialized with client type: %s", type(client).__name__)
 
-    def get_agent(self, agent_name: str) -> DurableAIAgent[AgentRunResponse]:
+    def get_agent(self, agent_name: str) -> DurableAIAgent[AgentResponse]:
         """Retrieve a DurableAIAgent shim for the specified agent.
 
         This method returns a proxy object that can be used to execute the agent.

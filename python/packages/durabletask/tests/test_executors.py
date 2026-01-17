@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentRunResponse, Role
+from agent_framework import AgentResponse, Role
 from durabletask.entities import EntityInstanceId
 from durabletask.task import Task
 from pydantic import BaseModel
@@ -150,11 +150,11 @@ class TestClientAgentExecutorRun:
     def test_client_executor_run_returns_response(
         self, client_executor: ClientAgentExecutor, sample_run_request: RunRequest
     ) -> None:
-        """Verify ClientAgentExecutor.run_durable_agent returns AgentRunResponse (synchronous)."""
+        """Verify ClientAgentExecutor.run_durable_agent returns AgentResponse (synchronous)."""
         result = client_executor.run_durable_agent("test_agent", sample_run_request)
 
-        # Verify it returns an AgentRunResponse (synchronous, not a coroutine)
-        assert isinstance(result, AgentRunResponse)
+        # Verify it returns an AgentResponse (synchronous, not a coroutine)
+        assert isinstance(result, AgentResponse)
         assert result is not None
 
 
@@ -183,8 +183,8 @@ class TestClientAgentExecutorPollingConfiguration:
         # Run the agent
         result = executor.run_durable_agent("test_agent", sample_run_request)
 
-        # Verify it returns AgentRunResponse (should timeout after 2 attempts)
-        assert isinstance(result, AgentRunResponse)
+        # Verify it returns AgentResponse (should timeout after 2 attempts)
+        assert isinstance(result, AgentResponse)
 
         # Verify get_entity was called 2 times (max_poll_retries)
         assert mock_client.get_entity.call_count == 2
@@ -202,7 +202,7 @@ class TestClientAgentExecutorPollingConfiguration:
         # Should take roughly 3 * 0.01 = 0.03 seconds (plus overhead)
         # Be generous with timing to avoid flakiness
         assert elapsed < 0.2  # Should be quick with 0.01 interval
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
 
 
 class TestClientAgentExecutorFireAndForget:
@@ -223,8 +223,8 @@ class TestClientAgentExecutorFireAndForget:
         # Should return immediately without polling (elapsed time should be very small)
         assert elapsed < 0.1  # Much faster than any polling would take
 
-        # Should return an AgentRunResponse
-        assert isinstance(result, AgentRunResponse)
+        # Should return an AgentResponse
+        assert isinstance(result, AgentResponse)
 
         # Should have signaled the entity but not polled
         assert mock_client.signal_entity.call_count == 1
@@ -239,7 +239,7 @@ class TestClientAgentExecutorFireAndForget:
         result = executor.run_durable_agent("test_agent", request)
 
         # Verify it contains an acceptance message
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         assert result.messages[0].role == Role.SYSTEM
         # Check message contains key information
@@ -292,7 +292,7 @@ class TestOrchestrationAgentExecutorFireAndForget:
 
         # Get the result
         response = result.get_result()
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         assert response.messages[0].role == Role.SYSTEM
         assert "test-789" in response.messages[0].text
@@ -380,7 +380,7 @@ class TestDurableAgentTask:
     def test_durable_agent_task_transforms_successful_result(
         self, configure_successful_entity_task: Any, successful_agent_response: dict[str, Any]
     ) -> None:
-        """Verify DurableAgentTask converts successful entity result to AgentRunResponse."""
+        """Verify DurableAgentTask converts successful entity result to AgentResponse."""
         mock_entity_task = configure_successful_entity_task(successful_agent_response)
 
         task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
@@ -390,7 +390,7 @@ class TestDurableAgentTask:
 
         assert task.is_complete
         result = task.get_result()
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         assert result.messages[0].role == Role.ASSISTANT
 
@@ -427,7 +427,7 @@ class TestDurableAgentTask:
 
         assert task.is_complete
         result = task.get_result()
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
 
     def test_durable_agent_task_ignores_duplicate_completion(
         self, configure_successful_entity_task: Any, successful_agent_response: dict[str, Any]
@@ -450,7 +450,7 @@ class TestDurableAgentTask:
 
     def test_durable_agent_task_fails_on_malformed_response(self, configure_successful_entity_task: Any) -> None:
         """Verify DurableAgentTask fails when entity returns malformed response data."""
-        # Use data that will cause AgentRunResponse.from_dict to fail
+        # Use data that will cause AgentResponse.from_dict to fail
         # Using a list instead of dict, or other invalid structure
         mock_entity_task = configure_successful_entity_task("invalid string response")
 
@@ -496,7 +496,7 @@ class TestDurableAgentTask:
 
         assert task.is_complete
         result = task.get_result()
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 0
 
     def test_durable_agent_task_handles_multiple_messages(self, configure_successful_entity_task: Any) -> None:
@@ -517,7 +517,7 @@ class TestDurableAgentTask:
 
         assert task.is_complete
         result = task.get_result()
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 2
         assert result.messages[0].role == Role.ASSISTANT
         assert result.messages[1].role == Role.ASSISTANT
@@ -564,7 +564,7 @@ class TestDurableAgentTask:
         assert task.is_complete
         assert not task.is_failed
         result = task.get_result()
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
 
 
 if __name__ == "__main__":

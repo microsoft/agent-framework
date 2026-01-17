@@ -8,7 +8,7 @@ This sample demonstrates the human-in-the-loop pattern where a WriterAgent gener
 - External event handling using `wait_for_external_event()` to receive human input.
 - Timeout management with `when_any()` to race between approval event and timeout.
 - Iterative refinement where agent regenerates content based on reviewer feedback.
-- Structured outputs using Pydantic models with `response_format` for type-safe agent responses.
+- Structured outputs using Pydantic models with `options={"response_format": ...}` for type-safe agent responses.
 - Activity functions for notifications and publishing as separate side effects.
 - Long-running orchestrations maintaining state across multiple interactions.
 

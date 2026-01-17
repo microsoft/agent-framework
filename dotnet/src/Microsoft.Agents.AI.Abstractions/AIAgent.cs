@@ -105,7 +105,8 @@ public abstract class AIAgent
     /// <summary>
     /// Creates a new conversation thread that is compatible with this agent.
     /// </summary>
-    /// <returns>A new <see cref="AgentThread"/> instance ready for use with this agent.</returns>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a new <see cref="AgentThread"/> instance ready for use with this agent.</returns>
     /// <remarks>
     /// <para>
     /// This method creates a fresh conversation thread that can be used to maintain state
@@ -118,14 +119,15 @@ public abstract class AIAgent
     /// may be deferred until first use to optimize performance.
     /// </para>
     /// </remarks>
-    public abstract AgentThread GetNewThread();
+    public abstract ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deserializes an agent thread from its JSON serialized representation.
     /// </summary>
     /// <param name="serializedThread">A <see cref="JsonElement"/> containing the serialized thread state.</param>
     /// <param name="jsonSerializerOptions">Optional settings to customize the deserialization process.</param>
-    /// <returns>A restored <see cref="AgentThread"/> instance with the state from <paramref name="serializedThread"/>.</returns>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a restored <see cref="AgentThread"/> instance with the state from <paramref name="serializedThread"/>.</returns>
     /// <exception cref="ArgumentException">The <paramref name="serializedThread"/> is not in the expected format.</exception>
     /// <exception cref="JsonException">The serialized data is invalid or cannot be deserialized.</exception>
     /// <remarks>
@@ -133,7 +135,7 @@ public abstract class AIAgent
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances.
     /// </remarks>
-    public abstract AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null);
+    public abstract ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
@@ -144,12 +146,12 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <remarks>
     /// This overload is useful when the agent has sufficient context from previous messages in the thread
     /// or from its initial configuration to generate a meaningful response without additional input.
     /// </remarks>
-    public Task<AgentRunResponse> RunAsync(
+    public Task<AgentResponse> RunAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default) =>
@@ -165,13 +167,13 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
     /// <remarks>
     /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role
     /// before being sent to the agent. This is a convenience method for simple text-based interactions.
     /// </remarks>
-    public Task<AgentRunResponse> RunAsync(
+    public Task<AgentResponse> RunAsync(
         string message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -192,9 +194,9 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
-    public Task<AgentRunResponse> RunAsync(
+    public Task<AgentResponse> RunAsync(
         ChatMessage message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -215,7 +217,7 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <remarks>
     /// <para>
     /// This method delegates to <see cref="RunCoreAsync"/> to perform the actual agent invocation. It handles collections of messages,
@@ -227,7 +229,7 @@ public abstract class AIAgent
     /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
     /// </para>
     /// </remarks>
-    public Task<AgentRunResponse> RunAsync(
+    public Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -244,7 +246,7 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <remarks>
     /// <para>
     /// This is the primary invocation method that implementations must override. It handles collections of messages,
@@ -256,7 +258,7 @@ public abstract class AIAgent
     /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
     /// </para>
     /// </remarks>
-    protected abstract Task<AgentRunResponse> RunCoreAsync(
+    protected abstract Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -271,8 +273,8 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
-    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    /// <returns>An asynchronous enumerable of <see cref="AgentResponseUpdate"/> instances representing the streaming response.</returns>
+    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default) =>
@@ -288,13 +290,13 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentResponseUpdate"/> instances representing the streaming response.</returns>
     /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
     /// <remarks>
     /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role.
     /// Streaming invocation provides real-time updates as the agent generates its response.
     /// </remarks>
-    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -315,9 +317,9 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentResponseUpdate"/> instances representing the streaming response.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
-    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         ChatMessage message,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -338,18 +340,18 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentResponseUpdate"/> instances representing the streaming response.</returns>
     /// <remarks>
     /// <para>
     /// This method delegates to <see cref="RunCoreStreamingAsync"/> to perform the actual streaming invocation. It provides real-time
     /// updates as the agent processes the input and generates its response, enabling more responsive user experiences.
     /// </para>
     /// <para>
-    /// Each <see cref="AgentRunResponseUpdate"/> represents a portion of the complete response, allowing consumers
+    /// Each <see cref="AgentResponseUpdate"/> represents a portion of the complete response, allowing consumers
     /// to display partial results, implement progressive loading, or provide immediate feedback to users.
     /// </para>
     /// </remarks>
-    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -366,18 +368,18 @@ public abstract class AIAgent
     /// </param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentResponseUpdate"/> instances representing the streaming response.</returns>
     /// <remarks>
     /// <para>
     /// This is the primary streaming invocation method that implementations must override. It provides real-time
     /// updates as the agent processes the input and generates its response, enabling more responsive user experiences.
     /// </para>
     /// <para>
-    /// Each <see cref="AgentRunResponseUpdate"/> represents a portion of the complete response, allowing consumers
+    /// Each <see cref="AgentResponseUpdate"/> represents a portion of the complete response, allowing consumers
     /// to display partial results, implement progressive loading, or provide immediate feedback to users.
     /// </para>
     /// </remarks>
-    protected abstract IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected abstract IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

@@ -5,7 +5,8 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework.openai import OpenAIAssistantsClient
+from agent_framework.openai import OpenAIAssistantProvider
+from openai import AsyncOpenAI
 from pydantic import Field
 
 """
@@ -21,21 +22,28 @@ def get_weather(
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}C."
 
 
 async def main() -> None:
-    print("=== OpenAI Assistants Client with Explicit Settings ===")
+    print("=== OpenAI Assistants Provider with Explicit Settings ===")
 
-    async with OpenAIAssistantsClient(
-        model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
-        api_key=os.environ["OPENAI_API_KEY"],
-    ).create_agent(
+    # Create client with explicit API key
+    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    provider = OpenAIAssistantProvider(client)
+
+    agent = await provider.create_agent(
+        name="WeatherAssistant",
+        model=os.environ["OPENAI_CHAT_MODEL_ID"],
         instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    ) as agent:
+        tools=[get_weather],
+    )
+
+    try:
         result = await agent.run("What's the weather like in New York?")
         print(f"Result: {result}\n")
+    finally:
+        await client.beta.assistants.delete(agent.id)
 
 
 if __name__ == "__main__":

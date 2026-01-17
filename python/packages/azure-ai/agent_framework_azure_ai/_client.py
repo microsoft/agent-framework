@@ -2,19 +2,18 @@
 
 import sys
 from collections.abc import Mapping, MutableSequence
-from typing import Any, ClassVar, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     ChatMessage,
-    ChatOptions,
     HostedMCPTool,
     TextContent,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
@@ -22,37 +21,44 @@ from azure.ai.projects.models import (
     MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
-    ResponseTextFormatConfigurationJsonObject,
-    ResponseTextFormatConfigurationJsonSchema,
-    ResponseTextFormatConfigurationText,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
-from ._shared import AzureAISettings
+from ._shared import AzureAISettings, create_text_format_config
 
+if TYPE_CHECKING:
+    from agent_framework.openai import OpenAIResponsesOptions
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
 
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 
 logger = get_logger("agent_framework.azure")
 
-
-TAzureAIClient = TypeVar("TAzureAIClient", bound="AzureAIClient")
+TAzureAIClientOptions = TypeVar(
+    "TAzureAIClientOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIResponsesOptions",
+    covariant=True,
+)
 
 
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureAIClient(OpenAIBaseResponsesClient):
+class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
     """Azure AI Agent client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -115,6 +121,18 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
                 # Or loading from a .env file
                 client = AzureAIClient(credential=credential, env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework import ChatOptions
+
+
+                class MyOptions(ChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureAIClient[MyOptions] = AzureAIClient(credential=credential)
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -265,45 +283,11 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """Close the project_client."""
         await self._close_client_if_needed()
 
-    def _create_text_format_config(
-        self, response_format: Any
-    ) -> (
-        ResponseTextFormatConfigurationJsonSchema
-        | ResponseTextFormatConfigurationJsonObject
-        | ResponseTextFormatConfigurationText
-    ):
-        """Convert response_format into Azure text format configuration."""
-        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            return ResponseTextFormatConfigurationJsonSchema(
-                name=response_format.__name__,
-                schema=response_format.model_json_schema(),
-            )
-
-        if isinstance(response_format, Mapping):
-            format_config = self._convert_response_format(response_format)
-            format_type = format_config.get("type")
-            if format_type == "json_schema":
-                config_kwargs: dict[str, Any] = {
-                    "name": format_config.get("name") or "response",
-                    "schema": format_config["schema"],
-                }
-                if "strict" in format_config:
-                    config_kwargs["strict"] = format_config["strict"]
-                if "description" in format_config:
-                    config_kwargs["description"] = format_config["description"]
-                return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
-            if format_type == "json_object":
-                return ResponseTextFormatConfigurationJsonObject()
-            if format_type == "text":
-                return ResponseTextFormatConfigurationText()
-
-        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
-
     async def _get_agent_reference_or_create(
         self,
         run_options: dict[str, Any],
         messages_instructions: str | None,
-        chat_options: ChatOptions | None = None,
+        chat_options: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         """Determine which agent to use and create if needed.
 
@@ -315,11 +299,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         Returns:
             dict[str, str]: The agent reference to use.
         """
-        # chat_options is needed separately because the base class excludes response_format
-        # from run_options (transforming it to text/text_format for OpenAI). Azure's agent
-        # creation API requires the original response_format to build its own config format.
-        if chat_options is None:
-            chat_options = ChatOptions()
         # Agent name must be explicitly provided by the user.
         if self.agent_name is None:
             raise ServiceInitializationError(
@@ -356,13 +335,8 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
-            response_format: Any = (
-                chat_options.response_format
-                if chat_options.response_format is not None
-                else chat_options.additional_properties.get("response_format")
-            )
-            if response_format:
-                args["text"] = PromptAgentDefinitionText(format=self._create_text_format_config(response_format))
+            if chat_options and (response_format := chat_options.get("response_format")):
+                args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             combined_instructions = [
@@ -392,12 +366,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
     async def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
         prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages)
-        run_options = await super()._prepare_options(prepared_messages, chat_options, **kwargs)
+        run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
 
         # WORKAROUND: Azure AI Projects 'create responses' API has schema divergence from OpenAI's
         # Responses API. Azure requires 'type' at item level and 'annotations' in content items.
@@ -409,17 +383,32 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         if not self._is_application_endpoint:
             # Application-scoped response APIs do not support "agent" property.
-            agent_reference = await self._get_agent_reference_or_create(run_options, instructions, chat_options)
+            agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
             run_options["extra_body"] = {"agent": agent_reference}
 
         # Remove properties that are not supported on request level
         # but were configured on agent level
-        exclude = ["model", "tools", "response_format", "temperature", "top_p", "text", "text_format"]
+        exclude = [
+            "model",
+            "tools",
+            "response_format",
+            "temperature",
+            "top_p",
+            "text",
+            "text_format",
+        ]
 
         for property in exclude:
             run_options.pop(property, None)
 
         return run_options
+
+    @override
+    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_deployment_name must be a non-empty string")
+            run_options["model"] = self.model_id
 
     def _transform_input_for_azure_ai(self, input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Transform input items to match Azure AI Projects expected schema.
@@ -460,9 +449,9 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         return transformed
 
     @override
-    def _get_current_conversation_id(self, chat_options: ChatOptions, **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
-        return chat_options.conversation_id or kwargs.get("conversation_id") or self.conversation_id
+        return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
     def _prepare_messages_for_azure_ai(
         self, messages: MutableSequence[ChatMessage]

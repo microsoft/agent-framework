@@ -13,18 +13,18 @@ These follow the patterns established in other agent_framework packages
 to avoid pytest plugin conflicts when running tests across packages.
 """
 
+import sys
 from collections.abc import AsyncIterable, MutableSequence
-from typing import Any
+from typing import Any, Generic
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     BaseChatClient,
     ChatAgent,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ConcurrentBuilder,
@@ -35,7 +35,13 @@ from agent_framework import (
     TextContent,
     use_chat_middleware,
 )
+from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 # Import real workflow event classes - NOT mocks!
 from agent_framework._workflows._events import (
@@ -91,7 +97,7 @@ class MockChatClient:
 
 
 @use_chat_middleware
-class MockBaseChatClient(BaseChatClient):
+class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """Full BaseChatClient mock with middleware support.
 
     Use this when testing features that require the full BaseChatClient interface.
@@ -106,11 +112,12 @@ class MockBaseChatClient(BaseChatClient):
         self.call_count: int = 0
         self.received_messages: list[list[ChatMessage]] = []
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         self.call_count += 1
@@ -119,11 +126,12 @@ class MockBaseChatClient(BaseChatClient):
             return self.run_responses.pop(0)
         return ChatResponse(messages=ChatMessage(role="assistant", text="Mock response from ChatAgent"))
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         self.call_count += 1
@@ -164,9 +172,9 @@ class MockAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         self.call_count += 1
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=self.response_text)])]
         )
 
@@ -176,10 +184,10 @@ class MockAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         for chunk in self.streaming_chunks:
-            yield AgentRunResponseUpdate(contents=[TextContent(text=chunk)], role=Role.ASSISTANT)
+            yield AgentResponseUpdate(contents=[TextContent(text=chunk)], role=Role.ASSISTANT)
 
 
 class MockToolCallingAgent(BaseAgent):
@@ -195,9 +203,9 @@ class MockToolCallingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         self.call_count += 1
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
 
     async def run_stream(
         self,
@@ -205,15 +213,15 @@ class MockToolCallingAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         # First: text
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="Let me search for that...")],
             role=Role.ASSISTANT,
         )
         # Second: tool call
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[
                 FunctionCallContent(
                     call_id="call_123",
@@ -224,7 +232,7 @@ class MockToolCallingAgent(BaseAgent):
             role=Role.ASSISTANT,
         )
         # Third: tool result
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[
                 FunctionResultContent(
                     call_id="call_123",
@@ -234,7 +242,7 @@ class MockToolCallingAgent(BaseAgent):
             role=Role.TOOL,
         )
         # Fourth: final text
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="The weather is sunny, 72°F.")],
             role=Role.ASSISTANT,
         )
@@ -287,9 +295,9 @@ def create_mock_tool_agent(id: str = "tool_agent", name: str = "ToolAgent") -> M
     return MockToolCallingAgent(id=id, name=name)
 
 
-def create_agent_run_response(text: str = "Test response") -> AgentRunResponse:
-    """Create an AgentRunResponse with the given text."""
-    return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=text)])])
+def create_agent_run_response(text: str = "Test response") -> AgentResponse:
+    """Create an AgentResponse with the given text."""
+    return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=text)])])
 
 
 def create_agent_executor_response(
@@ -300,7 +308,7 @@ def create_agent_executor_response(
     agent_response = create_agent_run_response(response_text)
     return AgentExecutorResponse(
         executor_id=executor_id,
-        agent_run_response=agent_response,
+        agent_response=agent_response,
         full_conversation=[
             ChatMessage(role=Role.USER, contents=[TextContent(text="User input")]),
             ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)]),
@@ -316,7 +324,7 @@ def create_executor_completed_event(
 
     This creates the exact data structure that caused the serialization bug:
     ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
-    AgentRunResponse and ChatMessage objects (SerializationMixin, not Pydantic).
+    AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
     """
     data = create_agent_executor_response(executor_id) if with_agent_response else {"simple": "dict"}
     return ExecutorCompletedEvent(executor_id=executor_id, data=data)

@@ -7,8 +7,8 @@ from typing import Annotated
 
 from agent_framework import (
     AgentMiddleware,
+    AgentResponse,
     AgentRunContext,
-    AgentRunResponse,
     ChatMessage,
     Role,
 )
@@ -57,7 +57,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     print(f"[PreTerminationMiddleware] Blocked word '{blocked_word}' detected. Terminating request.")
 
                     # Set a custom response
-                    context.result = AgentRunResponse(
+                    context.result = AgentResponse(
                         messages=[
                             ChatMessage(
                                 role=Role.ASSISTANT,
@@ -114,7 +114,7 @@ async def pre_termination_middleware() -> None:
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middleware=PreTerminationMiddleware(blocked_words=["bad", "inappropriate"]),
+            middleware=[PreTerminationMiddleware(blocked_words=["bad", "inappropriate"])],
         ) as agent,
     ):
         # Test with normal query
@@ -141,7 +141,7 @@ async def post_termination_middleware() -> None:
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middleware=PostTerminationMiddleware(max_responses=1),
+            middleware=[PostTerminationMiddleware(max_responses=1)],
         ) as agent,
     ):
         # First run (should work)

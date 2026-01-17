@@ -181,7 +181,7 @@ class DurableAIAgentWorker:
                     request: RunRequest as dict or string
 
                 Returns:
-                    AgentRunResponse as dict
+                    AgentResponse as dict
                 """
                 logger.debug("[ConfiguredAgentEntity.run] Executing agent: %s", agent_name)
                 # Get or create event loop for async execution

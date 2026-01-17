@@ -52,27 +52,27 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new A2AAgentThread();
+    public sealed override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        => new(new A2AAgentThread());
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing context id, to continue that conversation.
     /// </summary>
     /// <param name="contextId">The context id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public AgentThread GetNewThread(string contextId)
-        => new A2AAgentThread() { ContextId = contextId };
+    /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentThread"/> instance.</returns>
+    public ValueTask<AgentThread> GetNewThreadAsync(string contextId)
+        => new(new A2AAgentThread() { ContextId = contextId });
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new A2AAgentThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new A2AAgentThread(serializedThread, jsonSerializerOptions));
 
     /// <inheritdoc/>
-    protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        A2AAgentThread typedThread = this.GetA2AThread(thread, options);
+        A2AAgentThread typedThread = await this.GetA2AThreadAsync(thread, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
@@ -99,7 +99,7 @@ public sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, message.ContextId);
 
-            return new AgentRunResponse
+            return new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = message.MessageId,
@@ -113,7 +113,7 @@ public sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, agentTask.ContextId, agentTask.Id);
 
-            var response = new AgentRunResponse
+            var response = new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
@@ -135,11 +135,11 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        A2AAgentThread typedThread = this.GetA2AThread(thread, options);
+        A2AAgentThread typedThread = await this.GetA2AThreadAsync(thread, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -211,7 +211,7 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override string? Description => this._description;
 
-    private A2AAgentThread GetA2AThread(AgentThread? thread, AgentRunOptions? options)
+    private async ValueTask<A2AAgentThread> GetA2AThreadAsync(AgentThread? thread, AgentRunOptions? options, CancellationToken cancellationToken)
     {
         // Aligning with other agent implementations that support background responses, where
         // a thread is required for background responses to prevent inconsistent experience
@@ -221,7 +221,7 @@ public sealed class A2AAgent : AIAgent
             throw new InvalidOperationException("A thread must be provided when AllowBackgroundResponses is enabled.");
         }
 
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
 
         if (thread is not A2AAgentThread typedThread)
         {
@@ -291,9 +291,9 @@ public sealed class A2AAgent : AIAgent
         return null;
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
     {
-        return new AgentRunResponseUpdate
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
@@ -305,9 +305,9 @@ public sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
     {
-        return new AgentRunResponseUpdate
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = task.Id,
@@ -318,9 +318,9 @@ public sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
     {
-        AgentRunResponseUpdate responseUpdate = new()
+        AgentResponseUpdate responseUpdate = new()
         {
             AgentId = this.Id,
             ResponseId = taskUpdateEvent.TaskId,

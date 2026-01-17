@@ -4,17 +4,17 @@
 Sample: Request Info with ConcurrentBuilder
 
 This sample demonstrates using the `.with_request_info()` method to pause a
-ConcurrentBuilder workflow AFTER all parallel agents complete but BEFORE
-aggregation, allowing human review and modification of the combined results.
+ConcurrentBuilder workflow for specific agents, allowing human review and
+modification of individual agent outputs before aggregation.
 
 Purpose:
-Show how to use the request info API that pauses after concurrent agents run,
-allowing review and steering of results before they are aggregated.
+Show how to use the request info API that pauses for selected concurrent agents,
+allowing review and steering of their results.
 
 Demonstrate:
-- Configuring request info with `.with_request_info()`
-- Reviewing outputs from multiple concurrent agents
-- Injecting human guidance after agents execute but before aggregation
+- Configuring request info with `.with_request_info()` for specific agents
+- Reviewing output from individual agents during concurrent execution
+- Injecting human guidance for specific agents before aggregation
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
@@ -25,7 +25,7 @@ import asyncio
 from typing import Any
 
 from agent_framework import (
-    AgentInputRequest,
+    AgentRequestInfoResponse,
     ChatMessage,
     ConcurrentBuilder,
     RequestInfoEvent,
@@ -64,7 +64,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 
     for r in results:
         try:
-            messages = getattr(r.agent_run_response, "messages", [])
+            messages = getattr(r.agent_response, "messages", [])
             final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
             expert_sections.append(f"{getattr(r, 'executor_id', 'analyst')}:\n{final_text}")
 
@@ -131,12 +131,13 @@ async def main() -> None:
         ConcurrentBuilder()
         .participants([technical_analyst, business_analyst, user_experience_analyst])
         .with_aggregator(aggregate_with_synthesis)
-        .with_request_info()
+        # Only enable request info for the technical analyst agent
+        .with_request_info(agents=["technical_analyst"])
         .build()
     )
 
     # Run the workflow with human-in-the-loop
-    pending_responses: dict[str, str] | None = None
+    pending_responses: dict[str, AgentRequestInfoResponse] | None = None
     workflow_complete = False
 
     print("Starting multi-perspective analysis workflow...")
@@ -155,26 +156,34 @@ async def main() -> None:
         # Process events
         async for event in stream:
             if isinstance(event, RequestInfoEvent):
-                if isinstance(event.data, AgentInputRequest):
-                    # Display pre-execution context for steering concurrent agents
+                if isinstance(event.data, AgentExecutorResponse):
+                    # Display agent output for review and potential modification
                     print("\n" + "-" * 40)
-                    print("INPUT REQUESTED (BEFORE CONCURRENT AGENTS)")
-                    print("-" * 40)
-                    print(f"About to call agents: {event.data.target_agent_id}")
-                    print("Conversation context:")
-                    recent = (
-                        event.data.conversation[-2:] if len(event.data.conversation) > 2 else event.data.conversation
+                    print("INPUT REQUESTED")
+                    print(
+                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
+                        "Please provide your feedback."
                     )
-                    for msg in recent:
-                        role = msg.role.value if msg.role else "unknown"
-                        text = (msg.text or "")[:150]
-                        print(f"  [{role}]: {text}...")
                     print("-" * 40)
+                    if event.data.full_conversation:
+                        print("Conversation context:")
+                        recent = (
+                            event.data.full_conversation[-2:]
+                            if len(event.data.full_conversation) > 2
+                            else event.data.full_conversation
+                        )
+                        for msg in recent:
+                            name = msg.author_name or msg.role.value
+                            text = (msg.text or "")[:150]
+                            print(f"  [{name}]: {text}...")
+                        print("-" * 40)
 
-                    # Get human input to steer all agents
-                    user_input = input("Your guidance for the analysts (or 'skip' to continue): ")  # noqa: ASYNC250
+                    # Get human input to steer this agent's contribution
+                    user_input = input("Your guidance for the analysts (or 'skip' to approve): ")  # noqa: ASYNC250
                     if user_input.lower() == "skip":
-                        user_input = "Please analyze objectively from your unique perspective."
+                        user_input = AgentRequestInfoResponse.approve()
+                    else:
+                        user_input = AgentRequestInfoResponse.from_strings([user_input])
 
                     pending_responses = {event.request_id: user_input}
                     print("(Resuming workflow...)")
@@ -189,9 +198,8 @@ async def main() -> None:
                     print(event.data)
                 workflow_complete = True
 
-            elif isinstance(event, WorkflowStatusEvent):
-                if event.state == WorkflowRunState.IDLE:
-                    workflow_complete = True
+            elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+                workflow_complete = True
 
 
 if __name__ == "__main__":

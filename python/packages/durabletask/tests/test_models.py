@@ -183,6 +183,28 @@ class TestRunRequest:
         restored = RunRequest.from_dict(data)
         assert restored.response_format is ModuleStructuredResponse
 
+    def test_round_trip_with_options(self) -> None:
+        """Ensure options are preserved and response_format is deserialized."""
+        original = RunRequest(
+            message="Test",
+            correlation_id="corr-opts-1",
+            response_format=ModuleStructuredResponse,
+            enable_tool_calls=False,
+            options={
+                "response_format": ModuleStructuredResponse,
+                "enable_tool_calls": False,
+                "custom": "value",
+            },
+        )
+
+        data = original.to_dict()
+        assert data["options"]["custom"] == "value"
+
+        restored = RunRequest.from_dict(data)
+        assert restored.options is not None
+        assert restored.options["custom"] == "value"
+        assert restored.options["response_format"] is ModuleStructuredResponse
+
     def test_init_with_correlationId(self) -> None:
         """Test RunRequest initialization with correlationId."""
         request = RunRequest(message="Test message", correlation_id="corr-123")

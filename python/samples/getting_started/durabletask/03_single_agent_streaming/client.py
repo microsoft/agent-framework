@@ -165,7 +165,7 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
     # Start the agent run with wait_for_response=False for non-blocking execution
     # This signals the agent to start processing without waiting for completion
     # The agent will execute in the background and write chunks to Redis
-    travel_planner.run(user_message, thread=thread, wait_for_response=False)
+    travel_planner.run(user_message, thread=thread, options={"wait_for_response": False})
     
     # Stream the response from Redis
     # This demonstrates that the client can stream from Redis while

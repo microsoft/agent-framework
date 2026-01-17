@@ -18,6 +18,7 @@ from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
     Case,
     Default,
+    EdgeCondition,
     EdgeGroup,
     FanInEdgeGroup,
     FanOutEdgeGroup,
@@ -48,12 +49,12 @@ class _EdgeRegistration:
     Args:
         source: The registered source name.
         target: The registered target name.
-        condition: An optional condition function for the edge.
+        condition: An optional condition function `(data) -> bool | Awaitable[bool]`.
     """
 
     source: str
     target: str
-    condition: Callable[[Any], bool] | None = None
+    condition: EdgeCondition | None = None
 
 
 @dataclass
@@ -222,7 +223,7 @@ class WorkflowBuilder:
         Args:
             candidate: The executor or agent to wrap.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
             executor_id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         try:  # Local import to avoid hard dependency at import time
@@ -351,7 +352,7 @@ class WorkflowBuilder:
                   the agent's internal name. But it must be unique within the workflow.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created when
                           the agent is instantiated.
-            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
 
         Example:
             .. code-block:: python
@@ -410,7 +411,7 @@ class WorkflowBuilder:
         Args:
             agent: The agent to add to the workflow.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
 
         Returns:
@@ -437,7 +438,10 @@ class WorkflowBuilder:
             "Consider using register_agent() for lazy initialization instead."
         )
         executor = self._maybe_wrap_agent(
-            agent, agent_thread=agent_thread, output_response=output_response, executor_id=id
+            agent,
+            agent_thread=agent_thread,
+            output_response=output_response,
+            executor_id=id,
         )
         self._add_executor(executor)
         return self
@@ -446,7 +450,7 @@ class WorkflowBuilder:
         self,
         source: Executor | AgentProtocol | str,
         target: Executor | AgentProtocol | str,
-        condition: Callable[[Any], bool] | None = None,
+        condition: EdgeCondition | None = None,
     ) -> Self:
         """Add a directed edge between two executors.
 
@@ -456,13 +460,14 @@ class WorkflowBuilder:
         Args:
             source: The source executor or registered name of the source factory for the edge.
             target: The target executor or registered name of the target factory for the edge.
-            condition: An optional condition function that determines whether the edge
-                       should be traversed based on the message.
+            condition: An optional condition function `(data) -> bool | Awaitable[bool]`
+                       that determines whether the edge should be traversed.
+                       Example: `lambda data: data["ready"]`.
 
-        Note: If instances are provided for both source and target, they will be shared across
-              all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
-              and referencing them by factory name for lazy initialization instead.
+            Note: If instances are provided for both source and target, they will be shared across
+                all workflow instances created from the built Workflow. To avoid this, consider
+                registering the executors and agents using `register_executor` and `register_agent`
+                and referencing them by factory name for lazy initialization instead.
 
         Returns:
             Self: The WorkflowBuilder instance for method chaining.
@@ -496,12 +501,6 @@ class WorkflowBuilder:
                     .build()
                 )
 
-
-                # With a condition
-                def only_large_numbers(msg: int) -> bool:
-                    return msg > 100
-
-
                 workflow = (
                     WorkflowBuilder()
                     .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
@@ -529,7 +528,7 @@ class WorkflowBuilder:
         target_exec = self._maybe_wrap_agent(target)  # type: ignore[arg-type]
         source_id = self._add_executor(source_exec)
         target_id = self._add_executor(target_exec)
-        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))  # type: ignore[call-arg]
+        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))
         return self
 
     def add_fan_out_edges(
@@ -1141,7 +1140,9 @@ class WorkflowBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def _resolve_edge_registry(self) -> tuple[Executor, list[Executor], list[EdgeGroup]]:
+    def _resolve_edge_registry(
+        self,
+    ) -> tuple[Executor, list[Executor], list[EdgeGroup]]:
         """Resolve deferred edge registrations into executors and edge groups."""
         if not self._start_executor:
             raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
@@ -1211,7 +1212,11 @@ class WorkflowBuilder:
         if start_executor is None:
             raise ValueError("Failed to resolve starting executor from registered factories.")
 
-        return start_executor, list(executor_id_to_instance.values()), deferred_edge_groups
+        return (
+            start_executor,
+            list(executor_id_to_instance.values()),
+            deferred_edge_groups,
+        )
 
     def build(self) -> Workflow:
         """Build and return the constructed workflow.

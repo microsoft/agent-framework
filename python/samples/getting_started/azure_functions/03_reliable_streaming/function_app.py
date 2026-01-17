@@ -19,9 +19,9 @@ import logging
 import os
 from datetime import timedelta
 
-import redis.asyncio as aioredis
-from agent_framework import AgentRunResponseUpdate
 import azure.functions as func
+import redis.asyncio as aioredis
+from agent_framework import AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 REDIS_CONNECTION_STRING = os.environ.get("REDIS_CONNECTION_STRING", "redis://localhost:6379")
 REDIS_STREAM_TTL_MINUTES = int(os.environ.get("REDIS_STREAM_TTL_MINUTES", "10"))
+
 
 async def get_stream_handler() -> RedisStreamResponseHandler:
     """Create a new Redis stream handler for each request.
@@ -70,7 +71,7 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
 
     async def on_streaming_response_update(
         self,
-        update: AgentRunResponseUpdate,
+        update: AgentResponseUpdate,
         context: AgentCallbackContext,
     ) -> None:
         """Write streaming update to Redis Stream.

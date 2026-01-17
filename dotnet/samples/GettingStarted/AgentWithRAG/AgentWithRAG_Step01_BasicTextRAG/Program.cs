@@ -59,18 +59,18 @@ TextSearchProviderOptions textSearchOptions = new()
 // Create the AI agent with the TextSearchProvider as the AI context provider.
 AIAgent agent = azureOpenAIClient
     .GetChatClient(deploymentName)
-    .CreateAIAgent(new ChatClientAgentOptions
+    .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
-        AIContextProviderFactory = ctx => new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions),
+        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)),
         // Since we are using ChatCompletion which stores chat history locally, we can also add a message removal policy
         // that removes messages produced by the TextSearchProvider before they are added to the chat history, so that
         // we don't bloat chat history with all the search result messages.
-        ChatMessageStoreFactory = ctx => new InMemoryChatMessageStore(ctx.SerializedState, ctx.JsonSerializerOptions)
-            .WithAIContextProviderMessageRemoval(),
+        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore(ctx.SerializedState, ctx.JsonSerializerOptions)
+            .WithAIContextProviderMessageRemoval()),
     });
 
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 
 Console.WriteLine(">> Asking about returns\n");
 Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));

@@ -16,15 +16,13 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return serializedThread.Deserialize<EchoAgentThread>(jsonSerializerOptions) ?? this.GetNewThread();
+        return serializedThread.Deserialize<EchoAgentThread>(jsonSerializerOptions) ?? await this.GetNewThreadAsync(cancellationToken);
     }
 
-    public override AgentThread GetNewThread()
-    {
-        return new EchoAgentThread();
-    }
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
+        new(new EchoAgentThread());
 
     private static ChatMessage UpdateThread(ChatMessage message, InMemoryAgentThread? thread = null)
     {
@@ -60,9 +58,9 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return [];
     }
 
-    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        AgentRunResponse result =
+        AgentResponse result =
             new(this.EchoMessages(messages, thread, options).ToList())
             {
                 AgentId = this.Id,
@@ -73,7 +71,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return Task.FromResult(result);
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string responseId = Guid.NewGuid().ToString("N");
 

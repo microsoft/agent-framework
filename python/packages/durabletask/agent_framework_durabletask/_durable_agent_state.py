@@ -35,7 +35,7 @@ from enum import Enum
 from typing import Any, cast
 
 from agent_framework import (
-    AgentRunResponse,
+    AgentResponse,
     BaseContent,
     ChatMessage,
     DataContent,
@@ -452,7 +452,7 @@ class DurableAgentState:
         """Get the count of conversation entries (requests + responses)."""
         return len(self.data.conversation_history)
 
-    def try_get_agent_response(self, correlation_id: str) -> AgentRunResponse | None:
+    def try_get_agent_response(self, correlation_id: str) -> AgentResponse | None:
         """Try to get an agent response by correlation ID.
 
         This method searches the conversation history for a response entry matching the given
@@ -690,8 +690,8 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         )
 
     @staticmethod
-    def from_run_response(correlation_id: str, response: AgentRunResponse) -> DurableAgentStateResponse:
-        """Creates a DurableAgentStateResponse from an AgentRunResponse."""
+    def from_run_response(correlation_id: str, response: AgentResponse) -> DurableAgentStateResponse:
+        """Creates a DurableAgentStateResponse from an AgentResponse."""
         return DurableAgentStateResponse(
             correlation_id=correlation_id,
             created_at=_parse_created_at(response.created_at),
@@ -702,13 +702,13 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
     @staticmethod
     def to_run_response(
         response_entry: DurableAgentStateResponse,
-    ) -> AgentRunResponse:
-        """Converts a DurableAgentStateResponse back to an AgentRunResponse."""
+    ) -> AgentResponse:
+        """Converts a DurableAgentStateResponse back to an AgentResponse."""
         messages = [m.to_chat_message() for m in response_entry.messages]
 
         usage_details = response_entry.usage.to_usage_details() if response_entry.usage is not None else UsageDetails()
 
-        return AgentRunResponse(
+        return AgentResponse(
             created_at=response_entry.created_at.isoformat(),
             messages=messages,
             usage_details=usage_details,

@@ -47,7 +47,7 @@ from _tools import (
 )
 from agent_framework import (
     AgentExecutorResponse,
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatMessage,
     Executor,
@@ -133,8 +133,8 @@ class ResearchLead(Executor):
 
         for response in responses:
             findings = []
-            if response.agent_run_response and response.agent_run_response.messages:
-                for msg in response.agent_run_response.messages:
+            if response.agent_response and response.agent_response.messages:
+                for msg in response.agent_response.messages:
                     if msg.role == Role.ASSISTANT and msg.text and msg.text.strip():
                         findings.append(msg.text.strip())
 
@@ -373,7 +373,7 @@ async def _process_workflow_events(events, conversation_ids, response_ids):
 
 def _track_agent_ids(event, agent, response_ids, conversation_ids):
     """Track agent response and conversation IDs - supporting multiple responses per agent."""
-    if isinstance(event.data, AgentRunResponseUpdate):
+    if isinstance(event.data, AgentResponseUpdate):
         # Check for conversation_id and response_id from raw_representation
         # V2 API stores conversation_id directly on raw_representation (ChatResponseUpdate)
         if hasattr(event.data, "raw_representation") and event.data.raw_representation:

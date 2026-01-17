@@ -21,8 +21,8 @@ from a2a.types import (
 )
 from a2a.types import Role as A2ARole
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatMessage,
     DataContent,
     ErrorContent,
@@ -131,7 +131,7 @@ async def test_run_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: M
 
     response = await a2a_agent.run("Hello agent")
 
-    assert isinstance(response, AgentRunResponse)
+    assert isinstance(response, AgentResponse)
     assert len(response.messages) == 1
     assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == "Hello from agent!"
@@ -146,7 +146,7 @@ async def test_run_with_task_response_single_artifact(a2a_agent: A2AAgent, mock_
 
     response = await a2a_agent.run("Generate a report")
 
-    assert isinstance(response, AgentRunResponse)
+    assert isinstance(response, AgentResponse)
     assert len(response.messages) == 1
     assert response.messages[0].role == Role.ASSISTANT
     assert response.messages[0].text == "Generated report content"
@@ -165,7 +165,7 @@ async def test_run_with_task_response_multiple_artifacts(a2a_agent: A2AAgent, mo
 
     response = await a2a_agent.run("Generate multiple outputs")
 
-    assert isinstance(response, AgentRunResponse)
+    assert isinstance(response, AgentResponse)
     assert len(response.messages) == 3
 
     assert response.messages[0].text == "First artifact content"
@@ -185,7 +185,7 @@ async def test_run_with_task_response_no_artifacts(a2a_agent: A2AAgent, mock_a2a
 
     response = await a2a_agent.run("Do something with no output")
 
-    assert isinstance(response, AgentRunResponse)
+    assert isinstance(response, AgentResponse)
     assert response.response_id == "task-empty"
 
 
@@ -357,13 +357,13 @@ async def test_run_stream_with_message_response(a2a_agent: A2AAgent, mock_a2a_cl
     mock_a2a_client.add_message_response("msg-stream-123", "Streaming response from agent!", "agent")
 
     # Collect streaming updates
-    updates: list[AgentRunResponseUpdate] = []
+    updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run_stream("Hello agent"):
         updates.append(update)
 
     # Verify streaming response
     assert len(updates) == 1
-    assert isinstance(updates[0], AgentRunResponseUpdate)
+    assert isinstance(updates[0], AgentResponseUpdate)
     assert updates[0].role == Role.ASSISTANT
     assert len(updates[0].contents) == 1
 

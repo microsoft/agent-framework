@@ -16,7 +16,7 @@ import logging
 import os
 from typing import Any, cast
 
-from agent_framework import AgentRunResponse
+from agent_framework import AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_durabletask import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
@@ -148,10 +148,10 @@ def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any
     logger.info("[Orchestration] Running spam detection agent: %s", spam_prompt)
     spam_result_task = spam_agent.run(
         messages=spam_prompt,
-        response_format=SpamDetectionResult,
+        options={"response_format": SpamDetectionResult},
     )
     
-    spam_result_raw: AgentRunResponse = yield spam_result_task
+    spam_result_raw: AgentResponse = yield spam_result_task
     spam_result = cast(SpamDetectionResult, spam_result_raw.value)
     
     logger.info("[Orchestration] Spam detection result: is_spam=%s", spam_result.is_spam)
@@ -178,10 +178,10 @@ def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any
     logger.info("[Orchestration] Running email assistant agent: %s", email_prompt)
     email_result_task = email_agent.run(
         messages=email_prompt,
-        response_format=EmailResponse,
+        options={"response_format": EmailResponse},
     )
     
-    email_result_raw: AgentRunResponse = yield email_result_task
+    email_result_raw: AgentResponse = yield email_result_task
     email_result = cast(EmailResponse, email_result_raw.value)
     
     logger.debug("[Orchestration] Email response drafted, sending...")

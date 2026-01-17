@@ -89,7 +89,7 @@ class SummarizationExecutor(Executor):
         expert_sections: list[str] = []
         for r in results:
             try:
-                messages = getattr(r.agent_run_response, "messages", [])
+                messages = getattr(r.agent_response, "messages", [])
                 final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}:\n{final_text}")
             except Exception as e:

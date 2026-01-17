@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage, Role
+from agent_framework import AgentResponse, ChatMessage, Role
 from agent_framework_durabletask import DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
@@ -136,7 +136,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -144,9 +144,9 @@ class TestAgentResponseHelpers:
         # Call try_set_value
         task.try_set_value(entity_task)
 
-        # Verify task completed successfully with AgentRunResponse
+        # Verify task completed successfully with AgentResponse
         assert task.state == TaskState.SUCCEEDED
-        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result, AgentResponse)
         assert task.result.text == "Test response"
 
     def test_try_set_value_failure(self) -> None:
@@ -178,9 +178,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentRunResponse(
-            messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]
-        ).to_dict()
+        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -190,7 +188,7 @@ class TestAgentResponseHelpers:
 
         # Verify task completed and value was parsed
         assert task.state == TaskState.SUCCEEDED
-        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result, AgentResponse)
         assert isinstance(task.result.value, TestSchema)
         assert task.result.value.answer == "42"
 
@@ -219,7 +217,7 @@ class TestAzureFunctionsFireAndForget:
         thread = agent.get_new_thread()
 
         # Run with wait_for_response=False
-        result = agent.run("Test message", thread=thread, wait_for_response=False)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
 
         # Verify signal_entity was called and call_entity was not
         assert context.signal_entity.call_count == 1
@@ -236,7 +234,7 @@ class TestAzureFunctionsFireAndForget:
         agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
-        result = agent.run("Test message", thread=thread, wait_for_response=False)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
 
         # Task should be immediately complete
         assert isinstance(result, AgentTask)
@@ -250,11 +248,11 @@ class TestAzureFunctionsFireAndForget:
         agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
-        result = agent.run("Test message", thread=thread, wait_for_response=False)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
 
         # Get the result
         response = result.result
-        assert isinstance(response, AgentRunResponse)
+        assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         assert response.messages[0].role == Role.SYSTEM
         # Check message contains key information
@@ -271,7 +269,7 @@ class TestAzureFunctionsFireAndForget:
         agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
-        result = agent.run("Test message", thread=thread, wait_for_response=True)
+        result = agent.run("Test message", thread=thread, options={"wait_for_response": True})
 
         # Verify call_entity was called and signal_entity was not
         assert context.call_entity.call_count == 1

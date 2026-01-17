@@ -40,7 +40,7 @@ def needs_editing(message: Any) -> bool:
     if not isinstance(message, AgentExecutorResponse):
         return False
     try:
-        review = ReviewResult.model_validate_json(message.agent_run_response.text)
+        review = ReviewResult.model_validate_json(message.agent_response.text)
         return review.score < 80
     except Exception:
         return False
@@ -52,7 +52,7 @@ def is_approved(message: Any) -> bool:
     if not isinstance(message, AgentExecutorResponse):
         return True
     try:
-        review = ReviewResult.model_validate_json(message.agent_run_response.text)
+        review = ReviewResult.model_validate_json(message.agent_response.text)
         return review.score >= 80
     except Exception:
         return True
@@ -86,7 +86,7 @@ reviewer = chat_client.create_agent(
         "- feedback: concise, actionable feedback\n"
         "- clarity, completeness, accuracy, structure: individual scores (0-100)"
     ),
-    response_format=ReviewResult,
+    default_options={"response_format": ReviewResult},
 )
 
 # Create Editor agent - improves content based on feedback

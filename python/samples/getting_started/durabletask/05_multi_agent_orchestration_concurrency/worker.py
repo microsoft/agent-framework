@@ -16,7 +16,7 @@ import logging
 import os
 from typing import Any
 
-from agent_framework import AgentRunResponse
+from agent_framework import AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_durabletask import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
@@ -97,9 +97,9 @@ def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: 
     
     logger.debug("[Orchestration] Both agents completed")
     
-    # Extract results from the tasks - DurableAgentTask yields AgentRunResponse
-    physicist_result: AgentRunResponse = task_results[0]
-    chemist_result: AgentRunResponse = task_results[1]
+    # Extract results from the tasks - DurableAgentTask yields AgentResponse
+    physicist_result: AgentResponse = task_results[0]
+    chemist_result: AgentResponse = task_results[1]
     
     result = {
         "physicist": physicist_result.text,

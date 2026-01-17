@@ -10,19 +10,21 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage
+from agent_framework import AgentResponse, ChatMessage, Role
 
 from agent_framework_azurefunctions._entities import create_agent_entity
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
 
-def _agent_response(text: str | None) -> AgentRunResponse:
-    """Create an AgentRunResponse with a single assistant message."""
+def _agent_response(text: str | None) -> AgentResponse:
+    """Create an AgentResponse with a single assistant message."""
     message = (
-        ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", contents=[])
+        ChatMessage(role=Role.ASSISTANT, text=text)
+        if text is not None
+        else ChatMessage(role=Role.ASSISTANT, contents=[])
     )
-    return AgentRunResponse(messages=[message])
+    return AgentResponse(messages=[message])
 
 
 class TestCreateAgentEntity:

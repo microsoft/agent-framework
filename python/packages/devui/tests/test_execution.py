@@ -287,7 +287,7 @@ async def test_full_pipeline_agent_events_are_json_serializable(executor_with_re
     2. Each event is converted by the mapper
     3. Server calls model_dump_json() on each event for SSE
 
-    If any event contains non-serializable objects (like AgentRunResponse),
+    If any event contains non-serializable objects (like AgentResponse),
     this test will fail - catching the bug before it hits production.
     """
     executor, entity_id, mock_client = executor_with_real_agent
@@ -327,7 +327,7 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
 
     This is particularly important for workflows with AgentExecutor because:
     - AgentExecutor produces ExecutorCompletedEvent with AgentExecutorResponse
-    - AgentExecutorResponse contains AgentRunResponse and ChatMessage objects
+    - AgentExecutorResponse contains AgentResponse and ChatMessage objects
     - These are SerializationMixin objects, not Pydantic, which caused the original bug
 
     This test ensures the ENTIRE streaming pipeline works end-to-end.
@@ -566,7 +566,7 @@ def test_extract_workflow_hil_responses_handles_stringified_json():
 
 async def test_executor_handles_non_streaming_agent():
     """Test executor can handle agents with only run() method (no run_stream)."""
-    from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
+    from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, TextContent
 
     class NonStreamingAgent:
         """Agent with only run() method - does NOT satisfy full AgentProtocol."""
@@ -575,12 +575,8 @@ async def test_executor_handles_non_streaming_agent():
         name = "Non-Streaming Test Agent"
         description = "Test agent without run_stream()"
 
-        @property
-        def display_name(self):
-            return self.name
-
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=f"Processed: {messages}")])],
                 response_id="test_123",
             )

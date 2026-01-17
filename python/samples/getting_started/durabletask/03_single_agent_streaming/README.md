@@ -6,7 +6,7 @@ This sample demonstrates how to use Redis Streams with agent response callbacks 
 
 - Using `AgentResponseCallbackProtocol` to capture streaming agent responses.
 - Persisting streaming chunks to Redis Streams for reliable delivery.
-- Non-blocking agent execution with `wait_for_response=False` (fire-and-forget mode).
+- Non-blocking agent execution with `options={"wait_for_response": False}` (fire-and-forget mode).
 - Cursor-based resumption for disconnected clients.
 - Decoupling agent execution from response streaming.
 
@@ -114,7 +114,7 @@ The client uses fire-and-forget mode to start the agent and streams from Redis:
 
 ```python
 # Start agent run with wait_for_response=False for non-blocking execution
-travel_planner.run(user_message, thread=thread, wait_for_response=False)
+travel_planner.run(user_message, thread=thread, options={"wait_for_response": False})
 
 # Stream response from Redis while the agent is processing
 async with await get_stream_handler() as stream_handler:
@@ -125,7 +125,7 @@ async with await get_stream_handler() as stream_handler:
             break
 ```
 
-**Fire-and-Forget Mode**: The `wait_for_response=False` parameter enables non-blocking execution. The `run()` method signals the agent and returns immediately, allowing the client to stream from Redis without blocking.
+**Fire-and-Forget Mode**: Use `options={"wait_for_response": False}` to enable non-blocking execution. The `run()` method signals the agent and returns immediately, allowing the client to stream from Redis without blocking.
 
 ### Cursor-Based Resumption
 
