@@ -28,8 +28,21 @@ internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : 
             Transport = new HttpClientPipelineTransport(httpClient)
         };
 
-        var openAiClient = new ChatClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
-        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, cancellationToken: cancellationToken))
+        IChatClient openAiClient = new ChatClient(model: nameof(AgentWebChat), credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
+
+        ChatOptions chatOptions = new()
+        {
+            ConversationId = threadId,
+            RawRepresentationFactory = _ => new ChatCompletionOptions()
+            {
+                Metadata =
+                {
+                    { "entity_id", agentName }
+                }
+            },
+        };
+
+        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, options: chatOptions, cancellationToken: cancellationToken))
         {
             yield return new AgentResponseUpdate(update);
         }
