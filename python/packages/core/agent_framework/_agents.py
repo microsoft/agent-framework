@@ -470,8 +470,8 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward all kwargs except the arg_name to support runtime context propagation
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k != arg_name}
+            # Forward runtime context kwargs, excluding arg_name and conversation_id.
+            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id")}
 
             if stream_callback is None:
                 # Use non-streaming mode
