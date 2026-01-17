@@ -66,6 +66,7 @@ __all__ = [
     "UsageContent",
     "UsageDetails",
     "merge_chat_options",
+    "normalize_messages",
     "normalize_tools",
     "prepare_function_call_results",
     "prepend_instructions_to_messages",
