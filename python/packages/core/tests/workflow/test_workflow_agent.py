@@ -974,7 +974,7 @@ class TestWorkflowAgentMergeUpdates:
         updates = [
             # User question
             AgentResponseUpdate(
-                contents=[TextContent(text="What is the weather?")],
+                contents=[Content.from_text(text="What is the weather?")],
                 role=Role.USER,
                 response_id="resp-1",
                 message_id="msg-1",
@@ -982,7 +982,9 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Assistant with function call
             AgentResponseUpdate(
-                contents=[FunctionCallContent(call_id=call_id, name="get_weather", arguments='{"location": "NYC"}')],
+                contents=[
+                    Content.from_function_call(call_id=call_id, name="get_weather", arguments='{"location": "NYC"}')
+                ],
                 role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-2",
@@ -991,7 +993,7 @@ class TestWorkflowAgentMergeUpdates:
             # Function result: no response_id previously caused this to go to global_dangling
             # and be placed at the end (the bug); fix now correctly associates via call_id
             AgentResponseUpdate(
-                contents=[FunctionResultContent(call_id=call_id, result="Sunny, 72F")],
+                contents=[Content.from_function_result(call_id=call_id, result="Sunny, 72F")],
                 role=Role.TOOL,
                 response_id=None,
                 message_id="msg-3",
@@ -999,7 +1001,7 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Final assistant answer
             AgentResponseUpdate(
-                contents=[TextContent(text="The weather in NYC is sunny and 72F.")],
+                contents=[Content.from_text(text="The weather in NYC is sunny and 72F.")],
                 role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-4",
@@ -1015,11 +1017,11 @@ class TestWorkflowAgentMergeUpdates:
         content_sequence = []
         for msg in result.messages:
             for content in msg.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text":
                     content_sequence.append(("text", msg.role))
-                elif isinstance(content, FunctionCallContent):
+                elif content.type == "function_call":
                     content_sequence.append(("function_call", msg.role))
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     content_sequence.append(("function_result", msg.role))
 
         # Verify correct ordering: user -> function_call -> function_result -> assistant_answer
@@ -1040,10 +1042,10 @@ class TestWorkflowAgentMergeUpdates:
         function_result_idx = None
         for i, msg in enumerate(result.messages):
             for content in msg.contents:
-                if isinstance(content, FunctionCallContent):
+                if content.type == "function_call":
                     function_call_idx = i
                     assert content.call_id == call_id
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     function_result_idx = i
                     assert content.call_id == call_id
 
@@ -1070,7 +1072,7 @@ class TestWorkflowAgentMergeUpdates:
         updates = [
             # User question
             AgentResponseUpdate(
-                contents=[TextContent(text="What's the weather and time?")],
+                contents=[Content.from_text(text="What's the weather and time?")],
                 role=Role.USER,
                 response_id="resp-1",
                 message_id="msg-1",
@@ -1078,7 +1080,9 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Assistant with first function call
             AgentResponseUpdate(
-                contents=[FunctionCallContent(call_id=call_id_1, name="get_weather", arguments='{"location": "NYC"}')],
+                contents=[
+                    Content.from_function_call(call_id=call_id_1, name="get_weather", arguments='{"location": "NYC"}')
+                ],
                 role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-2",
@@ -1086,7 +1090,9 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Assistant with second function call
             AgentResponseUpdate(
-                contents=[FunctionCallContent(call_id=call_id_2, name="get_time", arguments='{"timezone": "EST"}')],
+                contents=[
+                    Content.from_function_call(call_id=call_id_2, name="get_time", arguments='{"timezone": "EST"}')
+                ],
                 role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-3",
@@ -1094,7 +1100,7 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Second function result arrives first (no response_id)
             AgentResponseUpdate(
-                contents=[FunctionResultContent(call_id=call_id_2, result="3:00 PM EST")],
+                contents=[Content.from_function_result(call_id=call_id_2, result="3:00 PM EST")],
                 role=Role.TOOL,
                 response_id=None,
                 message_id="msg-4",
@@ -1102,7 +1108,7 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # First function result arrives second (no response_id)
             AgentResponseUpdate(
-                contents=[FunctionResultContent(call_id=call_id_1, result="Sunny, 72F")],
+                contents=[Content.from_function_result(call_id=call_id_1, result="Sunny, 72F")],
                 role=Role.TOOL,
                 response_id=None,
                 message_id="msg-5",
@@ -1110,7 +1116,7 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Final assistant answer
             AgentResponseUpdate(
-                contents=[TextContent(text="It's sunny (72F) and 3 PM in NYC.")],
+                contents=[Content.from_text(text="It's sunny (72F) and 3 PM in NYC.")],
                 role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-6",
@@ -1126,11 +1132,11 @@ class TestWorkflowAgentMergeUpdates:
         content_sequence = []
         for msg in result.messages:
             for content in msg.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text":
                     content_sequence.append(("text", None))
-                elif isinstance(content, FunctionCallContent):
+                elif content.type == "function_call":
                     content_sequence.append(("function_call", content.call_id))
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     content_sequence.append(("function_result", content.call_id))
 
         # Verify all function results appear before the final assistant text
@@ -1161,7 +1167,7 @@ class TestWorkflowAgentMergeUpdates:
         """
         updates = [
             AgentResponseUpdate(
-                contents=[TextContent(text="Hello")],
+                contents=[Content.from_text(text="Hello")],
                 role=Role.USER,
                 response_id="resp-1",
                 message_id="msg-1",
@@ -1169,14 +1175,14 @@ class TestWorkflowAgentMergeUpdates:
             ),
             # Function result with no matching call
             AgentResponseUpdate(
-                contents=[FunctionResultContent(call_id="orphan_call_id", result="orphan result")],
+                contents=[Content.from_function_result(call_id="orphan_call_id", result="orphan result")],
                 role=Role.TOOL,
                 response_id=None,
                 message_id="msg-2",
                 created_at="2024-01-01T12:00:01Z",
             ),
             AgentResponseUpdate(
-                contents=[TextContent(text="Goodbye")],
+                contents=[Content.from_text(text="Goodbye")],
                 role=Role.ASSISTANT,
                 response_id="resp-1",
                 message_id="msg-3",
@@ -1192,9 +1198,9 @@ class TestWorkflowAgentMergeUpdates:
         content_types = []
         for msg in result.messages:
             for content in msg.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text":
                     content_types.append("text")
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     content_types.append("function_result")
 
         # Order: text (user), text (assistant), function_result (orphan at end)
