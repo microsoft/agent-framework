@@ -705,6 +705,124 @@ def test_chat_response_with_format_init():
     assert response.value.response == "Hello"
 
 
+def test_chat_response_value_raises_on_invalid_schema():
+    """Test that value property raises ValidationError with field constraint details."""
+    from typing import Literal
+
+    from pydantic import Field, ValidationError
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = ChatResponse(messages=message, response_format=StrictSchema)
+
+    with raises(ValidationError) as exc_info:
+        _ = response.value
+
+    errors = exc_info.value.errors()
+    error_fields = {e["loc"][0] for e in errors}
+    assert "id" in error_fields, "Expected 'id' Literal constraint error"
+    assert "name" in error_fields, "Expected 'name' min_length constraint error"
+    assert "score" in error_fields, "Expected 'score' gt constraint error"
+
+
+def test_chat_response_try_parse_value_returns_none_on_invalid():
+    """Test that try_parse_value returns None on validation failure with Field constraints."""
+    from typing import Literal
+
+    from pydantic import Field
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = ChatResponse(messages=message)
+
+    result = response.try_parse_value(StrictSchema)
+    assert result is None
+
+
+def test_chat_response_try_parse_value_returns_value_on_success():
+    """Test that try_parse_value returns parsed value when all constraints pass."""
+    from pydantic import Field
+
+    class MySchema(BaseModel):
+        name: str = Field(min_length=3)
+        score: int = Field(ge=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
+    response = ChatResponse(messages=message)
+
+    result = response.try_parse_value(MySchema)
+    assert result is not None
+    assert result.name == "test"
+    assert result.score == 85
+
+
+def test_agent_response_value_raises_on_invalid_schema():
+    """Test that AgentResponse.value property raises ValidationError with field constraint details."""
+    from typing import Literal
+
+    from pydantic import Field, ValidationError
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = AgentResponse(messages=message, response_format=StrictSchema)
+
+    with raises(ValidationError) as exc_info:
+        _ = response.value
+
+    errors = exc_info.value.errors()
+    error_fields = {e["loc"][0] for e in errors}
+    assert "id" in error_fields, "Expected 'id' Literal constraint error"
+    assert "name" in error_fields, "Expected 'name' min_length constraint error"
+    assert "score" in error_fields, "Expected 'score' gt constraint error"
+
+
+def test_agent_response_try_parse_value_returns_none_on_invalid():
+    """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
+    from typing import Literal
+
+    from pydantic import Field
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = AgentResponse(messages=message)
+
+    result = response.try_parse_value(StrictSchema)
+    assert result is None
+
+
+def test_agent_response_try_parse_value_returns_value_on_success():
+    """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
+    from pydantic import Field
+
+    class MySchema(BaseModel):
+        name: str = Field(min_length=3)
+        score: int = Field(ge=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
+    response = AgentResponse(messages=message)
+
+    result = response.try_parse_value(MySchema)
+    assert result is not None
+    assert result.name == "test"
+    assert result.score == 85
+
+
 # region ChatResponseUpdate
 
 
