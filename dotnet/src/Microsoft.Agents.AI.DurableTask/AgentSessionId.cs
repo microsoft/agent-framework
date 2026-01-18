@@ -27,13 +27,6 @@ public readonly struct AgentSessionId : IEquatable<AgentSessionId>
     }
 
     /// <summary>
-    /// Converts an agent name to its underlying entity name representation.
-    /// </summary>
-    /// <param name="name">The agent name.</param>
-    /// <returns>The entity name used by Durable Task for this agent.</returns>
-    public static string ToEntityName(string name) => $"{EntityNamePrefix}{name}";
-
-    /// <summary>
     /// Gets the name of the agent that owns the session. Names are case-insensitive.
     /// </summary>
     public string Name { get; }
@@ -43,6 +36,17 @@ public readonly struct AgentSessionId : IEquatable<AgentSessionId>
     /// </summary>
     public string Key => this._entityId.Key;
 
+    /// <summary>
+    /// Converts an agent name to its underlying entity name representation.
+    /// </summary>
+    /// <param name="name">The agent name.</param>
+    /// <returns>The entity name used by Durable Task for this agent.</returns>
+    internal static string ToEntityName(string name) => $"{EntityNamePrefix}{name}";
+
+    /// <summary>
+    /// Converts the <see cref="AgentSessionId"/> to an <see cref="EntityInstanceId"/>.
+    /// </summary>
+    /// <returns>The <see cref="EntityInstanceId"/> representation of the <see cref="AgentSessionId"/>.</returns>
     internal EntityInstanceId ToEntityId() => this._entityId;
 
     /// <summary>
