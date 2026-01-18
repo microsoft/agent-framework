@@ -2915,12 +2915,13 @@ class ChatResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        response_format = output_format_type if isinstance(output_format_type, type) else None
+        msg = cls(messages=[], response_format=response_format)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
-            msg.try_parse_value(output_format_type)
+        if response_format and issubclass(response_format, BaseModel):
+            msg.try_parse_value(response_format)
         return msg
 
     @property
@@ -2968,12 +2969,21 @@ class ChatResponse(SerializationMixin):
         format_type = output_format_type or self._response_format
         if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
             return None
-        if self._value_parsed and self._value is not None:
-            return self._value  # type: ignore[return-value]
+
+        # Cache the result unless a different schema than the configured response_format is requested.
+        # This prevents calls with a different schema from polluting the cached value.
+        use_cache = (
+            self._response_format is None or output_format_type is None or output_format_type is self._response_format
+        )
+
+        if use_cache and self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value, no-any-return]
         try:
-            self._value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            self._value_parsed = True
-            return self._value  # type: ignore[return-value]
+            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            if use_cache:
+                self._value = parsed_value
+                self._value_parsed = True
+            return parsed_value  # type: ignore[return-value]
         except ValidationError as ex:
             logger.warning("Failed to parse value from chat response text: %s", ex)
             return None
@@ -3261,7 +3271,7 @@ class AgentResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3284,7 +3294,7 @@ class AgentResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data
         """
-        msg = cls(messages=[])
+        msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3311,12 +3321,21 @@ class AgentResponse(SerializationMixin):
         format_type = output_format_type or self._response_format
         if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
             return None
-        if self._value_parsed and self._value is not None:
-            return self._value  # type: ignore[return-value]
+
+        # Cache the result unless a different schema than the configured response_format is requested.
+        # This prevents calls with a different schema from polluting the cached value.
+        use_cache = (
+            self._response_format is None or output_format_type is None or output_format_type is self._response_format
+        )
+
+        if use_cache and self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value, no-any-return]
         try:
-            self._value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            self._value_parsed = True
-            return self._value  # type: ignore[return-value]
+            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            if use_cache:
+                self._value = parsed_value
+                self._value_parsed = True
+            return parsed_value  # type: ignore[return-value]
         except ValidationError as ex:
             logger.warning("Failed to parse value from agent run response text: %s", ex)
             return None
