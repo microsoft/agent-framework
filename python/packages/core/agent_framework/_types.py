@@ -2976,7 +2976,6 @@ class ChatResponse(SerializationMixin):
             return self._value  # type: ignore[return-value]
         except ValidationError as ex:
             logger.warning("Failed to parse value from chat response text: %s", ex)
-            self._value_parsed = True
             return None
 
 
@@ -3320,7 +3319,6 @@ class AgentResponse(SerializationMixin):
             return self._value  # type: ignore[return-value]
         except ValidationError as ex:
             logger.warning("Failed to parse value from agent run response text: %s", ex)
-            self._value_parsed = True
             return None
 
 
