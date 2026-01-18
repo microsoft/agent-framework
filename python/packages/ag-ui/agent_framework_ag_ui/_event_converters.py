@@ -6,12 +6,9 @@ from typing import Any
 
 from agent_framework import (
     ChatResponseUpdate,
-    ErrorContent,
+    Content,
     FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
     Role,
-    TextContent,
 )
 
 
@@ -117,7 +114,7 @@ class AGUIEventConverter:
         return ChatResponseUpdate(
             role=Role.ASSISTANT,
             message_id=self.current_message_id,
-            contents=[TextContent(text=delta)],
+            contents=[Content.from_text(text=delta)],
         )
 
     def _handle_text_message_end(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
@@ -133,7 +130,7 @@ class AGUIEventConverter:
         return ChatResponseUpdate(
             role=Role.ASSISTANT,
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id=self.current_tool_call_id or "",
                     name=self.current_tool_name or "",
                     arguments="",
@@ -149,7 +146,7 @@ class AGUIEventConverter:
         return ChatResponseUpdate(
             role=Role.ASSISTANT,
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id=self.current_tool_call_id or "",
                     name=self.current_tool_name or "",
                     arguments=delta,
@@ -170,7 +167,7 @@ class AGUIEventConverter:
         return ChatResponseUpdate(
             role=Role.TOOL,
             contents=[
-                FunctionResultContent(
+                Content.from_function_result(
                     call_id=tool_call_id,
                     result=result,
                 )
@@ -197,7 +194,7 @@ class AGUIEventConverter:
             role=Role.ASSISTANT,
             finish_reason=FinishReason.CONTENT_FILTER,
             contents=[
-                ErrorContent(
+                Content.from_error(
                     message=error_message,
                     error_code="RUN_ERROR",
                 )

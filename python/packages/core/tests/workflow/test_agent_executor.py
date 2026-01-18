@@ -11,9 +11,9 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     ChatMessageStore,
+    Content,
     Role,
     SequentialBuilder,
-    TextContent,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -49,7 +49,7 @@ class _CountingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
-        yield AgentResponseUpdate(contents=[TextContent(text=f"Response #{self.call_count}: {self.name}")])
+        yield AgentResponseUpdate(contents=[Content.from_text(text=f"Response #{self.call_count}: {self.name}")])
 
 
 async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:

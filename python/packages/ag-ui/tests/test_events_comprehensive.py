@@ -6,10 +6,7 @@ import json
 
 from agent_framework import (
     AgentResponseUpdate,
-    FunctionApprovalRequestContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    TextContent,
+    Content,
 )
 
 
@@ -19,7 +16,7 @@ async def test_basic_text_message_conversion():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update = AgentResponseUpdate(contents=[TextContent(text="Hello")])
+    update = AgentResponseUpdate(contents=[Content.from_text(text="Hello")])
     events = await bridge.from_agent_run_update(update)
 
     assert len(events) == 2
@@ -35,8 +32,8 @@ async def test_text_message_streaming():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update1 = AgentResponseUpdate(contents=[TextContent(text="Hello ")])
-    update2 = AgentResponseUpdate(contents=[TextContent(text="world")])
+    update1 = AgentResponseUpdate(contents=[Content.from_text(text="Hello ")])
+    update2 = AgentResponseUpdate(contents=[Content.from_text(text="world")])
 
     events1 = await bridge.from_agent_run_update(update1)
     events2 = await bridge.from_agent_run_update(update2)
@@ -61,7 +58,7 @@ async def test_skip_text_content_for_structured_outputs():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread", skip_text_content=True)
 
-    update = AgentResponseUpdate(contents=[TextContent(text='{"result": "data"}')])
+    update = AgentResponseUpdate(contents=[Content.from_text(text='{"result": "data"}')])
     events = await bridge.from_agent_run_update(update)
 
     # No events should be emitted
@@ -74,9 +71,9 @@ async def test_skip_text_content_for_empty_text():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update1 = AgentResponseUpdate(contents=[TextContent(text="Hello ")])
-    update2 = AgentResponseUpdate(contents=[TextContent(text="")])  # Empty chunk
-    update3 = AgentResponseUpdate(contents=[TextContent(text="world")])
+    update1 = AgentResponseUpdate(contents=[Content.from_text(text="Hello ")])
+    update2 = AgentResponseUpdate(contents=[Content.from_text(text="")])  # Empty chunk
+    update3 = AgentResponseUpdate(contents=[Content.from_text(text="world")])
 
     events1 = await bridge.from_agent_run_update(update1)
     events2 = await bridge.from_agent_run_update(update2)
@@ -105,7 +102,7 @@ async def test_tool_call_with_name():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update = AgentResponseUpdate(contents=[FunctionCallContent(name="search_web", call_id="call_123")])
+    update = AgentResponseUpdate(contents=[Content.from_function_call(name="search_web", call_id="call_123")])
     events = await bridge.from_agent_run_update(update)
 
     assert len(events) == 1
@@ -121,15 +118,17 @@ async def test_tool_call_streaming_args():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     # First chunk: name only
-    update1 = AgentResponseUpdate(contents=[FunctionCallContent(name="search_web", call_id="call_123")])
+    update1 = AgentResponseUpdate(contents=[Content.from_function_call(name="search_web", call_id="call_123")])
     events1 = await bridge.from_agent_run_update(update1)
 
     # Second chunk: arguments chunk 1 (name can be empty string for continuation)
-    update2 = AgentResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_123", arguments='{"query": "')])
+    update2 = AgentResponseUpdate(
+        contents=[Content.from_function_call(name="", call_id="call_123", arguments='{"query": "')]
+    )
     events2 = await bridge.from_agent_run_update(update2)
 
     # Third chunk: arguments chunk 2
-    update3 = AgentResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_123", arguments='AI"}')])
+    update3 = AgentResponseUpdate(contents=[Content.from_function_call(name="", call_id="call_123", arguments='AI"}')])
     events3 = await bridge.from_agent_run_update(update3)
 
     # First update: ToolCallStartEvent
@@ -167,9 +166,11 @@ async def test_streaming_tool_call_no_duplicate_start_events():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     # Simulate streaming tool call: first chunk has name, subsequent chunks have name=""
-    update1 = AgentResponseUpdate(contents=[FunctionCallContent(name="get_weather", call_id="call_789")])
-    update2 = AgentResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_789", arguments='{"loc":')])
-    update3 = AgentResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_789", arguments='"SF"}')])
+    update1 = AgentResponseUpdate(contents=[Content.from_function_call(name="get_weather", call_id="call_789")])
+    update2 = AgentResponseUpdate(
+        contents=[Content.from_function_call(name="", call_id="call_789", arguments='{"loc":')]
+    )
+    update3 = AgentResponseUpdate(contents=[Content.from_function_call(name="", call_id="call_789", arguments='"SF"}')])
 
     events1 = await bridge.from_agent_run_update(update1)
     events2 = await bridge.from_agent_run_update(update2)
@@ -193,7 +194,7 @@ async def test_tool_result_with_dict():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     result_data = {"status": "success", "count": 42}
-    update = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_123", result=result_data)])
+    update = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_123", result=result_data)])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit ToolCallEndEvent + ToolCallResultEvent
@@ -214,7 +215,7 @@ async def test_tool_result_with_string():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_123", result="Search complete")])
+    update = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_123", result="Search complete")])
     events = await bridge.from_agent_run_update(update)
 
     assert len(events) == 2
@@ -229,7 +230,7 @@ async def test_tool_result_with_none():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_123", result=None)])
+    update = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_123", result=None)])
     events = await bridge.from_agent_run_update(update)
 
     assert len(events) == 2
@@ -247,8 +248,8 @@ async def test_multiple_tool_results_in_sequence():
 
     update = AgentResponseUpdate(
         contents=[
-            FunctionResultContent(call_id="call_1", result="Result 1"),
-            FunctionResultContent(call_id="call_2", result="Result 2"),
+            Content.from_function_result(call_id="call_1", result="Result 1"),
+            Content.from_function_result(call_id="call_2", result="Result 2"),
         ]
     )
     events = await bridge.from_agent_run_update(update)
@@ -272,12 +273,12 @@ async def test_function_approval_request_basic():
         require_confirmation=False,
     )
 
-    func_call = FunctionCallContent(
+    func_call = Content.from_function_call(
         call_id="call_123",
         name="send_email",
         arguments={"to": "user@example.com", "subject": "Test"},
     )
-    approval = FunctionApprovalRequestContent(
+    approval = Content.from_function_approval_request(
         id="approval_001",
         function_call=func_call,
     )
@@ -312,8 +313,8 @@ async def test_empty_predict_state_config():
     # Tool call with arguments
     update = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="write_doc", call_id="call_1", arguments='{"content": "test"}'),
-            FunctionResultContent(call_id="call_1", result="Done"),
+            Content.from_function_call(name="write_doc", call_id="call_1", arguments='{"content": "test"}'),
+            Content.from_function_result(call_id="call_1", result="Done"),
         ]
     )
     events = await bridge.from_agent_run_update(update)
@@ -347,8 +348,8 @@ async def test_tool_not_in_predict_state_config():
     # Different tool name
     update = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="search_web", call_id="call_1", arguments='{"query": "AI"}'),
-            FunctionResultContent(call_id="call_1", result="Results"),
+            Content.from_function_call(name="search_web", call_id="call_1", arguments='{"query": "AI"}'),
+            Content.from_function_result(call_id="call_1", result="Results"),
         ]
     )
     events = await bridge.from_agent_run_update(update)
@@ -376,8 +377,8 @@ async def test_state_management_tracking():
     # Streaming tool call
     update1 = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="write_doc", call_id="call_1"),
-            FunctionCallContent(name="", call_id="call_1", arguments='{"content": "Hello"}'),
+            Content.from_function_call(name="write_doc", call_id="call_1"),
+            Content.from_function_call(name="", call_id="call_1", arguments='{"content": "Hello"}'),
         ]
     )
     await bridge.from_agent_run_update(update1)
@@ -387,7 +388,7 @@ async def test_state_management_tracking():
     assert bridge.pending_state_updates["document"] == "Hello"
 
     # Tool result should update current_state
-    update2 = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")])
+    update2 = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_1", result="Done")])
     await bridge.from_agent_run_update(update2)
 
     # current_state should be updated
@@ -413,12 +414,12 @@ async def test_wildcard_tool_argument():
     # Complete tool call with dict arguments
     update = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(
+            Content.from_function_call(
                 name="create_recipe",
                 call_id="call_1",
                 arguments={"title": "Pasta", "ingredients": ["pasta", "sauce"]},
             ),
-            FunctionResultContent(call_id="call_1", result="Created"),
+            Content.from_function_result(call_id="call_1", result="Created"),
         ]
     )
     events = await bridge.from_agent_run_update(update)
@@ -503,14 +504,14 @@ async def test_state_snapshot_after_tool_result():
     # Tool call with streaming args
     update1 = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="write_doc", call_id="call_1"),
-            FunctionCallContent(name="", call_id="call_1", arguments='{"content": "Test"}'),
+            Content.from_function_call(name="write_doc", call_id="call_1"),
+            Content.from_function_call(name="", call_id="call_1", arguments='{"content": "Test"}'),
         ]
     )
     await bridge.from_agent_run_update(update1)
 
     # Tool result should trigger StateSnapshotEvent
-    update2 = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")])
+    update2 = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_1", result="Done")])
     events = await bridge.from_agent_run_update(update2)
 
     # Should have: ToolCallEnd, ToolCallResult, StateSnapshot, ToolCallStart (confirm_changes), ToolCallArgs, ToolCallEnd
@@ -526,12 +527,12 @@ async def test_message_id_persistence_across_chunks():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     # First chunk
-    update1 = AgentResponseUpdate(contents=[TextContent(text="Hello ")])
+    update1 = AgentResponseUpdate(contents=[Content.from_text(text="Hello ")])
     events1 = await bridge.from_agent_run_update(update1)
     message_id = events1[0].message_id
 
     # Second chunk
-    update2 = AgentResponseUpdate(contents=[TextContent(text="world")])
+    update2 = AgentResponseUpdate(contents=[Content.from_text(text="world")])
     events2 = await bridge.from_agent_run_update(update2)
 
     # Should use same message_id
@@ -546,14 +547,16 @@ async def test_tool_call_id_tracking():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     # First chunk with name
-    update1 = AgentResponseUpdate(contents=[FunctionCallContent(name="search", call_id="call_1")])
+    update1 = AgentResponseUpdate(contents=[Content.from_function_call(name="search", call_id="call_1")])
     await bridge.from_agent_run_update(update1)
 
     assert bridge.current_tool_call_id == "call_1"
     assert bridge.current_tool_call_name == "search"
 
     # Second chunk with args but no name
-    update2 = AgentResponseUpdate(contents=[FunctionCallContent(name="", call_id="call_1", arguments='{"q":"AI"}')])
+    update2 = AgentResponseUpdate(
+        contents=[Content.from_function_call(name="", call_id="call_1", arguments='{"q":"AI"}')]
+    )
     events2 = await bridge.from_agent_run_update(update2)
 
     # Should still track same tool call
@@ -576,8 +579,8 @@ async def test_tool_name_reset_after_result():
     # Tool call
     update1 = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="write_doc", call_id="call_1"),
-            FunctionCallContent(name="", call_id="call_1", arguments='{"content": "Test"}'),
+            Content.from_function_call(name="write_doc", call_id="call_1"),
+            Content.from_function_call(name="", call_id="call_1", arguments='{"content": "Test"}'),
         ]
     )
     await bridge.from_agent_run_update(update1)
@@ -585,7 +588,7 @@ async def test_tool_name_reset_after_result():
     assert bridge.current_tool_call_name == "write_doc"
 
     # Tool result with predictive state (should trigger confirm_changes and reset)
-    update2 = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_1", result="Done")])
+    update2 = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_1", result="Done")])
     await bridge.from_agent_run_update(update2)
 
     # Tool name should be reset
@@ -604,9 +607,9 @@ async def test_function_approval_with_wildcard_argument():
         },
     )
 
-    approval_content = FunctionApprovalRequestContent(
+    approval_content = Content.from_function_approval_request(
         id="approval_1",
-        function_call=FunctionCallContent(
+        function_call=Content.from_function_call(
             name="submit", call_id="call_1", arguments='{"key1": "value1", "key2": "value2"}'
         ),
     )
@@ -632,9 +635,11 @@ async def test_function_approval_missing_argument():
         },
     )
 
-    approval_content = FunctionApprovalRequestContent(
+    approval_content = Content.from_function_approval_request(
         id="approval_1",
-        function_call=FunctionCallContent(name="process", call_id="call_1", arguments='{"other_field": "value"}'),
+        function_call=Content.from_function_call(
+            name="process", call_id="call_1", arguments='{"other_field": "value"}'
+        ),
     )
 
     update = AgentResponseUpdate(contents=[approval_content])
@@ -654,8 +659,8 @@ async def test_empty_predict_state_config_no_deltas():
     # Tool call with arguments
     update = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="search", call_id="call_1"),
-            FunctionCallContent(name="", call_id="call_1", arguments='{"query": "test"}'),
+            Content.from_function_call(name="search", call_id="call_1"),
+            Content.from_function_call(name="", call_id="call_1", arguments='{"query": "test"}'),
         ]
     )
     events = await bridge.from_agent_run_update(update)
@@ -678,8 +683,8 @@ async def test_tool_with_no_matching_config():
     # Tool call for different tool
     update = AgentResponseUpdate(
         contents=[
-            FunctionCallContent(name="search_web", call_id="call_1"),
-            FunctionCallContent(name="", call_id="call_1", arguments='{"query": "test"}'),
+            Content.from_function_call(name="search_web", call_id="call_1"),
+            Content.from_function_call(name="", call_id="call_1", arguments='{"query": "test"}'),
         ]
     )
     events = await bridge.from_agent_run_update(update)
@@ -696,7 +701,7 @@ async def test_tool_call_without_name_or_id():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     # This should not crash but log an error
-    update = AgentResponseUpdate(contents=[FunctionCallContent(name="", call_id="", arguments='{"arg": "val"}')])
+    update = AgentResponseUpdate(contents=[Content.from_function_call(name="", call_id="", arguments='{"arg": "val"}')])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit ToolCallArgsEvent with generated ID
@@ -717,7 +722,7 @@ async def test_state_delta_count_logging():
     for i in range(15):
         update = AgentResponseUpdate(
             contents=[
-                FunctionCallContent(name="", call_id="call_1", arguments=f'{{"text": "Content variation {i}"}}'),
+                Content.from_function_call(name="", call_id="call_1", arguments=f'{{"text": "Content variation {i}"}}'),
             ]
         )
         # Set the tool name to match config
@@ -737,7 +742,7 @@ async def test_tool_result_with_empty_list():
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
-    update = AgentResponseUpdate(contents=[FunctionResultContent(call_id="call_123", result=[])])
+    update = AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_123", result=[])])
     events = await bridge.from_agent_run_update(update)
 
     assert len(events) == 2
@@ -760,7 +765,7 @@ async def test_tool_result_with_single_text_content():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     update = AgentResponseUpdate(
-        contents=[FunctionResultContent(call_id="call_123", result=[MockTextContent("Hello from MCP tool!")])]
+        contents=[Content.from_function_result(call_id="call_123", result=[MockTextContent("Hello from MCP tool!")])]
     )
     events = await bridge.from_agent_run_update(update)
 
@@ -785,7 +790,7 @@ async def test_tool_result_with_multiple_text_contents():
 
     update = AgentResponseUpdate(
         contents=[
-            FunctionResultContent(
+            Content.from_function_result(
                 call_id="call_123",
                 result=[MockTextContent("First result"), MockTextContent("Second result")],
             )
@@ -812,7 +817,7 @@ async def test_tool_result_with_model_dump_objects():
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     update = AgentResponseUpdate(
-        contents=[FunctionResultContent(call_id="call_123", result=[MockModel(value=1), MockModel(value=2)])]
+        contents=[Content.from_function_result(call_id="call_123", result=[MockModel(value=1), MockModel(value=2)])]
     )
     events = await bridge.from_agent_run_update(update)
 

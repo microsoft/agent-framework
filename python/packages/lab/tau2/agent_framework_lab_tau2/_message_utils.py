@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework._types import ChatMessage, Contents, Role
+from agent_framework._types import ChatMessage, Content, Role
 from loguru import logger
 
 
@@ -12,7 +12,7 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
     messages to user messages (since users typically don't make function calls).
     """
 
-    def filter_out_function_calls(messages: list[Contents]) -> list[Contents]:
+    def filter_out_function_calls(messages: list[Content]) -> list[Content]:
         """Remove function call content from message contents."""
         return [content for content in messages if content.type != "function_call"]
 
@@ -58,7 +58,7 @@ def log_messages(messages: list[ChatMessage]) -> None:
             for content in msg.contents:
                 if hasattr(content, "type"):
                     if content.type == "text":
-                        escape_text = content.text.replace("<", r"\<")
+                        escape_text = content.text.replace("<", r"\<")  # type: ignore[union-attr]
                         if msg.role == Role.SYSTEM:
                             logger_.info(f"<cyan>[SYSTEM]</cyan> {escape_text}")
                         elif msg.role == Role.USER:

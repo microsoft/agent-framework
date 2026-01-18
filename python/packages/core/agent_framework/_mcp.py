@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 import logging
 import re
 import sys
@@ -29,13 +30,8 @@ from ._tools import (
 )
 from ._types import (
     ChatMessage,
-    Contents,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -82,7 +78,7 @@ def _parse_message_from_mcp(
 
 def _parse_contents_from_mcp_tool_result(
     mcp_type: types.CallToolResult,
-) -> list[Contents]:
+) -> list[Content]:
     """Parse an MCP CallToolResult into Agent Framework content types.
 
     This function extracts the complete _meta field from CallToolResult objects
@@ -147,25 +143,27 @@ def _parse_content_from_mcp(
         | types.ToolUseContent
         | types.ToolResultContent
     ],
-) -> list[Contents]:
+) -> list[Content]:
     """Parse an MCP type into an Agent Framework type."""
     mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
-    return_types: list[Contents] = []
+    return_types: list[Content] = []
     for mcp_type in mcp_types:
         match mcp_type:
             case types.TextContent():
-                return_types.append(TextContent(text=mcp_type.text, raw_representation=mcp_type))
+                return_types.append(Content.from_text(text=mcp_type.text, raw_representation=mcp_type))
             case types.ImageContent() | types.AudioContent():
+                # MCP protocol uses base64-encoded strings, convert to bytes
+                data_bytes = base64.b64decode(mcp_type.data) if isinstance(mcp_type.data, str) else mcp_type.data
                 return_types.append(
-                    DataContent(
-                        data=mcp_type.data,
+                    Content.from_data(
+                        data=data_bytes,
                         media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
                     )
                 )
             case types.ResourceLink():
                 return_types.append(
-                    UriContent(
+                    Content.from_uri(
                         uri=str(mcp_type.uri),
                         media_type=mcp_type.mimeType or "application/json",
                         raw_representation=mcp_type,
@@ -173,7 +171,7 @@ def _parse_content_from_mcp(
                 )
             case types.ToolUseContent():
                 return_types.append(
-                    FunctionCallContent(
+                    Content.from_function_call(
                         call_id=mcp_type.id,
                         name=mcp_type.name,
                         arguments=mcp_type.input,
@@ -182,12 +180,12 @@ def _parse_content_from_mcp(
                 )
             case types.ToolResultContent():
                 return_types.append(
-                    FunctionResultContent(
+                    Content.from_function_result(
                         call_id=mcp_type.toolUseId,
                         result=_parse_content_from_mcp(mcp_type.content)
                         if mcp_type.content
                         else mcp_type.structuredContent,
-                        exception=Exception() if mcp_type.isError else None,
+                        exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
                         raw_representation=mcp_type,
                     )
                 )
@@ -195,7 +193,7 @@ def _parse_content_from_mcp(
                 match mcp_type.resource:
                     case types.TextResourceContents():
                         return_types.append(
-                            TextContent(
+                            Content.from_text(
                                 text=mcp_type.resource.text,
                                 raw_representation=mcp_type,
                                 additional_properties=(
@@ -205,7 +203,7 @@ def _parse_content_from_mcp(
                         )
                     case types.BlobResourceContents():
                         return_types.append(
-                            DataContent(
+                            Content.from_uri(
                                 uri=mcp_type.resource.blob,
                                 media_type=mcp_type.resource.mimeType,
                                 raw_representation=mcp_type,
@@ -218,45 +216,41 @@ def _parse_content_from_mcp(
 
 
 def _prepare_content_for_mcp(
-    content: Contents,
+    content: Content,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
     """Prepare an Agent Framework content type for MCP."""
-    match content:
-        case TextContent():
-            return types.TextContent(type="text", text=content.text)
-        case DataContent():
-            if content.media_type and content.media_type.startswith("image/"):
-                return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)
-            if content.media_type and content.media_type.startswith("audio/"):
-                return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)
-            if content.media_type and content.media_type.startswith("application/"):
-                return types.EmbeddedResource(
-                    type="resource",
-                    resource=types.BlobResourceContents(
-                        blob=content.uri,
-                        mimeType=content.media_type,
-                        # uri's are not limited in MCP but they have to be set.
-                        # the uri of data content, contains the data uri, which
-                        # is not the uri meant here, UriContent would match this.
-                        uri=(
-                            content.additional_properties.get("uri", "af://binary")
-                            if content.additional_properties
-                            else "af://binary"
-                        ),  # type: ignore[reportArgumentType]
-                    ),
-                )
-            return None
-        case UriContent():
-            return types.ResourceLink(
-                type="resource_link",
-                uri=content.uri,  # type: ignore[reportArgumentType]
-                mimeType=content.media_type,
-                name=(
-                    content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"
+    if content.type == "text":
+        return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
+    if content.type == "data":
+        if content.media_type and content.media_type.startswith("image/"):  # type: ignore[attr-defined]
+            return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+        if content.media_type and content.media_type.startswith("audio/"):  # type: ignore[attr-defined]
+            return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+        if content.media_type and content.media_type.startswith("application/"):  # type: ignore[attr-defined]
+            return types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    blob=content.uri,  # type: ignore[attr-defined]
+                    mimeType=content.media_type,  # type: ignore[attr-defined]
+                    # uri's are not limited in MCP but they have to be set.
+                    # the uri of data content, contains the data uri, which
+                    # is not the uri meant here, UriContent would match this.
+                    uri=(
+                        content.additional_properties.get("uri", "af://binary")
+                        if content.additional_properties
+                        else "af://binary"
+                    ),  # type: ignore[reportArgumentType]
                 ),
             )
-        case _:
-            return None
+        return None
+    if content.type == "uri":
+        return types.ResourceLink(
+            type="resource_link",
+            uri=content.uri,  # type: ignore[reportArgumentType,attr-defined]
+            mimeType=content.media_type,  # type: ignore[attr-defined]
+            name=(content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"),
+        )
+    return None
 
 
 def _prepare_message_for_mcp(
@@ -650,7 +644,7 @@ class MCPTool:
                 input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
                 # Create AIFunctions out of each tool
-                func: AIFunction[BaseModel, list[Contents] | Any | types.CallToolResult] = AIFunction(
+                func: AIFunction[BaseModel, list[Content] | Any | types.CallToolResult] = AIFunction(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
@@ -704,7 +698,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents] | Any | types.CallToolResult:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Content] | Any | types.CallToolResult:
         """Call a tool with the given arguments.
 
         Args:

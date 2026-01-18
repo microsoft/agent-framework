@@ -14,10 +14,10 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Content,
     Executor,
     Role,
     SequentialBuilder,
-    TextContent,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
@@ -50,7 +50,7 @@ class _SimpleAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         # This agent does not support streaming; yield a single complete response
-        yield AgentResponseUpdate(contents=[TextContent(text=self._reply_text)])
+        yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
 
 
 class _CaptureFullConversation(Executor):
@@ -136,7 +136,7 @@ class _CaptureAgent(BaseAgent):
                 elif isinstance(m, str):
                     norm.append(ChatMessage(role=Role.USER, text=m))
         self._last_messages = norm
-        yield AgentResponseUpdate(contents=[TextContent(text=self._reply_text)])
+        yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
 
 
 async def test_sequential_adapter_uses_full_conversation() -> None:

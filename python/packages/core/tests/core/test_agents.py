@@ -18,12 +18,11 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStore,
     ChatResponse,
+    Content,
     Context,
     ContextProvider,
-    FunctionCallContent,
     HostedCodeInterpreterTool,
     Role,
-    TextContent,
     ai_function,
 )
 from agent_framework._mcp import MCPTool
@@ -136,7 +135,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
 
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
     mock_response = ChatResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+        messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
         conversation_id="123",
     )
     chat_client_base.run_responses = [mock_response]
@@ -200,7 +199,9 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
     chat_client_base.run_responses = [
         ChatResponse(
             messages=[
-                ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")], author_name="TestAuthor")
+                ChatMessage(
+                    role=Role.ASSISTANT, contents=[Content.from_text("test response")], author_name="TestAuthor"
+                )
             ]
         )
     ]
@@ -264,7 +265,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
             conversation_id="test-thread-id",
         )
     ]
@@ -345,7 +346,7 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
             conversation_id="service-thread-123",
         )
     ]
@@ -575,7 +576,9 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
         ChatResponse(
             messages=ChatMessage(
                 role="assistant",
-                contents=[FunctionCallContent(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')],
+                contents=[
+                    Content.from_function_call(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')
+                ],
             )
         ),
         ChatResponse(messages=ChatMessage(role="assistant", text="done")),

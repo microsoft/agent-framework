@@ -20,8 +20,8 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Role,
-    TextContent,
     ToolProtocol,
     ai_function,
     use_chat_middleware,
@@ -108,8 +108,8 @@ class MockChatClient:
             for update in self.streaming_responses.pop(0):
                 yield update
         else:
-            yield ChatResponseUpdate(text=TextContent(text="test streaming response "), role="assistant")
-            yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="test streaming response "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="another update")], role="assistant")
 
 
 @use_chat_middleware
@@ -233,7 +233,7 @@ class MockAgent(AgentProtocol):
         **kwargs: Any,
     ) -> AgentResponse:
         logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("Response")])])
 
     async def run_stream(
         self,
@@ -243,7 +243,7 @@ class MockAgent(AgentProtocol):
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         logger.debug(f"Running mock agent stream, with: {messages=}, {thread=}, {kwargs=}")
-        yield AgentResponseUpdate(contents=[TextContent("Response")])
+        yield AgentResponseUpdate(contents=[Content.from_text("Response")])
 
     def get_new_thread(self) -> AgentThread:
         return MockAgentThread()

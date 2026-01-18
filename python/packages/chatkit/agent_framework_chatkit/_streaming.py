@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 
-from agent_framework import AgentResponseUpdate, TextContent
+from agent_framework import AgentResponseUpdate
 from chatkit.types import (
     AssistantMessageContent,
     AssistantMessageContentPartTextDelta,
@@ -77,7 +77,7 @@ async def stream_agent_response(
         if update.contents:
             for content in update.contents:
                 # Handle text content - only TextContent has a text attribute
-                if isinstance(content, TextContent) and content.text is not None:
+                if content.type == "text" and content.text is not None:
                     # Yield incremental text delta for streaming display
                     yield ThreadItemUpdated(
                         type="thread.item.updated",

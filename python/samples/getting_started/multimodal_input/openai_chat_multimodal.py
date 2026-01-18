@@ -5,7 +5,7 @@ import base64
 import struct
 from pathlib import Path
 
-from agent_framework import ChatMessage, DataContent, Role, TextContent
+from agent_framework import ChatMessage, Content, Role
 from agent_framework.openai import OpenAIChatClient
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "sample_assets"
@@ -47,7 +47,10 @@ async def test_image() -> None:
     image_uri = create_sample_image()
     message = ChatMessage(
         role=Role.USER,
-        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/png")],
+        contents=[
+            Content.from_text(text="What's in this image?"),
+            Content.from_uri(uri=image_uri, media_type="image/png"),
+        ],
     )
 
     response = await client.get_response(message)
@@ -62,8 +65,8 @@ async def test_audio() -> None:
     message = ChatMessage(
         role=Role.USER,
         contents=[
-            TextContent(text="What do you hear in this audio?"),
-            DataContent(uri=audio_uri, media_type="audio/wav"),
+            Content.from_text(text="What do you hear in this audio?"),
+            Content.from_uri(uri=audio_uri, media_type="audio/wav"),
         ],
     )
 
@@ -79,8 +82,8 @@ async def test_pdf() -> None:
     message = ChatMessage(
         role=Role.USER,
         contents=[
-            TextContent(text="What information can you extract from this document?"),
-            DataContent(
+            Content.from_text(text="What information can you extract from this document?"),
+            Content.from_data(
                 data=pdf_bytes, media_type="application/pdf", additional_properties={"filename": "employee_report.pdf"}
             ),
         ],

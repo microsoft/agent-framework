@@ -4,7 +4,7 @@
 
 import importlib.metadata
 
-from agent_framework.observability import OBSERVABILITY_SETTINGS
+from agent_framework.observability import enable_instrumentation
 from agentlightning import AgentOpsTracer  # type: ignore
 
 try:
@@ -22,13 +22,12 @@ class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
-        OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        enable_instrumentation()
         super().init()
 
     def teardown(self) -> None:
         """Teardown the agent-framework-lab-lightning for training."""
         super().teardown()
-        OBSERVABILITY_SETTINGS.enable_instrumentation = False
 
 
 __all__: list[str] = ["AgentFrameworkTracer"]

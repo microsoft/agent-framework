@@ -16,14 +16,10 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    Contents,
+    Content,
     FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
     Role,
-    TextContent,
     ToolProtocol,
-    UsageContent,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
@@ -328,7 +324,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         response = await self._inner_get_response(messages=messages, options=options, **kwargs)
         contents = list(response.messages[0].contents if response.messages else [])
         if response.usage_details:
-            contents.append(UsageContent(details=response.usage_details))
+            contents.append(Content.from_usage(usage_details=response.usage_details))  # type: ignore[arg-type]
         yield ChatResponseUpdate(
             response_id=response.response_id,
             contents=contents,
@@ -472,37 +468,41 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             blocks.append(block)
         return blocks
 
-    def _convert_content_to_bedrock_block(self, content: Contents) -> dict[str, Any] | None:
-        if isinstance(content, TextContent):
-            return {"text": content.text}
-        if isinstance(content, FunctionCallContent):
-            arguments = content.parse_arguments() or {}
-            return {
-                "toolUse": {
-                    "toolUseId": content.call_id or self._generate_tool_call_id(),
-                    "name": content.name,
-                    "input": arguments,
+    def _convert_content_to_bedrock_block(self, content: Content) -> dict[str, Any] | None:
+        match content.type:
+            case "text":
+                return {"text": content.text}
+            case "function_call":
+                arguments = content.parse_arguments() or {}
+                return {
+                    "toolUse": {
+                        "toolUseId": content.call_id or self._generate_tool_call_id(),
+                        "name": content.name,
+                        "input": arguments,
+                    }
                 }
-            }
-        if isinstance(content, FunctionResultContent):
-            tool_result_block = {
-                "toolResult": {
-                    "toolUseId": content.call_id,
-                    "content": self._convert_tool_result_to_blocks(content.result),
-                    "status": "error" if content.exception else "success",
+            case "function_result":
+                tool_result_block = {
+                    "toolResult": {
+                        "toolUseId": content.call_id,
+                        "content": self._convert_tool_result_to_blocks(content.result),
+                        "status": "error" if content.exception else "success",
+                    }
                 }
-            }
-            if content.exception:
-                tool_result = tool_result_block["toolResult"]
-                existing_content = tool_result.get("content")
-                content_list: list[dict[str, Any]]
-                if isinstance(existing_content, list):
-                    content_list = existing_content
-                else:
-                    content_list = []
-                    tool_result["content"] = content_list
-                content_list.append({"text": str(content.exception)})
-            return tool_result_block
+                if content.exception:
+                    tool_result = tool_result_block["toolResult"]
+                    existing_content = tool_result.get("content")
+                    content_list: list[dict[str, Any]]
+                    if isinstance(existing_content, list):
+                        content_list = existing_content
+                    else:
+                        content_list = []
+                        tool_result["content"] = content_list
+                    content_list.append({"text": str(content.exception)})
+                return tool_result_block
+            case _:
+                # Bedrock does not support other content types at this time
+                pass
         return None
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
@@ -531,7 +531,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             return {"text": value}
         if isinstance(value, (int, float, bool)) or value is None:
             return {"json": value}
-        if isinstance(value, TextContent) and getattr(value, "text", None):
+        if isinstance(value, Content) and value.type == "text":
             return {"text": value.text}
         if hasattr(value, "to_dict"):
             try:
@@ -586,23 +586,23 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
     def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:
         if not usage:
             return None
-        details = UsageDetails()
+        details: UsageDetails = {}
         if (input_tokens := usage.get("inputTokens")) is not None:
-            details.input_token_count = input_tokens
+            details["input_token_count"] = input_tokens
         if (output_tokens := usage.get("outputTokens")) is not None:
-            details.output_token_count = output_tokens
+            details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
-            details.additional_counts["bedrock.total_tokens"] = total_tokens
+            details["total_token_count"] = total_tokens
         return details
 
     def _parse_message_contents(self, content_blocks: Sequence[MutableMapping[str, Any]]) -> list[Any]:
         contents: list[Any] = []
         for block in content_blocks:
             if text_value := block.get("text"):
-                contents.append(TextContent(text=text_value, raw_representation=block))
+                contents.append(Content.from_text(text=text_value, raw_representation=block))
                 continue
             if (json_value := block.get("json")) is not None:
-                contents.append(TextContent(text=json.dumps(json_value), raw_representation=block))
+                contents.append(Content.from_text(text=json.dumps(json_value), raw_representation=block))
                 continue
             tool_use = block.get("toolUse")
             if isinstance(tool_use, MutableMapping):
@@ -610,7 +610,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 if not tool_name:
                     raise ServiceInvalidResponseError("Bedrock response missing required tool name in toolUse block.")
                 contents.append(
-                    FunctionCallContent(
+                    Content.from_function_call(
                         call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),
                         name=tool_name,
                         arguments=tool_use.get("input"),
@@ -626,10 +626,10 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     exception = RuntimeError(f"Bedrock tool result status: {status}")
                 result_value = self._convert_bedrock_tool_result_to_value(tool_result.get("content"))
                 contents.append(
-                    FunctionResultContent(
+                    Content.from_function_result(
                         call_id=tool_result.get("toolUseId") or self._generate_tool_call_id(),
                         result=result_value,
-                        exception=exception,
+                        exception=str(exception) if exception else None,  # type: ignore[arg-type]
                         raw_representation=block,
                     )
                 )

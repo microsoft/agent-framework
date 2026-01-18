@@ -47,15 +47,8 @@ from .._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CodeInterpreterToolCallContent,
-    Contents,
-    FunctionCallContent,
-    FunctionResultContent,
-    MCPServerToolCallContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
-    UsageContent,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -416,7 +409,7 @@ class OpenAIAssistantsClient(
         thread_id: str | None,
         assistant_id: str,
         run_options: dict[str, Any],
-        tool_results: list[FunctionResultContent] | None,
+        tool_results: list[Content] | None,
     ) -> tuple[Any, str]:
         """Create the assistant stream for processing.
 
@@ -526,7 +519,7 @@ class OpenAIAssistantsClient(
                     and response.data.usage is not None
                 ):
                     usage = response.data.usage
-                    usage_content = UsageContent(
+                    usage_content = Content.from_usage(
                         UsageDetails(
                             input_token_count=usage.prompt_tokens,
                             output_token_count=usage.completion_tokens,
@@ -551,9 +544,9 @@ class OpenAIAssistantsClient(
                         role=Role.ASSISTANT,
                     )
 
-    def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Contents]:
+    def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Content]:
         """Parse function call contents from an assistants tool action event."""
-        contents: list[Contents] = []
+        contents: list[Content] = []
 
         if event_data.required_action is not None:
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
@@ -563,10 +556,12 @@ class OpenAIAssistantsClient(
                 if tool_type == "code_interpreter" and getattr(tool_call_any, "code_interpreter", None):
                     code_input = getattr(tool_call_any.code_interpreter, "input", None)
                     inputs = (
-                        [TextContent(text=code_input, raw_representation=tool_call)] if code_input is not None else None
+                        [Content.from_text(text=code_input, raw_representation=tool_call)]
+                        if code_input is not None
+                        else None
                     )
                     contents.append(
-                        CodeInterpreterToolCallContent(
+                        Content.from_code_interpreter_tool_call(
                             call_id=call_id,
                             inputs=inputs,
                             raw_representation=tool_call,
@@ -574,7 +569,7 @@ class OpenAIAssistantsClient(
                     )
                 elif tool_type == "mcp":
                     contents.append(
-                        MCPServerToolCallContent(
+                        Content.from_mcp_server_tool_call(
                             call_id=call_id,
                             tool_name=getattr(tool_call, "name", "") or "",
                             server_name=getattr(tool_call, "server_label", None),
@@ -586,7 +581,7 @@ class OpenAIAssistantsClient(
                     function_name = tool_call.function.name
                     function_arguments = json.loads(tool_call.function.arguments)
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=call_id,
                             name=function_name,
                             arguments=function_arguments,
@@ -600,7 +595,7 @@ class OpenAIAssistantsClient(
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> tuple[dict[str, Any], list[FunctionResultContent] | None]:
+    ) -> tuple[dict[str, Any], list[Content] | None]:
         from .._types import validate_tool_mode
 
         run_options: dict[str, Any] = {**kwargs}
@@ -672,7 +667,7 @@ class OpenAIAssistantsClient(
                 }
 
         instructions: list[str] = []
-        tool_results: list[FunctionResultContent] | None = None
+        tool_results: list[Content] | None = None
 
         additional_messages: list[AdditionalMessage] | None = None
 
@@ -681,21 +676,23 @@ class OpenAIAssistantsClient(
         # All other messages are added 1:1.
         for chat_message in messages:
             if chat_message.role.value in ["system", "developer"]:
-                for text_content in [content for content in chat_message.contents if isinstance(content, TextContent)]:
-                    instructions.append(text_content.text)
+                for text_content in [content for content in chat_message.contents if content.type == "text"]:
+                    text = getattr(text_content, "text", None)
+                    if text:
+                        instructions.append(text)
 
                 continue
 
             message_contents: list[MessageContentPartParam] = []
 
             for content in chat_message.contents:
-                if isinstance(content, TextContent):
-                    message_contents.append(TextContentBlockParam(type="text", text=content.text))
-                elif isinstance(content, UriContent) and content.has_top_level_media_type("image"):
+                if content.type == "text":
+                    message_contents.append(TextContentBlockParam(type="text", text=content.text))  # type: ignore[attr-defined, typeddict-item]
+                elif content.type == "uri" and content.has_top_level_media_type("image"):
                     message_contents.append(
-                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))
+                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))  # type: ignore[attr-defined, typeddict-item]
                     )
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     if tool_results is None:
                         tool_results = []
                     tool_results.append(content)
@@ -720,7 +717,7 @@ class OpenAIAssistantsClient(
 
     def _prepare_tool_outputs_for_assistants(
         self,
-        tool_results: list[FunctionResultContent] | None,
+        tool_results: list[Content] | None,
     ) -> tuple[str | None, list[ToolOutput] | None]:
         """Prepare function results for submission to the assistants API."""
         run_id: str | None = None
@@ -731,7 +728,7 @@ class OpenAIAssistantsClient(
                 # When creating the FunctionCallContent, we created it with a CallId == [runId, callId].
                 # We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                 # is only the call ID.
-                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)
+                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)  # type: ignore[arg-type]
 
                 if (
                     not run_and_call_ids

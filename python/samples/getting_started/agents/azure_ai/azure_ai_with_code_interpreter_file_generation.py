@@ -4,10 +4,7 @@ import asyncio
 
 from agent_framework import (
     AgentResponseUpdate,
-    CitationAnnotation,
     HostedCodeInterpreterTool,
-    HostedFileContent,
-    TextContent,
 )
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
@@ -50,9 +47,9 @@ async def non_streaming_example() -> None:
         # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
-                if isinstance(content, TextContent) and content.annotations:
+                if content.type == "text" and content.annotations:
                     for annotation in content.annotations:
-                        if isinstance(annotation, CitationAnnotation) and annotation.file_id:
+                        if annotation.file_id:
                             annotations_found.append(annotation.file_id)
                             print(f"Found file annotation: file_id={annotation.file_id}")
 
@@ -84,15 +81,15 @@ async def streaming_example() -> None:
         async for update in agent.run_stream(QUERY):
             if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
-                    if isinstance(content, TextContent):
+                    if content.type == "text":
                         if content.text:
                             text_chunks.append(content.text)
                         if content.annotations:
                             for annotation in content.annotations:
-                                if isinstance(annotation, CitationAnnotation) and annotation.file_id:
+                                if annotation.file_id:
                                     annotations_found.append(annotation.file_id)
                                     print(f"Found streaming annotation: file_id={annotation.file_id}")
-                    elif isinstance(content, HostedFileContent):
+                    elif content.type == "hosted_file":
                         file_ids_found.append(content.file_id)
                         print(f"Found streaming HostedFileContent: file_id={content.file_id}")
 

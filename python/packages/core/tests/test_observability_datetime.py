@@ -5,7 +5,7 @@
 import json
 from datetime import datetime
 
-from agent_framework._types import FunctionResultContent
+from agent_framework import Content
 from agent_framework.observability import _to_otel_part
 
 
@@ -14,7 +14,7 @@ def test_datetime_in_tool_results() -> None:
 
     Reproduces issue #2219 where datetime objects caused TypeError.
     """
-    content = FunctionResultContent(
+    content = Content.from_function_result(
         call_id="test-call",
         result={"timestamp": datetime(2025, 11, 16, 10, 30, 0)},
     )

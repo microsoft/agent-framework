@@ -25,18 +25,9 @@ from .._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    Contents,
-    DataContent,
+    Content,
     FinishReason,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
     Role,
-    TextContent,
-    TextReasoningContent,
-    UriContent,
-    UsageContent,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -294,13 +285,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
                 finish_reason = FinishReason(value=choice.finish_reason)
-            contents: list[Contents] = []
+            contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
-                contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
+                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -322,13 +313,17 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         if chunk.usage:
             return ChatResponseUpdate(
                 role=Role.ASSISTANT,
-                contents=[UsageContent(details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk)],
+                contents=[
+                    Content.from_usage(
+                        usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
+                    )
+                ],
                 model_id=chunk.model,
                 additional_properties=chunk_metadata,
                 response_id=chunk.id,
                 message_id=chunk.id,
             )
-        contents: list[Contents] = []
+        contents: list[Content] = []
         finish_reason: FinishReason | None = None
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
@@ -339,7 +334,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
+                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -360,27 +355,27 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         )
         if usage.completion_tokens_details:
             if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
-                details["completion/accepted_prediction_tokens"] = tokens
+                details["completion/accepted_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.audio_tokens:
-                details["completion/audio_tokens"] = tokens
+                details["completion/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.reasoning_tokens:
-                details["completion/reasoning_tokens"] = tokens
+                details["completion/reasoning_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
-                details["completion/rejected_prediction_tokens"] = tokens
+                details["completion/rejected_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
         if usage.prompt_tokens_details:
             if tokens := usage.prompt_tokens_details.audio_tokens:
-                details["prompt/audio_tokens"] = tokens
+                details["prompt/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.prompt_tokens_details.cached_tokens:
-                details["prompt/cached_tokens"] = tokens
+                details["prompt/cached_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
         return details
 
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> TextContent | None:
-        """Parse the choice into a TextContent object."""
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse the choice into a Content object with type='text'."""
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
-            return TextContent(text=message.content, raw_representation=choice)
+            return Content.from_text(text=message.content, raw_representation=choice)
         if hasattr(message, "refusal") and message.refusal:
-            return TextContent(text=message.refusal, raw_representation=choice)
+            return Content.from_text(text=message.refusal, raw_representation=choice)
         return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -401,15 +396,15 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             "logprobs": getattr(choice, "logprobs", None),
         }
 
-    def _parse_tool_calls_from_openai(self, choice: Choice | ChunkChoice) -> list[Contents]:
+    def _parse_tool_calls_from_openai(self, choice: Choice | ChunkChoice) -> list[Content]:
         """Parse tool calls from an OpenAI response choice."""
-        resp: list[Contents] = []
+        resp: list[Content] = []
         content = choice.message if isinstance(choice, Choice) else choice.delta
         if content and content.tool_calls:
             for tool in content.tool_calls:
                 if not isinstance(tool, ChatCompletionMessageCustomToolCall) and tool.function:
                     # ignoring tool.custom
-                    fcc = FunctionCallContent(
+                    fcc = Content.from_function_call(
                         call_id=tool.id if tool.id else "",
                         name=tool.function.name if tool.function.name else "",
                         arguments=tool.function.arguments if tool.function.arguments else "",
@@ -455,7 +450,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
-            if isinstance(content, (FunctionApprovalRequestContent, FunctionApprovalResponseContent)):
+            if content.type in ("function_approval_request", "function_approval_response"):
                 continue
 
             args: dict[str, Any] = {
@@ -467,21 +462,21 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 details := message.additional_properties["reasoning_details"]
             ):
                 args["reasoning_details"] = details
-            match content:
-                case FunctionCallContent():
+            match content.type:
+                case "function_call":
                     if all_messages and "tool_calls" in all_messages[-1]:
                         # If the last message already has tool calls, append to it
                         all_messages[-1]["tool_calls"].append(self._prepare_content_for_openai(content))
                     else:
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
-                case FunctionResultContent():
+                case "function_result":
                     args["tool_call_id"] = content.call_id
                     # Always include content for tool results - API requires it even if empty
                     # Functions returning None should still have a tool result message
                     args["content"] = (
                         prepare_function_call_results(content.result) if content.result is not None else ""
                     )
-                case TextReasoningContent(protected_data=protected_data) if protected_data is not None:
+                case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
                     if "content" not in args:
@@ -492,27 +487,27 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 all_messages.append(args)
         return all_messages
 
-    def _prepare_content_for_openai(self, content: Contents) -> dict[str, Any]:
+    def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
         """Prepare content for OpenAI."""
-        match content:
-            case FunctionCallContent():
+        match content.type:
+            case "function_call":
                 args = json.dumps(content.arguments) if isinstance(content.arguments, Mapping) else content.arguments
                 return {
                     "id": content.call_id,
                     "type": "function",
                     "function": {"name": content.name, "arguments": args},
                 }
-            case FunctionResultContent():
+            case "function_result":
                 return {
                     "tool_call_id": content.call_id,
                     "content": content.result,
                 }
-            case DataContent() | UriContent() if content.has_top_level_media_type("image"):
+            case "data" | "uri" if content.has_top_level_media_type("image"):
                 return {
                     "type": "image_url",
                     "image_url": {"url": content.uri},
                 }
-            case DataContent() | UriContent() if content.has_top_level_media_type("audio"):
+            case "data" | "uri" if content.has_top_level_media_type("audio"):
                 if content.media_type and "wav" in content.media_type:
                     audio_format = "wav"
                 elif content.media_type and "mp3" in content.media_type:
@@ -523,9 +518,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
                 # Extract base64 data from data URI
                 audio_data = content.uri
-                if audio_data.startswith("data:"):
+                if audio_data.startswith("data:"):  # type: ignore[union-attr]
                     # Extract just the base64 part after "data:audio/format;base64,"
-                    audio_data = audio_data.split(",", 1)[-1]
+                    audio_data = audio_data.split(",", 1)[-1]  # type: ignore[union-attr]
 
                 return {
                     "type": "input_audio",
@@ -534,9 +529,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                         "format": audio_format,
                     },
                 }
-            case DataContent() | UriContent() if content.has_top_level_media_type(
-                "application"
-            ) and content.uri.startswith("data:"):
+            case "data" | "uri" if content.has_top_level_media_type("application") and content.uri.startswith("data:"):  # type: ignore[union-attr]
                 # All application/* media types should be treated as files for OpenAI
                 filename = getattr(content, "filename", None) or (
                     content.additional_properties.get("filename")

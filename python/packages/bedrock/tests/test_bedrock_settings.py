@@ -9,10 +9,8 @@ from agent_framework import (
     AIFunction,
     ChatMessage,
     ChatOptions,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
 )
 from pydantic import BaseModel
 
@@ -49,7 +47,7 @@ def test_build_request_includes_tool_config() -> None:
         "tools": [tool],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
     }
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="hi")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="hi")])]
 
     request = client._prepare_options(messages, options)
 
@@ -61,14 +59,16 @@ def test_build_request_serializes_tool_history() -> None:
     client = _build_client()
     options: ChatOptions = {}
     messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="how's weather?")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="how's weather?")]),
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[FunctionCallContent(call_id="call-1", name="get_weather", arguments='{"location": "SEA"}')],
+            contents=[
+                Content.from_function_call(call_id="call-1", name="get_weather", arguments='{"location": "SEA"}')
+            ],
         ),
         ChatMessage(
             role=Role.TOOL,
-            contents=[FunctionResultContent(call_id="call-1", result={"answer": "72F"})],
+            contents=[Content.from_function_result(call_id="call-1", result={"answer": "72F"})],
         ),
     ]
 
@@ -101,9 +101,9 @@ def test_process_response_parses_tool_use_and_result() -> None:
     chat_response = client._process_converse_response(response)
     contents = chat_response.messages[0].contents
 
-    assert isinstance(contents[0], FunctionCallContent)
+    assert contents[0].type == "function_call"
     assert contents[0].name == "get_weather"
-    assert isinstance(contents[1], TextContent)
+    assert contents[1].type == "text"
     assert chat_response.finish_reason == client._map_finish_reason("tool_use")
 
 
@@ -131,5 +131,5 @@ def test_process_response_parses_tool_result() -> None:
     chat_response = client._process_converse_response(response)
     contents = chat_response.messages[0].contents
 
-    assert isinstance(contents[0], FunctionResultContent)
+    assert contents[0].type == "function_result"
     assert contents[0].result == {"answer": 42}

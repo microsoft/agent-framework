@@ -13,10 +13,10 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import ValidationError
 
 from agent_framework import (
+    Annotation,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    TextContent,
+    Content,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -267,8 +267,8 @@ class AzureOpenAIChatClient(
         )
 
     @override
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> TextContent | None:
-        """Parse the choice into a TextContent object.
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse the choice into a Content object with type='text'.
 
         Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.
         For docs see:
@@ -276,10 +276,10 @@ class AzureOpenAIChatClient(
         """
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if hasattr(message, "refusal") and message.refusal:
-            return TextContent(text=message.refusal, raw_representation=choice)
+            return Content.from_text(text=message.refusal, raw_representation=choice)
         if not message.content:
             return None
-        text_content = TextContent(text=message.content, raw_representation=choice)
+        text_content = Content.from_text(text=message.content, raw_representation=choice)
         if not message.model_extra or "context" not in message.model_extra:
             return text_content
 
@@ -301,7 +301,8 @@ class AzureOpenAIChatClient(
             text_content.annotations = []
             for citation in citations:
                 text_content.annotations.append(
-                    CitationAnnotation(
+                    Annotation(
+                        type="citation",
                         title=citation.get("title", ""),
                         url=citation.get("url", ""),
                         snippet=citation.get("content", ""),

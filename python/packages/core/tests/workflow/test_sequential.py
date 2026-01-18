@@ -12,10 +12,10 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Content,
     Executor,
     Role,
     SequentialBuilder,
-    TextContent,
     TypeCompatibilityError,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -46,7 +46,7 @@ class _EchoAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         # Minimal async generator with one assistant update
-        yield AgentResponseUpdate(contents=[TextContent(text=f"{self.name} reply")])
+        yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} reply")])
 
 
 class _SummarizerExec(Executor):

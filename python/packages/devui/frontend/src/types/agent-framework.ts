@@ -187,7 +187,7 @@ export interface HostedVectorStoreContent extends BaseContent {
 }
 
 // Union type for all content
-export type Contents =
+export type Content =
   | TextContent
   | FunctionCallContent
   | FunctionResultContent
@@ -209,7 +209,7 @@ export interface UsageDetails {
 
 // Agent run response update (streaming)
 export interface AgentResponseUpdate {
-  contents: Contents[];
+  contents: Content[];
   role?: Role;
   author_name?: string;
   response_id?: string;
@@ -233,7 +233,7 @@ export interface AgentResponse {
 
 // Chat message
 export interface ChatMessage {
-  contents: Contents[];
+  contents: Content[];
   role?: Role;
   author_name?: string;
   message_id?: string;
@@ -244,7 +244,7 @@ export interface ChatMessage {
 
 // Chat response update (model client streaming)
 export interface ChatResponseUpdate {
-  contents: Contents[];
+  contents: Content[];
   role?: Role;
   author_name?: string;
   response_id?: string;
@@ -330,18 +330,18 @@ export interface TraceSpan {
 }
 
 // Helper type guards for Agent Framework content types
-export function isTextContent(content: Contents): content is TextContent {
+export function isTextContent(content: Content): content is TextContent {
   return content.type === "text";
 }
 
 export function isFunctionCallContent(
-  content: Contents
+  content: Content
 ): content is FunctionCallContent {
   return content.type === "function_call";
 }
 
 export function isFunctionResultContent(
-  content: Contents
+  content: Content
 ): content is FunctionResultContent {
   return content.type === "function_result";
 }

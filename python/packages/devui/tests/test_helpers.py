@@ -28,11 +28,9 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     ConcurrentBuilder,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
     SequentialBuilder,
-    TextContent,
     use_chat_middleware,
 )
 from agent_framework._clients import TOptions_co
@@ -93,7 +91,7 @@ class MockChatClient:
             for update in self.streaming_responses.pop(0):
                 yield update
         else:
-            yield ChatResponseUpdate(text=TextContent(text="test streaming response"), role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="test streaming response"), role="assistant")
 
 
 @use_chat_middleware
@@ -141,10 +139,10 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
                 yield update
         else:
             # Simulate realistic streaming chunks
-            yield ChatResponseUpdate(text=TextContent(text="Mock "), role="assistant")
-            yield ChatResponseUpdate(text=TextContent(text="streaming "), role="assistant")
-            yield ChatResponseUpdate(text=TextContent(text="response "), role="assistant")
-            yield ChatResponseUpdate(text=TextContent(text="from ChatAgent"), role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="Mock "), role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="streaming "), role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="response "), role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="from ChatAgent"), role="assistant")
 
 
 # =============================================================================
@@ -175,7 +173,7 @@ class MockAgent(BaseAgent):
     ) -> AgentResponse:
         self.call_count += 1
         return AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=self.response_text)])]
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=self.response_text)])]
         )
 
     async def run_stream(
@@ -187,7 +185,7 @@ class MockAgent(BaseAgent):
     ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         for chunk in self.streaming_chunks:
-            yield AgentResponseUpdate(contents=[TextContent(text=chunk)], role=Role.ASSISTANT)
+            yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role=Role.ASSISTANT)
 
 
 class MockToolCallingAgent(BaseAgent):
@@ -217,13 +215,13 @@ class MockToolCallingAgent(BaseAgent):
         self.call_count += 1
         # First: text
         yield AgentResponseUpdate(
-            contents=[TextContent(text="Let me search for that...")],
+            contents=[Content.from_text(text="Let me search for that...")],
             role=Role.ASSISTANT,
         )
         # Second: tool call
         yield AgentResponseUpdate(
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id="call_123",
                     name="search",
                     arguments={"query": "weather"},
@@ -234,7 +232,7 @@ class MockToolCallingAgent(BaseAgent):
         # Third: tool result
         yield AgentResponseUpdate(
             contents=[
-                FunctionResultContent(
+                Content.from_function_result(
                     call_id="call_123",
                     result={"temperature": 72, "condition": "sunny"},
                 )
@@ -243,7 +241,7 @@ class MockToolCallingAgent(BaseAgent):
         )
         # Fourth: final text
         yield AgentResponseUpdate(
-            contents=[TextContent(text="The weather is sunny, 72°F.")],
+            contents=[Content.from_text(text="The weather is sunny, 72°F.")],
             role=Role.ASSISTANT,
         )
 
@@ -297,7 +295,7 @@ def create_mock_tool_agent(id: str = "tool_agent", name: str = "ToolAgent") -> M
 
 def create_agent_run_response(text: str = "Test response") -> AgentResponse:
     """Create an AgentResponse with the given text."""
-    return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=text)])])
+    return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=text)])])
 
 
 def create_agent_executor_response(
@@ -310,8 +308,8 @@ def create_agent_executor_response(
         executor_id=executor_id,
         agent_response=agent_response,
         full_conversation=[
-            ChatMessage(role=Role.USER, contents=[TextContent(text="User input")]),
-            ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)]),
+            ChatMessage(role=Role.USER, contents=[Content.from_text(text="User input")]),
+            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)]),
         ],
     )
 

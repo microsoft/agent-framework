@@ -84,7 +84,7 @@ async def test_discovery_accepts_agents_with_only_run():
 
         init_file = agent_dir / "__init__.py"
         init_file.write_text("""
-from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, TextContent
+from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, Content
 
 class NonStreamingAgent:
     id = "non_streaming"
@@ -95,7 +95,7 @@ class NonStreamingAgent:
         return AgentResponse(
             messages=[ChatMessage(
                 role=Role.ASSISTANT,
-                contents=[TextContent(text="response")]
+                contents=[Content.from_text(text="response")]
             )],
             response_id="test"
         )
@@ -210,7 +210,7 @@ class TestAgent:
 
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="test")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="test")])],
             response_id="test"
         )
 

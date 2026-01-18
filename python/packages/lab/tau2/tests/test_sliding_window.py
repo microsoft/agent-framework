@@ -4,7 +4,7 @@
 
 from unittest.mock import patch
 
-from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
+from agent_framework._types import ChatMessage, Content, Role
 from agent_framework_lab_tau2._sliding_window import SlidingWindowChatMessageStore
 
 
@@ -36,8 +36,8 @@ def test_initialization_with_parameters():
 def test_initialization_with_messages():
     """Test initializing with existing messages."""
     messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hi there!")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hi there!")]),
     ]
 
     sliding_window = SlidingWindowChatMessageStore(messages=messages, max_tokens=1000)
@@ -51,8 +51,8 @@ async def test_add_messages_simple():
     sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
 
     new_messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="What's the weather?")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="I can help with that.")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="What's the weather?")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="I can help with that.")]),
     ]
 
     await sliding_window.add_messages(new_messages)
@@ -69,7 +69,8 @@ async def test_list_all_messages_vs_list_messages():
 
     # Add many messages to trigger truncation
     messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text=f"Message {i} with some content")]) for i in range(10)
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text=f"Message {i} with some content")])
+        for i in range(10)
     ]
 
     await sliding_window.add_messages(messages)
@@ -87,7 +88,7 @@ async def test_list_all_messages_vs_list_messages():
 def test_get_token_count_basic():
     """Test basic token counting."""
     sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    sliding_window.truncated_messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     token_count = sliding_window.get_token_count()
 
@@ -104,7 +105,7 @@ def test_get_token_count_with_system_message():
     token_count_empty = sliding_window.get_token_count()
 
     # Add a message
-    sliding_window.truncated_messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    sliding_window.truncated_messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
     token_count_with_message = sliding_window.get_token_count()
 
     # With message should be more tokens
@@ -114,7 +115,7 @@ def test_get_token_count_with_system_message():
 
 def test_get_token_count_function_call():
     """Test token counting with function calls."""
-    function_call = FunctionCallContent(call_id="call_123", name="test_function", arguments={"param": "value"})
+    function_call = Content.from_function_call(call_id="call_123", name="test_function", arguments={"param": "value"})
 
     sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
     sliding_window.truncated_messages = [ChatMessage(role=Role.ASSISTANT, contents=[function_call])]
@@ -125,7 +126,7 @@ def test_get_token_count_function_call():
 
 def test_get_token_count_function_result():
     """Test token counting with function results."""
-    function_result = FunctionResultContent(call_id="call_123", result={"success": True, "data": "result"})
+    function_result = Content.from_function_result(call_id="call_123", result={"success": True, "data": "result"})
 
     sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
     sliding_window.truncated_messages = [ChatMessage(role=Role.TOOL, contents=[function_result])]
@@ -143,13 +144,15 @@ def test_truncate_messages_removes_old_messages(mock_logger):
     messages = [
         ChatMessage(
             role=Role.USER,
-            contents=[TextContent(text="This is a very long message that should exceed the token limit")],
+            contents=[Content.from_text(text="This is a very long message that should exceed the token limit")],
         ),
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[TextContent(text="This is another very long message that should also exceed the token limit")],
+            contents=[
+                Content.from_text(text="This is another very long message that should also exceed the token limit")
+            ],
         ),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Short msg")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Short msg")]),
     ]
 
     sliding_window.truncated_messages = messages.copy()
@@ -168,8 +171,10 @@ def test_truncate_messages_removes_leading_tool_messages(mock_logger):
     sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
 
     # Create messages starting with tool message
-    tool_message = ChatMessage(role=Role.TOOL, contents=[FunctionResultContent(call_id="call_123", result="result")])
-    user_message = ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])
+    tool_message = ChatMessage(
+        role=Role.TOOL, contents=[Content.from_function_result(call_id="call_123", result="result")]
+    )
+    user_message = ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])
 
     sliding_window.truncated_messages = [tool_message, user_message]
     sliding_window.truncate_messages()
@@ -227,24 +232,27 @@ async def test_real_world_scenario():
 
     # Simulate a conversation
     conversation = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Hello, how are you?")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello, how are you?")]),
         ChatMessage(
-            role=Role.ASSISTANT, contents=[TextContent(text="I'm doing well, thank you! How can I help you today?")]
+            role=Role.ASSISTANT,
+            contents=[Content.from_text(text="I'm doing well, thank you! How can I help you today?")],
         ),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Can you tell me about the weather?")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Can you tell me about the weather?")]),
         ChatMessage(
             role=Role.ASSISTANT,
             contents=[
-                TextContent(
+                Content.from_text(
                     text="I'd be happy to help with weather information, "
                     "but I don't have access to current weather data."
                 )
             ],
         ),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="What about telling me a joke instead?")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="What about telling me a joke instead?")]),
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[TextContent(text="Sure! Why don't scientists trust atoms? Because they make up everything!")],
+            contents=[
+                Content.from_text(text="Sure! Why don't scientists trust atoms? Because they make up everything!")
+            ],
         ),
     ]
 

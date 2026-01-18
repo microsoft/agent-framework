@@ -21,8 +21,7 @@ from typing import Any, cast
 
 from agent_framework import (
     ChatMessage,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     WorkflowContext,
     handler,
     response_handler,
@@ -191,7 +190,7 @@ def _validate_conversation_history(messages: list[ChatMessage], agent_name: str)
         if not hasattr(msg, "contents") or msg.contents is None:
             continue
         for content in msg.contents:
-            if isinstance(content, FunctionCallContent) and content.call_id:
+            if content.type == "function_call" and content.call_id:
                 tool_call_ids.add(content.call_id)
                 logger.debug(
                     "Agent '%s': Found tool call '%s' (id=%s) in message %d",
@@ -200,7 +199,7 @@ def _validate_conversation_history(messages: list[ChatMessage], agent_name: str)
                     content.call_id,
                     i,
                 )
-            elif isinstance(content, FunctionResultContent) and content.call_id:
+            elif content.type == "function_result" and content.call_id:
                 tool_result_ids.add(content.call_id)
                 logger.debug(
                     "Agent '%s': Found tool result for call_id=%s in message %d",
@@ -265,7 +264,7 @@ class AgentResult:
     response: str
     agent_name: str
     messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
-    tool_calls: list[FunctionCallContent] = field(default_factory=lambda: cast(list[FunctionCallContent], []))
+    tool_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
     error: str | None = None
 
 
@@ -311,7 +310,7 @@ class AgentExternalInputRequest:
     agent_response: str
     iteration: int = 0
     messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
-    function_calls: list[FunctionCallContent] = field(default_factory=lambda: cast(list[FunctionCallContent], []))
+    function_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
 
 
 @dataclass
@@ -342,9 +341,7 @@ class AgentExternalInputResponse:
 
     user_input: str
     messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
-    function_results: dict[str, FunctionResultContent] = field(
-        default_factory=lambda: cast(dict[str, FunctionResultContent], {})
-    )
+    function_results: dict[str, Content] = field(default_factory=lambda: cast(dict[str, Content], {}))
 
 
 @dataclass
@@ -641,7 +638,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         """
         accumulated_response = ""
         all_messages: list[ChatMessage] = []
-        tool_calls: list[FunctionCallContent] = []
+        tool_calls: list[Content] = []
 
         # Add user input to conversation history first (via state.append only)
         if input_text:
@@ -679,7 +676,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                     all_messages = list(cast(list[ChatMessage], result_messages))
                 result_tool_calls: Any = getattr(result, "tool_calls", None)
                 if result_tool_calls is not None:
-                    tool_calls = list(cast(list[FunctionCallContent], result_tool_calls))
+                    tool_calls = list(cast(list[Content], result_tool_calls))
 
         else:
             raise RuntimeError(f"Agent '{agent_name}' has no run or run_stream method")
