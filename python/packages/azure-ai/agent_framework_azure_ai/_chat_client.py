@@ -2,6 +2,7 @@
 
 import ast
 import json
+import os
 import re
 import sys
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
@@ -19,10 +20,12 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
+    Middleware,
     Role,
     TextSpanRegion,
     ToolProtocol,
@@ -43,9 +46,14 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
+    BingCustomSearchTool,
+    BingGroundingTool,
+    CodeInterpreterToolDefinition,
+    FileSearchTool,
     FunctionName,
     FunctionToolDefinition,
     ListSortOrder,
+    McpTool,
     MessageDeltaChunk,
     MessageDeltaTextContent,
     MessageDeltaTextFileCitationAnnotation,

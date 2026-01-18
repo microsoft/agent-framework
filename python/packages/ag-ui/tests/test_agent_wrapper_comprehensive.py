@@ -650,7 +650,7 @@ async def test_agent_with_use_service_thread_is_false():
         thread = kwargs.get("thread")
         request_service_thread_id = thread.service_thread_id if thread else None
         yield ChatResponseUpdate(
-            contents=[TextContent(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
+            contents=[Content.from_text(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
         )
 
     agent = ChatAgent(chat_client=StreamingChatClientStub(stream_fn))
@@ -677,7 +677,7 @@ async def test_agent_with_use_service_thread_is_true():
         thread = kwargs.get("thread")
         request_service_thread_id = thread.service_thread_id if thread else None
         yield ChatResponseUpdate(
-            contents=[TextContent(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
+            contents=[Content.from_text(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
         )
 
     agent = ChatAgent(chat_client=StreamingChatClientStub(stream_fn))

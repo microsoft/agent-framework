@@ -18,10 +18,8 @@ from agent_framework import (
     ChatResponse,
     Content,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
     Role,
 )
@@ -992,7 +990,7 @@ def test_from_azure_ai_tools() -> None:
 
     tool_input = parsed_tools[0].inputs[0]
 
-    assert tool_input and isinstance(tool_input, HostedFileContent) and tool_input.file_id == "file-1"
+    assert tool_input and tool_input.type == "hosted_file" and tool_input.file_id == "file-1"
 
     # Test File Search tool
     fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
@@ -1004,7 +1002,7 @@ def test_from_azure_ai_tools() -> None:
 
     tool_input = parsed_tools[0].inputs[0]
 
-    assert tool_input and isinstance(tool_input, HostedVectorStoreContent) and tool_input.vector_store_id == "vs-1"
+    assert tool_input and tool_input.type == "hosted_vector_store" and tool_input.vector_store_id == "vs-1"
     assert parsed_tools[0].max_results == 5
 
     # Test Web Search tool

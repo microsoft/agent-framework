@@ -463,7 +463,7 @@ class WorkflowAgent(BaseAgent):
         for u in updates:
             if u.response_id:
                 for content in u.contents:
-                    if isinstance(content, FunctionCallContent) and content.call_id:
+                    if content.type == "function_call" and content.call_id:
                         call_id_to_response_id[content.call_id] = u.response_id
 
         # Second pass: group updates, associating FunctionResultContent with their calls
@@ -475,7 +475,7 @@ class WorkflowAgent(BaseAgent):
             # If no response_id, check if this is a FunctionResultContent that matches a call
             if not effective_response_id:
                 for content in u.contents:
-                    if isinstance(content, FunctionResultContent) and content.call_id:
+                    if content.type == "function_result" and content.call_id:
                         effective_response_id = call_id_to_response_id.get(content.call_id)
                         if effective_response_id:
                             break
