@@ -28,14 +28,14 @@ async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    writer_agent = chat_client.create_agent(
+    writer_agent = chat_client.as_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = chat_client.create_agent(
+    reviewer_agent = chat_client.as_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."

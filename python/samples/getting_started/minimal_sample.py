@@ -15,7 +15,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-agent = OpenAIChatClient().create_agent(
+agent = OpenAIChatClient().as_agent(
     name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
 )
 print(asyncio.run(agent.run("What's the weather like in Seattle?")))
