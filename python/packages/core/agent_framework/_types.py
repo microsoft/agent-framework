@@ -2844,13 +2844,12 @@ class ChatResponse(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self.value = value
+        self._value: Any | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
-
-        if response_format:
-            self.try_parse_value(output_format_type=response_format)
 
     @classmethod
     def from_chat_response_updates(
@@ -2929,16 +2928,56 @@ class ChatResponse(SerializationMixin):
         """Returns the concatenated text of all messages in the response."""
         return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
 
+    @property
+    def value(self) -> Any | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = self._response_format.model_validate_json(self.text)
+            self._value_parsed = True
+        return self._value
+
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from chat response text: %s", ex)
+    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+        """Try to parse the text into a typed value.
+
+        This is the safe alternative to accessing the value property directly.
+        Returns the parsed value on success, or None on failure.
+
+        Args:
+            output_format_type: The Pydantic model type to parse into.
+                               If None, uses the response_format from initialization.
+
+        Returns:
+            The parsed value as the specified type, or None if parsing fails.
+        """
+        format_type = output_format_type or self._response_format
+        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
+            return None
+        if self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value]
+        try:
+            self._value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            self._value_parsed = True
+            return self._value  # type: ignore[return-value]
+        except ValidationError as ex:
+            logger.warning("Failed to parse value from chat response text: %s", ex)
+            self._value_parsed = True
+            return None
 
 
 # region ChatResponseUpdate
@@ -3124,6 +3163,7 @@ class AgentResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
         value: Any | None = None,
+        response_format: type[BaseModel] | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -3136,6 +3176,7 @@ class AgentResponse(SerializationMixin):
             created_at: A timestamp for the chat response.
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
+            response_format: Optional response format for the agent response.
             additional_properties: Any additional properties associated with the chat response.
             raw_representation: The raw representation of the chat response from an underlying implementation.
             **kwargs: Additional properties to set on the response.
@@ -3163,7 +3204,9 @@ class AgentResponse(SerializationMixin):
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
-        self.value = value
+        self._value: Any | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation = raw_representation
@@ -3172,6 +3215,27 @@ class AgentResponse(SerializationMixin):
     def text(self) -> str:
         """Get the concatenated text of all messages."""
         return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @property
+    def value(self) -> Any | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = self._response_format.model_validate_json(self.text)
+            self._value_parsed = True
+        return self._value
 
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:
@@ -3232,13 +3296,32 @@ class AgentResponse(SerializationMixin):
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from agent run response text: %s", ex)
+    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+        """Try to parse the text into a typed value.
+
+        This is the safe alternative when you need to parse the response text into a typed value.
+        Returns the parsed value on success, or None on failure.
+
+        Args:
+            output_format_type: The Pydantic model type to parse into.
+                               If None, uses the response_format from initialization.
+
+        Returns:
+            The parsed value as the specified type, or None if parsing fails.
+        """
+        format_type = output_format_type or self._response_format
+        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
+            return None
+        if self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value]
+        try:
+            self._value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            self._value_parsed = True
+            return self._value  # type: ignore[return-value]
+        except ValidationError as ex:
+            logger.warning("Failed to parse value from agent run response text: %s", ex)
+            self._value_parsed = True
+            return None
 
 
 # region AgentResponseUpdate

@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 
 from agent_framework.declarative import AgentFactory
+from pydantic import ValidationError
 
 
 async def main():
@@ -19,7 +20,10 @@ async def main():
     agent = AgentFactory().create_agent_from_yaml(yaml_str)
     # use the agent
     response = await agent.run("Why is the sky blue, answer in Dutch?")
-    print("Agent response:", response.value)
+    try:
+        print("Agent response:", response.value if response.value else response.text)
+    except ValidationError:
+        print("Agent response:", response.text)
 
 
 if __name__ == "__main__":

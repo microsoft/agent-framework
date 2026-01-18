@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent_framework.declarative import AgentFactory
 from azure.identity import AzureCliCredential
+from pydantic import ValidationError
 
 
 async def main():
@@ -20,7 +21,13 @@ async def main():
     agent = AgentFactory(client_kwargs={"credential": AzureCliCredential()}).create_agent_from_yaml(yaml_str)
     # use the agent
     response = await agent.run("Why is the sky blue, answer in Dutch?")
-    print("Agent response:", response.value.model_dump_json(indent=2))
+    try:
+        if response.value:
+            print("Agent response:", response.value.model_dump_json(indent=2))
+        else:
+            print("Agent response:", response.text)
+    except ValidationError:
+        print("Agent response:", response.text)
 
 
 if __name__ == "__main__":
