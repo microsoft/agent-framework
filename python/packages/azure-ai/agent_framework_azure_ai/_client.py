@@ -56,6 +56,7 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions):
     """Azure AI Project Agent options."""
 
     rai_config: RaiConfig
+    """Configuration for Responsible AI (RAI) content filtering and safety features."""
 
 
 TAzureAIClientOptions = TypeVar(
