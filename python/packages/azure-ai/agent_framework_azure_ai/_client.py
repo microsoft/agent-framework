@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -20,21 +20,20 @@ from agent_framework import (
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
+from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
+    RaiConfig,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
 from ._shared import AzureAISettings, create_text_format_config
-
-if TYPE_CHECKING:
-    from agent_framework.openai import OpenAIResponsesOptions
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -52,10 +51,18 @@ else:
 
 logger = get_logger("agent_framework.azure")
 
+
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions):
+    """Azure AI Project Agent options."""
+
+    rai_config: RaiConfig
+    """Configuration for Responsible AI (RAI) content filtering and safety features."""
+
+
 TAzureAIClientOptions = TypeVar(
     "TAzureAIClientOptions",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIResponsesOptions",
+    default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
@@ -397,6 +404,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             "model",
             "tools",
             "response_format",
+            "rai_config",
             "temperature",
             "top_p",
             "text",
