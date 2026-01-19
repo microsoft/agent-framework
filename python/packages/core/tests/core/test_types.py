@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 from collections.abc import AsyncIterable
 from datetime import datetime, timezone
 from typing import Any
@@ -24,6 +25,7 @@ from agent_framework import (
     ToolProtocol,
     UsageDetails,
     ai_function,
+    detect_media_type_from_base64,
     merge_chat_options,
     prepare_function_call_results,
 )
@@ -154,55 +156,63 @@ def test_data_content_empty():
     assert data.media_type == "application/octet-stream"
 
 
-# def test_data_content_detect_image_format_from_base64():
-#     """Test the detect_image_format_from_base64 static method."""
-#     # Test each supported format
-#     png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
-#     assert detect_image_format_from_base64(base64.b64encode(png_data).decode()) == "png"
+def test_data_content_detect_image_format_from_base64():
+    """Test the detect_image_format_from_base64 static method."""
+    # Test each supported format
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    assert detect_media_type_from_base64(data_bytes=png_data) == "image/png"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(png_data).decode()) == "image/png"
 
-#     jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
-#     assert DataContent.detect_image_format_from_base64(base64.b64encode(jpeg_data).decode()) == "jpeg"
+    jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
+    assert detect_media_type_from_base64(data_bytes=jpeg_data) == "image/jpeg"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(jpeg_data).decode()) == "image/jpeg"
 
-#     webp_data = b"RIFF" + b"1234" + b"WEBP" + b"fake_data"
-#     assert DataContent.detect_image_format_from_base64(base64.b64encode(webp_data).decode()) == "webp"
+    webp_data = b"RIFF" + b"1234" + b"WEBP" + b"fake_data"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(webp_data).decode()) == "image/webp"
+    gif_data = b"GIF89a" + b"fake_data"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(gif_data).decode()) == "image/gif"
 
-#     gif_data = b"GIF89a" + b"fake_data"
-#     assert DataContent.detect_image_format_from_base64(base64.b64encode(gif_data).decode()) == "gif"
+    # Test fallback behavior
+    unknown_data = b"UNKNOWN_FORMAT"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(unknown_data).decode()) is None
+    assert (
+        detect_media_type_from_base64(
+            data_uri=f"data:application/octet-stream;base64,{base64.b64encode(unknown_data).decode()}"
+        )
+        is None
+    )
+    assert detect_media_type_from_base64(data_bytes=unknown_data) is None
+    # Test error handling
+    with pytest.raises(ValueError, match="Invalid base64 data provided."):
+        detect_media_type_from_base64(data_str="invalid_base64!")
+        detect_media_type_from_base64(data_str="")
 
-#     # Test fallback behavior
-#     unknown_data = b"UNKNOWN_FORMAT"
-#     assert DataContent.detect_image_format_from_base64(base64.b64encode(unknown_data).decode()) == "png"
+    with pytest.raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        detect_media_type_from_base64()
+        detect_media_type_from_base64(
+            data_bytes=b"data", data_str="data", data_uri="data:application/octet-stream;base64,AAA"
+        )
+        detect_media_type_from_base64(data_bytes=b"data", data_str="data")
+        detect_media_type_from_base64(data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA")
+        detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
-#     # Test error handling
-#     assert DataContent.detect_image_format_from_base64("invalid_base64!") == "png"
-#     assert DataContent.detect_image_format_from_base64("") == "png"
 
+def test_data_content_create_data_uri_from_base64():
+    """Test the create_data_uri_from_base64 class method."""
+    # Test with PNG data
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    content = Content.from_data(png_data, media_type=detect_media_type_from_base64(data_bytes=png_data))
 
-# def test_data_content_create_data_uri_from_base64():
-#     """Test the create_data_uri_from_base64 class method."""
-#     # Test with PNG data
-#     png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
-#     png_base64 = base64.b64encode(png_data).decode()
-#     uri, media_type = Content.create_data_uri_from_base64(png_base64)
+    assert content.uri == f"data:image/png;base64,{base64.b64encode(png_data).decode()}"
+    assert content.media_type == "image/png"
 
-#     assert uri == f"data:image/png;base64,{png_base64}"
-#     assert media_type == "image/png"
+    # Test with different format
+    jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
+    jpeg_base64 = base64.b64encode(jpeg_data).decode()
+    content = Content.from_data(jpeg_data, media_type=detect_media_type_from_base64(data_bytes=jpeg_data))
 
-#     # Test with different format
-#     jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
-#     jpeg_base64 = base64.b64encode(jpeg_data).decode()
-#     uri, media_type = DataContent.create_data_uri_from_base64(jpeg_base64)
-
-#     assert uri == f"data:image/jpeg;base64,{jpeg_base64}"
-#     assert media_type == "image/jpeg"
-
-#     # Test fallback for unknown format
-#     unknown_data = b"UNKNOWN_FORMAT"
-#     unknown_base64 = base64.b64encode(unknown_data).decode()
-#     uri, media_type = DataContent.create_data_uri_from_base64(unknown_base64)
-
-#     assert uri == f"data:image/png;base64,{unknown_base64}"
-#     assert media_type == "image/png"
+    assert content.uri == f"data:image/jpeg;base64,{jpeg_base64}"
+    assert content.media_type == "image/jpeg"
 
 
 # region UriContent

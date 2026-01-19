@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import base64
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -58,6 +57,7 @@ from .._types import (
     Role,
     TextSpanRegion,
     UsageDetails,
+    detect_media_type_from_base64,
     prepare_function_call_results,
     prepend_instructions_to_messages,
     validate_tool_mode,
@@ -991,19 +991,13 @@ class OpenAIBaseResponsesClient(
                         )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     image_output: Content | None = None
-                    if item.result:
-                        base64_data = item.result  # OpenAI returns base64-encoded string
-                        # Detect media type from base64 data
-                        from agent_framework._types import detect_media_type_from_base64
-
-                        media_type = detect_media_type_from_base64(base64_data)
-                        if media_type is None:
-                            media_type = "image/png"  # Default fallback
-                        # Convert base64 string to bytes for Content.from_data
-                        data_bytes = base64.b64decode(base64_data)
-                        image_output = Content.from_data(
-                            data=data_bytes,
-                            media_type=media_type,
+                    if item.result is not None:
+                        # item.result contains raw base64 string
+                        # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
+                        image_output = Content.from_uri(
+                            uri=f"data:{(detect_media_type_from_base64(data_str=item.result) or 'image/png')};base64,{
+                                item.result
+                            }",
                             raw_representation=item.result,
                         )
                     image_id = item.id
@@ -1297,19 +1291,10 @@ class OpenAIBaseResponsesClient(
                 # Handle streaming partial image generation
                 image_base64 = event.partial_image_b64
                 partial_index = event.partial_image_index
-
-                # Detect media type from base64 data
-                from agent_framework._types import detect_media_type_from_base64
-
-                media_type = detect_media_type_from_base64(image_base64)
-                if media_type is None:
-                    media_type = "image/png"  # Default fallback
-
-                # Decode base64 and use Content.from_data
-                data_bytes = base64.b64decode(image_base64)
-                image_output = Content.from_data(
-                    data=data_bytes,
-                    media_type=media_type,
+                image_output = Content.from_uri(
+                    uri=f"data:{(detect_media_type_from_base64(data_str=image_base64) or 'image/png')};base64,{
+                        image_base64
+                    }",
                     additional_properties={
                         "partial_image_index": partial_index,
                         "is_partial_image": True,

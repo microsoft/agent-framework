@@ -101,7 +101,12 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
 # region Internal Helper functions for unified Content
 
 
-def detect_media_type_from_base64(data_base64: str) -> str | None:
+def detect_media_type_from_base64(
+    *,
+    data_bytes: bytes | None = None,
+    data_str: str | None = None,
+    data_uri: str | None = None,
+) -> str | None:
     """Detect media type from base64-encoded data by examining magic bytes.
 
     This function examines the binary signature (magic bytes) at the start of the data
@@ -109,7 +114,14 @@ def detect_media_type_from_base64(data_base64: str) -> str | None:
     video, and documents, but cannot detect text-based formats like JSON or plain text.
 
     Args:
-        data_base64: Base64-encoded data (with or without data URI prefix).
+        data_bytes: Raw binary data.
+        data_str: Base64-encoded data (without data URI prefix).
+        data_uri: Full data URI string (e.g., "data:image/png;base64,iVBORw0KGgo...").
+            This will look at the actual data to determine the media_type and not at the URI prefix.
+            Will also not compare those two values.
+
+    Raises:
+        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
 
     Returns:
         The detected media type (e.g., 'image/png', 'audio/wav', 'application/pdf')
@@ -130,83 +142,55 @@ def detect_media_type_from_base64(data_base64: str) -> str | None:
             media_type = detect_media_type_from_base64(data_uri)
             # Returns: "image/png"
     """
-    # Remove data URI prefix if present
-    if data_base64.startswith("data:") and ";base64," in data_base64:
-        data_base64 = data_base64.split(";base64,", 1)[1]
-
-    try:
-        # Decode just the first few bytes to check magic numbers
-        decoded = base64.b64decode(data_base64[:50])
-    except Exception:
-        return None
+    data: bytes | None = None
+    if data_bytes is not None:
+        data = data_bytes
+    if data_uri is not None:
+        if data is not None:
+            raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
+        # Remove data URI prefix if present
+        data_str = data_uri.split(";base64,", 1)[1]
+    if data_str is not None:
+        if data is not None:
+            raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
+        try:
+            # Decode just the first few bytes to check magic numbers
+            data = base64.b64decode(data_str[:50])
+        except Exception as exc:
+            raise ValueError("Invalid base64 data provided.") from exc
+    if data is None:
+        raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
 
     # Check magic bytes for common formats
     # Images
-    if decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
-    if decoded.startswith(b"\xff\xd8\xff"):
+    if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if decoded.startswith(b"GIF87a") or decoded.startswith(b"GIF89a"):
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
         return "image/gif"
-    if decoded.startswith(b"RIFF") and len(decoded) > 11 and decoded[8:12] == b"WEBP":
+    if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WEBP":
         return "image/webp"
-    if decoded.startswith(b"BM"):
+    if data.startswith(b"BM"):
         return "image/bmp"
-    if decoded.startswith(b"<svg") or decoded.startswith(b"<?xml"):
+    if data.startswith(b"<svg") or data.startswith(b"<?xml"):
         return "image/svg+xml"
 
     # Documents
-    if decoded.startswith(b"%PDF-"):
+    if data.startswith(b"%PDF-"):
         return "application/pdf"
 
     # Audio
-    if decoded.startswith(b"RIFF") and len(decoded) > 11 and decoded[8:12] == b"WAVE":
+    if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WAVE":
         return "audio/wav"
-    if decoded.startswith(b"ID3") or decoded.startswith(b"\xff\xfb") or decoded.startswith(b"\xff\xf3"):
+    if data.startswith(b"ID3") or data.startswith(b"\xff\xfb") or data.startswith(b"\xff\xf3"):
         return "audio/mpeg"
-    if decoded.startswith(b"OggS"):
+    if data.startswith(b"OggS"):
         return "audio/ogg"
-    if decoded.startswith(b"fLaC"):
+    if data.startswith(b"fLaC"):
         return "audio/flac"
 
     return None
-
-
-def _create_data_uri_from_base64(image_base64: str, media_type: str | None = None) -> tuple[str, str]:
-    """Create a data URI and media type from base64 data.
-
-    Args:
-        image_base64: Base64-encoded image data (with or without data URI prefix).
-        media_type: Optional explicit media type. If not provided, will attempt to detect.
-
-    Returns:
-        A tuple of (data_uri, media_type).
-
-    Raises:
-        ContentError: If media type cannot be determined.
-    """
-    # If it's already a data URI, extract the parts
-    if image_base64.startswith("data:"):
-        if ";base64," in image_base64:
-            prefix, data = image_base64.split(";base64,", 1)
-            existing_media_type = prefix.split(":", 1)[1] if ":" in prefix else None
-            if media_type is None:
-                media_type = existing_media_type
-            image_base64 = data
-        else:
-            raise ContentError("Data URI must use base64 encoding")
-
-    # Detect format if media type not provided
-    if media_type is None:
-        detected_media_type = detect_media_type_from_base64(image_base64)
-        if detected_media_type:
-            media_type = detected_media_type
-        else:
-            raise ContentError("Could not detect media type from base64 data")
-
-    # Construct data URI
-    data_uri = f"data:{media_type};base64,{image_base64}"
-    return data_uri, media_type
 
 
 def _get_data_bytes_as_str(content: "Content") -> str | None:
@@ -623,7 +607,7 @@ class Content:
 
                 .. code-block:: python
 
-                    from agent_framework import detect_media_type_from_base64
+                    from agent_framework import detect_media_type_from_base64, Content
 
                     media_type = detect_media_type_from_base64(base64_string)
                     if media_type is None:
@@ -718,6 +702,14 @@ class Content:
                 # Create from an external URI
                 content = Content.from_uri(uri="https://example.com/image.png", media_type="image/png")
                 assert content.type == "uri"
+
+                # When receiving a raw already encode data string, you can do this:
+                raw_base64_string = "iVBORw0KGgo..."
+                content = Content.from_uri(
+                    uri=f"data:{(detect_media_type_from_base64(data_str=raw_base64_string) or 'image/png')};base64,{
+                        raw_base64_string
+                    }"
+                )
 
         Returns:
             A Content instance with type="data" for data URIs or type="uri" for external URIs.

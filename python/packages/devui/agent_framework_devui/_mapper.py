@@ -1416,10 +1416,10 @@ class MessageMapper:
             None - no event emitted (usage goes in final Response.usage)
         """
         # Extract usage from UsageContent.usage_details (UsageDetails object)
-        details = getattr(content, "usage_details", None)
-        total_tokens = getattr(details, "total_token_count", 0) or 0
-        prompt_tokens = getattr(details, "input_token_count", 0) or 0
-        completion_tokens = getattr(details, "output_token_count", 0) or 0
+        details = content.usage_details or {}
+        total_tokens = details.get("total_token_count", 0)
+        prompt_tokens = details.get("input_token_count", 0)
+        completion_tokens = details.get("output_token_count", 0)
 
         # Accumulate for final Response.usage
         request_id = context.get("request_id", "default")
