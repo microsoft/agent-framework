@@ -1,14 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import os
 import platform
 import re
 import shlex
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, TypedDict
 
 from ._serialization import SerializationMixin
 from ._tools import BaseTool
+
+if TYPE_CHECKING:
+    from ._tools import AIFunction
 
 __all__ = [
     "ShellExecutor",
@@ -436,3 +440,36 @@ class ShellTool(BaseTool):
             max_output_bytes=self.max_output_bytes,
             capture_stderr=self.capture_stderr,
         )
+
+    def as_ai_function(self) -> "AIFunction[Any, str]":
+        """Convert this ShellTool to an AIFunction.
+
+        Returns:
+            An AIFunction that wraps the shell command execution.
+        """
+        from ._tools import AIFunction
+
+        cached: AIFunction[Any, str] | None = getattr(self, "_cached_ai_function", None)
+        if cached is not None:
+            return cached
+
+        shell_tool = self
+
+        async def execute_shell_command(command: Annotated[str, "The shell command to execute"]) -> str:
+            try:
+                result = await shell_tool.execute(command)
+                return json.dumps(result.to_dict(), indent=2)
+            except ValueError as e:
+                return json.dumps({"error": True, "message": str(e), "exit_code": -1})
+            except Exception as e:
+                return json.dumps({"error": True, "message": f"Execution failed: {e}", "exit_code": -1})
+
+        ai_function: AIFunction[Any, str] = AIFunction(
+            name=self.name,
+            description=self.description,
+            func=execute_shell_command,
+            approval_mode=self.approval_mode,
+        )
+
+        self._cached_ai_function: AIFunction[Any, str] = ai_function
+        return ai_function

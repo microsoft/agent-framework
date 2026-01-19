@@ -37,6 +37,7 @@ from pydantic import BaseModel, ValidationError
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
+from .._shell_tool import ShellTool
 from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
@@ -473,6 +474,19 @@ class OpenAIBaseResponsesClient(
                         if tool.additional_properties:
                             mapped_tool.update(tool.additional_properties)
                         response_tools.append(mapped_tool)
+                    case ShellTool():
+                        ai_func = tool.as_ai_function()
+                        params = ai_func.parameters()
+                        params["additionalProperties"] = False
+                        response_tools.append(
+                            FunctionToolParam(
+                                name=ai_func.name,
+                                parameters=params,
+                                strict=False,
+                                type="function",
+                                description=ai_func.description,
+                            )
+                        )
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:

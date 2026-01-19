@@ -289,7 +289,6 @@ def test_shell_tool_validate_command_integration():
     assert not result.is_valid
 
 
-@pytest.mark.asyncio
 async def test_shell_tool_execute_valid():
     """Test ShellTool execute with valid command."""
     executor = MockShellExecutor()
@@ -300,7 +299,6 @@ async def test_shell_tool_execute_valid():
     assert "echo hello" in result.stdout
 
 
-@pytest.mark.asyncio
 async def test_shell_tool_execute_invalid():
     """Test ShellTool execute with invalid command."""
     executor = MockShellExecutor()
@@ -378,3 +376,83 @@ def test_shell_tool_default_options():
     assert tool.blacklist_patterns == []
     assert tool.allowed_paths == []
     assert tool.blocked_paths == []
+
+
+# region AIFunction conversion tests
+
+
+def test_shell_tool_as_ai_function():
+    """Test ShellTool.as_ai_function returns AIFunction with correct properties."""
+    from agent_framework import AIFunction
+
+    executor = MockShellExecutor()
+    tool = ShellTool(
+        executor=executor,
+        name="test_shell",
+        description="Test shell tool",
+        options={"approval_mode": "never_require"},
+    )
+
+    ai_func = tool.as_ai_function()
+
+    assert isinstance(ai_func, AIFunction)
+    assert ai_func.name == "test_shell"
+    assert ai_func.description == "Test shell tool"
+    assert ai_func.approval_mode == "never_require"
+
+
+def test_shell_tool_as_ai_function_caching():
+    """Test that as_ai_function returns the same cached instance."""
+    executor = MockShellExecutor()
+    tool = ShellTool(executor=executor)
+
+    ai_func1 = tool.as_ai_function()
+    ai_func2 = tool.as_ai_function()
+
+    assert ai_func1 is ai_func2
+
+
+def test_shell_tool_as_ai_function_parameters():
+    """Test that the AIFunction has correct JSON schema parameters."""
+    executor = MockShellExecutor()
+    tool = ShellTool(executor=executor)
+
+    ai_func = tool.as_ai_function()
+    params = ai_func.parameters()
+
+    assert "properties" in params
+    assert "command" in params["properties"]
+    assert params["properties"]["command"]["type"] == "string"
+    assert "required" in params
+    assert "command" in params["required"]
+
+
+async def test_shell_tool_ai_function_invoke_success():
+    """Test AIFunction invoke returns JSON-formatted result."""
+    import json
+
+    executor = MockShellExecutor()
+    tool = ShellTool(executor=executor, options={"whitelist_patterns": ["echo"]})
+
+    ai_func = tool.as_ai_function()
+    result = await ai_func.invoke(command="echo hello")
+
+    parsed = json.loads(result)
+    assert parsed["exit_code"] == 0
+    assert "echo hello" in parsed["stdout"]
+
+
+async def test_shell_tool_ai_function_invoke_validation_error():
+    """Test AIFunction invoke returns error JSON for validation failures."""
+    import json
+
+    executor = MockShellExecutor()
+    tool = ShellTool(executor=executor, options={"whitelist_patterns": ["echo"]})
+
+    ai_func = tool.as_ai_function()
+    result = await ai_func.invoke(command="rm file.txt")
+
+    parsed = json.loads(result)
+    assert parsed["error"] is True
+    assert "whitelist" in parsed["message"].lower()
+    assert parsed["exit_code"] == -1
