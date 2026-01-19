@@ -25,7 +25,7 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming example ===")
 
     # Create an OpenAI Responses agent
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )
@@ -51,7 +51,7 @@ async def streaming_example() -> None:
     print("=== Streaming example ===")
 
     # Create an OpenAI Responses agent
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )

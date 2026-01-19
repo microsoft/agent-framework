@@ -6,10 +6,13 @@ from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import MagicMock
 
+from ag_ui.core import BaseEvent, RunFinishedEvent
 from agent_framework import (
     AgentResponseUpdate,
+    AgentThread,
     BaseChatClient,
     ChatAgent,
+    ChatResponseUpdate,
     FunctionInvocationConfiguration,
     TextContent,
     ai_function,
@@ -52,7 +55,22 @@ def _create_mock_chat_agent(
     async def mock_run_stream(
         messages: list[Any],
         *,
-        thread: Any = None,
+        #     thread: AgentThread,
+        #     tools: list[Any] | None = None,
+        #     **kwargs: Any,
+        # ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+        #     self.seen_tools = tools
+        #     yield AgentRunResponseUpdate(
+        #         contents=[TextContent(text="ok")],
+        #         role="assistant",
+        #         response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+        #         raw_representation=ChatResponseUpdate(
+        #             contents=[TextContent(text="ok")],
+        #             conversation_id=thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+        #             response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+        #         ),
+        #     )
+        thread: AgentThread,
         tools: list[Any] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[AgentResponseUpdate, None]:
@@ -60,7 +78,16 @@ def _create_mock_chat_agent(
             capture_tools.extend(tools)
         if capture_messages is not None:
             capture_messages.extend(messages)
-        yield AgentResponseUpdate(contents=[TextContent(text="ok")], role="assistant")
+        yield AgentResponseUpdate(
+            contents=[TextContent(text="ok")],
+            role="assistant",
+            response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+            raw_representation=ChatResponseUpdate(
+                contents=[TextContent(text="ok")],
+                conversation_id=thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+                response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
+            ),
+        )
 
     # Patch the run_stream method
     agent.run_stream = mock_run_stream  # type: ignore[method-assign]
@@ -139,6 +166,7 @@ async def test_default_orchestrator_with_camel_case_ids() -> None:
         events.append(event)
 
     # assert the last event has the expected run_id and thread_id
+    assert isinstance(events[-1], RunFinishedEvent)
     last_event = events[-1]
     assert last_event.run_id == "test-camelcase-runid"
     assert last_event.thread_id == "test-camelcase-threadid"
@@ -167,11 +195,12 @@ async def test_default_orchestrator_with_snake_case_ids() -> None:
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[BaseEvent] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
     # assert the last event has the expected run_id and thread_id
+    assert isinstance(events[-1], RunFinishedEvent)
     last_event = events[-1]
     assert last_event.run_id == "test-snakecase-runid"
     assert last_event.thread_id == "test-snakecase-threadid"

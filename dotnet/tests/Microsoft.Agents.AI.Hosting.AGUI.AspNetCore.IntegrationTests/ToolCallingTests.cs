@@ -44,7 +44,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(serverTools: [serverTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the server function");
 
@@ -92,7 +92,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(serverTools: [getWeatherTool, getTimeTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "What's the weather and time?");
 
@@ -133,7 +133,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the client function");
 
@@ -181,7 +181,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [calculateTool, formatTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [calculateTool, formatTool]);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Calculate 5 + 3 and format 'hello'");
 
@@ -232,7 +232,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(serverTools: [serverTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get both server and client data");
 
@@ -297,7 +297,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(serverTools: [testTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the test function");
 
@@ -341,7 +341,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(serverTools: [func1, func2], triggerParallelCalls: true);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call both functions in parallel");
 
@@ -427,7 +427,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(serverTools: [serverTool], jsonSerializerOptions: ServerJsonContext.Default.Options);
         var chatClient = new AGUIChatClient(this._client!, "", null, ServerJsonContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get server forecast for Seattle for 5 days");
 
@@ -473,7 +473,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null, ClientJsonContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
         AgentThread thread = await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get client forecast for Portland with hourly data");
 
@@ -518,7 +518,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         this._app = builder.Build();
         // FakeChatClient will receive options.Tools containing both server and client tools (merged by framework)
         var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, jsonSerializerOptions: jsonSerializerOptions);
-        AIAgent baseAgent = fakeChatClient.CreateAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
+        AIAgent baseAgent = fakeChatClient.AsAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
         this._app.MapAGUI("/agent", baseAgent);
 
         await this._app.StartAsync();

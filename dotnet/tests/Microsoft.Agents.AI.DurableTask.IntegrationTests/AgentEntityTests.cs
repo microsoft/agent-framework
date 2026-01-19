@@ -41,7 +41,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     public async Task EntityNamePrefixAsync()
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -88,7 +88,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     public async Task RunAgentMethodNamesAllWorkAsync(string runAgentMethodName)
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -143,7 +143,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     public async Task OrchestrationIdSetDuringOrchestrationAsync()
     {
         // Arrange
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );

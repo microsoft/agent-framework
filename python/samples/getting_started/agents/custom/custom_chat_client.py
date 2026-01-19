@@ -125,7 +125,7 @@ async def main() -> None:
     print(f"Direct response: {direct_response.messages[0].text}")
 
     # Create an agent using the custom chat client
-    echo_agent = echo_client.create_agent(
+    echo_agent = echo_client.as_agent(
         name="EchoAgent",
         instructions="You are a helpful assistant that echoes back what users say.",
     )

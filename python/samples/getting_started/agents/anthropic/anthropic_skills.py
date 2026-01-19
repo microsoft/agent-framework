@@ -31,7 +31,7 @@ async def main() -> None:
 
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
         tools=HostedCodeInterpreterTool(),

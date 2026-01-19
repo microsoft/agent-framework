@@ -145,17 +145,17 @@ from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 chat_client = AzureOpenAIChatClient()
 
 # Define agents with different roles
-joker_agent = chat_client.create_agent(
+joker_agent = chat_client.as_agent(
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
-stock_agent = chat_client.create_agent(
+stock_agent = chat_client.as_agent(
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
-plant_agent = chat_client.create_agent(
+plant_agent = chat_client.as_agent(
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",

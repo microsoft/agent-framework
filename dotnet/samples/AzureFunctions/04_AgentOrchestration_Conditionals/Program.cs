@@ -29,10 +29,10 @@ const string EmailAssistantName = "EmailAssistantAgent";
 const string EmailAssistantInstructions = "You are an email assistant that helps users draft responses to emails with professionalism.";
 
 AIAgent spamDetectionAgent = client.GetChatClient(deploymentName)
-    .CreateAIAgent(SpamDetectionInstructions, SpamDetectionName);
+    .AsAIAgent(SpamDetectionInstructions, SpamDetectionName);
 
 AIAgent emailAssistantAgent = client.GetChatClient(deploymentName)
-    .CreateAIAgent(EmailAssistantInstructions, EmailAssistantName);
+    .AsAIAgent(EmailAssistantInstructions, EmailAssistantName);
 
 using IHost app = FunctionsApplication
     .CreateBuilder(args)

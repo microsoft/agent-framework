@@ -83,7 +83,7 @@ public static class Program
             serverUrl,
             jsonSerializerOptions: AGUIClientSerializerContext.Default.Options);
 
-        AIAgent agent = chatClient.CreateAIAgent(
+        AIAgent agent = chatClient.AsAIAgent(
             name: "agui-client",
             description: "AG-UI Client Agent",
             tools: [changeBackground, readClientClimateSensors]);

@@ -40,7 +40,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
     {
         // Arrange: Create agent with short TTL (10 seconds)
         TimeSpan ttl = TimeSpan.FromSeconds(10);
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TTLTestAgent",
             instructions: "You are a helpful assistant."
         );
@@ -105,7 +105,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
     {
         // Arrange: Create agent with short TTL
         TimeSpan ttl = TimeSpan.FromSeconds(6);
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TTLResetTestAgent",
             instructions: "You are a helpful assistant."
         );

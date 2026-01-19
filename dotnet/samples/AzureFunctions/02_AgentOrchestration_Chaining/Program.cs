@@ -29,7 +29,7 @@ const string WriterInstructions =
     when given an improved sentence you polish it further.
     """;
 
-AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterInstructions, WriterName);
+AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstructions, WriterName);
 
 using IHost app = FunctionsApplication
     .CreateBuilder(args)
