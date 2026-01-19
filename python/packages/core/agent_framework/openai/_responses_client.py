@@ -995,9 +995,8 @@ class OpenAIBaseResponsesClient(
                         # item.result contains raw base64 string
                         # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
                         image_output = Content.from_uri(
-                            uri=f"data:{(detect_media_type_from_base64(data_str=item.result) or 'image/png')};base64,{
-                                item.result
-                            }",
+                            uri=f"data:{detect_media_type_from_base64(data_str=item.result) or 'image/png'}"
+                            f";base64,{item.result}",
                             raw_representation=item.result,
                         )
                     image_id = item.id
@@ -1292,9 +1291,8 @@ class OpenAIBaseResponsesClient(
                 image_base64 = event.partial_image_b64
                 partial_index = event.partial_image_index
                 image_output = Content.from_uri(
-                    uri=f"data:{(detect_media_type_from_base64(data_str=image_base64) or 'image/png')};base64,{
-                        image_base64
-                    }",
+                    uri=f"data:{detect_media_type_from_base64(data_str=image_base64) or 'image/png'}"
+                    f";base64,{image_base64}",
                     additional_properties={
                         "partial_image_index": partial_index,
                         "is_partial_image": True,
