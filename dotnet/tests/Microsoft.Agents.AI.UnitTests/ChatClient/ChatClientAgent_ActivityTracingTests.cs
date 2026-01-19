@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -17,18 +17,101 @@ namespace Microsoft.Agents.AI.UnitTests;
 /// </summary>
 public sealed class ChatClientAgent_ActivityTracingTests
 {
+    /// <summary>
+    /// Unit test that validates the Activity/TraceId preservation pattern with a mocked MCP tool.
+    /// This test uses mocks to verify the OpenTelemetryAgent + ChatClientAgent pattern works
+    /// without requiring Azure OpenAI or real MCP server dependencies.
+    /// </summary>
     [Fact]
-    public async Task OpenTelemetryAgent_WithoutTools_PreservesActivityTraceId()
+    public async Task OpenTelemetryAgent_WithMockedMcpTool_PreservesTraceIdAsync()
     {
         // Arrange
-        const string sourceName = "TestActivitySource";
+        const string SourceName = "MockedMCPTest";
         List<Activity> activities = [];
         using TracerProvider tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
-            .AddSource(sourceName)
+            .AddSource(SourceName)
             .AddInMemoryExporter(activities)
             .Build();
 
-        using ActivitySource activitySource = new(sourceName);
+        using ActivitySource activitySource = new(SourceName);
+        using Activity? parentActivity = activitySource.StartActivity("Mocked_MCP_Test");
+        ActivityTraceId? parentTraceId = parentActivity?.TraceId;
+
+        Assert.NotNull(parentTraceId);
+
+        // Track TraceIds during tool execution
+        List<string?> traceIds = [];
+
+        // Create a mock MCP tool
+        AIFunction mockMcpTool = AIFunctionFactory.Create(
+            async (int a, int b) =>
+            {
+                // Simulate MCP tool execution with async operation (like HTTP call)
+                traceIds.Add(Activity.Current?.TraceId.ToString());
+                await Task.Delay(10, CancellationToken.None);
+                traceIds.Add(Activity.Current?.TraceId.ToString());
+                return a + b;
+            },
+            "add",
+            "Adds two numbers together");
+
+        // Create mock chat client that simulates tool calling
+        TestChatClient mockChatClient = new()
+        {
+            GetResponseAsyncFunc = async (messages, options, cancellationToken) =>
+            {
+                traceIds.Add(Activity.Current?.TraceId.ToString());
+
+                // Simulate async operation
+                await Task.Delay(10, CancellationToken.None);
+
+                traceIds.Add(Activity.Current?.TraceId.ToString());
+
+                return new ChatResponse([
+                    new ChatMessage(ChatRole.Assistant, "The sum is 8")
+                ]);
+            }
+        };
+
+        // Create inner agent with mock MCP tool
+        ChatClientAgent innerAgent = new(
+            mockChatClient,
+            "You are a helpful assistant.",
+            "MockMCPAgent",
+            tools: [mockMcpTool]);
+
+        // Wrap with OpenTelemetryAgent
+        using OpenTelemetryAgent agent = new(innerAgent, SourceName);
+
+        // Act
+        AgentResponse result = await agent.RunAsync([new ChatMessage(ChatRole.User, "Add 5 and 3")]);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.NotEmpty(traceIds);
+
+        // All TraceIds should match the parent
+        foreach ((string? traceId, int index) in traceIds.Select((t, i) => (t, i)))
+        {
+            Assert.NotNull(traceId);
+            Assert.True(
+                parentTraceId.ToString() == traceId,
+                "TraceId mismatch at index " + index + ". Expected: " + parentTraceId + ", Actual: " + traceId);
+        }
+    }
+
+    [Fact]
+    public async Task OpenTelemetryAgent_WithoutTools_PreservesActivityTraceIdAsync()
+    {
+        // Arrange
+        const string SourceName = "TestActivitySource";
+        List<Activity> activities = [];
+        using TracerProvider tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(SourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        using ActivitySource activitySource = new(SourceName);
         using Activity? parentActivity = activitySource.StartActivity("ParentRequest");
         ActivityTraceId? parentTraceId = parentActivity?.TraceId;
 
@@ -46,7 +129,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
         };
 
         ChatClientAgent innerAgent = new(mockChatClient, "You are a helpful assistant.", "TestAgent");
-        using OpenTelemetryAgent agent = new(innerAgent, sourceName);
+        using OpenTelemetryAgent agent = new(innerAgent, SourceName);
 
         // Act
         AgentResponse result = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -58,17 +141,17 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task OpenTelemetryAgent_WithTools_PreservesActivityTraceId()
+    public async Task OpenTelemetryAgent_WithTools_PreservesActivityTraceIdAsync()
     {
         // Arrange
-        const string sourceName = "TestActivitySource";
+        const string SourceName = "TestActivitySource";
         List<Activity> activities = [];
         using TracerProvider tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
-            .AddSource(sourceName)
+            .AddSource(SourceName)
             .AddInMemoryExporter(activities)
             .Build();
 
-        using ActivitySource activitySource = new(sourceName);
+        using ActivitySource activitySource = new(SourceName);
         using Activity? parentActivity = activitySource.StartActivity("ParentRequest");
         ActivityTraceId? parentTraceId = parentActivity?.TraceId;
 
@@ -105,10 +188,10 @@ public sealed class ChatClientAgent_ActivityTracingTests
                 traceIds.Add(Activity.Current?.TraceId.ToString());
 
                 // First response: LLM decides to call a tool
-                const string toolCallId = "call_123";
+                const string ToolCallId = "call_123";
                 ChatResponse firstResponse = new([
                     new ChatMessage(ChatRole.Assistant, [
-                        new FunctionCallContent(toolCallId, "GetWeather",
+                        new FunctionCallContent(ToolCallId, "GetWeather",
                             new Dictionary<string, object?> { ["location"] = "Seattle" })
                     ])
                 ]);
@@ -136,7 +219,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
             "TestAgent",
             tools: [weatherTool]);
 
-        using OpenTelemetryAgent agent = new(innerAgent, sourceName);
+        using OpenTelemetryAgent agent = new(innerAgent, SourceName);
 
         // Act
         AgentResponse result = await agent.RunAsync([new ChatMessage(ChatRole.User, "What's the weather in Seattle?")]);
@@ -157,17 +240,17 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task OpenTelemetryAgent_WithToolsStreaming_PreservesActivityTraceId_InConsumerCode()
+    public async Task OpenTelemetryAgent_WithToolsStreaming_PreservesActivityTraceId_InConsumerCodeAsync()
     {
         // Arrange
-        const string sourceName = "TestActivitySource";
+        const string SourceName = "TestActivitySource";
         List<Activity> activities = [];
         using TracerProvider tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
-            .AddSource(sourceName)
+            .AddSource(SourceName)
             .AddInMemoryExporter(activities)
             .Build();
 
-        using ActivitySource activitySource = new(sourceName);
+        using ActivitySource activitySource = new(SourceName);
         using Activity? parentActivity = activitySource.StartActivity("ParentRequest");
         ActivityTraceId? parentTraceId = parentActivity?.TraceId;
 
@@ -202,7 +285,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
             "You are a helpful assistant.",
             "TestAgent");
 
-        using OpenTelemetryAgent agent = new(innerAgent, sourceName);
+        using OpenTelemetryAgent agent = new(innerAgent, SourceName);
 
         // Act - Process streaming updates in consumer code
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")]))
@@ -225,17 +308,17 @@ public sealed class ChatClientAgent_ActivityTracingTests
     }
 
     [Fact]
-    public async Task OpenTelemetryAgent_WithTestAIAgent_PreservesActivityTraceId()
+    public async Task OpenTelemetryAgent_WithTestAIAgent_PreservesActivityTraceIdAsync()
     {
         // Arrange
-        const string sourceName = "TestOTelSource";
+        const string SourceName = "TestOTelSource";
         List<Activity> activities = [];
         using TracerProvider tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
-            .AddSource(sourceName)
+            .AddSource(SourceName)
             .AddInMemoryExporter(activities)
             .Build();
 
-        using ActivitySource activitySource = new(sourceName);
+        using ActivitySource activitySource = new(SourceName);
         using Activity? parentActivity = activitySource.StartActivity("ParentRequest");
         ActivityTraceId? parentTraceId = parentActivity?.TraceId;
 
@@ -256,7 +339,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
             }
         };
 
-        using OpenTelemetryAgent otelAgent = new(innerAgent, sourceName);
+        using OpenTelemetryAgent otelAgent = new(innerAgent, SourceName);
 
         // Act
         await otelAgent.RunAsync([new ChatMessage(ChatRole.User, "Hi")]);
