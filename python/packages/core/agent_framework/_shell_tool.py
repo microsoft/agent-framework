@@ -1,0 +1,438 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+import os
+import platform
+import re
+import shlex
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar, Literal, TypedDict
+
+from ._serialization import SerializationMixin
+from ._tools import BaseTool
+
+__all__ = [
+    "ShellExecutor",
+    "ShellResult",
+    "ShellTool",
+    "ShellToolOptions",
+]
+
+# Type alias for command patterns: str for prefix matching, Pattern for regex
+CommandPattern = str | re.Pattern[str]
+
+# Default configuration values
+DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024  # 50 KB
+
+
+def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
+    """Check if a command matches a pattern."""
+    if isinstance(pattern, re.Pattern):
+        return bool(pattern.search(command))
+    return command.startswith(pattern)
+
+
+def _contains_privilege_command(command: str, privilege_commands: frozenset[str]) -> bool:
+    """Check if command contains privilege escalation using token-based parsing.
+
+    This provides defense-in-depth against shell wrapper bypasses like
+    `sh -c 'sudo ...'` or `eval "sudo ..."`.
+    """
+    try:
+        tokens = shlex.split(command)
+        for token in tokens:
+            # Check the token itself and handle paths like /usr/bin/sudo
+            base_name = os.path.basename(token)
+            if base_name in privilege_commands or token in privilege_commands:
+                return True
+    except ValueError:
+        # shlex.split can fail on malformed input; fall through to pattern matching
+        pass
+    return False
+
+
+class _ValidationResult:
+    """Internal result of command validation."""
+
+    def __init__(self, is_valid: bool, error_message: str | None = None) -> None:
+        self.is_valid = is_valid
+        self.error_message = error_message
+
+    def __bool__(self) -> bool:
+        return self.is_valid
+
+
+class ShellToolOptions(TypedDict, total=False):
+    """Configuration options for ShellTool.
+
+    Attributes:
+        working_directory: Default working directory for command execution.
+        timeout_seconds: Command execution timeout in seconds. Defaults to 60.
+        max_output_bytes: Maximum output size before truncation. Defaults to 50KB.
+        approval_mode: Human-in-the-loop approval mode. Defaults to "always_require".
+        whitelist_patterns: List of allowed command patterns (str for prefix, re.Pattern for regex).
+        blacklist_patterns: List of blocked command patterns.
+        allowed_paths: Paths that commands can access.
+        blocked_paths: Paths that commands cannot access (takes precedence).
+        block_privilege_escalation: Block sudo/runas commands. Defaults to True.
+        capture_stderr: Capture stderr output. Defaults to True.
+    """
+
+    working_directory: str | None
+    timeout_seconds: int
+    max_output_bytes: int
+    approval_mode: Literal["always_require", "never_require"]
+    whitelist_patterns: list[CommandPattern]
+    blacklist_patterns: list[CommandPattern]
+    allowed_paths: list[str]
+    blocked_paths: list[str]
+    block_privilege_escalation: bool
+    capture_stderr: bool
+
+
+class ShellResult(SerializationMixin):
+    """Result of shell command execution."""
+
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
+
+    def __init__(
+        self,
+        *,
+        exit_code: int,
+        stdout: str = "",
+        stderr: str = "",
+        timed_out: bool = False,
+        truncated: bool = False,
+    ) -> None:
+        """Initialize a ShellResult.
+
+        Keyword Args:
+            exit_code: The command's exit code (0 typically indicates success).
+            stdout: Standard output from the command.
+            stderr: Standard error output from the command.
+            timed_out: Whether the command timed out.
+            truncated: Whether output was truncated due to size limits.
+        """
+        self.exit_code = exit_code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timed_out = timed_out
+        self.truncated = truncated
+
+    @property
+    def success(self) -> bool:
+        """Return True if the command executed successfully (exit code 0)."""
+        return self.exit_code == 0 and not self.timed_out
+
+
+class ShellExecutor(ABC):
+    """Abstract base class for shell command executors."""
+
+    @abstractmethod
+    async def execute(
+        self,
+        command: str,
+        *,
+        working_directory: str | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+        capture_stderr: bool = True,
+    ) -> ShellResult:
+        """Execute a shell command.
+
+        Args:
+            command: The command to execute.
+
+        Keyword Args:
+            working_directory: Working directory for the command.
+            timeout_seconds: Timeout in seconds.
+            max_output_bytes: Maximum output size in bytes.
+            capture_stderr: Whether to capture stderr.
+
+        Returns:
+            ShellResult containing the command output and execution status.
+        """
+        ...
+
+
+# Unix privilege escalation commands
+_UNIX_PRIVILEGE_COMMANDS = frozenset({"sudo", "su", "doas", "pkexec"})
+
+# Unix privilege escalation patterns
+_UNIX_PRIVILEGE_PATTERNS: list[CommandPattern] = [
+    re.compile(r"^sudo\s"),
+    re.compile(r"^su\s"),
+    re.compile(r"^doas\s"),
+    re.compile(r"^pkexec\s"),
+    re.compile(r"\|\s*sudo\s"),
+    re.compile(r"&&\s*sudo\s"),
+    re.compile(r";\s*sudo\s"),
+    # Shell wrapper patterns to prevent bypass via sh -c 'sudo ...', eval, etc.
+    re.compile(r"\b(sh|bash|dash|zsh|ksh|csh|tcsh)\s+(-\w+\s+)*-c\s+['\"].*\b(sudo|su|doas|pkexec)\b"),
+    re.compile(r"\beval\s+['\"].*\b(sudo|su|doas|pkexec)\b"),
+    re.compile(r"\bexec\s+(sudo|su|doas|pkexec)\b"),
+]
+
+# Windows privilege escalation commands
+_WINDOWS_PRIVILEGE_COMMANDS = frozenset({"runas", "gsudo"})
+
+# Windows privilege escalation patterns
+_WINDOWS_PRIVILEGE_PATTERNS: list[CommandPattern] = [
+    re.compile(r"^runas\s+/"),
+    re.compile(r"Start-Process\s+.*-Verb\s+RunAs"),
+    re.compile(r"^gsudo\s"),
+    # PowerShell/cmd wrapper patterns
+    re.compile(r"\b(cmd|powershell|pwsh)\s+.*(/c|-c|-Command)\s+.*\b(runas|gsudo)\b", re.IGNORECASE),
+]
+
+# Dangerous patterns blocked on all platforms
+_DANGEROUS_PATTERNS: list[CommandPattern] = [
+    # Destructive Unix commands
+    re.compile(r"rm\s+-rf\s+/\s*$"),
+    re.compile(r"rm\s+-rf\s+/\*"),
+    re.compile(r"^mkfs\s"),
+    re.compile(r"dd\s+.*of=/dev/"),
+    # Destructive Windows commands
+    re.compile(r"^format\s+[A-Za-z]:"),
+    re.compile(r"del\s+/f\s+/s\s+/q\s+[A-Za-z]:\\"),
+    # Fork bombs
+    re.compile(r":\(\)\s*\{\s*:\|:&\s*\}\s*;:"),
+    re.compile(r"%0\|%0"),
+    # Permission abuse
+    re.compile(r"chmod\s+777\s+/\s*$"),
+    re.compile(r"icacls\s+.*\s+/grant\s+Everyone:F"),
+]
+
+# Path extraction pattern for detecting paths in commands
+_PATH_PATTERN = re.compile(
+    r"(?:"
+    r'(?:^|\s)(/[^\s"\']+)'  # Unix absolute paths
+    r'|(?:^|\s)([A-Za-z]:\\[^\s"\']+)'  # Windows absolute paths
+    r'|"(/[^"]+)"'  # Quoted Unix paths
+    r'|"([A-Za-z]:\\[^"]+)"'  # Quoted Windows paths
+    r"|'(/[^']+)'"  # Single-quoted Unix paths
+    r"|'([A-Za-z]:\\[^']+)'"  # Single-quoted Windows paths
+    r")"
+)
+
+
+class ShellTool(BaseTool):
+    """Tool for executing shell commands with security controls.
+
+    Requires an executor to be provided at construction time.
+
+    Attributes:
+        executor: The shell executor to use for command execution.
+    """
+
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"executor", "additional_properties"}
+    INJECTABLE: ClassVar[set[str]] = {"executor"}
+
+    def __init__(
+        self,
+        *,
+        executor: ShellExecutor,
+        options: ShellToolOptions | None = None,
+        name: str = "shell",
+        description: str = "Execute shell commands",
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the ShellTool.
+
+        Keyword Args:
+            executor: The shell executor to use for command execution.
+            options: Configuration options for the shell tool.
+            name: The name of the tool. Defaults to "shell".
+            description: A description of the tool.
+            additional_properties: Additional properties for the tool.
+            **kwargs: Additional keyword arguments passed to BaseTool.
+        """
+        super().__init__(
+            name=name,
+            description=description,
+            additional_properties=additional_properties,
+            **kwargs,
+        )
+        self.executor = executor
+        self._options = options or {}
+
+        # Extract options with defaults
+        self.working_directory = self._options.get("working_directory")
+        self.timeout_seconds = self._options.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+        self.max_output_bytes = self._options.get("max_output_bytes", DEFAULT_MAX_OUTPUT_BYTES)
+        self.approval_mode: Literal["always_require", "never_require"] = self._options.get(
+            "approval_mode", "always_require"
+        )
+        self.whitelist_patterns = self._options.get("whitelist_patterns", [])
+        self.blacklist_patterns = self._options.get("blacklist_patterns", [])
+        self.allowed_paths = self._options.get("allowed_paths", [])
+        self.blocked_paths = self._options.get("blocked_paths", [])
+        self.block_privilege_escalation = self._options.get("block_privilege_escalation", True)
+        self.capture_stderr = self._options.get("capture_stderr", True)
+
+    def _validate_command(self, command: str) -> _ValidationResult:
+        """Validate a command against all security policies."""
+        if self.block_privilege_escalation:
+            result = self._validate_privilege_escalation(command)
+            if not result.is_valid:
+                return result
+
+        result = self._validate_dangerous_patterns(command)
+        if not result.is_valid:
+            return result
+
+        result = self._validate_blacklist(command)
+        if not result.is_valid:
+            return result
+
+        result = self._validate_whitelist(command)
+        if not result.is_valid:
+            return result
+
+        result = self._validate_paths(command)
+        if not result.is_valid:
+            return result
+
+        return _ValidationResult(is_valid=True)
+
+    def _validate_privilege_escalation(self, command: str) -> _ValidationResult:
+        """Check if command attempts privilege escalation."""
+        system = platform.system().lower()
+
+        if system in ("linux", "darwin"):
+            # Pattern-based detection
+            for pattern in _UNIX_PRIVILEGE_PATTERNS:
+                if _matches_pattern(pattern, command):
+                    return _ValidationResult(
+                        is_valid=False,
+                        error_message="Privilege escalation not allowed",
+                    )
+            # Token-based detection for shell wrapper bypasses
+            if _contains_privilege_command(command, _UNIX_PRIVILEGE_COMMANDS):
+                return _ValidationResult(
+                    is_valid=False,
+                    error_message="Privilege escalation not allowed",
+                )
+
+        if system == "windows":
+            # Pattern-based detection
+            for pattern in _WINDOWS_PRIVILEGE_PATTERNS:
+                if _matches_pattern(pattern, command):
+                    return _ValidationResult(
+                        is_valid=False,
+                        error_message="Privilege escalation not allowed",
+                    )
+            # Token-based detection for shell wrapper bypasses
+            if _contains_privilege_command(command, _WINDOWS_PRIVILEGE_COMMANDS):
+                return _ValidationResult(
+                    is_valid=False,
+                    error_message="Privilege escalation not allowed",
+                )
+
+        return _ValidationResult(is_valid=True)
+
+    def _validate_dangerous_patterns(self, command: str) -> _ValidationResult:
+        """Check if command matches dangerous patterns."""
+        for pattern in _DANGEROUS_PATTERNS:
+            if _matches_pattern(pattern, command):
+                return _ValidationResult(
+                    is_valid=False,
+                    error_message=f"Dangerous command blocked: {command[:50]}...",
+                )
+        return _ValidationResult(is_valid=True)
+
+    def _validate_blacklist(self, command: str) -> _ValidationResult:
+        """Check if command matches blacklist patterns."""
+        for pattern in self.blacklist_patterns:
+            if _matches_pattern(pattern, command):
+                pattern_str = pattern.pattern if isinstance(pattern, re.Pattern) else pattern
+                return _ValidationResult(
+                    is_valid=False,
+                    error_message=f"Command matches blacklist pattern '{pattern_str}'",
+                )
+        return _ValidationResult(is_valid=True)
+
+    def _validate_whitelist(self, command: str) -> _ValidationResult:
+        """Check if command matches whitelist patterns."""
+        if not self.whitelist_patterns:
+            return _ValidationResult(is_valid=True)
+
+        for pattern in self.whitelist_patterns:
+            if _matches_pattern(pattern, command):
+                return _ValidationResult(is_valid=True)
+
+        return _ValidationResult(
+            is_valid=False,
+            error_message="Command does not match any whitelist pattern",
+        )
+
+    def _validate_paths(self, command: str) -> _ValidationResult:
+        """Check if command accesses allowed paths."""
+        paths = self._extract_paths(command)
+
+        for path in paths:
+            # Resolve symlinks to prevent bypass via symlink pointing to blocked paths
+            try:
+                resolved = os.path.realpath(path)
+            except (OSError, ValueError):
+                resolved = path
+            normalized = resolved.replace("\\", "/").rstrip("/")
+
+            for blocked in self.blocked_paths:
+                blocked_resolved = os.path.realpath(blocked)
+                blocked_normalized = blocked_resolved.replace("\\", "/").rstrip("/")
+                if normalized.startswith(blocked_normalized):
+                    return _ValidationResult(
+                        is_valid=False,
+                        error_message=f"Access to blocked path not allowed: {path}",
+                    )
+
+            if self.allowed_paths:
+                allowed = False
+                for allowed_path in self.allowed_paths:
+                    allowed_resolved = os.path.realpath(allowed_path)
+                    allowed_normalized = allowed_resolved.replace("\\", "/").rstrip("/")
+                    if normalized.startswith(allowed_normalized):
+                        allowed = True
+                        break
+                if not allowed:
+                    return _ValidationResult(
+                        is_valid=False,
+                        error_message=f"Path not in allowed paths: {path}",
+                    )
+
+        return _ValidationResult(is_valid=True)
+
+    def _extract_paths(self, command: str) -> list[str]:
+        """Extract file paths from a command string."""
+        paths: list[str] = []
+        for match in _PATH_PATTERN.finditer(command):
+            path = next((g for g in match.groups() if g is not None), None)
+            if path:
+                paths.append(path)
+        return paths
+
+    async def execute(self, command: str) -> ShellResult:
+        """Execute a shell command after validation.
+
+        Args:
+            command: The command to execute.
+
+        Returns:
+            ShellResult containing the command output.
+
+        Raises:
+            ValueError: If the command fails validation.
+        """
+        validation = self._validate_command(command)
+        if not validation.is_valid:
+            raise ValueError(validation.error_message)
+
+        return await self.executor.execute(
+            command,
+            working_directory=self.working_directory,
+            timeout_seconds=self.timeout_seconds,
+            max_output_bytes=self.max_output_bytes,
+            capture_stderr=self.capture_stderr,
+        )
