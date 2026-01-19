@@ -38,11 +38,11 @@ async def main() -> None:
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
-        # Create agent with content filtering enabled via rai_config
+        # Create agent with content filtering enabled via default_options
         agent = await provider.create_agent(
             name="ContentFilteredAgent",
             instructions="You are a helpful assistant.",
-            rai_config=RaiConfig(rai_policy_name=rai_policy_name),
+            default_options={"rai_config": RaiConfig(rai_policy_name=rai_policy_name)},
         )
 
         # Test with a normal query

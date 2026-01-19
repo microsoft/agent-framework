@@ -207,11 +207,11 @@ async def test_provider_create_agent_missing_model(mock_project_client: MagicMoc
             await provider.create_agent(name="test-agent")
 
 
-async def test_provider_create_agent_with_kwargs(
+async def test_provider_create_agent_with_rai_config(
     mock_project_client: MagicMock,
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
-    """Test AzureAIProjectAgentProvider.create_agent passes kwargs to PromptAgentDefinition."""
+    """Test AzureAIProjectAgentProvider.create_agent passes rai_config from default_options."""
     with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
         mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
         mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
@@ -237,14 +237,14 @@ async def test_provider_create_agent_with_kwargs(
         mock_rai_config = MagicMock()
         mock_rai_config.rai_policy_name = "policy-name"
 
-        # Call create_agent with additional kwargs
+        # Call create_agent with rai_config in default_options
         await provider.create_agent(
             name="test-agent",
             model="gpt-4",
-            rai_config=mock_rai_config,
+            default_options={"rai_config": mock_rai_config},
         )
 
-        # Verify kwargs were passed to PromptAgentDefinition
+        # Verify rai_config was passed to PromptAgentDefinition
         call_args = mock_project_client.agents.create_version.call_args
         definition = call_args[1]["definition"]
         assert definition.rai_config is mock_rai_config
