@@ -101,6 +101,7 @@ agent-framework-mem0 = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
+agent-framework-shell-local = { workspace = true }
 
 [tool.ruff]
 line-length = 120

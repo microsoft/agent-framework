@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from ._tools import AIFunction
 
 __all__ = [
+    "DEFAULT_SHELL_MAX_OUTPUT_BYTES",
+    "DEFAULT_SHELL_TIMEOUT_SECONDS",
     "ShellExecutor",
     "ShellResult",
     "ShellTool",
@@ -25,15 +27,66 @@ __all__ = [
 CommandPattern = str | re.Pattern[str]
 
 # Default configuration values
-DEFAULT_TIMEOUT_SECONDS = 60
-DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024  # 50 KB
+DEFAULT_SHELL_TIMEOUT_SECONDS = 60
+DEFAULT_SHELL_MAX_OUTPUT_BYTES = 50 * 1024  # 50 KB
+
+
+_SHELL_METACHAR_PATTERN = re.compile(r"[;|&`$()]")
 
 
 def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
-    """Check if a command matches a pattern."""
+    """Check if a command matches a pattern.
+
+    For regex patterns, uses full regex matching.
+    For string patterns, extracts the first command token and checks if it
+    matches the pattern exactly. Shell metacharacters in the command will
+    cause the match to fail to prevent command injection via chaining.
+    """
     if isinstance(pattern, re.Pattern):
         return bool(pattern.search(command))
-    return command.startswith(pattern)
+
+    # For string patterns, extract the first command by splitting on whitespace
+    # and shell metacharacters to prevent bypass via command chaining
+    # (e.g., "ls; rm -rf /" should not match "ls" pattern)
+
+    # First, get the first whitespace-delimited token
+    parts = command.split(None, 1)  # Split on whitespace, max 1 split
+    if not parts:
+        return False
+    first_part = parts[0]
+
+    # Strip any trailing shell metacharacters from the first part
+    # (e.g., "ls;" -> "ls")
+    first_cmd = first_part.rstrip(";|&")
+
+    # If the first part contained shell metacharacters, the command is
+    # attempting chaining - don't match
+    if first_cmd != first_part:
+        # The command has a metacharacter attached (e.g., "ls;")
+        # Check if base command matches but still block due to chaining
+        base_cmd = os.path.basename(first_cmd)
+        if base_cmd == pattern or first_cmd == pattern:
+            # Would match, but has chaining - reject
+            return False
+
+    # Check for shell metacharacters in the rest of the command
+    # These indicate command chaining which should not be whitelisted
+    remaining = parts[1] if len(parts) > 1 else ""
+    if remaining and _SHELL_METACHAR_PATTERN.search(remaining):
+        # Shell metacharacters detected - block this from simple string whitelist
+        # to prevent command injection via chaining (e.g., "ls && rm -rf /")
+        # Users should use regex patterns for complex whitelisting needs
+        return False
+
+    # Handle paths like /usr/bin/ls -> ls
+    base_cmd = os.path.basename(first_cmd)
+
+    # Check if the base command matches the pattern exactly
+    if base_cmd == pattern or first_cmd == pattern:
+        return True
+
+    # Also allow pattern as a prefix of the command name (e.g., "git" matches "git-upload-pack")
+    return bool(base_cmd.startswith(pattern + "-") or first_cmd.startswith(pattern + "-"))
 
 
 def _contains_privilege_command(command: str, privilege_commands: frozenset[str]) -> bool:
@@ -138,8 +191,8 @@ class ShellExecutor(ABC):
         command: str,
         *,
         working_directory: str | None = None,
-        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-        max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+        timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
+        max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
     ) -> ShellResult:
         """Execute a shell command.
@@ -208,14 +261,31 @@ _DANGEROUS_PATTERNS: list[CommandPattern] = [
 ]
 
 # Path extraction pattern for detecting paths in commands
+# Captures both absolute and relative paths to prevent path traversal bypass
 _PATH_PATTERN = re.compile(
     r"(?:"
-    r'(?:^|\s)(/[^\s"\']+)'  # Unix absolute paths
-    r'|(?:^|\s)([A-Za-z]:\\[^\s"\']+)'  # Windows absolute paths
-    r'|"(/[^"]+)"'  # Quoted Unix paths
-    r'|"([A-Za-z]:\\[^"]+)"'  # Quoted Windows paths
-    r"|'(/[^']+)'"  # Single-quoted Unix paths
-    r"|'([A-Za-z]:\\[^']+)'"  # Single-quoted Windows paths
+    # Unix absolute paths
+    r'(?:^|\s)(/[^\s"\']+)'
+    # Windows absolute paths
+    r'|(?:^|\s)([A-Za-z]:\\[^\s"\']+)'
+    # Relative paths starting with ./ or ../
+    r'|(?:^|\s)(\.\.?/[^\s"\']*)'
+    # Path traversal patterns (../ anywhere in argument)
+    r'|(?:^|\s)([^\s"\']*\.\./[^\s"\']*)'
+    # Quoted Unix absolute paths
+    r'|"(/[^"]+)"'
+    # Quoted Windows absolute paths
+    r'|"([A-Za-z]:\\[^"]+)"'
+    # Quoted relative paths
+    r'|"(\.\.?/[^"]*)"'
+    r"|'(\.\.?/[^']*)'"
+    # Quoted path traversal
+    r'|"([^"]*\.\./[^"]*)"'
+    r"|'([^']*\.\./[^']*)'"
+    # Single-quoted Unix absolute paths
+    r"|'(/[^']+)'"
+    # Single-quoted Windows absolute paths
+    r"|'([A-Za-z]:\\[^']+)'"
     r")"
 )
 
@@ -263,8 +333,8 @@ class ShellTool(BaseTool):
 
         # Extract options with defaults
         self.working_directory = self._options.get("working_directory")
-        self.timeout_seconds = self._options.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
-        self.max_output_bytes = self._options.get("max_output_bytes", DEFAULT_MAX_OUTPUT_BYTES)
+        self.timeout_seconds = self._options.get("timeout_seconds", DEFAULT_SHELL_TIMEOUT_SECONDS)
+        self.max_output_bytes = self._options.get("max_output_bytes", DEFAULT_SHELL_MAX_OUTPUT_BYTES)
         self.approval_mode: Literal["always_require", "never_require"] = self._options.get(
             "approval_mode", "always_require"
         )
@@ -376,8 +446,11 @@ class ShellTool(BaseTool):
         paths = self._extract_paths(command)
 
         for path in paths:
-            # Resolve symlinks to prevent bypass via symlink pointing to blocked paths
+            # Resolve relative paths using the configured working directory
+            # to prevent bypass via relative path traversal
             try:
+                if not os.path.isabs(path) and self.working_directory:
+                    path = os.path.join(self.working_directory, path)
                 resolved = os.path.realpath(path)
             except (OSError, ValueError):
                 resolved = path
