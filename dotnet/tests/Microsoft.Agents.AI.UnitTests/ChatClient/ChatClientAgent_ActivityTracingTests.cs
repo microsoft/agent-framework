@@ -96,7 +96,7 @@ public sealed class ChatClientAgent_ActivityTracingTests
             Assert.NotNull(traceId);
             Assert.True(
                 parentTraceId.ToString() == traceId,
-                "TraceId mismatch at index " + index + ". Expected: " + parentTraceId + ", Actual: " + traceId);
+                $"TraceId mismatch at index {index}. Expected: {parentTraceId}, Actual: {traceId}");
         }
     }
 
