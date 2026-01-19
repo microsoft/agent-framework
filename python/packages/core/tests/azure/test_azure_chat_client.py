@@ -627,9 +627,7 @@ async def test_streaming_with_none_delta(
         results.append(msg)
 
     assert len(results) > 0
-    assert any(
-        isinstance(content, TextContent) and content.text == "test" for msg in results for content in msg.contents
-    )
+    assert any(content.type == "text" and content.text == "test" for msg in results for content in msg.contents)
     assert any(msg.contents for msg in results)
 
 
