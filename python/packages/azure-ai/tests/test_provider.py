@@ -207,6 +207,49 @@ async def test_provider_create_agent_missing_model(mock_project_client: MagicMoc
             await provider.create_agent(name="test-agent")
 
 
+async def test_provider_create_agent_with_rai_config(
+    mock_project_client: MagicMock,
+    azure_ai_unit_test_env: dict[str, str],
+) -> None:
+    """Test AzureAIProjectAgentProvider.create_agent passes rai_config from default_options."""
+    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
+        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
+        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+
+        provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
+
+        # Mock agent creation response
+        mock_agent_version = MagicMock(spec=AgentVersionDetails)
+        mock_agent_version.id = "agent-id"
+        mock_agent_version.name = "test-agent"
+        mock_agent_version.version = "1.0"
+        mock_agent_version.description = None
+        mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
+        mock_agent_version.definition.model = "gpt-4"
+        mock_agent_version.definition.instructions = None
+        mock_agent_version.definition.temperature = None
+        mock_agent_version.definition.top_p = None
+        mock_agent_version.definition.tools = []
+
+        mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent_version)
+
+        # Create a mock RaiConfig-like object
+        mock_rai_config = MagicMock()
+        mock_rai_config.rai_policy_name = "policy-name"
+
+        # Call create_agent with rai_config in default_options
+        await provider.create_agent(
+            name="test-agent",
+            model="gpt-4",
+            default_options={"rai_config": mock_rai_config},
+        )
+
+        # Verify rai_config was passed to PromptAgentDefinition
+        call_args = mock_project_client.agents.create_version.call_args
+        definition = call_args[1]["definition"]
+        assert definition.rai_config is mock_rai_config
+
+
 async def test_provider_get_agent_with_name(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider.get_agent with name parameter."""
     provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
