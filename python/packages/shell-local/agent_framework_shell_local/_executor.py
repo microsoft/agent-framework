@@ -46,13 +46,10 @@ class LocalShellExecutor(ShellExecutor):
                 await asyncio.wait_for(process.wait(), timeout=2.0)
 
     def _decode_output(self, data: bytes) -> str:
-        """Decode bytes to string with fallback handling."""
+        """Decode bytes to string."""
         if not data:
             return ""
-        try:
-            return data.decode(self._default_encoding, errors=self._encoding_errors)
-        except (UnicodeDecodeError, LookupError):
-            return data.decode("latin-1")
+        return data.decode(self._default_encoding, errors=self._encoding_errors)
 
     def _truncate_output(self, data: bytes, max_bytes: int) -> tuple[bytes, bool]:
         """Truncate output at valid UTF-8 boundary."""

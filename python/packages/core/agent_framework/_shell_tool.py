@@ -39,15 +39,10 @@ def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
 
     For regex patterns, uses full regex matching.
     For string patterns, extracts the first command token and checks if it
-    matches the pattern exactly. Shell metacharacters in the command will
-    cause the match to fail to prevent command injection via chaining.
+    matches the pattern exactly.
     """
     if isinstance(pattern, re.Pattern):
         return bool(pattern.search(command))
-
-    # For string patterns, extract the first command by splitting on whitespace
-    # and shell metacharacters to prevent bypass via command chaining
-    # (e.g., "ls; rm -rf /" should not match "ls" pattern)
 
     # First, get the first whitespace-delimited token
     parts = command.split(None, 1)  # Split on whitespace, max 1 split
@@ -56,7 +51,6 @@ def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
     first_part = parts[0]
 
     # Strip any trailing shell metacharacters from the first part
-    # (e.g., "ls;" -> "ls")
     first_cmd = first_part.rstrip(";|&")
 
     # If the first part contained shell metacharacters, the command is
@@ -73,9 +67,6 @@ def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
     # These indicate command chaining which should not be allowlisted
     remaining = parts[1] if len(parts) > 1 else ""
     if remaining and _SHELL_METACHAR_PATTERN.search(remaining):
-        # Shell metacharacters detected - block this from simple string allowlist
-        # to prevent command injection via chaining (e.g., "ls && rm -rf /")
-        # Users should use regex patterns for complex allowlisting needs
         return False
 
     # Handle paths like /usr/bin/ls -> ls
@@ -90,11 +81,7 @@ def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
 
 
 def _contains_privilege_command(command: str, privilege_commands: frozenset[str]) -> bool:
-    """Check if command contains privilege escalation using token-based parsing.
-
-    This provides defense-in-depth against shell wrapper bypasses like
-    `sh -c 'sudo ...'` or `eval "sudo ..."`.
-    """
+    """Check if command contains privilege escalation using token-based parsing."""
     try:
         tokens = shlex.split(command)
         for token in tokens:
