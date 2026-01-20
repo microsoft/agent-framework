@@ -606,7 +606,7 @@ class OpenAIBaseResponsesClient(
 
     def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from options dict or kwargs."""
-        return options.get("conversation_id") or kwargs.get("conversation_id")
+        return kwargs.get("conversation_id") or options.get("conversation_id")
 
     def _prepare_messages_for_openai(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
