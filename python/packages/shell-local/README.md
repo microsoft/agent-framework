@@ -2,6 +2,8 @@
 
 Local shell executor for Microsoft Agent Framework.
 
+> **Warning**: While `ShellTool` provides built-in security checks, the safest approach is to run shell commands in isolated environments (containers, VMs, sandboxes) with restricted permissions and network access.
+
 ## Installation
 
 ```bash
