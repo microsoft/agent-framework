@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import base64
 import json
 import re
+import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -12,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, TypeVar, cast, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -20,6 +20,11 @@ from ._logging import get_logger
 from ._serialization import SerializationMixin
 from ._tools import ToolProtocol, tool
 from .exceptions import AdditionItemMismatch, ContentError
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 __all__ = [
     "AgentResponse",
