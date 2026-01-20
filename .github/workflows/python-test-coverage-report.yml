@@ -40,7 +40,7 @@ jobs:
           fi
           PR_NUMBER=$(head -1 pr_number | tr -dc '0-9')
           if [ -z "$PR_NUMBER" ]; then
-            echo "PR number file 'pr_number' does not contain any digits"
+            echo "PR number file 'pr_number' does not contain a valid PR number"
             exit 1
           fi
           echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
