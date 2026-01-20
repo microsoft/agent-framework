@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from agent_framework._tools import AIFunction
-from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
+from agent_framework._types import ChatMessage, Content, Role
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,
     convert_tau2_tool_to_ai_function,
@@ -92,7 +92,7 @@ def test_convert_tau2_tool_to_ai_function_multiple_tools(tau2_airline_environmen
 
 def test_convert_agent_framework_messages_to_tau2_messages_system():
     """Test converting system message."""
-    messages = [ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System instruction")])]
+    messages = [ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="System instruction")])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -104,7 +104,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_system():
 
 def test_convert_agent_framework_messages_to_tau2_messages_user():
     """Test converting user message."""
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello assistant")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello assistant")])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -117,7 +117,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_user():
 
 def test_convert_agent_framework_messages_to_tau2_messages_assistant():
     """Test converting assistant message."""
-    messages = [ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hello user")])]
+    messages = [ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello user")])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -130,9 +130,11 @@ def test_convert_agent_framework_messages_to_tau2_messages_assistant():
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_function_call():
     """Test converting message with function call."""
-    function_call = FunctionCallContent(call_id="call_123", name="test_function", arguments={"param": "value"})
+    function_call = Content.from_function_call(call_id="call_123", name="test_function", arguments={"param": "value"})
 
-    messages = [ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="I'll call a function"), function_call])]
+    messages = [
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="I'll call a function"), function_call])
+    ]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -152,7 +154,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_function_call():
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_function_result():
     """Test converting message with function result."""
-    function_result = FunctionResultContent(call_id="call_123", result={"success": True, "data": "result data"})
+    function_result = Content.from_function_result(call_id="call_123", result={"success": True, "data": "result data"})
 
     messages = [ChatMessage(role=Role.TOOL, contents=[function_result])]
 
@@ -170,7 +172,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_function_result(
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_error():
     """Test converting function result with error."""
-    function_result = FunctionResultContent(
+    function_result = Content.from_function_result(
         call_id="call_456", result="Error occurred", exception=Exception("Test error")
     )
 
@@ -185,7 +187,11 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_error():
 
 def test_convert_agent_framework_messages_to_tau2_messages_multiple_text_contents():
     """Test converting message with multiple text contents."""
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="First part"), TextContent(text="Second part")])]
+    messages = [
+        ChatMessage(
+            role=Role.USER, contents=[Content.from_text(text="First part"), Content.from_text(text="Second part")]
+        )
+    ]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -196,16 +202,16 @@ def test_convert_agent_framework_messages_to_tau2_messages_multiple_text_content
 
 def test_convert_agent_framework_messages_to_tau2_messages_complex_scenario():
     """Test converting complex scenario with multiple message types."""
-    function_call = FunctionCallContent(call_id="call_789", name="complex_tool", arguments='{"key": "value"}')
+    function_call = Content.from_function_call(call_id="call_789", name="complex_tool", arguments='{"key": "value"}')
 
-    function_result = FunctionResultContent(call_id="call_789", result={"output": "tool result"})
+    function_result = Content.from_function_result(call_id="call_789", result={"output": "tool result"})
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System prompt")]),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="User request")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="I'll help you"), function_call]),
+        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="System prompt")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="User request")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="I'll help you"), function_call]),
         ChatMessage(role=Role.TOOL, contents=[function_result]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Based on the result...")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Based on the result...")]),
     ]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)

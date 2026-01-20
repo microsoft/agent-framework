@@ -1140,9 +1140,9 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
             # Convert result to MCP content
             if isinstance(result, str):
-                return [types.TextContent(type="text", text=result)]
+                return [types.TextContent(type="text", text=result)]  # type: ignore[attr-defined]
 
-            return [types.TextContent(type="text", text=str(result))]
+            return [types.TextContent(type="text", text=str(result))]  # type: ignore[attr-defined]
 
         @server.set_logging_level()  # type: ignore
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore

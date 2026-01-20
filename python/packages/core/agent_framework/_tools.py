@@ -54,9 +54,7 @@ if TYPE_CHECKING:
         ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
-        Contents,
-        FunctionApprovalResponseContent,
-        FunctionCallContent,
+        Content,
     )
 
 from typing import overload
@@ -104,15 +102,15 @@ _NOOP_HISTOGRAM = _NoOpHistogram()
 
 
 def _parse_inputs(
-    inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
-) -> list["Contents"]:
-    """Parse the inputs for a tool, ensuring they are of type Contents.
+    inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None",
+) -> list["Content"]:
+    """Parse the inputs for a tool, ensuring they are of type Content.
 
     Args:
-        inputs: The inputs to parse. Can be a single item or list of Contents, dicts, or strings.
+        inputs: The inputs to parse. Can be a single item or list of Content, dicts, or strings.
 
     Returns:
-        A list of Contents objects.
+        A list of Content objects.
 
     Raises:
         ValueError: If an unsupported input type is encountered.
@@ -122,43 +120,39 @@ def _parse_inputs(
         return []
 
     from ._types import (
-        BaseContent,
-        DataContent,
-        HostedFileContent,
-        HostedVectorStoreContent,
-        UriContent,
+        Content,
     )
 
-    parsed_inputs: list["Contents"] = []
+    parsed_inputs: list["Content"] = []
     if not isinstance(inputs, list):
         inputs = [inputs]
     for input_item in inputs:
         if isinstance(input_item, str):
             # If it's a string, we assume it's a URI or similar identifier.
             # Convert it to a UriContent or similar type as needed.
-            parsed_inputs.append(UriContent(uri=input_item, media_type="text/plain"))
+            parsed_inputs.append(Content.from_uri(uri=input_item, media_type="text/plain"))
         elif isinstance(input_item, dict):
             # If it's a dict, we assume it contains properties for a specific content type.
             # we check if the required keys are present to determine the type.
             # for instance, if it has "uri" and "media_type", we treat it as UriContent.
-            # if is only has uri, then we treat it as DataContent.
+            # if it only has uri and media_type without a specific type indicator, we treat it as DataContent.
             # etc.
             if "uri" in input_item:
-                parsed_inputs.append(
-                    UriContent(**input_item) if "media_type" in input_item else DataContent(**input_item)
-                )
+                # Use Content.from_uri for proper URI content, DataContent for backwards compatibility
+                parsed_inputs.append(Content.from_uri(**input_item))
             elif "file_id" in input_item:
-                parsed_inputs.append(HostedFileContent(**input_item))
+                parsed_inputs.append(Content.from_hosted_file(**input_item))
             elif "vector_store_id" in input_item:
-                parsed_inputs.append(HostedVectorStoreContent(**input_item))
+                parsed_inputs.append(Content.from_hosted_vector_store(**input_item))
             elif "data" in input_item:
-                parsed_inputs.append(DataContent(**input_item))
+                # DataContent helper handles both uri and data parameters
+                parsed_inputs.append(Content.from_data(**input_item))
             else:
                 raise ValueError(f"Unsupported input type: {input_item}")
-        elif isinstance(input_item, BaseContent):
+        elif isinstance(input_item, Content):
             parsed_inputs.append(input_item)
         else:
-            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected Contents or dict.")
+            raise TypeError(f"Unsupported input type: {type(input_item).__name__}. Expected Content or dict.")
     return parsed_inputs
 
 
@@ -254,7 +248,7 @@ class HostedCodeInterpreterTool(BaseTool):
     def __init__(
         self,
         *,
-        inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
+        inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None" = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -266,8 +260,8 @@ class HostedCodeInterpreterTool(BaseTool):
                 This should mostly be HostedFileContent or HostedVectorStoreContent.
                 Can also be DataContent, depending on the service used.
                 When supplying a list, it can contain:
-                - Contents instances
-                - dicts with properties for Contents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - Content instances
+                - dicts with properties for Content (e.g., {"uri": "http://example.com", "media_type": "text/html"})
                 - strings (which will be converted to UriContent with media_type "text/plain").
                 If None, defaults to an empty list.
             description: A description of the tool.
@@ -503,7 +497,7 @@ class HostedFileSearchTool(BaseTool):
     def __init__(
         self,
         *,
-        inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
+        inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None" = None,
         max_results: int | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -515,8 +509,8 @@ class HostedFileSearchTool(BaseTool):
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should be one or more HostedVectorStoreContents.
                 When supplying a list, it can contain:
-                - Contents instances
-                - dicts with properties for Contents (e.g., {"uri": "http://example.com", "media_type": "text/html"})
+                - Content instances
+                - dicts with properties for Content (e.g., {"uri": "http://example.com", "media_type": "text/html"})
                 - strings (which will be converted to UriContent with media_type "text/plain").
                 If None, defaults to an empty list.
             max_results: The maximum number of results to return from the file search.
@@ -1480,7 +1474,7 @@ class FunctionExecutionResult:
 
     __slots__ = ("content", "terminate")
 
-    def __init__(self, content: "Contents", terminate: bool = False) -> None:
+    def __init__(self, content: "Content", terminate: bool = False) -> None:
         """Initialize FunctionExecutionResult.
 
         Args:
@@ -1492,7 +1486,7 @@ class FunctionExecutionResult:
 
 
 async def _auto_invoke_function(
-    function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
+    function_call_content: "Content",
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
@@ -1500,7 +1494,7 @@ async def _auto_invoke_function(
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
-) -> "FunctionExecutionResult | Contents":
+) -> "FunctionExecutionResult | Content":
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
     Args:
@@ -1516,41 +1510,42 @@ async def _auto_invoke_function(
 
     Returns:
         A FunctionExecutionResult wrapping the content and terminate signal,
-        or a Contents object for approval/hosted tool scenarios.
+        or a Content object for approval/hosted tool scenarios.
 
     Raises:
         KeyError: If the requested function is not found in the tool map.
     """
+    from ._types import Content
+
     # Note: The scenarios for approval_mode="always_require", declaration_only, and
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
-    from ._types import FunctionCallContent, FunctionResultContent
 
     tool: AIFunction[BaseModel, Any] | None = None
     if function_call_content.type == "function_call":
-        tool = tool_map.get(function_call_content.name)
+        tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
         if tool is None:
             exc = KeyError(f'Function "{function_call_content.name}" not found.')
             return FunctionExecutionResult(
-                content=FunctionResultContent(
-                    call_id=function_call_content.call_id,
+                content=Content.from_function_result(
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
                     result=f'Error: Requested function "{function_call_content.name}" not found.',
-                    exception=exc,
+                    exception=str(exc),  # type: ignore[arg-type]
                 )
             )
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
         # and never reach this function, so we only handle approved=True cases here.
-        inner_call = function_call_content.function_call
-        if not isinstance(inner_call, FunctionCallContent):
+        inner_call = function_call_content.function_call  # type: ignore[attr-defined]
+        if inner_call.type != "function_call":  # type: ignore[union-attr]
             return function_call_content
-        tool = tool_map.get(inner_call.name)
+        tool = tool_map.get(inner_call.name)  # type: ignore[attr-defined, union-attr, arg-type]
         if tool is None:
             # we assume it is a hosted tool
             return function_call_content
-        function_call_content = inner_call
+        function_call_content = inner_call  # type: ignore[assignment]
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1567,7 +1562,11 @@ async def _auto_invoke_function(
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
         return FunctionExecutionResult(
-            content=FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+            content=Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=message,
+                exception=str(exc),  # type: ignore[arg-type]
+            )
         )
 
     if not middleware_pipeline or (
@@ -1581,8 +1580,8 @@ async def _auto_invoke_function(
                 **runtime_kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
             )
             return FunctionExecutionResult(
-                content=FunctionResultContent(
-                    call_id=function_call_content.call_id,
+                content=Content.from_function_result(
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
                     result=function_result,
                 )
             )
@@ -1591,7 +1590,11 @@ async def _auto_invoke_function(
             if config.include_detailed_errors:
                 message = f"{message} Exception: {exc}"
             return FunctionExecutionResult(
-                content=FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+                content=Content.from_function_result(
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                    result=message,
+                    exception=str(exc),
+                )
             )
     # Execute through middleware pipeline if available
     from ._middleware import FunctionInvocationContext
@@ -1617,8 +1620,8 @@ async def _auto_invoke_function(
             final_handler=final_function_handler,
         )
         return FunctionExecutionResult(
-            content=FunctionResultContent(
-                call_id=function_call_content.call_id,
+            content=Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=function_result,
             ),
             terminate=middleware_context.terminate,
@@ -1628,7 +1631,11 @@ async def _auto_invoke_function(
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
         return FunctionExecutionResult(
-            content=FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+            content=Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=message,
+                exception=str(exc),  # type: ignore[arg-type]
+            )
         )
 
 
@@ -1653,14 +1660,14 @@ def _get_tool_map(
 async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
-    function_calls: Sequence["FunctionCallContent"] | Sequence["FunctionApprovalResponseContent"],
+    function_calls: Sequence["Content"],
     tools: "ToolProtocol \
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
-) -> tuple[Sequence["Contents"], bool]:
+) -> tuple[Sequence["Content"], bool]:
     """Execute multiple function calls concurrently.
 
     Args:
@@ -1673,12 +1680,12 @@ async def _try_execute_function_calls(
 
     Returns:
         A tuple of:
-        - A list of Contents containing the results of each function call,
+        - A list of Content containing the results of each function call,
           or the approval requests if any function requires approval,
           or the original function calls if any are declaration only.
         - A boolean indicating whether to terminate the function calling loop.
     """
-    from ._types import FunctionApprovalRequestContent, FunctionCallContent
+    from ._types import Content
 
     tool_map = _get_tool_map(tools)
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
@@ -1689,27 +1696,27 @@ async def _try_execute_function_calls(
     approval_needed = False
     declaration_only_flag = False
     for fcc in function_calls:
-        if isinstance(fcc, FunctionCallContent) and fcc.name in approval_tools:
+        if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
             approval_needed = True
             break
-        if isinstance(fcc, FunctionCallContent) and (fcc.name in declaration_only or fcc.name in additional_tool_names):
+        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
             declaration_only_flag = True
             break
-        if config.terminate_on_unknown_calls and isinstance(fcc, FunctionCallContent) and fcc.name not in tool_map:
-            raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
+        if config.terminate_on_unknown_calls and fcc.type == "function_call" and fcc.name not in tool_map:  # type: ignore[attr-defined]
+            raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
     if approval_needed:
-        # approval can only be needed for Function Call Contents, not Approval Responses.
+        # approval can only be needed for Function Call Content, not Approval Responses.
         return (
             [
-                FunctionApprovalRequestContent(id=fcc.call_id, function_call=fcc)
+                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
                 for fcc in function_calls
-                if isinstance(fcc, FunctionCallContent)
+                if fcc.type == "function_call"
             ],
             False,
         )
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
-        return ([fcc for fcc in function_calls if isinstance(fcc, FunctionCallContent)], False)
+        return ([fcc for fcc in function_calls if fcc.type == "function_call"], False)
 
     # Run all function calls concurrently
     execution_results = await asyncio.gather(*[
@@ -1726,7 +1733,7 @@ async def _try_execute_function_calls(
     ])
 
     # Unpack FunctionExecutionResult wrappers and check for terminate signal
-    contents: list[Contents] = []
+    contents: list[Content] = []
     should_terminate = False
     for result in execution_results:
         if isinstance(result, FunctionExecutionResult):
@@ -1734,7 +1741,7 @@ async def _try_execute_function_calls(
             if result.terminate:
                 should_terminate = True
         else:
-            # Direct Contents (e.g., from hosted tools)
+            # Direct Content (e.g., from hosted tools)
             contents.append(result)
 
     return (contents, should_terminate)
@@ -1772,30 +1779,27 @@ def _extract_tools(options: dict[str, Any] | None) -> Any:
 
 def _collect_approval_responses(
     messages: "list[ChatMessage]",
-) -> dict[str, "FunctionApprovalResponseContent"]:
+) -> dict[str, "Content"]:
     """Collect approval responses (both approved and rejected) from messages."""
-    from ._types import ChatMessage, FunctionApprovalResponseContent
+    from ._types import ChatMessage, Content
 
-    fcc_todo: dict[str, FunctionApprovalResponseContent] = {}
+    fcc_todo: dict[str, Content] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, ChatMessage) else []:
             # Collect BOTH approved and rejected responses
-            if isinstance(content, FunctionApprovalResponseContent):
-                fcc_todo[content.id] = content
+            if content.type == "function_approval_response":
+                fcc_todo[content.id] = content  # type: ignore[attr-defined, index]
     return fcc_todo
 
 
 def _replace_approval_contents_with_results(
     messages: "list[ChatMessage]",
-    fcc_todo: dict[str, "FunctionApprovalResponseContent"],
-    approved_function_results: "list[Contents]",
+    fcc_todo: dict[str, "Content"],
+    approved_function_results: "list[Content]",
 ) -> None:
     """Replace approval request/response contents with function call/result contents in-place."""
     from ._types import (
-        FunctionApprovalRequestContent,
-        FunctionApprovalResponseContent,
-        FunctionCallContent,
-        FunctionResultContent,
+        Content,
         Role,
     )
 
@@ -1803,23 +1807,25 @@ def _replace_approval_contents_with_results(
     for msg in messages:
         # First pass - collect existing function call IDs to avoid duplicates
         existing_call_ids = {
-            content.call_id for content in msg.contents if isinstance(content, FunctionCallContent) and content.call_id
+            content.call_id  # type: ignore[union-attr, operator]
+            for content in msg.contents
+            if content.type == "function_call" and content.call_id  # type: ignore[attr-defined]
         }
 
         # Track approval requests that should be removed (duplicates)
         contents_to_remove = []
 
         for content_idx, content in enumerate(msg.contents):
-            if isinstance(content, FunctionApprovalRequestContent):
+            if content.type == "function_approval_request":
                 # Don't add the function call if it already exists (would create duplicate)
-                if content.function_call.call_id in existing_call_ids:
+                if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined, union-attr, operator]
                     # Just mark for removal - the function call already exists
                     contents_to_remove.append(content_idx)
                 else:
                     # Put back the function call content only if it doesn't exist
-                    msg.contents[content_idx] = content.function_call
-            elif isinstance(content, FunctionApprovalResponseContent):
-                if content.approved and content.id in fcc_todo:
+                    msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
+            elif content.type == "function_approval_response":
+                if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
@@ -1828,8 +1834,8 @@ def _replace_approval_contents_with_results(
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
-                    msg.contents[content_idx] = FunctionResultContent(
-                        call_id=content.function_call.call_id,
+                    msg.contents[content_idx] = Content.from_function_result(
+                        call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
                     msg.role = Role.TOOL
@@ -1867,9 +1873,6 @@ def _handle_function_calls_response(
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
-                FunctionApprovalRequestContent,
-                FunctionCallContent,
-                FunctionResultContent,
                 prepare_messages,
             )
 
@@ -1893,7 +1896,7 @@ def _handle_function_calls_response(
                     tools = _extract_tools(options)
                     # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
-                    approved_function_results: list[Contents] = []
+                    approved_function_results: list[Content] = []
                     if approved_responses:
                         results, _ = await _try_execute_function_calls(
                             custom_args=kwargs,
@@ -1907,7 +1910,7 @@ def _handle_function_calls_response(
                         if any(
                             fcr.exception is not None
                             for fcr in approved_function_results
-                            if isinstance(fcr, FunctionResultContent)
+                            if fcr.type == "function_result"
                         ):
                             errors_in_a_row += 1
                             # no need to reset the counter here, since this is the start of a new attempt.
@@ -1926,13 +1929,11 @@ def _handle_function_calls_response(
                 filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
                 response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
                 # if there are function calls, we will handle them first
-                function_results = {
-                    it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
-                }
+                function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
                 function_calls = [
                     it
                     for it in response.messages[0].contents
-                    if isinstance(it, FunctionCallContent) and it.call_id not in function_results
+                    if it.type == "function_call" and it.call_id not in function_results
                 ]
 
                 if response.conversation_id is not None:
@@ -1953,7 +1954,7 @@ def _handle_function_calls_response(
                         config=config,
                     )
                     # Check if we have approval requests or function calls (not results) in the results
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                    if any(fccr.type == "function_approval_request" for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
                         from ._types import Role
@@ -1965,7 +1966,7 @@ def _handle_function_calls_response(
                             result_message = ChatMessage(role="assistant", contents=function_call_results)
                             response.messages.append(result_message)
                         return response
-                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                    if any(fccr.type == "function_call" for fccr in function_call_results):
                         # the function calls are already in the response, so we just continue
                         return response
 
@@ -1980,11 +1981,7 @@ def _handle_function_calls_response(
                                 response.messages.insert(0, msg)
                         return response
 
-                    if any(
-                        fcr.exception is not None
-                        for fcr in function_call_results
-                        if isinstance(fcr, FunctionResultContent)
-                    ):
+                    if any(fcr.exception is not None for fcr in function_call_results if fcr.type == "function_result"):
                         errors_in_a_row += 1
                         if errors_in_a_row >= config.max_consecutive_errors_per_request:
                             logger.warning(
@@ -2071,8 +2068,6 @@ def _handle_function_calls_streaming_response(
                 ChatMessage,
                 ChatResponse,
                 ChatResponseUpdate,
-                FunctionCallContent,
-                FunctionResultContent,
                 prepare_messages,
             )
 
@@ -2094,7 +2089,7 @@ def _handle_function_calls_streaming_response(
                     tools = _extract_tools(options)
                     # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
-                    approved_function_results: list[Contents] = []
+                    approved_function_results: list[Content] = []
                     if approved_responses:
                         results, _ = await _try_execute_function_calls(
                             custom_args=kwargs,
@@ -2108,7 +2103,7 @@ def _handle_function_calls_streaming_response(
                         if any(
                             fcr.exception is not None
                             for fcr in approved_function_results
-                            if isinstance(fcr, FunctionResultContent)
+                            if fcr.type == "function_result"
                         ):
                             errors_in_a_row += 1
                             # no need to reset the counter here, since this is the start of a new attempt.
@@ -2124,10 +2119,9 @@ def _handle_function_calls_streaming_response(
                 # efficient check for FunctionCallContent in the updates
                 # if there is at least one, this stops and continuous
                 # if there are no FCC's then it returns
-                from ._types import FunctionApprovalRequestContent
 
                 if not any(
-                    isinstance(item, (FunctionCallContent, FunctionApprovalRequestContent))
+                    item.type in ("function_call", "function_approval_request")
                     for upd in all_updates
                     for item in upd.contents
                 ):
@@ -2139,13 +2133,11 @@ def _handle_function_calls_streaming_response(
 
                 response: "ChatResponse" = ChatResponse.from_chat_response_updates(all_updates)
                 # get the function calls (excluding ones that already have results)
-                function_results = {
-                    it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
-                }
+                function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
                 function_calls = [
                     it
                     for it in response.messages[0].contents
-                    if isinstance(it, FunctionCallContent) and it.call_id not in function_results
+                    if it.type == "function_call" and it.call_id not in function_results
                 ]
 
                 # When conversation id is present, it means that messages are hosted on the server.
@@ -2169,7 +2161,7 @@ def _handle_function_calls_streaming_response(
                     )
 
                     # Check if we have approval requests or function calls (not results) in the results
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                    if any(fccr.type == "function_approval_request" for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
                         from ._types import Role
@@ -2184,7 +2176,7 @@ def _handle_function_calls_streaming_response(
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                             response.messages.append(result_message)
                         return
-                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                    if any(fccr.type == "function_call" for fccr in function_call_results):
                         # the function calls were already yielded.
                         return
 
@@ -2195,11 +2187,7 @@ def _handle_function_calls_streaming_response(
                         yield ChatResponseUpdate(contents=function_call_results, role="tool")
                         return
 
-                    if any(
-                        fcr.exception is not None
-                        for fcr in function_call_results
-                        if isinstance(fcr, FunctionResultContent)
-                    ):
+                    if any(fcr.exception is not None for fcr in function_call_results if fcr.type == "function_result"):
                         errors_in_a_row += 1
                         if errors_in_a_row >= config.max_consecutive_errors_per_request:
                             logger.warning(

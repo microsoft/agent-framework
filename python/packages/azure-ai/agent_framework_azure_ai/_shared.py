@@ -6,12 +6,10 @@ from typing import Any, ClassVar, Literal, cast
 
 from agent_framework import (
     AIFunction,
-    Contents,
+    Content,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
     ToolProtocol,
     get_logger,
@@ -189,9 +187,9 @@ def to_azure_ai_agent_tools(
                 )
                 tool_definitions.extend(mcp_tool.definitions)
             case HostedFileSearchTool():
-                vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
+                vector_stores = [inp for inp in tool.inputs or [] if inp.type == "hosted_vector_store"]
                 if vector_stores:
-                    file_search = AgentsFileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
+                    file_search = AgentsFileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])  # type: ignore[misc]
                     tool_definitions.extend(file_search.definitions)
                     # Set tool_resources for file search to work properly with Azure AI
                     if run_options is not None and "tool_resources" not in run_options:
@@ -247,7 +245,7 @@ def _convert_dict_tool(tool: dict[str, Any]) -> ToolProtocol | dict[str, Any] | 
     if tool_type == "file_search":
         file_search_config = tool.get("file_search", {})
         vector_store_ids = file_search_config.get("vector_store_ids", [])
-        inputs = [HostedVectorStoreContent(vector_store_id=vs_id) for vs_id in vector_store_ids]
+        inputs = [Content.from_hosted_vector_store(vector_store_id=vs_id) for vs_id in vector_store_ids]
         return HostedFileSearchTool(inputs=inputs if inputs else None)  # type: ignore
 
     if tool_type == "bing_grounding":
@@ -287,7 +285,7 @@ def _convert_sdk_tool(tool: ToolDefinition) -> ToolProtocol | dict[str, Any] | N
     if tool_type == "file_search":
         file_search_config = getattr(tool, "file_search", None)
         vector_store_ids = getattr(file_search_config, "vector_store_ids", []) if file_search_config else []
-        inputs = [HostedVectorStoreContent(vector_store_id=vs_id) for vs_id in vector_store_ids]
+        inputs = [Content.from_hosted_vector_store(vector_store_id=vs_id) for vs_id in vector_store_ids]
         return HostedFileSearchTool(inputs=inputs if inputs else None)  # type: ignore
 
     if tool_type == "bing_grounding":
@@ -372,18 +370,18 @@ def from_azure_ai_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[T
         elif tool_type == "code_interpreter":
             ci_tool = cast(CodeInterpreterTool, tool_dict)
             container = ci_tool.get("container", {})
-            ci_inputs: list[Contents] = []
+            ci_inputs: list[Content] = []
             if "file_ids" in container:
                 for file_id in container["file_ids"]:
-                    ci_inputs.append(HostedFileContent(file_id=file_id))
+                    ci_inputs.append(Content.from_hosted_file(file_id=file_id))
 
             agent_tools.append(HostedCodeInterpreterTool(inputs=ci_inputs if ci_inputs else None))  # type: ignore
         elif tool_type == "file_search":
             fs_tool = cast(ProjectsFileSearchTool, tool_dict)
-            fs_inputs: list[Contents] = []
+            fs_inputs: list[Content] = []
             if "vector_store_ids" in fs_tool:
                 for vs_id in fs_tool["vector_store_ids"]:
-                    fs_inputs.append(HostedVectorStoreContent(vector_store_id=vs_id))
+                    fs_inputs.append(Content.from_hosted_vector_store(vector_store_id=vs_id))
 
             agent_tools.append(
                 HostedFileSearchTool(
@@ -433,8 +431,8 @@ def to_azure_ai_tools(
                     file_ids: list[str] = []
                     if tool.inputs:
                         for tool_input in tool.inputs:
-                            if isinstance(tool_input, HostedFileContent):
-                                file_ids.append(tool_input.file_id)
+                            if tool_input.type == "hosted_file":
+                                file_ids.append(tool_input.file_id)  # type: ignore[misc, arg-type]
                     container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
                     ci_tool: CodeInterpreterTool = CodeInterpreterTool(container=container)
                     azure_tools.append(ci_tool)
@@ -453,11 +451,14 @@ def to_azure_ai_tools(
                     if not tool.inputs:
                         raise ValueError("HostedFileSearchTool requires inputs to be specified.")
                     vector_store_ids: list[str] = [
-                        inp.vector_store_id for inp in tool.inputs if isinstance(inp, HostedVectorStoreContent)
+                        inp.vector_store_id  # type: ignore[misc]
+                        for inp in tool.inputs
+                        if inp.type == "hosted_vector_store"
                     ]
                     if not vector_store_ids:
                         raise ValueError(
-                            "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
+                            "HostedFileSearchTool requires inputs to be of type `Content` with "
+                            "type 'hosted_vector_store'."
                         )
                     fs_tool: ProjectsFileSearchTool = ProjectsFileSearchTool(vector_store_ids=vector_store_ids)
                     if tool.max_results:

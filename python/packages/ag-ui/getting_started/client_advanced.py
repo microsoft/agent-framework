@@ -73,11 +73,9 @@ async def streaming_example(client: AGUIChatClient, thread_id: str | None = None
         if not thread_id and update.additional_properties:
             thread_id = update.additional_properties.get("thread_id")
 
-        from agent_framework import TextContent
-
         for content in update.contents:
-            if isinstance(content, TextContent) and content.text:
-                print(content.text, end="", flush=True)
+            if content.type == "text" and content.text:  # type: ignore[attr-defined]
+                print(content.text, end="", flush=True)  # type: ignore[attr-defined]
 
     print("\n")
     return thread_id
@@ -138,13 +136,11 @@ async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
     print(f"Assistant: {response.text}")
 
     # Show tool calls if any
-    from agent_framework import FunctionCallContent
-
     tool_called = False
     for message in response.messages:
         for content in message.contents:
-            if isinstance(content, FunctionCallContent):
-                print(f"\n[Tool Called: {content.name}]")
+            if content.type == "function_call":  # type: ignore[attr-defined]
+                print(f"\n[Tool Called: {content.name}]")  # type: ignore[attr-defined]
                 tool_called = True
 
     if not tool_called:
@@ -176,7 +172,7 @@ async def conversation_example(client: AGUIChatClient):
 
     # Second turn - using same thread
     print("\nUser: What's my name?\n")
-    response2 = await client.get_response("What's my name?", metadata={"thread_id": thread_id})
+    response2 = await client.get_response("What's my name?", options={"metadata": {"thread_id": thread_id}})
     print(f"Assistant: {response2.text}")
 
     # Check if context was maintained
@@ -186,7 +182,7 @@ async def conversation_example(client: AGUIChatClient):
     # Third turn
     print("\nUser: Can you also tell me what 10 * 5 is?\n")
     response3 = await client.get_response(
-        "Can you also tell me what 10 * 5 is?", metadata={"thread_id": thread_id}, tools=[calculate]
+        "Can you also tell me what 10 * 5 is?", options={"metadata": {"thread_id": thread_id}}, tools=[calculate]
     )
     print(f"Assistant: {response3.text}")
 

@@ -4,7 +4,7 @@
 
 from unittest.mock import Mock
 
-from agent_framework import AgentResponseUpdate, Role, TextContent
+from agent_framework import AgentResponseUpdate, Content, Role
 from chatkit.types import (
     ThreadItemAddedEvent,
     ThreadItemDoneEvent,
@@ -34,7 +34,7 @@ class TestStreamAgentResponse:
         """Test streaming single text update."""
 
         async def single_update_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[TextContent(text="Hello world")])
+            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello world")])
 
         events = []
         async for event in stream_agent_response(single_update_stream(), thread_id="test_thread"):
@@ -59,8 +59,8 @@ class TestStreamAgentResponse:
         """Test streaming multiple text updates."""
 
         async def multiple_updates_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[TextContent(text="Hello ")])
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[TextContent(text="world!")])
+            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello ")])
+            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="world!")])
 
         events = []
         async for event in stream_agent_response(multiple_updates_stream(), thread_id="test_thread"):
@@ -91,7 +91,7 @@ class TestStreamAgentResponse:
             return f"custom_{item_type}_123"
 
         async def single_update_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[TextContent(text="Test")])
+            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="Test")])
 
         events = []
         async for event in stream_agent_response(
@@ -125,9 +125,10 @@ class TestStreamAgentResponse:
     async def test_stream_non_text_content(self):
         """Test streaming updates with non-text content."""
         # Mock a content object without text attribute
-        non_text_content = Mock()
+        non_text_content = Mock(spec=Content)
+        non_text_content.type = "image"
         # Don't set text attribute
-        del non_text_content.text
+        non_text_content.text = None
 
         async def non_text_stream():
             yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[non_text_content])

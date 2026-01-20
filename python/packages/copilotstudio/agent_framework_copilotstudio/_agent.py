@@ -10,9 +10,9 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Content,
     ContextProvider,
     Role,
-    TextContent,
     normalize_messages,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -332,7 +332,7 @@ class CopilotStudioAgent(BaseAgent):
             ):
                 yield ChatMessage(
                     role=Role.ASSISTANT,
-                    contents=[TextContent(activity.text)],
+                    contents=[Content.from_text(activity.text)],
                     author_name=activity.from_property.name if activity.from_property else None,
                     message_id=activity.id,
                     raw_representation=activity,
