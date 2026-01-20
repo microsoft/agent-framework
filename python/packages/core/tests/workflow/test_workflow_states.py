@@ -36,7 +36,7 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
 
     events: list[object] = []
     with pytest.raises(RuntimeError, match="boom"):
-        async for ev in wf.run_stream(0):
+        async for ev in wf.run(0, stream=True):
             events.append(ev)
 
     # ExecutorFailedEvent should be emitted before WorkflowFailedEvent
@@ -92,7 +92,7 @@ async def test_executor_failed_event_from_second_executor_in_chain():
 
     events: list[object] = []
     with pytest.raises(RuntimeError, match="boom"):
-        async for ev in wf.run_stream(0):
+        async for ev in wf.run(0, stream=True):
             events.append(ev)
 
     # ExecutorFailedEvent should be emitted for the failing executor
@@ -133,7 +133,7 @@ async def test_idle_with_pending_requests_status_streaming():
     requester = Requester(id="req")
     wf = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
 
-    events = [ev async for ev in wf.run_stream("start")]  # Consume stream fully
+    events = [ev async for ev in wf.run("start", stream=True)]  # Consume stream fully
 
     # Ensure a request was emitted
     assert any(isinstance(e, RequestInfoEvent) for e in events)
@@ -154,7 +154,7 @@ class Completer(Executor):
 async def test_completed_status_streaming():
     c = Completer(id="c")
     wf = WorkflowBuilder().set_start_executor(c).build()
-    events = [ev async for ev in wf.run_stream("ok")]  # no raise
+    events = [ev async for ev in wf.run("ok", stream=True)]  # no raise
     # Last status should be IDLE
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.IDLE
@@ -164,7 +164,7 @@ async def test_completed_status_streaming():
 async def test_started_and_completed_event_origins():
     c = Completer(id="c-origin")
     wf = WorkflowBuilder().set_start_executor(c).build()
-    events = [ev async for ev in wf.run_stream("payload")]
+    events = [ev async for ev in wf.run("payload", stream=True)]
 
     started = next(e for e in events if isinstance(e, WorkflowStartedEvent))
     assert started.origin is WorkflowEventSource.FRAMEWORK

@@ -1069,7 +1069,7 @@ async def test_streaming() -> None:
         messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         # Test that the client can be used to get a response
-        response = openai_assistants_client.get_streaming_response(messages=messages)
+        response = openai_assistants_client.get_response(stream=True, messages=messages)
 
         full_message: str = ""
         async for chunk in response:
@@ -1093,7 +1093,8 @@ async def test_streaming_tools() -> None:
         messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
 
         # Test that the client can be used to get a response
-        response = openai_assistants_client.get_streaming_response(
+        response = openai_assistants_client.get_response(
+            stream=True,
             messages=messages,
             options={
                 "tools": [get_weather],
@@ -1177,7 +1178,8 @@ async def test_file_search_streaming() -> None:
         messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         file_id, vector_store = await create_vector_store(openai_assistants_client)
-        response = openai_assistants_client.get_streaming_response(
+        response = openai_assistants_client.get_response(
+            stream=True,
             messages=messages,
             options={
                 "tools": [HostedFileSearchTool()],
@@ -1224,7 +1226,7 @@ async def test_openai_assistants_agent_basic_run_streaming():
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert chunk is not None
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:

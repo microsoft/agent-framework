@@ -133,50 +133,29 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         client = await self._ensure_client()
         # prepare
         options_dict = self._prepare_options(messages, options)
+
         try:
-            # execute and process
+            if stream:
+                # Streaming mode
+                options_dict["stream_options"] = {"include_usage": True}
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    async for chunk in await client.chat.completions.create(stream=True, **options_dict):
+                        if len(chunk.choices) == 0 and chunk.usage is None:
+                            continue
+                        yield self._parse_response_update_from_openai(chunk)
+
+                return _stream()
+            # Non-streaming mode
             return self._parse_response_from_openai(
                 await client.chat.completions.create(stream=False, **options_dict), options
             )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
-        # prepare
-        options_dict = self._prepare_options(messages, options)
-        options_dict["stream_options"] = {"include_usage": True}
-        try:
-            # execute and process
-            async for chunk in await client.chat.completions.create(stream=True, **options_dict):
-                if len(chunk.choices) == 0 and chunk.usage is None:
-                    continue
-                yield self._parse_response_update_from_openai(chunk)
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(

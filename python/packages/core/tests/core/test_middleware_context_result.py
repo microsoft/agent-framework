@@ -195,7 +195,7 @@ class TestResultOverrideMiddleware:
         # Test streaming override case
         override_messages = [ChatMessage("user", ["Give me a custom stream"])]
         override_updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(override_messages):
+        async for update in agent.run(override_messages, stream=True):
             override_updates.append(update)
 
         assert len(override_updates) == 3
@@ -206,7 +206,7 @@ class TestResultOverrideMiddleware:
         # Test normal streaming case
         normal_messages = [ChatMessage("user", ["Normal streaming request"])]
         normal_updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(normal_messages):
+        async for update in agent.run(normal_messages, stream=True):
             normal_updates.append(update)
 
         assert len(normal_updates) == 2

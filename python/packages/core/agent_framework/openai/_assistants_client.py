@@ -342,39 +342,41 @@ class OpenAIAssistantsClient(
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
-        return await ChatResponse.from_update_generator(
-            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+        if stream:
+            # Streaming mode - return the async generator directly
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                # prepare
+                run_options, tool_results = self._prepare_options(messages, options, **kwargs)
+
+                # Get the thread ID
+                thread_id: str | None = options.get(
+                    "conversation_id", run_options.get("conversation_id", self.thread_id)
+                )
+
+                if thread_id is None and tool_results is not None:
+                    raise ValueError("No thread ID was provided, but chat messages includes tool results.")
+
+                # Determine which assistant to use and create if needed
+                assistant_id = await self._get_assistant_id_or_create()
+
+                # execute
+                stream_obj, thread_id = await self._create_assistant_stream(
+                    thread_id, assistant_id, run_options, tool_results
+                )
+
+                # process
+                async for update in self._process_stream_events(stream_obj, thread_id):
+                    yield update
+
+            return _stream()
+        # Non-streaming mode - collect updates and convert to response
+        return await ChatResponse.from_chat_response_generator(
+            updates=self._inner_get_response(messages=messages, options=options, stream=True, **kwargs),
             output_format_type=options.get("response_format"),
         )
-
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options, tool_results = self._prepare_options(messages, options, **kwargs)
-
-        # Get the thread ID
-        thread_id: str | None = options.get("conversation_id", run_options.get("conversation_id", self.thread_id))
-
-        if thread_id is None and tool_results is not None:
-            raise ValueError("No thread ID was provided, but chat messages includes tool results.")
-
-        # Determine which assistant to use and create if needed
-        assistant_id = await self._get_assistant_id_or_create()
-
-        # execute
-        stream, thread_id = await self._create_assistant_stream(thread_id, assistant_id, run_options, tool_results)
-
-        # process
-        async for update in self._process_stream_events(stream, thread_id):
-            yield update
 
     async def _get_assistant_id_or_create(self) -> str:
         """Determine which assistant to use and create if needed.

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, cast
 
 import pytest
@@ -18,6 +18,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
+    Role,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -38,14 +39,20 @@ class StubAgent(BaseAgent):
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        response = ChatMessage("assistant", [self._reply_text], author_name=self.name)
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl()
+
+    async def _run_impl(self) -> AgentResponse:
+        response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
         return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
@@ -57,7 +64,7 @@ class StubAgent(BaseAgent):
     ) -> AsyncIterable[AgentResponseUpdate]:
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             yield AgentResponseUpdate(
-                contents=[Content.from_text(text=self._reply_text)], role="assistant", author_name=self.name
+                contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
         return _stream()
@@ -68,10 +75,9 @@ class MockChatClient:
 
     additional_properties: dict[str, Any]
 
-    async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
-        raise NotImplementedError
-
-    def get_streaming_response(self, messages: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+    async def get_response(
+        self, messages: Any, stream: bool = False, **kwargs: Any
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         raise NotImplementedError
 
 
@@ -94,7 +100,7 @@ class StubManagerAgent(ChatAgent):
             return AgentResponse(
                 messages=[
                     ChatMessage(
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         text=(
                             '{"terminate": false, "reason": "Selecting agent", '
                             '"next_speaker": "agent", "final_message": null}'
@@ -115,7 +121,7 @@ class StubManagerAgent(ChatAgent):
         return AgentResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     text=(
                         '{"terminate": true, "reason": "Task complete", '
                         '"next_speaker": null, "final_message": "agent manager final"}'
@@ -146,7 +152,7 @@ class StubManagerAgent(ChatAgent):
                             )
                         )
                     ],
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     author_name=self.name,
                 )
 
@@ -162,7 +168,7 @@ class StubManagerAgent(ChatAgent):
                         )
                     )
                 ],
-                role="assistant",
+                role=Role.ASSISTANT,
                 author_name=self.name,
             )
 
@@ -192,7 +198,7 @@ class StubMagenticManager(MagenticManagerBase):
         self._round = 0
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["plan"], author_name="magentic_manager")
+        return ChatMessage(role=Role.ASSISTANT, text="plan", author_name="magentic_manager")
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return await self.plan(magentic_context)
@@ -218,7 +224,7 @@ class StubMagenticManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["final"], author_name="magentic_manager")
+        return ChatMessage(role=Role.ASSISTANT, text="final", author_name="magentic_manager")
 
 
 async def test_group_chat_builder_basic_flow() -> None:
@@ -235,7 +241,7 @@ async def test_group_chat_builder_basic_flow() -> None:
     )
 
     outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream("coordinate task"):
+    async for event in workflow.run("coordinate task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
             if isinstance(data, list):
@@ -263,8 +269,8 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
 
     agent = workflow.as_agent(name="group-chat-agent")
     conversation = [
-        ChatMessage("user", ["kickoff"], author_name="user"),
-        ChatMessage("assistant", ["noted"], author_name="alpha"),
+        ChatMessage(role=Role.USER, text="kickoff", author_name="user"),
+        ChatMessage(role=Role.ASSISTANT, text="noted", author_name="alpha"),
     ]
     response = await agent.run(conversation)
 
@@ -404,7 +410,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -425,7 +431,7 @@ class TestGroupChatWorkflow:
             return "agent"
 
         def termination_condition(conversation: list[ChatMessage]) -> bool:
-            replies = [msg for msg in conversation if msg.role == "assistant" and msg.author_name == "agent"]
+            replies = [msg for msg in conversation if msg.role == Role.ASSISTANT and msg.author_name == "agent"]
             return len(replies) >= 2
 
         agent = StubAgent("agent", "response")
@@ -439,7 +445,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -447,7 +453,7 @@ class TestGroupChatWorkflow:
 
         assert outputs, "Expected termination to yield output"
         conversation = outputs[-1]
-        agent_replies = [msg for msg in conversation if msg.author_name == "agent" and msg.role == "assistant"]
+        agent_replies = [msg for msg in conversation if msg.author_name == "agent" and msg.role == Role.ASSISTANT]
         assert len(agent_replies) == 2
         final_output = conversation[-1]
         # The orchestrator uses its ID as author_name by default
@@ -467,7 +473,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -489,7 +495,7 @@ class TestGroupChatWorkflow:
         workflow = GroupChatBuilder().with_orchestrator(selection_func=selector).participants([agent]).build()
 
         with pytest.raises(RuntimeError, match="Selection function returned unknown participant 'unknown_agent'"):
-            async for _ in workflow.run_stream("test task"):
+            async for _ in workflow.run("test task", stream=True):
                 pass
 
 
@@ -515,7 +521,7 @@ class TestCheckpointing:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -544,7 +550,7 @@ class TestConversationHandling:
         )
 
         with pytest.raises(ValueError, match="At least one ChatMessage is required to start the group chat workflow."):
-            async for _ in workflow.run_stream([]):
+            async for _ in workflow.run([], stream=True):
                 pass
 
     async def test_handle_string_input(self) -> None:
@@ -553,7 +559,7 @@ class TestConversationHandling:
         def selector(state: GroupChatState) -> str:
             # Verify the conversation has the user message
             assert len(state.conversation) > 0
-            assert state.conversation[0].role == "user"
+            assert state.conversation[0].role == Role.USER
             assert state.conversation[0].text == "test string"
             return "agent"
 
@@ -568,7 +574,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test string"):
+        async for event in workflow.run("test string", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -578,7 +584,7 @@ class TestConversationHandling:
 
     async def test_handle_chat_message_input(self) -> None:
         """Test handling ChatMessage input directly."""
-        task_message = ChatMessage("user", ["test message"])
+        task_message = ChatMessage(role=Role.USER, text="test message")
 
         def selector(state: GroupChatState) -> str:
             # Verify the task message was preserved in conversation
@@ -597,7 +603,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream(task_message):
+        async for event in workflow.run(task_message, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -608,8 +614,8 @@ class TestConversationHandling:
     async def test_handle_conversation_list_input(self) -> None:
         """Test handling conversation list preserves context."""
         conversation = [
-            ChatMessage("system", ["system message"]),
-            ChatMessage("user", ["user message"]),
+            ChatMessage(role=Role.SYSTEM, text="system message"),
+            ChatMessage(role=Role.USER, text="user message"),
         ]
 
         def selector(state: GroupChatState) -> str:
@@ -629,7 +635,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream(conversation):
+        async for event in workflow.run(conversation, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -661,7 +667,7 @@ class TestRoundLimitEnforcement:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test"):
+        async for event in workflow.run("test", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -696,7 +702,7 @@ class TestRoundLimitEnforcement:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test"):
+        async for event in workflow.run("test", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -728,7 +734,7 @@ async def test_group_chat_checkpoint_runtime_only() -> None:
     )
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+    async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -766,7 +772,7 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
             .build()
         )
         baseline_output: list[ChatMessage] | None = None
-        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+        async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if isinstance(ev, WorkflowOutputEvent):
                 baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
             if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -814,7 +820,7 @@ async def test_group_chat_with_request_info_filtering():
 
     # Run until we get a request info event (should be before beta, not alpha)
     request_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             # Don't break - let stream complete naturally when paused
@@ -866,7 +872,7 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
 
     # Run until we get a request info event
     request_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             break
@@ -1118,7 +1124,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                 return AgentResponse(
                     messages=[
                         ChatMessage(
-                            role="assistant",
+                            role=Role.ASSISTANT,
                             text=(
                                 '{"terminate": false, "reason": "Selecting alpha", '
                                 '"next_speaker": "alpha", "final_message": null}'
@@ -1138,7 +1144,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
             return AgentResponse(
                 messages=[
                     ChatMessage(
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         text=(
                             '{"terminate": true, "reason": "Task complete", '
                             '"next_speaker": null, "final_message": "dynamic manager final"}'

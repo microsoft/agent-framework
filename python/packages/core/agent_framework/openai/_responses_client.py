@@ -210,13 +210,56 @@ class OpenAIBaseResponsesClient(
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         client = await self._ensure_client()
         # prepare
         run_options = await self._prepare_options(messages, options, **kwargs)
+
+        if stream:
+            # Streaming mode
+            function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                try:
+                    if "text_format" in run_options:
+                        # Streaming with text_format - use stream context manager
+                        async with client.responses.stream(**run_options) as response:
+                            async for chunk in response:
+                                yield self._parse_chunk_from_openai(
+                                    chunk,
+                                    options=options,
+                                    function_call_ids=function_call_ids,
+                                )
+                    else:
+                        # Streaming without text_format - use create
+                        async for chunk in await client.responses.create(stream=True, **run_options):
+                            yield self._parse_chunk_from_openai(
+                                chunk,
+                                options=options,
+                                function_call_ids=function_call_ids,
+                            )
+                except BadRequestError as ex:
+                    if ex.code == "content_filter":
+                        raise OpenAIContentFilterException(
+                            f"{type(self)} service encountered a content error: {ex}",
+                            inner_exception=ex,
+                        ) from ex
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                except Exception as ex:
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+
+            return _stream()
+
+        # Non-streaming mode
         try:
-            # execute and process
             if "text_format" in run_options:
                 response = await client.responses.parse(stream=False, **run_options)
             else:
@@ -237,51 +280,6 @@ class OpenAIBaseResponsesClient(
                 inner_exception=ex,
             ) from ex
         return self._parse_response_from_openai(response, options=options)
-
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
-        # prepare
-        run_options = await self._prepare_options(messages, options, **kwargs)
-        function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
-        try:
-            # execute and process
-            if "text_format" not in run_options:
-                async for chunk in await client.responses.create(stream=True, **run_options):
-                    yield self._parse_chunk_from_openai(
-                        chunk,
-                        options=options,
-                        function_call_ids=function_call_ids,
-                    )
-                return
-            async with client.responses.stream(**run_options) as response:
-                async for chunk in response:
-                    yield self._parse_chunk_from_openai(
-                        chunk,
-                        options=options,
-                        function_call_ids=function_call_ids,
-                    )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
 
     def _prepare_response_and_text_format(
         self,

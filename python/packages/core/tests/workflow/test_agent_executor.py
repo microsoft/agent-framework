@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from typing import Any
 
 from agent_framework import (
@@ -28,23 +28,23 @@ class _CountingAgent(BaseAgent):
         super().__init__(**kwargs)
         self.call_count = 0
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl()
+
+    async def _run_impl(self) -> AgentResponse:
         self.call_count += 1
         return AgentResponse(messages=[ChatMessage("assistant", [f"Response #{self.call_count}: {self.name}"])])
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         yield AgentResponseUpdate(contents=[Content.from_text(text=f"Response #{self.call_count}: {self.name}")])
 
@@ -72,7 +72,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Run the workflow with a user message
     first_run_output: AgentExecutorResponse | None = None
-    async for ev in wf.run_stream("First workflow run"):
+    async for ev in wf.run("First workflow run", stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             first_run_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -126,7 +126,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Resume from checkpoint
     resumed_output: AgentExecutorResponse | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=restore_checkpoint.checkpoint_id):
+    async for ev in wf_resume.run(checkpoint_id=restore_checkpoint.checkpoint_id, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             resumed_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (

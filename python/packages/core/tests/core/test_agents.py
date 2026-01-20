@@ -29,7 +29,7 @@ from agent_framework import (
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import AgentExecutionException, AgentInitializationError
+from agent_framework.exceptions import AgentExecutionException, AgentInitializationError, AgentRunException
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -50,7 +50,7 @@ async def test_agent_run_streaming(agent: AgentProtocol) -> None:
     async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]
 
-    updates = await collect_updates(agent.run_stream(messages="test"))
+    updates = await collect_updates(agent.run("test", stream=True))
     assert len(updates) == 1
     assert updates[0].text == "Response"
 
@@ -89,7 +89,7 @@ async def test_chat_client_agent_run(chat_client: ChatClientProtocol) -> None:
 async def test_chat_client_agent_run_streaming(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
 
-    result = await AgentResponse.from_agent_response_generator(agent.run_stream("Hello"))
+    result = await AgentResponse.from_agent_response_generator(agent.run("Hello", stream=True))
 
     assert result.text == "test streaming response another update"
 
@@ -176,7 +176,7 @@ async def test_chat_client_agent_update_thread_conversation_id_missing(chat_clie
     agent = ChatAgent(chat_client=chat_client)
     thread = AgentThread(service_thread_id="123")
 
-    with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
+    with raises(AgentRunException, match="Service did not return a valid conversation id"):
         await agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
 
 
@@ -330,7 +330,7 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
 
     # Collect all stream updates
     updates: list[AgentResponseUpdate] = []
-    async for update in agent.run_stream("Hello"):
+    async for update in agent.run("Hello", stream=True):
         updates.append(update)
 
     # Verify context provider was called

@@ -191,16 +191,18 @@ def test_decorator_with_missing_methods():
 
 
 def test_decorator_with_partial_methods():
-    """Test decorator when only one method is present."""
+    """Test decorator with unified get_response() method (no longer requires separate streaming method)."""
 
     class MockChatClient:
         OTEL_PROVIDER_NAME = "test_provider"
 
-        async def get_response(self, messages, **kwargs):
+        async def get_response(self, messages, *, stream=False, **kwargs):
+            """Unified get_response supporting both streaming and non-streaming."""
             return Mock()
 
-    with pytest.raises(ChatClientInitializationError):
-        use_instrumentation(MockChatClient)
+    # Should no longer raise an error with unified API
+    decorated_class = use_instrumentation(MockChatClient)
+    assert decorated_class is not None
 
 
 # region Test telemetry decorator with mock client
@@ -215,6 +217,13 @@ def mock_chat_client():
             return "https://test.example.com"
 
         async def _inner_get_response(
+            self, *, messages: MutableSequence[ChatMessage], stream: bool, options: dict[str, Any], **kwargs: Any
+        ):
+            if stream:
+                return self._get_streaming_response(messages=messages, options=options, **kwargs)
+            return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+        async def _get_non_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             return ChatResponse(
@@ -223,7 +232,7 @@ def mock_chat_client():
                 finish_reason=None,
             )
 
-        async def _inner_get_streaming_response(
+        async def _get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
@@ -264,7 +273,7 @@ async def test_chat_client_streaming_observability(
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    async for update in client.get_streaming_response(messages=messages, model_id="Test"):
+    async for update in client.get_response(stream=True, messages=messages, model_id="Test"):
         updates.append(update)
 
     # Verify we got the expected updates, this shouldn't be dependent on otel
@@ -433,7 +442,7 @@ async def test_chat_client_streaming_without_model_id_observability(
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    async for update in client.get_streaming_response(messages=messages):
+    async for update in client.get_response(stream=True, messages=messages):
         updates.append(update)
 
     # Verify we got the expected updates, this shouldn't be dependent on otel
@@ -501,7 +510,7 @@ def test_agent_decorator_with_missing_methods():
 
 
 def test_agent_decorator_with_partial_methods():
-    """Test agent decorator when only one method is present."""
+    """Test agent decorator with unified run() method (no longer requires separate run_stream)."""
     from agent_framework.observability import use_agent_instrumentation
 
     class MockAgent:
@@ -511,11 +520,13 @@ def test_agent_decorator_with_partial_methods():
             self.id = "test_agent_id"
             self.name = "test_agent"
 
-        async def run(self, messages=None, *, thread=None, **kwargs):
+        def run(self, messages=None, *, thread=None, stream=False, **kwargs):
+            """Unified run method supporting both streaming and non-streaming."""
             return Mock()
 
-    with pytest.raises(AgentInitializationError):
-        use_agent_instrumentation(MockAgent)
+    # Should no longer raise an error with unified API
+    decorated_class = use_agent_instrumentation(MockAgent)
+    assert decorated_class is not None
 
 
 # region Test agent telemetry decorator with mock agent
@@ -534,7 +545,12 @@ def mock_chat_agent():
             self.description = "Test agent description"
             self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
-        async def run(self, messages=None, *, thread=None, **kwargs):
+        def run(self, messages=None, *, thread=None, stream=False, **kwargs):
+            if stream:
+                return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
+            return self._run_impl(messages=messages, thread=thread, **kwargs)
+
+        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
                 messages=[ChatMessage("assistant", ["Agent response"])],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
@@ -542,7 +558,8 @@ def mock_chat_agent():
                 raw_representation=Mock(finish_reason=Mock(value="stop")),
             )
 
-        async def run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+            from agent_framework import AgentResponseUpdate
 
             yield AgentResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
             yield AgentResponseUpdate(contents=[Content.from_text(text=" from agent")], role="assistant")
@@ -584,7 +601,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     agent = use_agent_instrumentation(mock_chat_agent)()
     span_exporter.clear()
     updates = []
-    async for update in agent.run_stream("Test message"):
+    async for update in agent.run("Test message", stream=True):
         updates.append(update)
 
     # Verify we got the expected updates

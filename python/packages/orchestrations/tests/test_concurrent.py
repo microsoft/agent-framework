@@ -110,7 +110,7 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("prompt: hello world"):
+    async for ev in wf.run("prompt: hello world", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -148,7 +148,7 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: custom"):
+    async for ev in wf.run("prompt: custom", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -179,7 +179,7 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: custom sync"):
+    async for ev in wf.run("prompt: custom sync", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -227,7 +227,7 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: instance test"):
+    async for ev in wf.run("prompt: instance test", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -265,7 +265,7 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: factory test"):
+    async for ev in wf.run("prompt: factory test", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -301,7 +301,7 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: factory test"):
+    async for ev in wf.run("prompt: factory test", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -351,7 +351,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     wf = ConcurrentBuilder().participants(list(participants)).with_checkpointing(storage).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("checkpoint concurrent"):
+    async for ev in wf.run("checkpoint concurrent", stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             baseline_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -375,7 +375,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     wf_resume = ConcurrentBuilder().participants(list(resumed_participants)).with_checkpointing(storage).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
+    async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             resumed_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -397,7 +397,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     wf = ConcurrentBuilder().participants(agents).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+    async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             baseline_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -418,7 +418,9 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     wf_resume = ConcurrentBuilder().participants(resumed_agents).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage):
+    async for ev in wf_resume.run(
+        checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
+    ):
         if isinstance(ev, WorkflowOutputEvent):
             resumed_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -445,7 +447,7 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
         wf = ConcurrentBuilder().participants(agents).with_checkpointing(buildtime_storage).build()
 
         baseline_output: list[ChatMessage] | None = None
-        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+        async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if isinstance(ev, WorkflowOutputEvent):
                 baseline_output = ev.data  # type: ignore[assignment]
             if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -527,7 +529,7 @@ async def test_concurrent_with_register_participants() -> None:
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("test prompt"):
+    async for ev in wf.run("test prompt", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):

@@ -12,6 +12,7 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Protocol,
     cast,
     overload,
@@ -38,10 +39,9 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Content,
     normalize_messages,
 )
-from .exceptions import AgentExecutionException, AgentInitializationError
+from .exceptions import AgentInitializationError, AgentRunException
 from .observability import use_agent_instrumentation
 
 if sys.version_info >= (3, 13):
@@ -179,20 +179,20 @@ class AgentProtocol(Protocol):
                     self.name = "Custom Agent"
                     self.description = "A fully custom agent implementation"
 
-                async def run(self, messages=None, *, thread=None, **kwargs):
-                    # Your custom implementation
-                    from agent_framework import AgentResponse
+                async def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+                    if stream:
+                        # Your custom streaming implementation
+                        async def _stream():
+                            from agent_framework import AgentResponseUpdate
 
-                    return AgentResponse(messages=[], response_id="custom-response")
+                            yield AgentResponseUpdate()
 
-                def run_stream(self, messages=None, *, thread=None, **kwargs):
-                    # Your custom streaming implementation
-                    async def _stream():
-                        from agent_framework import AgentResponseUpdate
+                        return _stream()
+                    else:
+                        # Your custom implementation
+                        from agent_framework import AgentResponse
 
-                        yield AgentResponseUpdate()
-
-                    return _stream()
+                        return AgentResponse(messages=[], response_id="custom-response")
 
                 def get_new_thread(self, **kwargs):
                     # Return your own thread implementation
@@ -208,60 +208,51 @@ class AgentProtocol(Protocol):
     name: str | None
     description: str | None
 
+    @overload
     async def run(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: Literal[False] = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> AgentResponse: ...
+
+    @overload
+    async def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
+
+    async def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
         """Get a response from the agent.
 
-        This method returns the final result of the agent's execution
-        as a single AgentResponse object. The caller is blocked until
-        the final result is available.
-
-        Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of AgentResponseUpdate
-        objects. Streaming only the final result is not feasible because the timing of
-        the final result's availability is unknown, and blocking the caller until then
-        is undesirable in streaming scenarios.
+        This method can return either a complete response or stream partial updates
+        depending on the stream parameter.
 
         Args:
             messages: The message(s) to send to the agent.
+            stream: Whether to stream the response. Defaults to False.
 
         Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
         Returns:
-            An agent response item.
-        """
-        ...
-
-    def run_stream(
-        self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Run the agent as a stream.
-
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentResponseUpdate objects to the caller.
-
-        Note: An AgentResponseUpdate object contains a chunk of a message.
-
-        Args:
-            messages: The message(s) to send to the agent.
-
-        Keyword Args:
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            An agent response item.
+            When stream=False: An AgentResponse with the final result.
+            When stream=True: An async iterable of AgentResponseUpdate objects with
+                intermediate steps and the final result.
         """
         ...
 
@@ -292,16 +283,17 @@ class BaseAgent(SerializationMixin):
 
             # Create a concrete subclass that implements the protocol
             class SimpleAgent(BaseAgent):
-                async def run(self, messages=None, *, thread=None, **kwargs):
-                    # Custom implementation
-                    return AgentResponse(messages=[], response_id="simple-response")
+                async def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+                    if stream:
 
-                def run_stream(self, messages=None, *, thread=None, **kwargs):
-                    async def _stream():
-                        # Custom streaming implementation
-                        yield AgentResponseUpdate()
+                        async def _stream():
+                            # Custom streaming implementation
+                            yield AgentResponseUpdate()
 
-                    return _stream()
+                        return _stream()
+                    else:
+                        # Custom implementation
+                        return AgentResponse(messages=[], response_id="simple-response")
 
 
             # Now instantiate the concrete subclass
@@ -479,11 +471,11 @@ class BaseAgent(SerializationMixin):
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, **forwarded_kwargs)).text
+                return (await self.run(input_text, stream=False, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
-            async for update in self.run_stream(input_text, **forwarded_kwargs):
+            async for update in self.run(input_text, stream=True, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
                     await stream_callback(update)  # type: ignore[misc]
@@ -491,7 +483,7 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentResponse.from_updates(response_updates).text
+            return AgentResponse.from_agent_run_response_updates(response_updates).text
 
         agent_tool: FunctionTool[BaseModel, str] = FunctionTool(
             name=tool_name,
@@ -554,7 +546,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             )
 
             # Use streaming responses
-            async for update in agent.run_stream("What's the weather in Paris?"):
+            async for update in await agent.run("What's the weather in Paris?", stream=True):
                 print(update.text, end="")
 
         With typed options for IDE autocomplete:
@@ -754,10 +746,11 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             self.chat_client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
     @overload
-    async def run(
+    def run(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: Literal[False] = False,
         thread: AgentThread | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
@@ -766,27 +759,29 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | None = None,
         options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> AgentResponse[TResponseModelT]: ...
+    ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
 
     @overload
-    async def run(
+    def run(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: Literal[True],
         thread: AgentThread | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> AgentResponse[Any]: ...
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
 
-    async def run(
+    def run(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
@@ -795,7 +790,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | None = None,
         options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> AgentResponse[Any]:
+    ) -> Awaitable[AgentResponse[Any]] | AsyncIterable[AgentResponseUpdate]:
         """Run the agent with the given messages and options.
 
         Note:
@@ -806,6 +801,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
         Args:
             messages: The messages to process.
+            stream: Whether to stream the response. Defaults to False.
 
         Keyword Args:
             thread: The thread to use for the agent.
@@ -818,8 +814,27 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 Will only be passed to functions that are called.
 
         Returns:
-            An AgentResponse containing the agent's response.
+            When stream=False: An Awaitable[AgentResponse] containing the agent's response.
+            When stream=True: An async iterable of AgentResponseUpdate objects.
         """
+        if stream:
+            return self._run_stream_impl(messages=messages, thread=thread, tools=tools, options=options, **kwargs)
+        return self._run_impl(messages=messages, thread=thread, tools=tools, options=options, **kwargs)
+
+    async def _run_impl(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        options: TOptions_co | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        """Non-streaming implementation of run."""
         # Build options dict from provided options
         opts = dict(options) if options else {}
 
@@ -838,6 +853,8 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
+
+        # Normalize tools
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
@@ -845,7 +862,6 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
         final_tools: list[ToolProtocol | Callable[..., Any] | dict[str, Any]] = []
-        # Normalize tools argument to a list without mutating the original parameter
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
@@ -888,26 +904,23 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         kwargs["thread"] = thread
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+
         response = await self.chat_client.get_response(
             messages=thread_messages,
+            stream=False,
             options=co,  # type: ignore[arg-type]
             **filtered_kwargs,
         )
 
-        await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
+        if not response:
+            raise AgentRunException("Chat client did not return a response.")
 
-        # Ensure that the author name is set for each message in the response.
-        for message in response.messages:
-            if message.author_name is None:
-                message.author_name = agent_name
-
-        # Only notify the thread of new messages if the chatResponse was successful
-        # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(
-            thread,
-            input_messages,
-            response.messages,
-            **{k: v for k, v in kwargs.items() if k != "thread"},
+        await self._finalize_response_and_update_thread(
+            response=response,
+            agent_name=agent_name,
+            thread=thread,
+            input_messages=input_messages,
+            kwargs=kwargs,
         )
         response_format = co.get("response_format")
         if not (
@@ -926,9 +939,9 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             additional_properties=response.additional_properties,
         )
 
-    async def run_stream(
+    async def _run_stream_impl(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -939,30 +952,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         options: TOptions_co | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Stream the agent with the given messages and options.
-
-        Note:
-            Since you won't always call ``agent.run_stream()`` directly (it gets called
-            through orchestration), it is advised to set your default values for
-            all the chat client parameters in the agent constructor.
-            If both parameters are used, the ones passed to the run methods take precedence.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            thread: The thread to use for the agent.
-            tools: The tools to use for this specific run (merged with agent-level tools).
-            options: A TypedDict containing chat options. When using a typed agent like
-                ``ChatAgent[OpenAIChatOptions]``, this enables IDE autocomplete for
-                provider-specific options including temperature, max_tokens, model_id,
-                tool_choice, and provider-specific options like reasoning_effort.
-            kwargs: Additional keyword arguments for the agent.
-                Will only be passed to functions that are called.
-
-        Yields:
-            AgentResponseUpdate objects containing chunks of the agent's response.
-        """
+        """Streaming implementation of run."""
         # Build options dict from provided options
         opts = dict(options) if options else {}
 
@@ -973,27 +963,29 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
-        agent_name = self._get_agent_name()
-        # Resolve final tool list (runtime provided tools + local MCP server tools)
-        final_tools: list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]] = []
-        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
+
+        # Normalize tools
+        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
-        # Normalize tools argument to a list without mutating the original parameter
+        agent_name = self._get_agent_name()
+
+        # Resolve final tool list (runtime provided tools + local MCP server tools)
+        final_tools: list[ToolProtocol | Callable[..., Any] | dict[str, Any]] = []
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
                     await self._async_exit_stack.enter_async_context(tool)
                 final_tools.extend(tool.functions)  # type: ignore
             else:
-                final_tools.append(tool)
+                final_tools.append(tool)  # type: ignore
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
-        # Build options dict from run_stream() options merged with provided options
+        # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
             "model_id": opts.pop("model_id", None),
             "conversation_id": thread.service_thread_id,
@@ -1022,12 +1014,14 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         kwargs["thread"] = thread
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+
         response_updates: list[ChatResponseUpdate] = []
-        async for update in self.chat_client.get_streaming_response(
+        async for update in self.chat_client.get_response(
             messages=thread_messages,
+            stream=True,
             options=co,  # type: ignore[arg-type]
             **filtered_kwargs,
-        ):
+        ):  # type: ignore
             response_updates.append(update)
 
             if update.author_name is None:
@@ -1044,9 +1038,47 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 raw_representation=update,
             )
 
-        response = ChatResponse.from_updates(response_updates, output_format_type=co.get("response_format"))
+        response = ChatResponse.from_chat_response_updates(
+            response_updates, output_format_type=co.get("response_format")
+        )
+
+        if not response:
+            raise AgentRunException("Chat client did not return a response.")
+
+        await self._finalize_response_and_update_thread(
+            response=response,
+            agent_name=agent_name,
+            thread=thread,
+            input_messages=input_messages,
+            kwargs=kwargs,
+        )
+
+    async def _finalize_response_and_update_thread(
+        self,
+        response: ChatResponse,
+        agent_name: str,
+        thread: AgentThread,
+        input_messages: list[ChatMessage],
+        kwargs: dict[str, Any],
+    ) -> None:
+        """Finalize response by updating thread and setting author names.
+
+        Args:
+            response: The chat response to finalize.
+            agent_name: The name of the agent to set as author.
+            thread: The conversation thread.
+            input_messages: The input messages.
+            kwargs: Additional keyword arguments.
+        """
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
+        # Ensure that the author name is set for each message in the response.
+        for message in response.messages:
+            if message.author_name is None:
+                message.author_name = agent_name
+
+        # Only notify the thread of new messages if the chatResponse was successful
+        # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(
             thread,
             input_messages,
@@ -1220,13 +1252,13 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             response_conversation_id: The conversation ID from the response, if any.
 
         Raises:
-            AgentExecutionException: If conversation ID is missing for service-managed thread.
+            AgentRunException: If conversation ID is missing for service-managed thread.
         """
         if response_conversation_id is None and thread.service_thread_id is not None:
             # We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             # meaning the service doesn't support service managed threads,
             # so the thread cannot be used with this service.
-            raise AgentExecutionException(
+            raise AgentRunException(
                 "Service did not return a valid conversation id when using a service managed thread."
             )
 
@@ -1266,7 +1298,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 - The complete list of messages for the chat client
 
         Raises:
-            AgentExecutionException: If the conversation IDs on the thread and agent don't match.
+            AgentRunException: If the conversation IDs on the thread and agent don't match.
         """
         # Create a shallow copy of options and deep copy non-tool values
         # Tools containing HTTP clients or other non-copyable objects cannot be deep copied
@@ -1313,7 +1345,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             and chat_options.get("conversation_id")
             and thread.service_thread_id != chat_options["conversation_id"]
         ):
-            raise AgentExecutionException(
+            raise AgentRunException(
                 "The conversation_id set on the agent is different from the one set on the thread, "
                 "only one ID can be used for a run."
             )

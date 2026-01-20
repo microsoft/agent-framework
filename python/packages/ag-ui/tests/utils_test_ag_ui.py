@@ -38,16 +38,18 @@ class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co])
         self._response_fn = response_fn
 
     @override
-    async def _inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
-    ) -> AsyncIterator[ChatResponseUpdate]:
-        async for update in self._stream_fn(messages, options, **kwargs):
-            yield update
+    def _inner_get_response(
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False, **kwargs: Any
+    ) -> Awaitable[ChatResponse] | AsyncIterator[ChatResponseUpdate]:
+        if stream:
+            return self._stream_fn(messages, options, **kwargs)
 
-    @override
-    async def _inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+        return self._get_response_impl(messages, options, **kwargs)
+
+    async def _get_response_impl(
+        self, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
+        """Non-streaming implementation."""
         if self._response_fn is not None:
             return await self._response_fn(messages, options, **kwargs)
 

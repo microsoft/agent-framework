@@ -326,7 +326,7 @@ async def test_azure_assistants_client_streaming() -> None:
         messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         # Test that the client can be used to get a response
-        response = azure_assistants_client.get_streaming_response(messages=messages)
+        response = azure_assistants_client.get_response(messages=messages, stream=True)
 
         full_message: str = ""
         async for chunk in response:
@@ -350,9 +350,10 @@ async def test_azure_assistants_client_streaming_tools() -> None:
         messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
 
         # Test that the client can be used to get a response
-        response = azure_assistants_client.get_streaming_response(
+        response = azure_assistants_client.get_response(
             messages=messages,
             options={"tools": [get_weather], "tool_choice": "auto"},
+            stream=True,
         )
         full_message: str = ""
         async for chunk in response:
@@ -419,7 +420,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert chunk is not None
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:

@@ -239,8 +239,9 @@ async def test_integration_options(
 
         if streaming:
             # Test streaming mode
-            response_gen = client.get_streaming_response(
+            response_gen = client.get_response(
                 messages=messages,
+                stream=True,
                 options=options,
             )
 
@@ -291,9 +292,10 @@ async def test_integration_web_search() -> None:
                 "tool_choice": "auto",
                 "tools": [HostedWebSearchTool()],
             },
+            "stream": streaming,
         }
         if streaming:
-            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_chat_response_generator(client.get_response(**content))
         else:
             response = await client.get_response(**content)
 
@@ -316,9 +318,10 @@ async def test_integration_web_search() -> None:
                 "tool_choice": "auto",
                 "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
             },
+            "stream": streaming,
         }
         if streaming:
-            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_chat_response_generator(client.get_response(**content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None
@@ -356,7 +359,7 @@ async def test_integration_client_file_search_streaming() -> None:
     file_id, vector_store = await create_vector_store(azure_responses_client)
     # Test that the client will use the file search tool
     try:
-        response = azure_responses_client.get_streaming_response(
+        response = azure_responses_client.get_response(
             messages=[
                 ChatMessage(
                     role="user",

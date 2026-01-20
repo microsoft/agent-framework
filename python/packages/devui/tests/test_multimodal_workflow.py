@@ -86,9 +86,8 @@ class TestMultimodalWorkflowInput:
         assert result.contents[1].media_type == "image/png"
         assert result.contents[1].uri == TEST_IMAGE_DATA_URI
 
-    def test_parse_workflow_input_handles_json_string_with_multimodal(self):
+    async def test_parse_workflow_input_handles_json_string_with_multimodal(self):
         """Test that _parse_workflow_input correctly handles JSON string with multimodal content."""
-        import asyncio
 
         from agent_framework import ChatMessage
 
@@ -113,7 +112,7 @@ class TestMultimodalWorkflowInput:
         mock_workflow = MagicMock()
 
         # Parse the input
-        result = asyncio.run(executor._parse_workflow_input(mock_workflow, json_string_input))
+        result = await executor._parse_workflow_input(mock_workflow, json_string_input)
 
         # Verify result is ChatMessage with multimodal content
         assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"
@@ -127,9 +126,8 @@ class TestMultimodalWorkflowInput:
         assert result.contents[1].type == "data"
         assert result.contents[1].media_type == "image/png"
 
-    def test_parse_workflow_input_still_handles_simple_dict(self):
+    async def test_parse_workflow_input_still_handles_simple_dict(self):
         """Test that simple dict input still works (backward compatibility)."""
-        import asyncio
 
         from agent_framework import ChatMessage
 
@@ -148,7 +146,7 @@ class TestMultimodalWorkflowInput:
         mock_workflow.get_start_executor.return_value = mock_executor
 
         # Parse the input
-        result = asyncio.run(executor._parse_workflow_input(mock_workflow, json_string_input))
+        result = await executor._parse_workflow_input(mock_workflow, json_string_input)
 
         # Result should be ChatMessage (from _parse_structured_workflow_input)
         assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"

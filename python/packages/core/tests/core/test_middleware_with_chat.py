@@ -238,7 +238,7 @@ class TestChatMiddleware:
         # Execute streaming response
         messages = [ChatMessage("user", ["test message"])]
         updates: list[object] = []
-        async for update in chat_client_base.get_streaming_response(messages):
+        async for update in chat_client_base.get_response(messages, stream=True):
             updates.append(update)
 
         # Verify we got updates

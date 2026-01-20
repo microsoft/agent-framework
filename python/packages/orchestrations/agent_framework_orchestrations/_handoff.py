@@ -975,12 +975,12 @@ class HandoffBuilder:
             workflow = HandoffBuilder(participants=[triage, refund, billing]).with_checkpointing(storage).build()
 
             # Run workflow with a session ID for resumption
-            async for event in workflow.run_stream("Help me", session_id="user_123"):
+            async for event in workflow.run("Help me", session_id="user_123", stream=True):
                 # Process events...
                 pass
 
             # Later, resume the same conversation
-            async for event in workflow.run_stream("I need a refund", session_id="user_123"):
+            async for event in workflow.run("I need a refund", session_id="user_123", stream=True):
                 # Conversation continues from where it left off
                 pass
 
@@ -1039,7 +1039,7 @@ class HandoffBuilder:
         - Request/response handling
 
         Returns:
-            A fully configured Workflow ready to execute via `.run()` or `.run_stream()`.
+            A fully configured Workflow ready to execute via `.run()` with optional `stream=True` parameter.
 
         Raises:
             ValueError: If participants or coordinator were not configured, or if

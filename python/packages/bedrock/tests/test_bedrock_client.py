@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -33,7 +32,7 @@ class _StubBedrockRuntime:
         }
 
 
-def test_get_response_invokes_bedrock_runtime() -> None:
+async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
         model_id="amazon.titan-text",
@@ -46,7 +45,7 @@ def test_get_response_invokes_bedrock_runtime() -> None:
         ChatMessage("user", [Content.from_text(text="hello")]),
     ]
 
-    response = asyncio.run(client.get_response(messages=messages, options={"max_tokens": 32}))
+    response = await client.get_response(messages=messages, options={"max_tokens": 32})
 
     assert stub.calls, "Expected the runtime client to be called"
     payload = stub.calls[0]

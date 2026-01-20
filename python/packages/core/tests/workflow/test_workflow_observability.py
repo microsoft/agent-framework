@@ -315,7 +315,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Run workflow (this should create run spans)
     events = []
-    async for event in workflow.run_stream("test input"):
+    async for event in workflow.run("test input", stream=True):
         events.append(event)
 
     # Verify workflow executed correctly
@@ -416,7 +416,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
 
     # Run workflow and expect error
     with pytest.raises(ValueError, match="Test error"):
-        async for _ in workflow.run_stream("test input"):
+        async for _ in workflow.run("test input", stream=True):
             pass
 
     spans = span_exporter.get_finished_spans()

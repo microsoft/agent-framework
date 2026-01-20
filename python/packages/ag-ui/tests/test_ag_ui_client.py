@@ -42,18 +42,11 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose thread id helper."""
         return self._get_thread_id(options)
 
-    async def inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Proxy to protected streaming call."""
-        async for update in self._inner_get_streaming_response(messages=messages, options=options):
-            yield update
-
     async def inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
-    ) -> ChatResponse:
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         """Proxy to protected response call."""
-        return await self._inner_get_response(messages=messages, options=options)
+        return await self._inner_get_response(messages=messages, options=options, stream=stream)
 
 
 class TestAGUIChatClient:
@@ -185,7 +178,7 @@ class TestAGUIChatClient:
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.inner_get_streaming_response(messages=messages, options=chat_options):
+        async for update in client._inner_get_response(messages=messages, stream=True, options=chat_options):
             updates.append(update)
 
         assert len(updates) == 4

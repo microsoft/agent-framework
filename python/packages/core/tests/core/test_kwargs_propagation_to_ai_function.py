@@ -11,7 +11,7 @@ from agent_framework import (
     Content,
     tool,
 )
-from agent_framework._tools import _handle_function_calls_response, _handle_function_calls_streaming_response
+from agent_framework._tools import _handle_function_calls_unified
 
 
 class TestKwargsPropagationToFunctionTool:
@@ -32,7 +32,7 @@ class TestKwargsPropagationToFunctionTool:
 
         call_count = [0]
 
-        async def mock_get_response(self, messages, **kwargs):
+        async def mock_get_response(self, messages, *, stream=False, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 # First call: return a function call
@@ -52,13 +52,14 @@ class TestKwargsPropagationToFunctionTool:
             return ChatResponse(messages=[ChatMessage("assistant", ["Done!"])])
 
         # Wrap the function with function invocation decorator
-        wrapped = _handle_function_calls_response(mock_get_response)
+        wrapped = _handle_function_calls_unified(mock_get_response)
 
         # Call with custom kwargs that should propagate to the tool
         # Note: tools are passed in options dict, custom kwargs are passed separately
         result = await wrapped(
             mock_client,
             messages=[],
+            stream=False,
             options={"tools": [capture_kwargs_tool]},
             user_id="user-123",
             session_token="secret-token",
@@ -88,7 +89,7 @@ class TestKwargsPropagationToFunctionTool:
 
         call_count = [0]
 
-        async def mock_get_response(self, messages, **kwargs):
+        async def mock_get_response(self, messages, *, stream=False, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 return ChatResponse(
@@ -103,12 +104,13 @@ class TestKwargsPropagationToFunctionTool:
                 )
             return ChatResponse(messages=[ChatMessage("assistant", ["Completed!"])])
 
-        wrapped = _handle_function_calls_response(mock_get_response)
+        wrapped = _handle_function_calls_unified(mock_get_response)
 
         # Call with kwargs - the tool should work but not receive them
         result = await wrapped(
             mock_client,
             messages=[],
+            stream=False,
             options={"tools": [simple_tool]},
             user_id="user-123",  # This kwarg should be ignored by the tool
         )
@@ -130,7 +132,7 @@ class TestKwargsPropagationToFunctionTool:
 
         call_count = [0]
 
-        async def mock_get_response(self, messages, **kwargs):
+        async def mock_get_response(self, messages, *, stream=False, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 # Two function calls in one response
@@ -151,7 +153,7 @@ class TestKwargsPropagationToFunctionTool:
                 )
             return ChatResponse(messages=[ChatMessage("assistant", ["All done!"])])
 
-        wrapped = _handle_function_calls_response(mock_get_response)
+        wrapped = _handle_function_calls_unified(mock_get_response)
 
         # Call with kwargs
         result = await wrapped(
@@ -183,7 +185,7 @@ class TestKwargsPropagationToFunctionTool:
 
         call_count = [0]
 
-        async def mock_get_streaming_response(self, messages, **kwargs):
+        async def mock_get_response(self, messages, *, stream=True, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 # First call: return function call update
@@ -201,13 +203,14 @@ class TestKwargsPropagationToFunctionTool:
                 # Second call: return final response
                 yield ChatResponseUpdate(contents=[Content.from_text(text="Stream complete!")], role="assistant")
 
-        wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+        wrapped = _handle_function_calls_unified(mock_get_response)
 
         # Collect streaming updates
         updates: list[ChatResponseUpdate] = []
         async for update in wrapped(
             mock_client,
             messages=[],
+            stream=True,
             options={"tools": [streaming_capture_tool]},
             streaming_session="session-xyz",
             correlation_id="corr-123",

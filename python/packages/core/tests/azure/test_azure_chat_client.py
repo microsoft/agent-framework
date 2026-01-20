@@ -574,8 +574,9 @@ async def test_get_streaming(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     azure_chat_client = AzureOpenAIChatClient()
-    async for msg in azure_chat_client.get_streaming_response(
+    async for msg in azure_chat_client.get_response(
         messages=chat_history,
+        stream=True,
     ):
         assert msg is not None
         assert msg.message_id is not None
@@ -719,7 +720,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
     messages.append(ChatMessage("user", ["who are Emily and David?"]))
 
     # Test that the client can be used to get a response
-    response = azure_chat_client.get_streaming_response(messages=messages)
+    response = azure_chat_client.get_response(messages=messages, stream=True)
 
     full_message: str = ""
     async for chunk in response:
@@ -745,8 +746,9 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     messages.append(ChatMessage("user", ["who are Emily and David?"]))
 
     # Test that the client can be used to get a response
-    response = azure_chat_client.get_streaming_response(
+    response = azure_chat_client.get_response(
         messages=messages,
+        stream=True,
         options={"tools": [get_story_text], "tool_choice": "auto"},
     )
     full_message: str = ""
@@ -785,7 +787,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text

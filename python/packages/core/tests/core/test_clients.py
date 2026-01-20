@@ -20,8 +20,8 @@ async def test_chat_client_get_response(chat_client: ChatClientProtocol):
     assert response.messages[0].role == "assistant"
 
 
-async def test_chat_client_get_streaming_response(chat_client: ChatClientProtocol):
-    async for update in chat_client.get_streaming_response(ChatMessage("user", ["Hello"])):
+async def test_chat_client_get_response_streaming(chat_client: ChatClientProtocol):
+    async for update in chat_client.get_response(ChatMessage(role="user", text="Hello"), stream=True):
         assert update.text == "test streaming response " or update.text == "another update"
         assert update.role == "assistant"
 
@@ -37,8 +37,8 @@ async def test_base_client_get_response(chat_client_base: ChatClientProtocol):
     assert response.messages[0].text == "test response - Hello"
 
 
-async def test_base_client_get_streaming_response(chat_client_base: ChatClientProtocol):
-    async for update in chat_client_base.get_streaming_response(ChatMessage("user", ["Hello"])):
+async def test_base_client_get_response_streaming(chat_client_base: ChatClientProtocol):
+    async for update in chat_client_base.get_response(ChatMessage(role="user", text="Hello"), stream=True):
         assert update.text == "update - Hello" or update.text == "another update"
 
 

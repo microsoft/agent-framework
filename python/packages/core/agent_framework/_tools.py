@@ -1875,56 +1875,69 @@ def _replace_approval_contents_with_results(
             msg.contents.pop(idx)
 
 
-def _handle_function_calls_response(
-    func: Callable[..., Awaitable["ChatResponse"]],
-) -> Callable[..., Awaitable["ChatResponse"]]:
-    """Decorate the get_response method to enable function calls.
+def _function_calling_get_response(
+    func: Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]],
+) -> Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]]:
+    """Decorate the unified get_response method to handle function calls.
 
     Args:
         func: The get_response method to decorate.
 
     Returns:
-        A decorated function that handles function calls automatically.
+        A decorated function that handles function calls for both streaming and non-streaming modes.
     """
 
     def decorator(
-        func: Callable[..., Awaitable["ChatResponse"]],
-    ) -> Callable[..., Awaitable["ChatResponse"]]:
+        func: Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]],
+    ) -> Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]]:
         """Inner decorator."""
 
         @wraps(func)
-        async def function_invocation_wrapper(
+        def function_invocation_wrapper(
+            self: "ChatClientProtocol",
+            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+            *,
+            stream: bool = False,
+            options: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]:
+            if stream:
+                return _function_invocation_stream_impl(self, messages, options=options, **kwargs)
+            return _function_invocation_impl(self, messages, options=options, **kwargs)
+
+        async def _function_invocation_impl(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
             *,
             options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> "ChatResponse":
+            """Non-streaming implementation of function invocation wrapper."""
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
+                Content,
                 prepare_messages,
             )
 
             # Extract and merge function middleware from chat client with kwargs
             stored_middleware_pipeline = extract_and_merge_function_middleware(self, kwargs)
 
-            # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
+            # Get the config for function invocation
             config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
             if not config:
-                # Default config if not set
                 config = FunctionInvocationConfiguration()
 
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
-            response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
+            response: "ChatResponse | None" = None
 
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
+                # Handle approval responses
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(options)
-                    # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Content] = []
                     if approved_responses:
@@ -1943,22 +1956,27 @@ def _handle_function_calls_response(
                             if fcr.type == "function_result"
                         ):
                             errors_in_a_row += 1
-                            # no need to reset the counter here, since this is the start of a new attempt.
-                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
-                            logger.warning(
-                                "Maximum consecutive function call errors reached (%d). "
-                                "Stopping further function calls for this request.",
-                                config.max_consecutive_errors_per_request,
-                            )
-                            # break out of the loop and do the fallback response
-                            break
+                            if errors_in_a_row >= config.max_consecutive_errors_per_request:
+                                logger.warning(
+                                    "Maximum consecutive function call errors reached (%d). "
+                                    "Stopping further function calls for this request.",
+                                    config.max_consecutive_errors_per_request,
+                                )
+                                break
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
-                # Filter out internal framework kwargs before passing to clients.
-                # Also exclude tools and tool_choice since they are now in options dict.
+                # Call the underlying function - non-streaming
                 filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
-                response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
-                # if there are function calls, we will handle them first
+
+                response = await func(
+                    self,
+                    messages=prepped_messages,
+                    stream=False,
+                    options=options,
+                    **filtered_kwargs,
+                )
+
+                # Extract function calls from response
                 function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
                 function_calls = [
                     it
@@ -1970,11 +1988,9 @@ def _handle_function_calls_response(
                     _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
-                # we load the tools here, since middleware might have changed them compared to before calling func.
+                # Execute function calls if any
                 tools = _extract_tools(options)
                 if function_calls and tools:
-                    # Use the stored middleware pipeline instead of extracting from kwargs
-                    # because kwargs may have been modified by the underlying function
                     function_call_results, should_terminate = await _try_execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
@@ -1983,32 +1999,25 @@ def _handle_function_calls_response(
                         middleware_pipeline=stored_middleware_pipeline,
                         config=config,
                     )
-                    # Check if we have approval requests or function calls (not results) in the results
-                    if any(fccr.type == "function_approval_request" for fccr in function_call_results):
-                        # Add approval requests to the existing assistant message (with tool_calls)
-                        # instead of creating a separate tool message
-
-                        if response.messages and response.messages[0].role == "assistant":
+                    # Handle approval requests and declaration only
+                    if any(
+                        fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results
+                    ):
+                        if response.messages and response.messages[0].role.value == "assistant":
                             response.messages[0].contents.extend(function_call_results)
                         else:
-                            # Fallback: create new assistant message (shouldn't normally happen)
-                            result_message = ChatMessage("assistant", function_call_results)
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
                             response.messages.append(result_message)
-                        return response
-                    if any(fccr.type == "function_call" for fccr in function_call_results):
-                        # the function calls are already in the response, so we just continue
-                        return response
+                        return response  # type: ignore
 
-                    # Check if middleware signaled to terminate the loop (context.terminate=True)
-                    # This allows middleware to short-circuit the tool loop without another LLM call
+                    # Handle termination
                     if should_terminate:
-                        # Add tool results to response and return immediately without calling LLM again
-                        result_message = ChatMessage("tool", function_call_results)
+                        result_message = ChatMessage(role="tool", contents=function_call_results)
                         response.messages.append(result_message)
                         if fcc_messages:
                             for msg in reversed(fcc_messages):
                                 response.messages.insert(0, msg)
-                        return response
+                        return response  # type: ignore
 
                     if any(fcr.exception is not None for fcr in function_call_results if fcr.type == "function_result"):
                         errors_in_a_row += 1
@@ -2018,80 +2027,58 @@ def _handle_function_calls_response(
                                 "Stopping further function calls for this request.",
                                 config.max_consecutive_errors_per_request,
                             )
-                            # break out of the loop and do the fallback response
                             break
                     else:
                         errors_in_a_row = 0
 
-                    # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage("tool", function_call_results)
+                    # Add function results to messages
+                    result_message = ChatMessage(role="tool", contents=function_call_results)
                     response.messages.append(result_message)
-                    # response should contain 2 messages after this,
-                    # one with function call contents
-                    # and one with function result contents
-                    # the amount and call_id's should match
-                    # this runs in every but the first run
-                    # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
+
                     if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
                         prepped_messages.extend(response.messages)
                     continue
-                # If we reach this point, it means there were no function calls to handle,
-                # we'll add the previous function call and responses
-                # to the front of the list, so that the final response is the last one
-                # TODO (eavanvalkenburg): control this behavior?
+
+                # No more function calls, exit loop
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)
-                return response
+                return response  # type: ignore
 
-            # Failsafe: give up on tools, ask model for plain answer
+            # After loop completion or break, handle final response
+            if response is not None:
+                return response  # type: ignore
+
+            # Failsafe - disable function calling
             if options is None:
                 options = {}
             options["tool_choice"] = "none"
-
-            # Filter out internal framework kwargs before passing to clients.
             filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-            response = await func(self, messages=prepped_messages, options=options, **filtered_kwargs)
+
+            response = await func(
+                self,
+                messages=prepped_messages,
+                stream=False,
+                options=options,
+                **filtered_kwargs,
+            )
             if fcc_messages:
                 for msg in reversed(fcc_messages):
                     response.messages.insert(0, msg)
-            return response
+            return response  # type: ignore
 
-        return function_invocation_wrapper  # type: ignore
-
-    return decorator(func)
-
-
-def _handle_function_calls_streaming_response(
-    func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
-    """Decorate the get_streaming_response method to handle function calls.
-
-    Args:
-        func: The get_streaming_response method to decorate.
-
-    Returns:
-        A decorated function that handles function calls in streaming mode.
-    """
-
-    def decorator(
-        func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-    ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
-        """Inner decorator."""
-
-        @wraps(func)
-        async def streaming_function_invocation_wrapper(
+        async def _function_invocation_stream_impl(
             self: "ChatClientProtocol",
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
             *,
             options: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
-            """Wrap the inner get streaming response method to handle tool calls."""
+            """Streaming implementation of function invocation wrapper."""
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
@@ -2103,20 +2090,21 @@ def _handle_function_calls_streaming_response(
             # Extract and merge function middleware from chat client with kwargs
             stored_middleware_pipeline = extract_and_merge_function_middleware(self, kwargs)
 
-            # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
+            # Get the config for function invocation
             config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
             if not config:
-                # Default config if not set
                 config = FunctionInvocationConfiguration()
 
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
             fcc_messages: "list[ChatMessage]" = []
+            response: "ChatResponse | None" = None
+
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
+                # Handle approval responses
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(options)
-                    # Only execute APPROVED function calls, not rejected ones
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Content] = []
                     if approved_responses:
@@ -2135,13 +2123,26 @@ def _handle_function_calls_streaming_response(
                             if fcr.type == "function_result"
                         ):
                             errors_in_a_row += 1
-                            # no need to reset the counter here, since this is the start of a new attempt.
+                            if errors_in_a_row >= config.max_consecutive_errors_per_request:
+                                logger.warning(
+                                    "Maximum consecutive function call errors reached (%d). "
+                                    "Stopping further function calls for this request.",
+                                    config.max_consecutive_errors_per_request,
+                                )
+                                break
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
+                # Call the underlying function - streaming
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
+
                 all_updates: list["ChatResponseUpdate"] = []
-                # Filter out internal framework kwargs before passing to clients.
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-                async for update in func(self, messages=prepped_messages, options=options, **filtered_kwargs):
+                async for update in func(
+                    self,
+                    messages=prepped_messages,
+                    stream=True,
+                    options=options,
+                    **filtered_kwargs,
+                ):
                     all_updates.append(update)
                     yield update
 
@@ -2155,6 +2156,7 @@ def _handle_function_calls_streaming_response(
                     for item in upd.contents
                 ):
                     return
+                response: ChatResponse = ChatResponse.from_chat_response_updates(all_updates)
 
                 # Now combining the updates to create the full response.
                 # Depending on the prompt, the message may contain both function call
@@ -2169,13 +2171,11 @@ def _handle_function_calls_streaming_response(
                     if it.type == "function_call" and it.call_id not in function_results
                 ]
 
-                # When conversation id is present, it means that messages are hosted on the server.
-                # In this case, we need to update kwargs with conversation id and also clear messages
                 if response.conversation_id is not None:
                     _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
-                # we load the tools here, since middleware might have changed them compared to before calling func.
+                # Execute function calls if any
                 tools = _extract_tools(options)
                 fc_count = len(function_calls) if function_calls else 0
                 logger.debug(
@@ -2189,8 +2189,6 @@ def _handle_function_calls_streaming_response(
                         t_approval = getattr(t, "approval_mode", None)
                         logger.debug("  Tool %s: approval_mode=%s", t_name, t_approval)
                 if function_calls and tools:
-                    # Use the stored middleware pipeline instead of extracting from kwargs
-                    # because kwargs may have been modified by the underlying function
                     function_call_results, should_terminate = await _try_execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
@@ -2200,29 +2198,25 @@ def _handle_function_calls_streaming_response(
                         config=config,
                     )
 
-                    # Check if we have approval requests or function calls (not results) in the results
-                    if any(fccr.type == "function_approval_request" for fccr in function_call_results):
-                        # Add approval requests to the existing assistant message (with tool_calls)
-                        # instead of creating a separate tool message
-
-                        if response.messages and response.messages[0].role == "assistant":
+                    # Handle approval requests and declaration only
+                    if any(
+                        fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results
+                    ):
+                        if response.messages and response.messages[0].role.value == "assistant":
                             response.messages[0].contents.extend(function_call_results)
-                            # Yield the approval requests as part of the assistant message
-                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                         else:
-                            # Fallback: create new assistant message (shouldn't normally happen)
-                            result_message = ChatMessage("assistant", function_call_results)
-                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
                             response.messages.append(result_message)
-                        return
-                    if any(fccr.type == "function_call" for fccr in function_call_results):
-                        # the function calls were already yielded.
+                        yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                         return
 
-                    # Check if middleware signaled to terminate the loop (context.terminate=True)
-                    # This allows middleware to short-circuit the tool loop without another LLM call
+                    # Handle termination
                     if should_terminate:
-                        # Yield tool results and return immediately without calling LLM again
+                        result_message = ChatMessage(role="tool", contents=function_call_results)
+                        response.messages.append(result_message)
+                        if fcc_messages:
+                            for msg in reversed(fcc_messages):
+                                response.messages.insert(0, msg)
                         yield ChatResponseUpdate(contents=function_call_results, role="tool")
                         return
 
@@ -2234,42 +2228,49 @@ def _handle_function_calls_streaming_response(
                                 "Stopping further function calls for this request.",
                                 config.max_consecutive_errors_per_request,
                             )
-                            # break out of the loop and do the fallback response
                             break
                     else:
                         errors_in_a_row = 0
 
-                    # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage("tool", function_call_results)
+                    # Add function results to messages
+                    result_message = ChatMessage(role="tool", contents=function_call_results)
                     yield ChatResponseUpdate(contents=function_call_results, role="tool")
                     response.messages.append(result_message)
-                    # response should contain 2 messages after this,
-                    # one with function call contents
-                    # and one with function result contents
-                    # the amount and call_id's should match
-                    # this runs in every but the first run
-                    # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
+
                     if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
                         prepped_messages.extend(response.messages)
                     continue
-                # If we reach this point, it means there were no function calls to handle,
-                # so we're done
+
+                # No more function calls, exit loop
+                if fcc_messages:
+                    for msg in reversed(fcc_messages):
+                        response.messages.insert(0, msg)
                 return
 
-            # Failsafe: give up on tools, ask model for plain answer
+            # After loop completion or break, handle final response
+            if response is not None:
+                return
+
+            # Failsafe - disable function calling
             if options is None:
                 options = {}
             options["tool_choice"] = "none"
-            # Filter out internal framework kwargs before passing to clients.
             filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-            async for update in func(self, messages=prepped_messages, options=options, **filtered_kwargs):
+
+            async for update in func(
+                self,
+                messages=prepped_messages,
+                stream=True,
+                options=options,
+                **filtered_kwargs,
+            ):
                 yield update
 
-        return streaming_function_invocation_wrapper
+        return function_invocation_wrapper  # type: ignore
 
     return decorator(func)
 
@@ -2279,9 +2280,9 @@ def use_function_invocation(
 ) -> type[TChatClient]:
     """Class decorator that enables tool calling for a chat client.
 
-    This decorator wraps the ``get_response`` and ``get_streaming_response`` methods
-    to automatically handle function calls from the model, execute them, and return
-    the results back to the model for further processing.
+    This decorator wraps the unified ``get_response`` method to automatically handle
+    function calls from the model, execute them, and return the results back to the
+    model for further processing.
 
     Args:
         chat_client: The chat client class to decorate.
@@ -2290,7 +2291,7 @@ def use_function_invocation(
         The decorated chat client class with function invocation enabled.
 
     Raises:
-        ChatClientInitializationError: If the chat client does not have the required methods.
+        ChatClientInitializationError: If the chat client does not have the required method.
 
     Examples:
         .. code-block:: python
@@ -2300,11 +2301,7 @@ def use_function_invocation(
 
             @use_function_invocation
             class MyCustomClient(BaseChatClient):
-                async def get_response(self, messages, **kwargs):
-                    # Implementation here
-                    pass
-
-                async def get_streaming_response(self, messages, **kwargs):
+                async def get_response(self, messages, *, stream=False, **kwargs):
                     # Implementation here
                     pass
 
@@ -2316,21 +2313,13 @@ def use_function_invocation(
         return chat_client
 
     try:
-        chat_client.get_response = _handle_function_calls_response(  # type: ignore
+        chat_client.get_response = _function_calling_get_response(  # type: ignore
             func=chat_client.get_response,  # type: ignore
         )
     except AttributeError as ex:
         raise ChatClientInitializationError(
             f"Chat client {chat_client.__name__} does not have a get_response method, cannot apply function invocation."
         ) from ex
-    try:
-        chat_client.get_streaming_response = _handle_function_calls_streaming_response(  # type: ignore
-            func=chat_client.get_streaming_response,
-        )
-    except AttributeError as ex:
-        raise ChatClientInitializationError(
-            f"Chat client {chat_client.__name__} does not have a get_streaming_response method, "
-            "cannot apply function invocation."
-        ) from ex
+
     setattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, True)
     return chat_client
