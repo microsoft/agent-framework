@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Final, TypeVar
 
@@ -45,12 +46,13 @@ from anthropic.types.beta import (
     BetaTextBlock,
     BetaUsage,
 )
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+RESPONSE_FORMAT_TOOL_NAME: Final[str] = "_response_format_tool"
 
 ROLE_MAP: dict[Role, str] = {
     Role.USER: "user",
@@ -218,7 +220,7 @@ class AnthropicClient(BaseChatClient):
         # execute
         message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
         # process
-        return self._process_message(message)
+        return self._process_message(message, chat_options)
 
     async def _inner_get_streaming_response(
         self,
@@ -259,6 +261,7 @@ class AnthropicClient(BaseChatClient):
                 "instructions",  # handled via system message
                 "tool_choice",  # handled separately
                 "allow_multiple_tool_calls",  # handled via tool_choice
+                "response_format",  # handled separately
                 "additional_properties",  # handled separately
             }
         )
@@ -299,6 +302,15 @@ class AnthropicClient(BaseChatClient):
         if tools_config := self._prepare_tools_for_anthropic(chat_options):
             run_options.update(tools_config)
 
+        # response_format - use tool-based approach for structured outputs
+        if chat_options.response_format is not None:
+            response_format_tool = self._create_response_format_tool(chat_options.response_format)
+            if "tools" not in run_options:
+                run_options["tools"] = []
+            run_options["tools"].append(response_format_tool)
+            # Force the model to use this tool
+            run_options["tool_choice"] = {"type": "tool", "name": RESPONSE_FORMAT_TOOL_NAME}
+
         # additional properties
         additional_options = {
             key: value
@@ -323,6 +335,30 @@ class AnthropicClient(BaseChatClient):
             *BETA_FLAGS,
             *self.additional_beta_flags,
             *chat_options.additional_properties.get("additional_beta_flags", []),
+        }
+
+    def _create_response_format_tool(self, response_format: type[BaseModel]) -> dict[str, Any]:
+        """Create a tool definition from a Pydantic model for structured output.
+
+        Args:
+            response_format: The Pydantic model class to use as the response format.
+
+        Returns:
+            A dictionary representing the tool definition for Anthropic.
+        """
+        schema = response_format.model_json_schema()
+        # Remove $defs from schema and inline them if needed - Anthropic may not support $ref
+        if "$defs" in schema:
+            # For simple cases, just remove $defs as most response formats are flat
+            schema.pop("$defs", None)
+
+        return {
+            "type": "custom",
+            "name": RESPONSE_FORMAT_TOOL_NAME,
+            "description": (
+                f"Use this tool to provide your response in the required structured format: {response_format.__name__}"
+            ),
+            "input_schema": schema,
         }
 
     def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -484,11 +520,12 @@ class AnthropicClient(BaseChatClient):
 
     # region Response Processing Methods
 
-    def _process_message(self, message: BetaMessage) -> ChatResponse:
+    def _process_message(self, message: BetaMessage, chat_options: ChatOptions) -> ChatResponse:
         """Process the response from the Anthropic client.
 
         Args:
             message: The message returned by the Anthropic client.
+            chat_options: The chat options used for the request.
 
         Returns:
             A ChatResponse object containing the processed response.
@@ -505,6 +542,7 @@ class AnthropicClient(BaseChatClient):
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model_id=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
+            response_format=chat_options.response_format,
             raw_response=message,
         )
 
@@ -588,14 +626,29 @@ class AnthropicClient(BaseChatClient):
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
-                    contents.append(
-                        FunctionCallContent(
-                            call_id=content_block.id,
-                            name=content_block.name,
-                            arguments=content_block.input,
-                            raw_representation=content_block,
+                    # Check if this is the response_format tool - convert to text for structured output parsing
+                    if content_block.name == RESPONSE_FORMAT_TOOL_NAME:
+                        # Convert the tool arguments to JSON text so try_parse_value can parse it
+                        json_text = (
+                            json.dumps(content_block.input)
+                            if isinstance(content_block.input, dict)
+                            else str(content_block.input)
                         )
-                    )
+                        contents.append(
+                            TextContent(
+                                text=json_text,
+                                raw_representation=content_block,
+                            )
+                        )
+                    else:
+                        contents.append(
+                            FunctionCallContent(
+                                call_id=content_block.id,
+                                name=content_block.name,
+                                arguments=content_block.input,
+                                raw_representation=content_block,
+                            )
+                        )
                 case "mcp_tool_result":
                     call_id, name = self._last_call_id_name or (None, None)
                     contents.append(
@@ -647,14 +700,23 @@ class AnthropicClient(BaseChatClient):
                     )
                 case "input_json_delta":
                     call_id, name = self._last_call_id_name if self._last_call_id_name else ("", "")
-                    contents.append(
-                        FunctionCallContent(
-                            call_id=call_id,
-                            name=name,
-                            arguments=content_block.partial_json,
-                            raw_representation=content_block,
+                    # Check if this is the response_format tool - convert to text for structured output parsing
+                    if name == RESPONSE_FORMAT_TOOL_NAME:
+                        contents.append(
+                            TextContent(
+                                text=content_block.partial_json,
+                                raw_representation=content_block,
+                            )
                         )
-                    )
+                    else:
+                        contents.append(
+                            FunctionCallContent(
+                                call_id=call_id,
+                                name=name,
+                                arguments=content_block.partial_json,
+                                raw_representation=content_block,
+                            )
+                        )
                 case "thinking" | "thinking_delta":
                     contents.append(TextReasoningContent(text=content_block.thinking, raw_representation=content_block))
                 case _:
