@@ -430,10 +430,14 @@ class ShellTool(BaseTool):
     def _validate_paths(self, command: str) -> _ValidationResult:
         """Check if command accesses allowed paths."""
         paths = self._extract_paths(command)
+        if not paths:
+            return _ValidationResult(is_valid=True)
+
+        # Pre-compute normalized blocked/allowed paths
+        blocked_normalized = [os.path.realpath(p).replace("\\", "/").rstrip("/") for p in self.blocked_paths]
+        allowed_normalized = [os.path.realpath(p).replace("\\", "/").rstrip("/") for p in self.allowed_paths]
 
         for path in paths:
-            # Resolve relative paths using the configured working directory
-            # to prevent bypass via relative path traversal
             try:
                 if not os.path.isabs(path) and self.working_directory:
                     path = os.path.join(self.working_directory, path)
@@ -442,28 +446,18 @@ class ShellTool(BaseTool):
                 resolved = path
             normalized = resolved.replace("\\", "/").rstrip("/")
 
-            for blocked in self.blocked_paths:
-                blocked_resolved = os.path.realpath(blocked)
-                blocked_normalized = blocked_resolved.replace("\\", "/").rstrip("/")
-                if normalized.startswith(blocked_normalized):
+            for blocked in blocked_normalized:
+                if normalized.startswith(blocked):
                     return _ValidationResult(
                         is_valid=False,
                         error_message=f"Access to blocked path not allowed: {path}",
                     )
 
-            if self.allowed_paths:
-                allowed = False
-                for allowed_path in self.allowed_paths:
-                    allowed_resolved = os.path.realpath(allowed_path)
-                    allowed_normalized = allowed_resolved.replace("\\", "/").rstrip("/")
-                    if normalized.startswith(allowed_normalized):
-                        allowed = True
-                        break
-                if not allowed:
-                    return _ValidationResult(
-                        is_valid=False,
-                        error_message=f"Path not in allowed paths: {path}",
-                    )
+            if allowed_normalized and not any(normalized.startswith(allowed) for allowed in allowed_normalized):
+                return _ValidationResult(
+                    is_valid=False,
+                    error_message=f"Path not in allowed paths: {path}",
+                )
 
         return _ValidationResult(is_valid=True)
 

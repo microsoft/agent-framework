@@ -52,13 +52,14 @@ class LocalShellExecutor(ShellExecutor):
         return data.decode(self._default_encoding, errors=self._encoding_errors)
 
     def _truncate_output(self, data: bytes, max_bytes: int) -> tuple[bytes, bool]:
-        """Truncate output at valid UTF-8 boundary."""
+        """Truncate output at valid encoding boundary."""
         if len(data) <= max_bytes:
             return data, False
         truncated = data[:max_bytes]
+        # Try to find a valid boundary by removing up to 4 bytes (max UTF-8 char length)
         for i in range(min(4, len(truncated))):
             try:
-                truncated[: len(truncated) - i].decode("utf-8")
+                truncated[: len(truncated) - i].decode(self._default_encoding)
                 return truncated[: len(truncated) - i], True
             except UnicodeDecodeError:
                 continue
