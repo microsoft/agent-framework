@@ -34,7 +34,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
                 fullyQualifiedMetadataName: MessageHandlerAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
                 transform: static (ctx, ct) => SemanticAnalyzer.AnalyzeHandlerMethod(ctx, ct))
-            .Where(static result => !string.IsNullOrEmpty(result.ClassKey));
+            .Where(static result => !string.IsNullOrWhiteSpace(result.ClassKey));
 
         // Pipeline 2: Classes with [SendsMessage] attribute
         IncrementalValuesProvider<ClassProtocolInfo> sendProtocolResults = context.SyntaxProvider
@@ -132,7 +132,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
     {
         var sb = new StringBuilder();
 
-        if (!string.IsNullOrEmpty(info.Namespace))
+        if (!string.IsNullOrWhiteSpace(info.Namespace))
         {
             sb.Append(info.Namespace)
                .Append('.');
@@ -147,7 +147,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
         sb.Append(info.ClassName);
 
         // Handle generic type parameters in hint name
-        if (!string.IsNullOrEmpty(info.GenericParameters))
+        if (!string.IsNullOrWhiteSpace(info.GenericParameters))
         {
             // Replace < > with underscores for valid file name
             sb.Append('_')

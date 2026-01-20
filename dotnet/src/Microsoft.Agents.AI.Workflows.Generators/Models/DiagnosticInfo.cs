@@ -57,7 +57,7 @@ internal sealed record DiagnosticInfo(
         {
             location = Location.Create(syntaxTree, this.Span);
         }
-        else if (!string.IsNullOrEmpty(this.FilePath))
+        else if (!string.IsNullOrWhiteSpace(this.FilePath))
         {
             location = Location.Create(this.FilePath, this.Span, this.LineSpan);
         }

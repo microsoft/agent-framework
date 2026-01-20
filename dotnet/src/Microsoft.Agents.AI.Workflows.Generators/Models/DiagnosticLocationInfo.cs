@@ -35,7 +35,7 @@ internal sealed record DiagnosticLocationInfo(
     /// </summary>
     public Location ToRoslynLocation()
     {
-        if (string.IsNullOrEmpty(this.FilePath))
+        if (string.IsNullOrWhiteSpace(this.FilePath))
         {
             return Location.None;
         }

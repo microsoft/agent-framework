@@ -37,7 +37,7 @@ internal static class SourceBuilder
         sb.AppendLine();
 
         // Namespace
-        if (!string.IsNullOrEmpty(info.Namespace))
+        if (!string.IsNullOrWhiteSpace(info.Namespace))
         {
             sb.AppendLine($"namespace {info.Namespace};");
             sb.AppendLine();

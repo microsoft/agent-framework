@@ -583,11 +583,11 @@ internal static class SemanticAnalyzer
 
             foreach (var namedArg in attr.NamedArguments)
             {
-                if (namedArg.Key == "Yield" && !namedArg.Value.IsNull)
+                if (namedArg.Key.Equals("Yield", StringComparison.Ordinal) && !namedArg.Value.IsNull)
                 {
                     yieldTypes = ExtractTypeArray(namedArg.Value);
                 }
-                else if (namedArg.Key == "Send" && !namedArg.Value.IsNull)
+                else if (namedArg.Key.Equals("Send", StringComparison.Ordinal) && !namedArg.Value.IsNull)
                 {
                     sendTypes = ExtractTypeArray(namedArg.Value);
                 }
