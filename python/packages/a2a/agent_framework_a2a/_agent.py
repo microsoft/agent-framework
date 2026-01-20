@@ -36,6 +36,7 @@ from agent_framework import (
     Role,
     TextContent,
     UriContent,
+    normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
 from agent_framework.observability import use_agent_instrumentation
@@ -236,7 +237,7 @@ class A2AAgent(BaseAgent):
         Yields:
             An agent response item.
         """
-        messages = self._normalize_messages(messages)
+        messages = normalize_messages(messages)
         a2a_message = self._prepare_message_for_a2a(messages[-1])
 
         response_stream = self.client.send_message(a2a_message)

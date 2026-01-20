@@ -180,6 +180,17 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | [`getting_started/context_providers/simple_context_provider.py`](./getting_started/context_providers/simple_context_provider.py) | Simple context provider implementation example |
 | [`getting_started/context_providers/aggregate_context_provider.py`](./getting_started/context_providers/aggregate_context_provider.py) | Shows how to combine multiple context providers using an AggregateContextProvider |
 
+## Declarative
+
+| File | Description |
+|------|-------------|
+| [`getting_started/declarative/azure_openai_responses_agent.py`](./getting_started/declarative/azure_openai_responses_agent.py) | Basic agent using Azure OpenAI with structured responses |
+| [`getting_started/declarative/get_weather_agent.py`](./getting_started/declarative/get_weather_agent.py) | Agent with custom function tools using declarative bindings |
+| [`getting_started/declarative/inline_yaml.py`](./getting_started/declarative/inline_yaml.py) | Agent created from inline YAML string |
+| [`getting_started/declarative/mcp_tool_yaml.py`](./getting_started/declarative/mcp_tool_yaml.py) | MCP tool configuration with API key and Azure Foundry connection auth |
+| [`getting_started/declarative/microsoft_learn_agent.py`](./getting_started/declarative/microsoft_learn_agent.py) | Agent with MCP server integration for Microsoft Learn documentation |
+| [`getting_started/declarative/openai_responses_agent.py`](./getting_started/declarative/openai_responses_agent.py) | Basic agent using OpenAI directly |
+
 ## DevUI
 
 | File | Description |
