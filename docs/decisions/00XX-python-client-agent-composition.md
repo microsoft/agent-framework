@@ -1,8 +1,8 @@
 ---
 status: proposed
 contact: eavanvalkenburg
-date: 2026-01-12
-deciders: eavanvalkenburg, markwallace-microsoft,  sphenry, alliscode, johanst, brettcannon
+date: 2026-01-20
+deciders: eavanvalkenburg, markwallace-microsoft, sphenry, alliscode, johanst, brettcannon
 consulted: taochenosu, moonbox3, dmytrostruk, giles17
 ---
 
@@ -10,7 +10,7 @@ consulted: taochenosu, moonbox3, dmytrostruk, giles17
 
 ## Context and Problem Statement
 
-In Python we currently use a set of decorators that can be applied to ChatClients and Agents, those are for function calling, telemetry and middleware. However we currently do not allow a user to compose these themselves, for example to create a ChatClient that does not do function calling, but does have tools being passed to a API. Or to only have telemetry enabled on a chat client, but not on the agent. Up unto this point, that has been a sensible decision because it makes getting started very easy. However as we add more features, and more ways to customize the behavior of clients and agents, this becomes a limitation.
+In Python we currently use a set of decorators that can be applied to ChatClients and Agents, those are for function calling, telemetry and middleware. However we currently do not allow a user to compose these themselves, for example to create a ChatClient that does not do function calling, but does have tools being passed to a API. Or to only have telemetry enabled on a chat client, but not on the agent. Up to this point, that has been a sensible decision because it makes getting started very easy. However as we add more features, and more ways to customize the behavior of clients and agents, this becomes a limitation.
 
 We have also seen latency issues, and every decorator adds some overhead, so being able to compose a client or agent with only the features you need would help with that as well, and it will at least make this a very explicit tradeoff. Note all the ChatClientBuilderExtensions in the C# version [here](https://github.com/dotnet/extensions/tree/main/src/Libraries/Microsoft.Extensions.AI/ChatCompletion)
 
