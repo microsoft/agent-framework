@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from typing import Any
 
 from pydantic import PrivateAttr
@@ -33,22 +33,22 @@ class _SimpleAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl()
+
+    async def _run_impl(self) -> AgentResponse:
         return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
         # This agent does not support streaming; yield a single complete response
         yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
 
@@ -78,7 +78,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
 
     wf = WorkflowBuilder().set_start_executor(agent_exec).add_edge(agent_exec, capturer).build()
 
-    # Act: use run() instead of run_stream() to test non-streaming mode
+    # Act: use run() instead of run(stream=True) to test non-streaming mode
     result = await wf.run("hello world")
 
     # Extract output from run result
@@ -102,13 +102,19 @@ class _CaptureAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl(messages)
+        return self._run_impl(messages)
+
+    async def _run_impl(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> AgentResponse:
         # Normalize and record messages for verification when running non-streaming
         norm: list[ChatMessage] = []
         if messages:
@@ -120,12 +126,9 @@ class _CaptureAgent(BaseAgent):
         self._last_messages = norm
         return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
-    async def run_stream(  # type: ignore[override]
+    async def _run_stream_impl(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         # Normalize and record messages for verification when running streaming
         norm: list[ChatMessage] = []
@@ -147,7 +150,7 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     wf = SequentialBuilder().participants([a1, a2]).build()
 
     # Act
-    async for ev in wf.run_stream("hello seq"):
+    async for ev in wf.run("hello seq", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             break
 
