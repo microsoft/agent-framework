@@ -354,9 +354,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options = self._prepare_options(messages, options, **kwargs)
         # execute
         message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-        # process - merge response_format from kwargs if present
-        merged_options = {**options, **{k: v for k, v in kwargs.items() if k == "response_format"}}
-        return self._process_message(message, merged_options)
+        # process
+        return self._process_message(message, options)
 
     @override
     async def _inner_get_streaming_response(
@@ -444,8 +443,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             run_options.update(tools_config)
 
         # response_format - use tool-based approach for structured outputs
-        # response_format can come from options or kwargs
-        response_format = options.get("response_format") or kwargs.get("response_format")
+        response_format = options.get("response_format")
         if response_format is not None:
             response_format_tool = self._create_response_format_tool(response_format)
             if "tools" not in run_options:
@@ -454,9 +452,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             # Force the model to use this tool
             run_options["tool_choice"] = {"type": "tool", "name": RESPONSE_FORMAT_TOOL_NAME}
 
-        # Filter out response_format from kwargs since we handle it separately
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "response_format"}
-        run_options.update(filtered_kwargs)
+        run_options.update(kwargs)
         return run_options
 
     def _prepare_betas(self, options: dict[str, Any]) -> set[str]:
