@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, MutableSequence
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, cast
 
@@ -67,25 +67,32 @@ TAGUIChatOptions = TypeVar(
 def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
-    original_get_streaming_response = chat_client.get_streaming_response
-
-    @wraps(original_get_streaming_response)
-    async def streaming_wrapper(self: Any, *args: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
-        async for update in original_get_streaming_response(self, *args, **kwargs):
-            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
-            yield update
-
-    chat_client.get_streaming_response = streaming_wrapper  # type: ignore[assignment]
-
     original_get_response = chat_client.get_response
 
     @wraps(original_get_response)
-    async def response_wrapper(self: Any, *args: Any, **kwargs: Any) -> ChatResponse:
-        response: ChatResponse[Any] = await original_get_response(self, *args, **kwargs)  # type: ignore[var-annotated]
+    def response_wrapper(
+        self, *args: Any, stream: bool = False, **kwargs: Any
+    ) -> Awaitable[ChatResponse] | AsyncIterable[ChatResponseUpdate]:
+        if stream:
+            return _stream_wrapper_impl(self, original_get_response, *args, **kwargs)
+        else:
+            return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
+
+    async def _response_wrapper_impl(self, original_func: Any, *args: Any, **kwargs: Any) -> ChatResponse:
+        """Non-streaming wrapper implementation."""
+        response = await original_func(self, *args, stream=False, **kwargs)
         if response.messages:
             for message in response.messages:
                 _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
         return response
+
+    async def _stream_wrapper_impl(
+        self, original_func: Any, *args: Any, **kwargs: Any
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Streaming wrapper implementation."""
+        async for update in original_func(self, *args, stream=True, **kwargs):
+            _unwrap_server_function_call_contents(cast(MutableSequence[Contents | dict[str, Any]], update.contents))
+            yield update
 
     chat_client.get_response = response_wrapper  # type: ignore[assignment]
     return chat_client

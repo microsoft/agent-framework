@@ -1122,8 +1122,9 @@ async def test_integration_options(
     for streaming in [False, True]:
         if streaming:
             # Test streaming mode
-            response_gen = client.get_streaming_response(
+            response_gen = client.get_response(
                 messages=messages,
+                stream=True,
                 options=options,
             )
 
@@ -1225,8 +1226,9 @@ async def test_integration_agent_options(
 
             if streaming:
                 # Test streaming mode
-                response_gen = client.get_streaming_response(
+                response_gen = client.get_response(
                     messages=messages,
+                    stream=True,
                     options=options,
                 )
 
@@ -1275,7 +1277,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
             else:
                 response = await client.get_response(**content)
 
@@ -1300,7 +1302,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
             else:
                 response = await client.get_response(**content)
             assert response.text is not None

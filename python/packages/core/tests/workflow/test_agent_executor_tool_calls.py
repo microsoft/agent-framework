@@ -2,7 +2,7 @@
 
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from typing import Any
 
 from typing_extensions import Never
@@ -37,22 +37,25 @@ class _ToolCallingAgent(BaseAgent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        """Unified run method with stream parameter."""
+        if stream:
+            return self._run_stream_impl()
+        return self._run_non_stream_impl()
+
+    async def _run_non_stream_impl(self) -> AgentResponse:
         """Non-streaming run - not used in this test."""
         return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
 
-    async def run_stream(
+    async def _run_stream_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Simulate streaming with tool calls and results."""
         # First update: some text
@@ -101,7 +104,7 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
 
     # Act: run in streaming mode
     events: list[AgentRunUpdateEvent] = []
-    async for event in workflow.run_stream("What's the weather?"):
+    async for event in workflow.run("What's the weather?", stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             events.append(event)
 
@@ -150,8 +153,42 @@ class MockChatClient:
     async def get_response(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+        if stream:
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                if self._iteration == 0:
+                    if self._parallel_request:
+                        yield ChatResponseUpdate(
+                            contents=[
+                                FunctionCallContent(
+                                    call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
+                                ),
+                                FunctionCallContent(
+                                    call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
+                                ),
+                            ],
+                            role="assistant",
+                        )
+                    else:
+                        yield ChatResponseUpdate(
+                            contents=[
+                                FunctionCallContent(
+                                    call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
+                                )
+                            ],
+                            role="assistant",
+                        )
+                else:
+                    yield ChatResponseUpdate(text=TextContent(text="Tool executed "), role="assistant")
+                    yield ChatResponseUpdate(contents=[TextContent(text="successfully.")], role="assistant")
+                self._iteration += 1
+
+            return _stream()
+
+        # Non-streaming mode
         if self._iteration == 0:
             if self._parallel_request:
                 response = ChatResponse(
@@ -183,39 +220,6 @@ class MockChatClient:
 
         self._iteration += 1
         return response
-
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        if self._iteration == 0:
-            if self._parallel_request:
-                yield ChatResponseUpdate(
-                    contents=[
-                        Content.from_function_call(
-                            call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
-                        ),
-                        Content.from_function_call(
-                            call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
-                        ),
-                    ],
-                    role="assistant",
-                )
-            else:
-                yield ChatResponseUpdate(
-                    contents=[
-                        Content.from_function_call(
-                            call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
-                        )
-                    ],
-                    role="assistant",
-                )
-        else:
-            yield ChatResponseUpdate(text=Content.from_text(text="Tool executed "), role="assistant")
-            yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
-
-        self._iteration += 1
 
 
 @executor(id="test_executor")
@@ -268,7 +272,7 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
 
     # Act
     request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("Invoke tool requiring approval"):
+    async for event in workflow.run("Invoke tool requiring approval", stream=True):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
 
@@ -339,7 +343,7 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
 
     # Act
     request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("Invoke tool requiring approval"):
+    async for event in workflow.run("Invoke tool requiring approval", stream=True):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
 

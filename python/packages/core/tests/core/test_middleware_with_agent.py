@@ -384,7 +384,7 @@ class TestChatAgentStreamingMiddleware:
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(messages):
+        async for update in agent.run(messages, stream=True):
             updates.append(update)
 
         # Verify streaming response
@@ -418,7 +418,7 @@ class TestChatAgentStreamingMiddleware:
         assert response is not None
 
         # Test streaming execution
-        async for _ in agent.run_stream(messages):
+        async for _ in agent.run(messages, stream=True):
             pass
 
         # Verify flags: [non-streaming, streaming]
@@ -900,7 +900,7 @@ class TestMiddlewareDynamicRebuild:
 
         # First streaming execution
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test stream message 1"):
+        async for update in agent.run("Test stream message 1", stream=True):
             updates.append(update)
 
         assert "stream_middleware1_start" in execution_log
@@ -915,7 +915,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Second streaming execution - should use only middleware2
         updates = []
-        async for update in agent.run_stream("Test stream message 2"):
+        async for update in agent.run("Test stream message 2", stream=True):
             updates.append(update)
 
         assert "stream_middleware1_start" not in execution_log
@@ -1107,7 +1107,7 @@ class TestRunLevelMiddleware:
 
         # Execute streaming with run middleware
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
+        async for update in agent.run("Test streaming", middleware=[run_middleware], stream=True):
             updates.append(update)
 
         # Verify streaming response
@@ -1751,7 +1751,7 @@ class TestChatAgentChatMiddleware:
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(messages):
+        async for update in agent.run(messages, stream=True):
             updates.append(update)
 
         # Verify streaming response

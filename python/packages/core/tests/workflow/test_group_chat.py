@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, cast
 
 import pytest
@@ -38,13 +38,19 @@ class StubAgent(BaseAgent):
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl()
+
+    async def _run_impl(self) -> AgentResponse:
         response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
         return AgentResponse(messages=[response])
 
@@ -68,10 +74,9 @@ class MockChatClient:
 
     additional_properties: dict[str, Any]
 
-    async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
-        raise NotImplementedError
-
-    def get_streaming_response(self, messages: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+    async def get_response(
+        self, messages: Any, stream: bool = False, **kwargs: Any
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         raise NotImplementedError
 
 
@@ -235,7 +240,7 @@ async def test_group_chat_builder_basic_flow() -> None:
     )
 
     outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream("coordinate task"):
+    async for event in workflow.run("coordinate task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
             if isinstance(data, list):
@@ -404,7 +409,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -439,7 +444,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -467,7 +472,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -489,7 +494,7 @@ class TestGroupChatWorkflow:
         workflow = GroupChatBuilder().with_orchestrator(selection_func=selector).participants([agent]).build()
 
         with pytest.raises(RuntimeError, match="Selection function returned unknown participant 'unknown_agent'"):
-            async for _ in workflow.run_stream("test task"):
+            async for _ in workflow.run("test task", stream=True):
                 pass
 
 
@@ -515,7 +520,7 @@ class TestCheckpointing:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -544,7 +549,7 @@ class TestConversationHandling:
         )
 
         with pytest.raises(ValueError, match="At least one ChatMessage is required to start the group chat workflow."):
-            async for _ in workflow.run_stream([]):
+            async for _ in workflow.run([], stream=True):
                 pass
 
     async def test_handle_string_input(self) -> None:
@@ -568,7 +573,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test string"):
+        async for event in workflow.run("test string", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -597,7 +602,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream(task_message):
+        async for event in workflow.run(task_message, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -629,7 +634,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream(conversation):
+        async for event in workflow.run(conversation, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -661,7 +666,7 @@ class TestRoundLimitEnforcement:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test"):
+        async for event in workflow.run("test", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -696,7 +701,7 @@ class TestRoundLimitEnforcement:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test"):
+        async for event in workflow.run("test", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -728,7 +733,7 @@ async def test_group_chat_checkpoint_runtime_only() -> None:
     )
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+    async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -766,7 +771,7 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
             .build()
         )
         baseline_output: list[ChatMessage] | None = None
-        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+        async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if isinstance(ev, WorkflowOutputEvent):
                 baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
             if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -814,7 +819,7 @@ async def test_group_chat_with_request_info_filtering():
 
     # Run until we get a request info event (should be before beta, not alpha)
     request_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             # Don't break - let stream complete naturally when paused
@@ -866,7 +871,7 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
 
     # Run until we get a request info event
     request_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             break

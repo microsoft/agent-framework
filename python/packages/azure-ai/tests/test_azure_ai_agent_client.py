@@ -309,7 +309,7 @@ async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ag
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call without existing thread - should create new one
-    response = chat_client.get_streaming_response(messages)
+    response = chat_client.get_response(messages, stream=True)
     # Consume the generator to trigger the method execution
     async for _ in response:
         pass
@@ -474,7 +474,7 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
         yield ChatResponseUpdate(role=Role.ASSISTANT, text="Hello back")
 
     with (
-        patch.object(chat_client, "_inner_get_streaming_response", return_value=mock_streaming_response()),
+        patch.object(chat_client, "_inner_get_response", return_value=mock_streaming_response()),
         patch("agent_framework.ChatResponse.from_chat_response_generator") as mock_from_generator,
     ):
         mock_response = ChatResponse(role=Role.ASSISTANT, text="Hello back")
@@ -1409,7 +1409,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_streaming_response(messages=messages)
+        response = azure_ai_chat_client.get_response(messages=messages, stream=True)
 
         full_message: str = ""
         async for chunk in response:
@@ -1433,8 +1433,9 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_streaming_response(
+        response = azure_ai_chat_client.get_response(
             messages=messages,
+            stream=True,
             options={"tools": [get_weather], "tool_choice": "auto"},
         )
         full_message: str = ""

@@ -46,20 +46,23 @@ class MockChatClient:
         self._handoff_to = handoff_to
         self._call_index = 0
 
-    async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
+    async def get_response(
+        self, messages: Any, stream: bool = False, **kwargs: Any
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+        if stream:
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
+                yield ChatResponseUpdate(contents=contents, role=Role.ASSISTANT)
+
+            return _stream()
+
         contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
         reply = ChatMessage(
             role=Role.ASSISTANT,
             contents=contents,
         )
         return ChatResponse(messages=reply, response_id="mock_response")
-
-    def get_streaming_response(self, messages: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
-        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-            contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-            yield ChatResponseUpdate(contents=contents, role=Role.ASSISTANT)
-
-        return _stream()
 
     def _next_call_id(self) -> str | None:
         if not self._handoff_to:
@@ -130,7 +133,7 @@ async def test_handoff():
     # Start conversation - triage hands off to specialist then escalation
     # escalation won't trigger a handoff, so the response from it will become
     # a request for user input because autonomous mode is not enabled by default.
-    events = await _drain(workflow.run_stream("Need technical support"))
+    events = await _drain(workflow.run("Need technical support", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
 
     assert requests
@@ -164,7 +167,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
         .build()
     )
 
-    events = await _drain(workflow.run_stream("Package arrived broken"))
+    events = await _drain(workflow.run("Package arrived broken", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert not requests, "Autonomous mode should not request additional user input"
 
@@ -192,7 +195,7 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
         .build()
     )
 
-    events = await _drain(workflow.run_stream("Start"))
+    events = await _drain(workflow.run("Start", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests and len(requests) == 1, "Turn limit should force a user input request"
     assert requests[0].source_executor_id == worker.name
@@ -235,7 +238,7 @@ async def test_handoff_async_termination_condition() -> None:
         .build()
     )
 
-    events = await _drain(workflow.run_stream("First user message"))
+    events = await _drain(workflow.run("First user message", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
@@ -487,7 +490,7 @@ async def test_handoff_with_participant_factories():
     # Factories should be called during build
     assert call_count == 2
 
-    events = await _drain(workflow.run_stream("Need help"))
+    events = await _drain(workflow.run("Need help", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
@@ -558,7 +561,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
     )
 
     # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run_stream("Initial request"))
+    events = await _drain(workflow.run("Initial request", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
@@ -599,7 +602,7 @@ async def test_handoff_participant_factories_with_checkpointing():
     )
 
     # Run workflow and capture output
-    events = await _drain(workflow.run_stream("checkpoint test"))
+    events = await _drain(workflow.run("checkpoint test", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
@@ -677,7 +680,7 @@ async def test_handoff_participant_factories_autonomous_mode():
         .build()
     )
 
-    events = await _drain(workflow.run_stream("Issue"))
+    events = await _drain(workflow.run("Issue", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests and len(requests) == 1
     assert requests[0].source_executor_id == "specialist"
