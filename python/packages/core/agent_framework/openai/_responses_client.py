@@ -660,7 +660,7 @@ class OpenAIBaseResponsesClient(
                 case FunctionCallContent():
                     function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)
                     all_messages.append(function_call)  # type: ignore
-                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
+                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent() | TextReasoningContent():
                     all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
                 case _:
                     if "content" not in args:
@@ -686,10 +686,12 @@ class OpenAIBaseResponsesClient(
             case TextReasoningContent():
                 ret: dict[str, Any] = {
                     "type": "reasoning",
-                    "summary": {
-                        "type": "summary_text",
-                        "text": content.text,
-                    },
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": content.text,
+                        }
+                    ],
                 }
                 props: dict[str, Any] | None = getattr(content, "additional_properties", None)
                 if props:
@@ -1132,14 +1134,8 @@ class OpenAIBaseResponsesClient(
             case "response.reasoning_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case "response.reasoning_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
-                metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
-                metadata.update(self._get_metadata_from_response(event))
-            case "response.reasoning_summary_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.created":
                 response_id = event.response.id

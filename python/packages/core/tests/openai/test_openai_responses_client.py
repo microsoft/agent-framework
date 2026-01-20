@@ -1345,7 +1345,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
     )
     result = client._prepare_content_for_openai(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
-    assert result["summary"]["text"] == "Comprehensive reasoning summary"
+    assert result["summary"][0]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
     assert result["content"]["type"] == "reasoning_text"
     assert result["content"]["text"] == "Step-by-step analysis"
@@ -1378,7 +1378,7 @@ def test_streaming_reasoning_text_delta_event() -> None:
 
 
 def test_streaming_reasoning_text_done_event() -> None:
-    """Test reasoning text done event creates TextReasoningContent with complete text."""
+    """Test reasoning text done event is skipped to avoid duplication."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -1392,15 +1392,11 @@ def test_streaming_reasoning_text_done_event() -> None:
         text="complete reasoning",
     )
 
-    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}):
         response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
-        assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
-        assert response.contents[0].text == "complete reasoning"
-        assert response.contents[0].raw_representation == event
-        mock_metadata.assert_called_once_with(event)
-        assert response.additional_properties == {"test": "data"}
+        # Event should be ignored - no content added (already streamed via .delta events)
+        assert len(response.contents) == 0
 
 
 def test_streaming_reasoning_summary_text_delta_event() -> None:
@@ -1429,7 +1425,7 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
 
 
 def test_streaming_reasoning_summary_text_done_event() -> None:
-    """Test reasoning summary text done event creates TextReasoningContent with complete text."""
+    """Test reasoning summary text done event is skipped to avoid duplication."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -1443,15 +1439,11 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
         text="complete summary",
     )
 
-    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
+    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}):
         response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
-        assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
-        assert response.contents[0].text == "complete summary"
-        assert response.contents[0].raw_representation == event
-        mock_metadata.assert_called_once_with(event)
-        assert response.additional_properties == {"custom": "meta"}
+        # Event should be ignored - no content added (already streamed via .delta events)
+        assert len(response.contents) == 0
 
 
 def test_streaming_reasoning_events_preserve_metadata() -> None:
