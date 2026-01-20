@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from agent_framework import (
@@ -40,6 +43,44 @@ from ._orchestration import AzureFunctionsAgentExecutor
 from ._utils import deserialize_value, serialize_message
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Task Types and Data Structures
+# ============================================================================
+
+
+class TaskType(Enum):
+    """Type of executor task."""
+
+    AGENT = "agent"
+    ACTIVITY = "activity"
+
+
+@dataclass
+class TaskMetadata:
+    """Metadata for a pending task."""
+
+    executor_id: str
+    message: Any
+    source_executor_id: str
+    task_type: TaskType
+    remaining_messages: list[tuple[str, Any, str]] | None = None  # For agents with multiple messages
+
+
+@dataclass
+class ExecutorResult:
+    """Result from executing an agent or activity."""
+
+    executor_id: str
+    output_message: AgentExecutorResponse | None
+    activity_result: dict[str, Any] | None
+    task_type: TaskType
+
+
+# ============================================================================
+# Routing Functions
+# ============================================================================
 
 
 def route_message_through_edge_groups(
@@ -139,6 +180,262 @@ def build_agent_executor_response(
     )
 
 
+# ============================================================================
+# Task Preparation Helpers
+# ============================================================================
+
+
+def _prepare_agent_task(
+    context: DurableOrchestrationContext,
+    executor_id: str,
+    message: Any,
+) -> Any:
+    """Prepare an agent task for execution.
+
+    Args:
+        context: The Durable Functions orchestration context
+        executor_id: The agent executor ID (agent name)
+        message: The input message for the agent
+
+    Returns:
+        A task that can be yielded to execute the agent
+    """
+    message_content = _extract_message_content(message)
+    session_id = AgentSessionId(name=executor_id, key=context.instance_id)
+    thread = DurableAgentThread(session_id=session_id)
+
+    az_executor = AzureFunctionsAgentExecutor(context)
+    agent = DurableAIAgent(az_executor, executor_id)
+    return agent.run(message_content, thread=thread)
+
+
+def _prepare_activity_task(
+    context: DurableOrchestrationContext,
+    executor_id: str,
+    message: Any,
+    source_executor_id: str,
+    shared_state_snapshot: dict[str, Any] | None,
+) -> Any:
+    """Prepare an activity task for execution.
+
+    Args:
+        context: The Durable Functions orchestration context
+        executor_id: The activity executor ID
+        message: The input message for the activity
+        source_executor_id: The ID of the executor that sent the message
+        shared_state_snapshot: Current shared state snapshot
+
+    Returns:
+        A task that can be yielded to execute the activity
+    """
+    activity_input = {
+        "executor_id": executor_id,
+        "message": serialize_message(message),
+        "shared_state_snapshot": shared_state_snapshot,
+        "source_executor_ids": [source_executor_id],
+    }
+    activity_input_json = json.dumps(activity_input)
+    return context.call_activity("ExecuteExecutor", activity_input_json)
+
+
+# ============================================================================
+# Result Processing Helpers
+# ============================================================================
+
+
+def _process_agent_response(
+    agent_response: AgentRunResponse,
+    executor_id: str,
+    message: Any,
+) -> ExecutorResult:
+    """Process an agent response into an ExecutorResult.
+
+    Args:
+        agent_response: The response from the agent
+        executor_id: The agent executor ID
+        message: The original input message
+
+    Returns:
+        ExecutorResult containing the processed response
+    """
+    response_text = agent_response.text if agent_response else None
+    structured_response = None
+
+    if agent_response and agent_response.value is not None:
+        if hasattr(agent_response.value, "model_dump"):
+            structured_response = agent_response.value.model_dump()
+        elif isinstance(agent_response.value, dict):
+            structured_response = agent_response.value
+
+    output_message = build_agent_executor_response(
+        executor_id=executor_id,
+        response_text=response_text,
+        structured_response=structured_response,
+        previous_message=message,
+    )
+
+    return ExecutorResult(
+        executor_id=executor_id,
+        output_message=output_message,
+        activity_result=None,
+        task_type=TaskType.AGENT,
+    )
+
+
+def _process_activity_result(
+    result_json: str | None,
+    executor_id: str,
+    shared_state: dict[str, Any] | None,
+    workflow_outputs: list[Any],
+) -> ExecutorResult:
+    """Process an activity result and apply shared state updates.
+
+    Args:
+        result_json: The JSON result from the activity
+        executor_id: The activity executor ID
+        shared_state: The shared state dict to update (mutated in place)
+        workflow_outputs: List to append outputs to (mutated in place)
+
+    Returns:
+        ExecutorResult containing the processed result
+    """
+    result = json.loads(result_json) if result_json else None
+
+    # Apply shared state updates
+    if shared_state is not None and result:
+        if result.get("shared_state_updates"):
+            updates = result["shared_state_updates"]
+            logger.debug("[workflow] Applying SharedState updates from %s: %s", executor_id, updates)
+            shared_state.update(updates)
+        if result.get("shared_state_deletes"):
+            deletes = result["shared_state_deletes"]
+            logger.debug("[workflow] Applying SharedState deletes from %s: %s", executor_id, deletes)
+            for key in deletes:
+                shared_state.pop(key, None)
+
+    # Collect outputs
+    if result and result.get("outputs"):
+        workflow_outputs.extend(result["outputs"])
+
+    return ExecutorResult(
+        executor_id=executor_id,
+        output_message=None,
+        activity_result=result,
+        task_type=TaskType.ACTIVITY,
+    )
+
+
+# ============================================================================
+# Routing Helpers
+# ============================================================================
+
+
+def _route_result_messages(
+    result: ExecutorResult,
+    workflow: Workflow,
+    next_pending_messages: dict[str, list[tuple[Any, str]]],
+    fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]],
+) -> None:
+    """Route messages from an executor result to their targets.
+
+    Args:
+        result: The executor result containing messages to route
+        workflow: The workflow definition
+        next_pending_messages: Dict to accumulate next iteration's messages (mutated)
+        fan_in_pending: Dict tracking fan-in state (mutated)
+    """
+    executor_id = result.executor_id
+    messages_to_route: list[tuple[Any, str | None]] = []
+
+    # Collect messages from agent response
+    if result.output_message:
+        messages_to_route.append((result.output_message, None))
+
+    # Collect sent_messages from activity results
+    if result.activity_result and result.activity_result.get("sent_messages"):
+        for msg_data in result.activity_result["sent_messages"]:
+            sent_msg = msg_data.get("message")
+            target_id = msg_data.get("target_id")
+            if sent_msg:
+                sent_msg = deserialize_value(sent_msg)
+                messages_to_route.append((sent_msg, target_id))
+
+    # Route each message
+    for msg_to_route, explicit_target in messages_to_route:
+        logger.debug("Routing output from %s", executor_id)
+
+        # If explicit target specified, route directly
+        if explicit_target:
+            if explicit_target not in next_pending_messages:
+                next_pending_messages[explicit_target] = []
+            next_pending_messages[explicit_target].append((msg_to_route, executor_id))
+            logger.debug("Routed message from %s to explicit target %s", executor_id, explicit_target)
+            continue
+
+        # Check for FanInEdgeGroup sources
+        for group in workflow.edge_groups:
+            if isinstance(group, FanInEdgeGroup) and executor_id in group.source_executor_ids:
+                fan_in_pending[group.id][executor_id].append((msg_to_route, executor_id))
+                logger.debug("Accumulated message for FanIn group %s from %s", group.id, executor_id)
+
+        # Use MAF's edge group routing for other edge types
+        targets = route_message_through_edge_groups(workflow.edge_groups, executor_id, msg_to_route)
+
+        for target_id in targets:
+            logger.debug("Routing to %s", target_id)
+            if target_id not in next_pending_messages:
+                next_pending_messages[target_id] = []
+            next_pending_messages[target_id].append((msg_to_route, executor_id))
+
+
+def _check_fan_in_ready(
+    workflow: Workflow,
+    fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]],
+    next_pending_messages: dict[str, list[tuple[Any, str]]],
+) -> None:
+    """Check if any FanInEdgeGroups are ready and deliver their messages.
+
+    Args:
+        workflow: The workflow definition
+        fan_in_pending: Dict tracking fan-in state (mutated - cleared when delivered)
+        next_pending_messages: Dict to add aggregated messages to (mutated)
+    """
+    for group in workflow.edge_groups:
+        if not isinstance(group, FanInEdgeGroup):
+            continue
+
+        pending_sources = fan_in_pending.get(group.id, {})
+
+        # Check if all sources have contributed at least one message
+        if not all(src in pending_sources and pending_sources[src] for src in group.source_executor_ids):
+            continue
+
+        # Aggregate all messages into a single list
+        aggregated: list[Any] = []
+        aggregated_sources: list[str] = []
+        for src in group.source_executor_ids:
+            for msg, msg_source in pending_sources[src]:
+                aggregated.append(msg)
+                aggregated_sources.append(msg_source)
+
+        target_id = group.target_executor_ids[0]
+        logger.debug("FanIn group %s ready, delivering %d messages to %s", group.id, len(aggregated), target_id)
+
+        if target_id not in next_pending_messages:
+            next_pending_messages[target_id] = []
+
+        first_source = aggregated_sources[0] if aggregated_sources else "__fan_in__"
+        next_pending_messages[target_id].append((aggregated, first_source))
+
+        # Clear the pending sources for this group
+        fan_in_pending[group.id] = defaultdict(list)
+
+
+# ============================================================================
+# Main Orchestrator
+# ============================================================================
+
+
 def run_workflow_orchestrator(
     context: DurableOrchestrationContext,
     workflow: Workflow,
@@ -158,14 +455,9 @@ def run_workflow_orchestrator(
     - SharedState: Local shared state accessible to all executors
 
     Execution model:
-    - Different executors pending in the same iteration run in parallel
-    - Agent executors (entities): Different agents run in parallel; multiple messages
-      to the SAME agent are processed sequentially to maintain conversation coherence
-    - Standard executors (activities): All batched and executed in parallel using task_all()
-
-    Note: When running in parallel with shared state, updates are applied
-    in order after all tasks complete. This may cause conflicts if multiple
-    executors modify the same state keys.
+    - All pending executors (agents AND activities) run in parallel via single task_all()
+    - Multiple messages to the SAME agent are processed sequentially for conversation coherence
+    - SharedState updates are applied in order after parallel tasks complete
 
     Args:
         context: The Durable Functions orchestration context
@@ -176,296 +468,145 @@ def run_workflow_orchestrator(
     Returns:
         List of workflow outputs collected from executor activities
     """
-    # pending_messages stores {target_executor_id: [(message, source_executor_id), ...]}
-    # This allows executors to know who sent them each message
     pending_messages: dict[str, list[tuple[Any, str]]] = {
         workflow.start_executor_id: [(initial_message, "__workflow_start__")]
     }
-    iteration = 0
-    max_iterations = workflow.max_iterations
     workflow_outputs: list[Any] = []
+    iteration = 0
 
-    # Track pending sources for FanInEdgeGroups.
-    # Maps group_id to a dict of source_id to list of (message, source_executor_id) tuples.
-    fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {}
+    # Track pending sources for FanInEdgeGroups using defaultdict for cleaner access
+    fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {
+        group.id: defaultdict(list) for group in workflow.edge_groups if isinstance(group, FanInEdgeGroup)
+    }
 
-    # Initialize fan-in tracking for all FanInEdgeGroups
-    for group in workflow.edge_groups:
-        if isinstance(group, FanInEdgeGroup):
-            fan_in_pending[group.id] = {}
-
-    while pending_messages and iteration < max_iterations:
+    while pending_messages and iteration < workflow.max_iterations:
         logger.debug("Orchestrator iteration %d", iteration)
         next_pending_messages: dict[str, list[tuple[Any, str]]] = {}
 
-        # Separate executors into agents (entities) and standard executors (activities)
-        # Agents must be processed sequentially due to entity semantics
-        # Activities can be processed in parallel
-        agent_executor_tasks: list[tuple[str, Any, str]] = []  # (executor_id, message, source_id)
-        activity_executor_tasks: list[tuple[str, Any, str]] = []  # (executor_id, message, source_id)
+        # Phase 1: Prepare all tasks (agents and activities unified)
+        all_tasks, task_metadata_list, remaining_agent_messages = _prepare_all_tasks(
+            context, workflow, pending_messages, shared_state
+        )
 
-        for executor_id, messages_with_sources in pending_messages.items():
-            executor = workflow.executors[executor_id]
-            for message, source_executor_id in messages_with_sources:
-                if isinstance(executor, AgentExecutor):
-                    agent_executor_tasks.append((executor_id, message, source_executor_id))
+        # Phase 2: Execute all tasks in parallel (single task_all for true parallelism)
+        all_results: list[ExecutorResult] = []
+        if all_tasks:
+            logger.debug("Executing %d tasks in parallel (agents + activities)", len(all_tasks))
+            raw_results = yield context.task_all(all_tasks)
+            logger.debug("All %d tasks completed", len(all_tasks))
+
+            # Process results based on task type
+            for idx, raw_result in enumerate(raw_results):
+                metadata = task_metadata_list[idx]
+                if metadata.task_type == TaskType.AGENT:
+                    result = _process_agent_response(raw_result, metadata.executor_id, metadata.message)
                 else:
-                    activity_executor_tasks.append((executor_id, message, source_executor_id))
+                    result = _process_activity_result(raw_result, metadata.executor_id, shared_state, workflow_outputs)
+                all_results.append(result)
 
-        # Results collected from all executor types
-        # Structure: list of (executor_id, output_message, result_dict_or_none)
-        all_results: list[tuple[str, Any | None, dict[str, Any] | None]] = []
+        # Phase 3: Process sequential agent messages (for same-agent conversation coherence)
+        for executor_id, message, _source_executor_id in remaining_agent_messages:
+            logger.debug("Processing sequential message for agent: %s", executor_id)
+            task = _prepare_agent_task(context, executor_id, message)
+            agent_response: AgentRunResponse = yield task
+            logger.debug("Agent %s sequential response completed", executor_id)
 
-        # Process Agent Executors (entities) in parallel when they are different agents
-        # Messages to the SAME agent are processed sequentially to maintain conversation coherence
-        if agent_executor_tasks:
-            # Group tasks by executor_id (agent_name) - same agent needs sequential processing
-            agent_groups: dict[str, list[tuple[str, Any, str]]] = {}
-            for executor_id, message, source_executor_id in agent_executor_tasks:
-                if executor_id not in agent_groups:
-                    agent_groups[executor_id] = []
-                agent_groups[executor_id].append((executor_id, message, source_executor_id))
+            result = _process_agent_response(agent_response, executor_id, message)
+            all_results.append(result)
 
-            # Process groups - if only one message per agent, can run all in parallel
-            # If multiple messages to same agent, need sequential within that agent
+        # Phase 4: Route all results to next iteration
+        for result in all_results:
+            _route_result_messages(result, workflow, next_pending_messages, fan_in_pending)
 
-            # First pass: create tasks for the first message of each agent (parallel)
-            agent_tasks = []
-            agent_task_metadata = []  # (executor_id, message, source_executor_id, remaining_messages)
-
-            for executor_id, messages_list in agent_groups.items():
-                first_msg = messages_list[0]
-                remaining = messages_list[1:]
-
-                message = first_msg[1]
-                source_executor_id = first_msg[2]
-
-                agent_name = executor_id
-                logger.debug("Preparing agent task for: %s", agent_name)
-
-                message_content = _extract_message_content(message)
-                session_id = AgentSessionId(name=agent_name, key=context.instance_id)
-                thread = DurableAgentThread(session_id=session_id)
-
-                az_executor = AzureFunctionsAgentExecutor(context)
-                agent = DurableAIAgent(az_executor, agent_name)
-                task = agent.run(message_content, thread=thread)
-
-                agent_tasks.append(task)
-                agent_task_metadata.append((executor_id, message, source_executor_id, remaining))
-
-            # Execute first batch of agent tasks in parallel
-            if agent_tasks:
-                logger.debug("Executing %d agent tasks in parallel", len(agent_tasks))
-                agent_responses = yield context.task_all(agent_tasks)
-                logger.debug("All %d agent tasks completed", len(agent_tasks))
-
-                # Process results and handle remaining messages for agents with multiple inputs
-                remaining_to_process: list[tuple[str, Any, str]] = []
-
-                for idx, agent_response in enumerate(agent_responses):
-                    executor_id, message, source_executor_id, remaining = agent_task_metadata[idx]
-                    logger.debug("Durable Entity %s returned: %s", executor_id, agent_response)
-
-                    # Build AgentExecutorResponse from the typed AgentRunResponse
-                    response_text = agent_response.text if agent_response else None
-                    structured_response = None
-                    if agent_response and agent_response.value is not None:
-                        if hasattr(agent_response.value, "model_dump"):
-                            structured_response = agent_response.value.model_dump()
-                        elif isinstance(agent_response.value, dict):
-                            structured_response = agent_response.value
-
-                    output_message = build_agent_executor_response(
-                        executor_id=executor_id,
-                        response_text=response_text,
-                        structured_response=structured_response,
-                        previous_message=message,
-                    )
-
-                    all_results.append((executor_id, output_message, None))
-
-                    # Queue remaining messages for sequential processing
-                    remaining_to_process.extend(remaining)
-
-                # Process remaining messages sequentially (these are additional messages to same agent)
-                for executor_id, message, _source_executor_id in remaining_to_process:
-                    agent_name = executor_id
-                    logger.debug("Processing additional message for agent: %s (sequential)", agent_name)
-
-                    message_content = _extract_message_content(message)
-                    session_id = AgentSessionId(name=agent_name, key=context.instance_id)
-                    thread = DurableAgentThread(session_id=session_id)
-
-                    az_executor = AzureFunctionsAgentExecutor(context)
-                    agent = DurableAIAgent(az_executor, agent_name)
-                    agent_response: AgentRunResponse = yield agent.run(message_content, thread=thread)
-                    logger.debug("Durable Entity %s returned: %s", agent_name, agent_response)
-
-                    response_text = agent_response.text if agent_response else None
-                    structured_response = None
-                    if agent_response and agent_response.value is not None:
-                        if hasattr(agent_response.value, "model_dump"):
-                            structured_response = agent_response.value.model_dump()
-                        elif isinstance(agent_response.value, dict):
-                            structured_response = agent_response.value
-
-                    output_message = build_agent_executor_response(
-                        executor_id=executor_id,
-                        response_text=response_text,
-                        structured_response=structured_response,
-                        previous_message=message,
-                    )
-
-                    all_results.append((executor_id, output_message, None))
-
-        # Process Activity Executors in parallel
-        if activity_executor_tasks:
-            logger.debug("Processing %d activity executors in parallel", len(activity_executor_tasks))
-
-            # Use shared state dict directly (no entity calls needed)
-            shared_state_snapshot: dict[str, Any] | None = shared_state
-            if shared_state_snapshot:
-                logger.debug("[workflow] SharedState snapshot for activities: %s", shared_state_snapshot)
-
-            # Create all activity tasks without yielding (to enable parallel execution)
-            activity_tasks = []
-            task_metadata = []  # Track which task corresponds to which executor
-
-            for executor_id, message, source_executor_id in activity_executor_tasks:
-                logger.debug("Preparing activity task for executor: %s", executor_id)
-
-                activity_input = {
-                    "executor_id": executor_id,
-                    "message": serialize_message(message),
-                    "shared_state_snapshot": shared_state_snapshot,
-                    "source_executor_ids": [source_executor_id],
-                }
-
-                # Create the task (don't yield yet - this enables parallelism)
-                activity_input_json = json.dumps(activity_input)
-                task = context.call_activity("ExecuteExecutor", activity_input_json)
-                activity_tasks.append(task)
-                task_metadata.append((executor_id, message, source_executor_id))
-
-            # Execute all activities in parallel using task_all
-            logger.debug("Executing %d activities in parallel", len(activity_tasks))
-            results_json_list = yield context.task_all(activity_tasks)
-            logger.debug("All %d activities completed", len(activity_tasks))
-
-            # Process results and apply shared state updates
-            # Note: When running in parallel, shared state updates may conflict
-            # We apply them in order, but this is a limitation of parallel execution
-            for idx, result_json in enumerate(results_json_list):
-                executor_id, message, source_executor_id = task_metadata[idx]
-                result = json.loads(result_json) if result_json else None
-                logger.debug("Activity for executor %s returned", executor_id)
-
-                # Apply any shared state updates from the activity result
-                if shared_state is not None and result:
-                    if result.get("shared_state_updates"):
-                        updates = result["shared_state_updates"]
-                        logger.debug(
-                            "[workflow] Applying SharedState updates from activity %s: %s", executor_id, updates
-                        )
-                        shared_state.update(updates)
-                    if result.get("shared_state_deletes"):
-                        deletes = result["shared_state_deletes"]
-                        logger.debug(
-                            "[workflow] Applying SharedState deletes from activity %s: %s", executor_id, deletes
-                        )
-                        for key in deletes:
-                            shared_state.pop(key, None)
-
-                # Collect outputs
-                if result and result.get("outputs"):
-                    workflow_outputs.extend(result["outputs"])
-
-                # Add to results for routing
-                all_results.append((executor_id, None, result))
-
-        # Routing phase - process all results
-        for executor_id, output_message, result in all_results:
-            messages_to_route: list[tuple[Any, str | None]] = []
-
-            if output_message:
-                messages_to_route.append((output_message, None))
-
-            # Also route sent_messages from activities
-            if result and result.get("sent_messages"):
-                for msg_data in result["sent_messages"]:
-                    sent_msg = msg_data.get("message")
-                    target_id = msg_data.get("target_id")
-                    if sent_msg:
-                        sent_msg = deserialize_value(sent_msg)
-                        messages_to_route.append((sent_msg, target_id))
-
-            for msg_to_route, explicit_target in messages_to_route:
-                logger.debug("Routing output from %s", executor_id)
-
-                # If explicit target specified, route directly
-                if explicit_target:
-                    if explicit_target not in next_pending_messages:
-                        next_pending_messages[explicit_target] = []
-                    next_pending_messages[explicit_target].append((msg_to_route, executor_id))
-                    logger.debug("Routed message from %s to explicit target %s", executor_id, explicit_target)
-                    continue
-
-                # Check for FanInEdgeGroup sources first
-                for group in workflow.edge_groups:
-                    if isinstance(group, FanInEdgeGroup) and executor_id in group.source_executor_ids:
-                        if executor_id not in fan_in_pending[group.id]:
-                            fan_in_pending[group.id][executor_id] = []
-                        fan_in_pending[group.id][executor_id].append((msg_to_route, executor_id))
-                        logger.debug("Accumulated message for FanIn group %s from %s", group.id, executor_id)
-
-                # Use MAF's edge group routing for other edge types
-                targets = route_message_through_edge_groups(
-                    workflow.edge_groups,
-                    executor_id,
-                    msg_to_route,
-                )
-
-                for target_id in targets:
-                    logger.debug("Routing to %s", target_id)
-                    if target_id not in next_pending_messages:
-                        next_pending_messages[target_id] = []
-                    next_pending_messages[target_id].append((msg_to_route, executor_id))
-
-        # Check if any FanInEdgeGroups are ready to deliver
-        for group in workflow.edge_groups:
-            if isinstance(group, FanInEdgeGroup):
-                pending_sources = fan_in_pending.get(group.id, {})
-                # Check if all sources have contributed at least one message
-                if all(src in pending_sources for src in group.source_executor_ids):
-                    # Aggregate all messages into a single list (extract just the messages)
-                    aggregated: list[Any] = []
-                    aggregated_sources: list[str] = []
-                    for src in group.source_executor_ids:
-                        for msg, msg_source in pending_sources[src]:
-                            aggregated.append(msg)
-                            aggregated_sources.append(msg_source)
-
-                    target_id = group.target_executor_ids[0]
-                    logger.debug(
-                        "FanIn group %s ready, delivering %d messages to %s", group.id, len(aggregated), target_id
-                    )
-
-                    if target_id not in next_pending_messages:
-                        next_pending_messages[target_id] = []
-                    # For fan-in, the aggregated list is the message, sources are all contributors
-                    # Use first source as representative (or could join them)
-                    first_source = aggregated_sources[0] if aggregated_sources else "__fan_in__"
-                    next_pending_messages[target_id].append((aggregated, first_source))
-
-                    # Clear the pending sources for this group
-                    fan_in_pending[group.id] = {}
+        # Phase 5: Check if any FanInEdgeGroups are ready to deliver
+        _check_fan_in_ready(workflow, fan_in_pending, next_pending_messages)
 
         pending_messages = next_pending_messages
         iteration += 1
 
     # Durable Functions runtime extracts return value from StopIteration
     return workflow_outputs  # noqa: B901
+
+
+def _prepare_all_tasks(
+    context: DurableOrchestrationContext,
+    workflow: Workflow,
+    pending_messages: dict[str, list[tuple[Any, str]]],
+    shared_state: dict[str, Any] | None,
+) -> tuple[list[Any], list[TaskMetadata], list[tuple[str, Any, str]]]:
+    """Prepare all pending tasks for parallel execution.
+
+    Groups agent messages by executor ID so that only the first message per agent
+    runs in the parallel batch. Additional messages to the same agent are returned
+    for sequential processing.
+
+    Args:
+        context: The Durable Functions orchestration context
+        workflow: The workflow definition
+        pending_messages: Messages pending for each executor
+        shared_state: Current shared state snapshot
+
+    Returns:
+        Tuple of (tasks, metadata, remaining_agent_messages):
+        - tasks: List of tasks ready for task_all()
+        - metadata: TaskMetadata for each task (same order as tasks)
+        - remaining_agent_messages: Agent messages requiring sequential processing
+    """
+    all_tasks: list[Any] = []
+    task_metadata_list: list[TaskMetadata] = []
+    remaining_agent_messages: list[tuple[str, Any, str]] = []
+
+    # Group agent messages by executor_id for sequential handling of same-agent messages
+    agent_messages_by_executor: dict[str, list[tuple[str, Any, str]]] = defaultdict(list)
+
+    # Categorize all pending messages
+    for executor_id, messages_with_sources in pending_messages.items():
+        executor = workflow.executors[executor_id]
+        is_agent = isinstance(executor, AgentExecutor)
+
+        for message, source_executor_id in messages_with_sources:
+            if is_agent:
+                agent_messages_by_executor[executor_id].append((executor_id, message, source_executor_id))
+            else:
+                # Activity tasks can all run in parallel
+                logger.debug("Preparing activity task: %s", executor_id)
+                task = _prepare_activity_task(context, executor_id, message, source_executor_id, shared_state)
+                all_tasks.append(task)
+                task_metadata_list.append(
+                    TaskMetadata(
+                        executor_id=executor_id,
+                        message=message,
+                        source_executor_id=source_executor_id,
+                        task_type=TaskType.ACTIVITY,
+                    )
+                )
+
+    # Process agent messages: first message per agent goes to parallel batch
+    for executor_id, messages_list in agent_messages_by_executor.items():
+        first_msg = messages_list[0]
+        remaining = messages_list[1:]
+
+        logger.debug("Preparing agent task: %s", executor_id)
+        task = _prepare_agent_task(context, first_msg[0], first_msg[1])
+        all_tasks.append(task)
+        task_metadata_list.append(
+            TaskMetadata(
+                executor_id=first_msg[0],
+                message=first_msg[1],
+                source_executor_id=first_msg[2],
+                task_type=TaskType.AGENT,
+            )
+        )
+
+        # Queue remaining messages for sequential processing
+        remaining_agent_messages.extend(remaining)
+
+    return all_tasks, task_metadata_list, remaining_agent_messages
+
+
+# ============================================================================
+# Message Content Extraction
+# ============================================================================
 
 
 def _extract_message_content(message: Any) -> str:
