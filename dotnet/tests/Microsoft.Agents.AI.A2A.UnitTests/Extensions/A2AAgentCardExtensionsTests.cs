@@ -34,7 +34,7 @@ public sealed class A2AAgentCardExtensionsTests
     public void GetAIAgent_ReturnsAIAgent()
     {
         // Act
-        var agent = this._agentCard.GetAIAgent();
+        var agent = this._agentCard.AsAIAgent();
 
         // Assert
         Assert.NotNull(agent);
@@ -56,7 +56,7 @@ public sealed class A2AAgentCardExtensionsTests
             Parts = [new TextPart { Text = "Response" }],
         });
 
-        var agent = this._agentCard.GetAIAgent(httpClient);
+        var agent = this._agentCard.AsAIAgent(httpClient);
 
         // Act
         await agent.RunAsync("Test input");

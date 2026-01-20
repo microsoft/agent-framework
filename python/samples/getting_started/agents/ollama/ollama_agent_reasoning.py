@@ -21,10 +21,10 @@ https://ollama.com/
 async def reasoning_example() -> None:
     print("=== Response Reasoning Example ===")
 
-    agent = OllamaChatClient().create_agent(
+    agent = OllamaChatClient().as_agent(
         name="TimeAgent",
         instructions="You are a helpful agent answer in one sentence.",
-        additional_chat_options={"think": True},  # Enable Reasoning on agent level
+        default_options={"think": True},  # Enable Reasoning on agent level
     )
     query = "Hey what is 3+4? Can you explain how you got to that answer?"
     print(f"User: {query}")

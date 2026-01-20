@@ -77,7 +77,7 @@ async def main() -> None:
     client = OpenAIChatClient()
 
     # Create agent with Azure Redis store
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="AzureRedisAssistant",
         instructions="You are a helpful assistant.",
         chat_message_store_factory=chat_message_store_factory,

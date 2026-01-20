@@ -65,19 +65,19 @@ async def run_agent_framework() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    python_expert = client.create_agent(
+    python_expert = client.as_agent(
         name="python_expert",
         instructions="You are a Python programming expert. Answer Python-related questions.",
         description="Expert in Python programming",
     )
 
-    javascript_expert = client.create_agent(
+    javascript_expert = client.as_agent(
         name="javascript_expert",
         instructions="You are a JavaScript programming expert. Answer JavaScript-related questions.",
         description="Expert in JavaScript programming",
     )
 
-    database_expert = client.create_agent(
+    database_expert = client.as_agent(
         name="database_expert",
         instructions="You are a database expert. Answer SQL and database-related questions.",
         description="Expert in databases and SQL",
@@ -87,7 +87,7 @@ async def run_agent_framework() -> None:
         GroupChatBuilder()
         .participants([python_expert, javascript_expert, database_expert])
         .set_manager(
-            manager=client.create_agent(
+            manager=client.as_agent(
                 name="selector_manager",
                 instructions="Based on the conversation, select the most appropriate expert to respond next.",
             ),

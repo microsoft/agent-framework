@@ -36,13 +36,13 @@ This package provides a `ConfigureDurableAgents` extension method on the `Functi
 // Invocable via HTTP via http://localhost:7071/api/agents/SpamDetectionAgent/run
 AIAgent spamDetector = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a spam detection assistant that identifies spam emails.",
         name: "SpamDetectionAgent");
 
 AIAgent emailAssistant = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are an email assistant that helps users draft responses to emails with professionalism.",
         name: "EmailAssistantAgent");
 
@@ -77,7 +77,7 @@ public static async Task<string> SpamDetectionOrchestration(
     AgentThread spamThread = await spamDetectionAgent.GetNewThreadAsync();
 
     // Step 1: Check if the email is spam
-    AgentRunResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
+    AgentResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
         message:
             $"""
             Analyze this email for spam content and return a JSON response with 'is_spam' (boolean) and 'reason' (string) fields:
@@ -99,7 +99,7 @@ public static async Task<string> SpamDetectionOrchestration(
         DurableAIAgent emailAssistantAgent = context.GetAgent("EmailAssistantAgent");
         AgentThread emailThread = await emailAssistantAgent.GetNewThreadAsync();
 
-        AgentRunResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
+        AgentResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
             message:
                 $"""
                 Draft a professional response to this email. Return a JSON response with a 'response' field containing the reply:
@@ -156,7 +156,7 @@ These tools are registered with the agent using the `tools` parameter when creat
 Tools tools = new();
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a content generation assistant that helps users generate content.",
         name: "ContentGenerationAgent",
         tools: [

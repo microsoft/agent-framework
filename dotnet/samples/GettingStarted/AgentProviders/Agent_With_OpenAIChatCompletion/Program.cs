@@ -13,7 +13,7 @@ var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 AIAgent agent = new OpenAIClient(
     apiKey)
      .GetChatClient(model)
-     .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

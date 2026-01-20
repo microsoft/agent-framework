@@ -31,7 +31,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetResponsesClient(deploymentName)
-     .CreateAIAgent(
+     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
         tools: [mcpTool]);
@@ -58,7 +58,7 @@ AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetResponsesClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgentWithApproval",
         tools: [mcpToolWithApproval]);

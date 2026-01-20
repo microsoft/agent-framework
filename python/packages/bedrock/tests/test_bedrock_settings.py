@@ -13,7 +13,6 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
-    ToolMode,
 )
 from pydantic import BaseModel
 
@@ -46,10 +45,13 @@ def test_build_request_includes_tool_config() -> None:
     client = _build_client()
 
     tool = AIFunction(name="get_weather", description="desc", func=_dummy_weather, input_model=_WeatherArgs)
-    options = ChatOptions(tools=[tool], tool_choice=ToolMode.REQUIRED("get_weather"))
+    options = {
+        "tools": [tool],
+        "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
+    }
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="hi")])]
 
-    request = client._build_converse_request(messages, options)
+    request = client._prepare_options(messages, options)
 
     assert request["toolConfig"]["tools"][0]["toolSpec"]["name"] == "get_weather"
     assert request["toolConfig"]["toolChoice"] == {"tool": {"name": "get_weather"}}
@@ -57,7 +59,7 @@ def test_build_request_includes_tool_config() -> None:
 
 def test_build_request_serializes_tool_history() -> None:
     client = _build_client()
-    options = ChatOptions()
+    options: ChatOptions = {}
     messages = [
         ChatMessage(role=Role.USER, contents=[TextContent(text="how's weather?")]),
         ChatMessage(
@@ -70,7 +72,7 @@ def test_build_request_serializes_tool_history() -> None:
         ),
     ]
 
-    request = client._build_converse_request(messages, options)
+    request = client._prepare_options(messages, options)
     assistant_block = request["messages"][1]["content"][0]["toolUse"]
     result_block = request["messages"][2]["content"][0]["toolResult"]
 

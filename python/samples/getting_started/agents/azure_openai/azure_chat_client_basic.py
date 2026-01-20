@@ -31,7 +31,7 @@ async def non_streaming_example() -> None:
     # Create agent with Azure Chat Client
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -49,7 +49,7 @@ async def streaming_example() -> None:
     # Create agent with Azure Chat Client
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

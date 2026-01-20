@@ -59,17 +59,17 @@ async def run_agent_framework() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.create_agent(
+    researcher = client.as_agent(
         name="researcher",
         instructions="You are a researcher. Provide facts and data about the topic.",
     )
 
-    writer = client.create_agent(
+    writer = client.as_agent(
         name="writer",
         instructions="You are a writer. Turn research into engaging content.",
     )
 
-    editor = client.create_agent(
+    editor = client.as_agent(
         name="editor",
         instructions="You are an editor. Review and finalize the content.",
     )
@@ -109,17 +109,17 @@ async def run_agent_framework_with_cycle() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.create_agent(
+    researcher = client.as_agent(
         name="researcher",
         instructions="You are a researcher. Provide facts and data about the topic.",
     )
 
-    writer = client.create_agent(
+    writer = client.as_agent(
         name="writer",
         instructions="You are a writer. Turn research into engaging content.",
     )
 
-    editor = client.create_agent(
+    editor = client.as_agent(
         name="editor",
         instructions="You are an editor. Review and finalize the content. End with APPROVED if satisfied.",
     )

@@ -41,7 +41,7 @@ async def main() -> None:
     # Create the agent
     # Constructor automatically reads from environment variables:
     # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_OPENAI_API_KEY
-    agent = AzureOpenAIChatClient(credential=credential).create_agent(
+    agent = AzureOpenAIChatClient(credential=credential).as_agent(
         name="FinancialAdvisor",
         instructions="""You are a professional financial advisor assistant.
 

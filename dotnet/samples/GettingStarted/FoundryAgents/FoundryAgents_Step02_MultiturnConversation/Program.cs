@@ -32,11 +32,11 @@ Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and
 
 // Invoke the agent with a multi-turn conversation and streaming, where the context is preserved in the thread object.
 thread = await jokerAgent.GetNewThreadAsync();
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
     Console.WriteLine(update);
 }
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
 {
     Console.WriteLine(update);
 }

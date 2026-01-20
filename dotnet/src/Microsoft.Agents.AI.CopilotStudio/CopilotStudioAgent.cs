@@ -58,7 +58,7 @@ public class CopilotStudioAgent : AIAgent
         => new(new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions));
 
     /// <inheritdoc/>
-    protected override async Task<AgentRunResponse> RunCoreAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -88,7 +88,7 @@ public class CopilotStudioAgent : AIAgent
         // TODO: Review list of ChatResponse properties to ensure we set all availble values.
         // Setting ResponseId and MessageId end up being particularly important for streaming consumers
         // so that they can tell things like response boundaries.
-        return new AgentRunResponse(responseMessagesList)
+        return new AgentResponse(responseMessagesList)
         {
             AgentId = this.Id,
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
@@ -96,7 +96,7 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -125,7 +125,7 @@ public class CopilotStudioAgent : AIAgent
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
-            yield return new AgentRunResponseUpdate(message.Role, message.Contents)
+            yield return new AgentResponseUpdate(message.Role, message.Contents)
             {
                 AgentId = this.Id,
                 AdditionalProperties = message.AdditionalProperties,
