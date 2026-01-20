@@ -2,6 +2,7 @@
 
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
+using System.ClientModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -14,16 +15,27 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJEC
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
+AIProjectClient aIProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+
+// Create a new agent if one doesn't exist already.
+ChatClientAgent agent;
+try
+{
+    agent = await aIProjectClient.GetAIAgentAsync(name: JokerName);
+}
+catch (ClientResultException ex) when (ex.Status == 404)
+{
+    agent = await aIProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
+}
+
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add the agents client to the service collection.
-builder.Services.AddSingleton((sp) => new AIProjectClient(new Uri(endpoint), new AzureCliCredential()));
+builder.Services.AddSingleton((sp) => aIProjectClient);
 
 // Add the AI agent to the service collection.
-builder.Services.AddSingleton<AIAgent>((sp)
-    => sp.GetRequiredService<AIProjectClient>()
-        .CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions));
+builder.Services.AddSingleton<AIAgent>((sp) => agent);
 
 // Add a sample service that will use the agent to respond to user input.
 builder.Services.AddHostedService<SampleService>();
