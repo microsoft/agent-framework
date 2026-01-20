@@ -34,8 +34,11 @@ jobs:
         # because the workflow_run event does not have access to the PR number
         # The PR number is needed to post the comment on the PR
         run: |
-          PR_NUMBER=$(cat pr_number)
-          echo "PR number: $PR_NUMBER"
+          PR_NUMBER=$(head -1 pr_number | tr -dc '0-9')
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Invalid PR number"
+            exit 1
+          fi
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
       - name: Pytest coverage comment
         id: coverageComment
