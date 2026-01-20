@@ -202,6 +202,9 @@ public sealed class RedisStreamResponseHandler : IAgentResponseHandler
                 }
             }
         }
+
+        // If we exited the loop due to cancellation, throw to signal the caller
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     /// <summary>
