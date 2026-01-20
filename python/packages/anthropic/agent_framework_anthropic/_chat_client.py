@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
@@ -80,7 +79,7 @@ logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
-RESPONSE_FORMAT_TOOL_NAME: Final[str] = "_response_format_tool"
+STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 
 # region Anthropic Chat Options TypedDict
@@ -442,15 +441,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
-        # response_format - use tool-based approach for structured outputs
+        # response_format - use native output_format for structured outputs
         response_format = options.get("response_format")
         if response_format is not None:
-            response_format_tool = self._create_response_format_tool(response_format)
-            if "tools" not in run_options:
-                run_options["tools"] = []
-            run_options["tools"].append(response_format_tool)
-            # Force the model to use this tool
-            run_options["tool_choice"] = {"type": "tool", "name": RESPONSE_FORMAT_TOOL_NAME}
+            run_options["output_format"] = self._prepare_response_format(response_format)
+            # Add the structured outputs beta flag
+            run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
 
         run_options.update(kwargs)
         return run_options
@@ -470,28 +466,22 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             *options.get("additional_beta_flags", []),
         }
 
-    def _create_response_format_tool(self, response_format: type[BaseModel]) -> dict[str, Any]:
-        """Create a tool definition from a Pydantic model for structured output.
+    def _prepare_response_format(self, response_format: type[BaseModel]) -> dict[str, Any]:
+        """Prepare the output_format parameter from a Pydantic model for structured output.
 
         Args:
             response_format: The Pydantic model class to use as the response format.
 
         Returns:
-            A dictionary representing the tool definition for Anthropic.
+            A dictionary representing the output_format for Anthropic's structured outputs.
         """
         schema = response_format.model_json_schema()
-        # Remove $defs from schema and inline them if needed - Anthropic may not support $ref
-        if "$defs" in schema:
-            # For simple cases, just remove $defs as most response formats are flat
-            schema.pop("$defs", None)
+        # Ensure additionalProperties is false as required by Anthropic
+        schema["additionalProperties"] = False
 
         return {
-            "type": "custom",
-            "name": RESPONSE_FORMAT_TOOL_NAME,
-            "description": (
-                f"Use this tool to provide your response in the required structured format: {response_format.__name__}"
-            ),
-            "input_schema": schema,
+            "type": "json_schema",
+            "schema": schema,
         }
 
     def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -767,21 +757,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
-                    # Check if this is the response_format tool - convert to text for structured output parsing
-                    if content_block.name == RESPONSE_FORMAT_TOOL_NAME:
-                        # Convert the tool arguments to JSON text so try_parse_value can parse it
-                        json_text = (
-                            json.dumps(content_block.input)
-                            if isinstance(content_block.input, dict)
-                            else str(content_block.input)
-                        )
-                        contents.append(
-                            TextContent(
-                                text=json_text,
-                                raw_representation=content_block,
-                            )
-                        )
-                    elif content_block.type == "mcp_tool_use":
+                    if content_block.type == "mcp_tool_use":
                         contents.append(
                             MCPServerToolCallContent(
                                 call_id=content_block.id,
@@ -1034,23 +1010,14 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     # provides the name, so deltas should only carry incremental arguments.
                     # This matches OpenAI's behavior where streaming chunks have name="".
                     call_id, name = self._last_call_id_name if self._last_call_id_name else ("", "")
-                    # Check if this is the response_format tool - convert to text for structured output parsing
-                    if name == RESPONSE_FORMAT_TOOL_NAME:
-                        contents.append(
-                            TextContent(
-                                text=content_block.partial_json,
-                                raw_representation=content_block,
-                            )
+                    contents.append(
+                        FunctionCallContent(
+                            call_id=call_id,
+                            name="",
+                            arguments=content_block.partial_json,
+                            raw_representation=content_block,
                         )
-                    else:
-                        contents.append(
-                            FunctionCallContent(
-                                call_id=call_id,
-                                name="",
-                                arguments=content_block.partial_json,
-                                raw_representation=content_block,
-                            )
-                        )
+                    )
                 case "thinking" | "thinking_delta":
                     contents.append(
                         TextReasoningContent(

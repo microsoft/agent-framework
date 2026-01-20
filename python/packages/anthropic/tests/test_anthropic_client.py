@@ -500,7 +500,7 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
     mock_message.stop_reason = "end_turn"
 
-    response = chat_client._process_message(mock_message)
+    response = chat_client._process_message(mock_message, {})
 
     assert response.response_id == "msg_123"
     assert response.model_id == "claude-3-5-sonnet-20241022"
@@ -533,7 +533,7 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
     mock_message.stop_reason = "tool_use"
 
-    response = chat_client._process_message(mock_message)
+    response = chat_client._process_message(mock_message, {})
 
     assert len(response.messages[0].contents) == 1
     assert isinstance(response.messages[0].contents[0], FunctionCallContent)
