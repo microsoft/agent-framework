@@ -7,6 +7,8 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.DurableTask;
+using Microsoft.DurableTask.Client;
+using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
@@ -56,23 +58,41 @@ internal sealed class DurableWorkflowRunner
         logger.LogRunningWorkflow(workflow.Name);
 
         string result = await this.ExecuteWorkflowLevelsAsync(context, workflow, request.Input, logger).ConfigureAwait(true);
+
+        await CleanupWorkflowStateAsync(context).ConfigureAwait(true);
+
         return [result];
+    }
+
+    /// <summary>
+    /// Cleans up the workflow state entity by signaling it to delete itself.
+    /// </summary>
+    private static async Task CleanupWorkflowStateAsync(TaskOrchestrationContext context)
+    {
+        EntityInstanceId stateEntityId = new(WorkflowSharedStateEntity.EntityName, context.InstanceId);
+
+        // Call the entity's Delete method to clean up state
+        // Using CallEntityAsync ensures the deletion completes before the orchestration finishes
+        await context.Entities.CallEntityAsync(stateEntityId, nameof(WorkflowSharedStateEntity.Delete)).ConfigureAwait(true);
     }
 
     /// <summary>
     /// Executes an activity function for a workflow executor.
     /// </summary>
     /// <param name="activityFunctionName">The name of the activity function to execute.</param>
-    /// <param name="input">The input string for the executor.</param>
-    /// <param name="functionContext">The Azure Functions context.</param>
-    /// <returns>The serialized result of the executor.</returns>
+    /// <param name="input">The serialized executor input.</param>
+    /// <param name="durableTaskClient">The durable task client for entity operations.</param>
+    /// <param name="functionContext">The function context containing binding data with the orchestration instance ID.</param>
+    /// <returns>The serialized executor output.</returns>
     internal async Task<string> ExecuteActivityAsync(
         string activityFunctionName,
         string input,
+        DurableTaskClient durableTaskClient,
         FunctionContext functionContext)
     {
         ArgumentNullException.ThrowIfNull(activityFunctionName);
         ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(durableTaskClient);
         ArgumentNullException.ThrowIfNull(functionContext);
 
         string executorName = ParseExecutorName(activityFunctionName);
@@ -90,13 +110,42 @@ internal sealed class DurableWorkflowRunner
         Type inputType = executor.InputTypes.FirstOrDefault() ?? typeof(string);
         object typedInput = DeserializeInput(input, inputType);
 
+        // Get the orchestration instance ID from the function context binding data
+        string instanceId = GetInstanceIdFromContext(functionContext)
+            ?? throw new InvalidOperationException(
+                "Could not retrieve orchestration instance ID from FunctionContext. " +
+                "Ensure the activity is being called from within a durable orchestration.");
+
+        // Create context with durable entity-backed state
+        IWorkflowContext context = CreateExecutorContext(instanceId, durableTaskClient);
+
         object? result = await executor.ExecuteAsync(
             typedInput,
             new TypeId(inputType),
-            new MinimalActivityContext(registration.ExecutorId),
+            context,
             CancellationToken.None).ConfigureAwait(false);
 
         return SerializeResult(result);
+    }
+
+    private static string? GetInstanceIdFromContext(FunctionContext functionContext)
+    {
+        if (functionContext.BindingContext.BindingData.TryGetValue("instanceId", out object? instanceIdObj) &&
+            instanceIdObj is string instanceId)
+        {
+            return instanceId;
+        }
+
+        return null;
+    }
+
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "DurableExecutorContext state serialization is done at runtime with user-known types.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "DurableExecutorContext state serialization is done at runtime with user-known types.")]
+    private static DurableExecutorContext CreateExecutorContext(
+        string instanceId,
+        DurableTaskClient client)
+    {
+        return new DurableExecutorContext(instanceId, client);
     }
 
     private async Task<string> ExecuteWorkflowLevelsAsync(

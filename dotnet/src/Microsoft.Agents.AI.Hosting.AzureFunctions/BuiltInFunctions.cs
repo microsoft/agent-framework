@@ -33,15 +33,17 @@ internal static class BuiltInFunctions
     // Exposed as an activity trigger for workflow executors
     public static Task<string> InvokeWorkflowActivityAsync(
         [ActivityTrigger] string input,
+        [DurableClient] DurableTaskClient durableTaskClient,
         FunctionContext functionContext)
     {
         ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(durableTaskClient);
         ArgumentNullException.ThrowIfNull(functionContext);
 
         string activityFunctionName = functionContext.FunctionDefinition.Name;
 
         DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
-        return runner.ExecuteActivityAsync(activityFunctionName, input, functionContext);
+        return runner.ExecuteActivityAsync(activityFunctionName, input, durableTaskClient, functionContext);
     }
 
     // Exposed as an entity trigger via AgentFunctionsProvider
@@ -74,8 +76,9 @@ internal static class BuiltInFunctions
         FunctionContext context)
     {
         var workflowName = context.FunctionDefinition.Name.Replace("http-", "");
+        var orchestrationFunctionName = $"dafx-{workflowName}";
         var inputMessage = await req.ReadAsStringAsync();
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync("WorkflowRunnerOrchestration", new DuableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, new DuableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
         await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}. Orchestration instanceId: {instanceId}");
