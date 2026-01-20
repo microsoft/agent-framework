@@ -40,7 +40,6 @@ from agent_framework_durabletask import (
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._shared_state import SHARED_STATE_ENTITY_NAME, DurableSharedState, create_shared_state_entity_function
 from ._utils import CapturingRunnerContext, deserialize_value, reconstruct_message_for_handler, serialize_message
 from ._workflow import run_workflow_orchestrator
 
@@ -156,7 +155,6 @@ class AgentFunctionApp(DFAppBase):
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
         workflow: Optional Workflow instance for workflow orchestration
-        enable_shared_state: Whether SharedState entity is enabled for workflows
     """
 
     _agent_metadata: dict[str, AgentMetadata]
@@ -164,7 +162,6 @@ class AgentFunctionApp(DFAppBase):
     enable_http_endpoints: bool
     enable_mcp_tool_trigger: bool
     workflow: Workflow | None
-    enable_shared_state: bool
 
     def __init__(
         self,
@@ -177,7 +174,6 @@ class AgentFunctionApp(DFAppBase):
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         enable_mcp_tool_trigger: bool = False,
         default_callback: AgentResponseCallbackProtocol | None = None,
-        enable_shared_state: bool = True,
     ):
         """Initialize the AgentFunctionApp.
 
@@ -193,7 +189,6 @@ class AgentFunctionApp(DFAppBase):
         :param poll_interval_seconds: Delay in seconds between polling attempts.
             Defaults to ``DEFAULT_POLL_INTERVAL_SECONDS``.
         :param default_callback: Optional callback invoked for agents without specific callbacks.
-        :param enable_shared_state: Enable SharedState entity for workflow executors (default: ``True``).
 
         :note: If no agents are provided, they can be added later using :meth:`add_agent`.
         """
@@ -209,7 +204,6 @@ class AgentFunctionApp(DFAppBase):
         self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
         self.default_callback = default_callback
         self.workflow = workflow
-        self.enable_shared_state = enable_shared_state
 
         try:
             retries = int(max_poll_retries)
@@ -340,21 +334,8 @@ class AgentFunctionApp(DFAppBase):
             result = asyncio.run(run())
             return json_module.dumps(result)
 
-    def _setup_shared_state_entity(self) -> None:
-        """Register the SharedState durable entity for workflow state sharing."""
-        entity_function = create_shared_state_entity_function()
-        entity_function.__name__ = SHARED_STATE_ENTITY_NAME
-        self.entity_trigger(context_name="context", entity_name=SHARED_STATE_ENTITY_NAME)(entity_function)
-        logger.debug(f"[AgentFunctionApp] Registered SharedState entity: {SHARED_STATE_ENTITY_NAME}")
-
     def _setup_workflow_orchestration(self) -> None:
         """Register the workflow orchestration and related HTTP endpoints."""
-        # Only register the SharedState entity if enabled
-        if self.enable_shared_state:
-            self._setup_shared_state_entity()
-
-        # Capture enable_shared_state for use in nested function
-        enable_shared_state = self.enable_shared_state
 
         @self.orchestration_trigger(context_name="context")
         def workflow_orchestrator(context: df.DurableOrchestrationContext):  # type: ignore[type-arg]
@@ -364,10 +345,8 @@ class AgentFunctionApp(DFAppBase):
             # Ensure input is a string for the agent
             initial_message = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
 
-            # Only create DurableSharedState if enabled to avoid extra entity calls
-            shared_state = None
-            if enable_shared_state:
-                shared_state = DurableSharedState(context, context.instance_id)
+            # Create local shared state dict for cross-executor state sharing
+            shared_state: dict[str, Any] = {}
 
             outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
             # Durable Functions runtime extracts return value from StopIteration

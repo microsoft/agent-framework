@@ -1160,32 +1160,6 @@ class TestAgentFunctionAppWorkflow:
         setup_exec.assert_called_once()
         setup_orch.assert_called_once()
 
-    def test_init_shared_state_enabled_by_default(self) -> None:
-        """Test that SharedState is enabled by default."""
-        mock_workflow = Mock()
-        mock_workflow.executors = {}
-
-        with (
-            patch.object(AgentFunctionApp, "_setup_executor_activity"),
-            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
-        ):
-            app = AgentFunctionApp(workflow=mock_workflow)
-
-        assert app.enable_shared_state is True
-
-    def test_init_shared_state_can_be_disabled(self) -> None:
-        """Test that SharedState can be disabled."""
-        mock_workflow = Mock()
-        mock_workflow.executors = {}
-
-        with (
-            patch.object(AgentFunctionApp, "_setup_executor_activity"),
-            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
-        ):
-            app = AgentFunctionApp(workflow=mock_workflow, enable_shared_state=False)
-
-        assert app.enable_shared_state is False
-
     def test_init_without_workflow_does_not_call_workflow_setup(self) -> None:
         """Test that workflow setup is not called when no workflow provided."""
         mock_agent = Mock()

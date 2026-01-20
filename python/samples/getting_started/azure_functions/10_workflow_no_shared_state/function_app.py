@@ -198,7 +198,7 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     if durable:
         # Initialize app
         workflow = _create_workflow()
-        app = AgentFunctionApp(workflow=workflow, enable_health_check=True, enable_shared_state=False)
+        app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
         return app
     else:
         # Launch the spam detection workflow in DevUI

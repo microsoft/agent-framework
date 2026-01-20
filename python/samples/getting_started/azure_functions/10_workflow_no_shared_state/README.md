@@ -1,4 +1,4 @@
-# Workflow Execution Sample (No SharedState)
+# Workflow Execution Sample
 
 This sample demonstrates running **Agent Framework workflows** in Azure Durable Functions without using SharedState.
 
@@ -8,7 +8,7 @@ This sample shows how to use `AgentFunctionApp` with a `WorkflowBuilder` workflo
 
 ```python
 workflow = _create_workflow()  # Build the workflow graph
-app = AgentFunctionApp(workflow=workflow, enable_shared_state=False)
+app = AgentFunctionApp(workflow=workflow)
 ```
 
 This approach provides durable, fault-tolerant workflow execution with minimal code.
@@ -124,7 +124,7 @@ workflow = (
 ### Registering with AgentFunctionApp
 
 ```python
-app = AgentFunctionApp(workflow=workflow, enable_health_check=True, enable_shared_state=False)
+app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
 ```
 
 ### Executor Classes

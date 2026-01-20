@@ -37,7 +37,6 @@ from agent_framework_durabletask import AgentSessionId, DurableAgentThread, Dura
 from azure.durable_functions import DurableOrchestrationContext
 
 from ._orchestration import AzureFunctionsAgentExecutor
-from ._shared_state import DurableSharedState
 from ._utils import deserialize_value, serialize_message
 
 logger = logging.getLogger(__name__)
@@ -144,7 +143,7 @@ def run_workflow_orchestrator(
     context: DurableOrchestrationContext,
     workflow: Workflow,
     initial_message: Any,
-    shared_state: DurableSharedState | None = None,
+    shared_state: dict[str, Any] | None = None,
 ):
     """Traverse and execute the workflow graph using Durable Functions.
 
@@ -156,7 +155,7 @@ def run_workflow_orchestrator(
     - SwitchCaseEdgeGroup: First matching condition wins
     - FanOutEdgeGroup: Broadcast to multiple targets - **executed in parallel**
     - FanInEdgeGroup: Aggregates messages from multiple sources before delivery
-    - SharedState: Durable shared state accessible to all executors
+    - SharedState: Local shared state accessible to all executors
 
     Execution model:
     - Different executors pending in the same iteration run in parallel
@@ -172,7 +171,7 @@ def run_workflow_orchestrator(
         context: The Durable Functions orchestration context
         workflow: The MAF Workflow instance to execute
         initial_message: The initial message to send to the start executor
-        shared_state: Optional DurableSharedState for cross-executor state sharing
+        shared_state: Optional dict for cross-executor state sharing (local to orchestration)
 
     Returns:
         List of workflow outputs collected from executor activities
@@ -324,10 +323,9 @@ def run_workflow_orchestrator(
         if activity_executor_tasks:
             logger.debug("Processing %d activity executors in parallel", len(activity_executor_tasks))
 
-            # Get shared state snapshot once before all activity executions (if shared_state is available)
-            shared_state_snapshot: dict[str, Any] | None = None
-            if shared_state:
-                shared_state_snapshot = yield from shared_state.get_all()
+            # Use shared state dict directly (no entity calls needed)
+            shared_state_snapshot: dict[str, Any] | None = shared_state
+            if shared_state_snapshot:
                 logger.debug("[workflow] SharedState snapshot for activities: %s", shared_state_snapshot)
 
             # Create all activity tasks without yielding (to enable parallel execution)
@@ -364,20 +362,20 @@ def run_workflow_orchestrator(
                 logger.debug("Activity for executor %s returned", executor_id)
 
                 # Apply any shared state updates from the activity result
-                if shared_state and result:
+                if shared_state is not None and result:
                     if result.get("shared_state_updates"):
                         updates = result["shared_state_updates"]
                         logger.debug(
                             "[workflow] Applying SharedState updates from activity %s: %s", executor_id, updates
                         )
-                        yield from shared_state.update(updates)
+                        shared_state.update(updates)
                     if result.get("shared_state_deletes"):
                         deletes = result["shared_state_deletes"]
                         logger.debug(
                             "[workflow] Applying SharedState deletes from activity %s: %s", executor_id, deletes
                         )
                         for key in deletes:
-                            yield from shared_state.delete(key)
+                            shared_state.pop(key, None)
 
                 # Collect outputs
                 if result and result.get("outputs"):

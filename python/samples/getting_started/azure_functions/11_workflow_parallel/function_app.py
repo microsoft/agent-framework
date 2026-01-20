@@ -496,8 +496,7 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
         workflow = _create_workflow()
         app = AgentFunctionApp(
             workflow=workflow, 
-            enable_health_check=True, 
-            enable_shared_state=False,
+            enable_health_check=True,
         )
         return app
     else:
@@ -522,4 +521,4 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
         return None
 
 
-app = launch(durable=False)
+app = launch(durable=True)

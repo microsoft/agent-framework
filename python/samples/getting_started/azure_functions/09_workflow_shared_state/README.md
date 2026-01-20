@@ -4,7 +4,7 @@ This sample demonstrates running **Agent Framework workflows with SharedState** 
 
 ## Overview
 
-This sample shows how to use `AgentFunctionApp` to execute a `WorkflowBuilder` workflow that uses SharedState to pass data between executors. SharedState is backed by a Durable Entity for persistence across workflow steps.
+This sample shows how to use `AgentFunctionApp` to execute a `WorkflowBuilder` workflow that uses SharedState to pass data between executors. SharedState is a local dictionary maintained by the orchestration that allows executors to share data across workflow steps.
 
 ## What This Sample Demonstrates
 
@@ -95,5 +95,5 @@ Email sent: Hi, Thank you for the reminder about the sprint planning meeting tom
 
 ## Related Samples
 
-- `10_workflow_no_shared_state` - Workflow execution without SharedState
+- `10_workflow_no_shared_state` - Workflow execution without SharedState usage
 - `06_multi_agent_orchestration_conditionals` - Manual Durable Functions orchestration with agents
