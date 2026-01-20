@@ -81,10 +81,14 @@ public static class DurableOptionsExtensions
 
     private static void ConfigureWorkflowOrchestrations(FunctionsApplicationBuilder builder, DurableWorkflowOptions workflows)
     {
-        // Registering orchestration functions for each workflow.
+        // Registering orchestration functions and the workflow state entity.
 
         builder.ConfigureDurableWorker().AddTasks(tasks =>
         {
+            // Register the workflow state entity for durable state management
+            // Each orchestration instance gets its own entity keyed by instance ID
+            tasks.AddEntity<WorkflowSharedStateEntity>(WorkflowSharedStateEntity.EntityName);
+
             foreach (string workflowName in workflows.Workflows.Select(kp => kp.Key))
             {
                 tasks.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(

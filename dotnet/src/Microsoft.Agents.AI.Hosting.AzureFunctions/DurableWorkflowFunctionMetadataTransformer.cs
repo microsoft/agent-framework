@@ -136,6 +136,7 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
             RawBindings =
             [
                 """{"name":"input","type":"activityTrigger","direction":"In","dataType":"String"}""",
+                """{"name":"durableTaskClient","type":"durableClient","direction":"In"}"""
             ],
             EntryPoint = BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint,
             ScriptFile = BuiltInFunctions.ScriptFile,
