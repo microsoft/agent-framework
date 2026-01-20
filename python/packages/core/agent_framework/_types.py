@@ -12,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -2809,7 +2809,7 @@ class ToolMode(TypedDict, total=False):
 # region TypedDict-based Chat Options
 
 
-class ChatOptions(TypedDict, Generic[TResponseModel], total=False):
+class _ChatOptionsBase(TypedDict, total=False):
     """Common request settings for AI services as a TypedDict.
 
     All fields are optional (total=False) to allow partial specification.
@@ -2862,7 +2862,7 @@ class ChatOptions(TypedDict, Generic[TResponseModel], total=False):
     allow_multiple_tool_calls: bool
 
     # Response configuration
-    response_format: type[TResponseModel] | Mapping[str, Any] | None
+    response_format: type[BaseModel] | Mapping[str, Any] | None
 
     # Metadata
     metadata: dict[str, Any]
@@ -2872,6 +2872,15 @@ class ChatOptions(TypedDict, Generic[TResponseModel], total=False):
 
     # System/instructions
     instructions: str
+
+
+if TYPE_CHECKING:
+
+    class ChatOptions(_ChatOptionsBase, Generic[TResponseModel], total=False):
+        response_format: type[TResponseModel] | Mapping[str, Any] | None
+
+else:
+    ChatOptions = _ChatOptionsBase
 
 
 # region Chat Options Utility Functions
