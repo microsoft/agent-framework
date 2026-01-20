@@ -1096,12 +1096,11 @@ def _trace_get_response(
             )
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                    chat_options = kwargs.get("chat_options")
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=getattr(chat_options, "instructions", None) if chat_options else None,
+                        system_instructions=options.get("instructions"),
                     )
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
@@ -1191,12 +1190,11 @@ def _trace_get_streaming_response(
             all_updates: list["ChatResponseUpdate"] = []
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                    chat_options = kwargs.get("chat_options")
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=getattr(chat_options, "instructions", None) if chat_options else None,
+                        system_instructions=options.get("instructions"),
                     )
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None

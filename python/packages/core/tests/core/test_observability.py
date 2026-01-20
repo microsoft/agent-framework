@@ -283,15 +283,15 @@ async def test_chat_client_streaming_observability(
 async def test_chat_client_observability_with_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test that system_instructions from chat_options are captured in LLM span."""
+    """Test that system_instructions from options are captured in LLM span."""
     import json
 
     client = use_instrumentation(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
-    chat_options = ChatOptions(model_id="Test", instructions="You are a helpful assistant.")
+    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
-    response = await client.get_response(messages=messages, chat_options=chat_options)
+    response = await client.get_response(messages=messages, options=options)
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
@@ -313,16 +313,16 @@ async def test_chat_client_observability_with_instructions(
 async def test_chat_client_streaming_observability_with_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test streaming telemetry captures system_instructions from chat_options."""
+    """Test streaming telemetry captures system_instructions from options."""
     import json
 
     client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
-    chat_options = ChatOptions(model_id="Test", instructions="You are a helpful assistant.")
+    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
 
     updates = []
-    async for update in client.get_streaming_response(messages=messages, chat_options=chat_options):
+    async for update in client.get_streaming_response(messages=messages, options=options):
         updates.append(update)
 
     assert len(updates) == 2
@@ -345,9 +345,9 @@ async def test_chat_client_observability_without_instructions(
     client = use_instrumentation(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
-    chat_options = ChatOptions(model_id="Test")  # No instructions
+    options = {"model_id": "Test"}  # No instructions
     span_exporter.clear()
-    response = await client.get_response(messages=messages, chat_options=chat_options)
+    response = await client.get_response(messages=messages, options=options)
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
@@ -366,9 +366,9 @@ async def test_chat_client_observability_with_empty_instructions(
     client = use_instrumentation(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
-    chat_options = ChatOptions(model_id="Test", instructions="")  # Empty string
+    options = {"model_id": "Test", "instructions": ""}  # Empty string
     span_exporter.clear()
-    response = await client.get_response(messages=messages, chat_options=chat_options)
+    response = await client.get_response(messages=messages, options=options)
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
@@ -389,9 +389,9 @@ async def test_chat_client_observability_with_list_instructions(
     client = use_instrumentation(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
-    chat_options = ChatOptions(model_id="Test", instructions=["Instruction 1", "Instruction 2"])
+    options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
     span_exporter.clear()
-    response = await client.get_response(messages=messages, chat_options=chat_options)
+    response = await client.get_response(messages=messages, options=options)
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
