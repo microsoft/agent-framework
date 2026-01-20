@@ -51,7 +51,7 @@ from agent_framework import with_telemetry, with_function_calling
 
 client = OpenAIChatClient(...)
 client = with_function_calling(client)
-client = with_telemetry(client, logger_factory)
+client = with_telemetry(client)
 ```
 
 - Good: familiar Python pattern
@@ -61,7 +61,7 @@ client = with_telemetry(client, logger_factory)
 - Good: performance optimization by only including needed decorators
 - Bad: verbose and repetitive for common cases
 - Bad: order of decorators matters and can be confusing
-- Bad: no validation of decorator compatibility or ordering
+- Bad: no validation of decorator compatibility or ordering (limited validation could be done, through checking of flags on clients)
 - Bad: harder to discover available decorators and their usage
 
 ### Option 3: Builder pattern with fluent API
@@ -137,4 +137,18 @@ client = OpenAIChatClient(
 - Bad: depending on the setup, might still have overhead from unused features
 
 ## Decision Outcome
-TBD
+
+Option 2: Decorator based composition
+
+We currently have three decorators on ChatClients: function calling, telemetry and middleware. And two on Agents: telemetry and middleware.
+
+Details:
+- ChatClient:
+    - Function calling, updated to this new pattern, move FunctionInvocationConfiguration into the decorator arguments
+    - Telemetry, updated to this new pattern, keep `capture_usage` parameter
+    - Middleware, since that is a parameter on the ChatClient already, build the code paths into the BaseChatClient, remove the decorator.
+- Agent:
+    - Telemetry, updated to this new pattern, keep `capture_usage` parameter
+        - Should this look for and if necessary auto apply telemetry to the underlying client (for ChatAgent)?
+        - Look into a single telemetry decorator that can be applied to both ChatClients and Agents?
+    - Middleware, since that is a parameter on the ChatAgent already, build the code paths into the ChatAgent, remove the decorator.
