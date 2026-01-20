@@ -692,3 +692,230 @@ model:
             assert result.model.connection.apiKey == "secret-key-123"
         finally:
             _safe_mode_context.reset(token)
+
+
+class TestAgentFactoryMcpToolConnection:
+    """Tests for MCP tool connection handling in AgentFactory._parse_tool."""
+
+    def _get_mcp_tools(self, agent):
+        """Helper to get MCP tools from agent's default_options."""
+        from agent_framework import HostedMCPTool
+
+        tools = agent.default_options.get("tools", [])
+        return [t for t in tools if isinstance(t, HostedMCPTool)]
+
+    def test_mcp_tool_with_api_key_connection_sets_headers(self):
+        """Test that MCP tool with ApiKeyConnection sets headers correctly."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: my-mcp-tool
+    url: https://api.example.com/mcp
+    connection:
+      kind: key
+      apiKey: my-secret-api-key
+"""
+
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # Find the MCP tool in the agent's tools
+        mcp_tools = self._get_mcp_tools(agent)
+        assert len(mcp_tools) == 1
+        mcp_tool = mcp_tools[0]
+
+        # Verify headers are set with the API key
+        assert mcp_tool.headers is not None
+        assert mcp_tool.headers == {"Authorization": "Bearer my-secret-api-key"}
+
+    def test_mcp_tool_with_remote_connection_sets_additional_properties(self):
+        """Test that MCP tool with RemoteConnection sets additional_properties correctly."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: github-mcp
+    url: https://api.githubcopilot.com/mcp
+    connection:
+      kind: remote
+      authenticationMode: oauth
+      name: github-mcp-oauth-connection
+"""
+
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # Find the MCP tool in the agent's tools
+        mcp_tools = self._get_mcp_tools(agent)
+        assert len(mcp_tools) == 1
+        mcp_tool = mcp_tools[0]
+
+        # Verify additional_properties are set with connection info
+        assert mcp_tool.additional_properties is not None
+        assert "connection" in mcp_tool.additional_properties
+        conn = mcp_tool.additional_properties["connection"]
+        assert conn["kind"] == "remote"
+        assert conn["authenticationMode"] == "oauth"
+        assert conn["name"] == "github-mcp-oauth-connection"
+
+    def test_mcp_tool_with_reference_connection_sets_additional_properties(self):
+        """Test that MCP tool with ReferenceConnection sets additional_properties correctly."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: ref-mcp-tool
+    url: https://api.example.com/mcp
+    connection:
+      kind: reference
+      name: my-connection-ref
+      target: /connections/my-connection
+"""
+
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # Find the MCP tool in the agent's tools
+        mcp_tools = self._get_mcp_tools(agent)
+        assert len(mcp_tools) == 1
+        mcp_tool = mcp_tools[0]
+
+        # Verify additional_properties are set with connection info
+        assert mcp_tool.additional_properties is not None
+        assert "connection" in mcp_tool.additional_properties
+        conn = mcp_tool.additional_properties["connection"]
+        assert conn["kind"] == "reference"
+        assert conn["name"] == "my-connection-ref"
+
+    def test_mcp_tool_with_anonymous_connection_no_headers_or_properties(self):
+        """Test that MCP tool with AnonymousConnection doesn't set headers or additional_properties."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: anon-mcp-tool
+    url: https://api.example.com/mcp
+    connection:
+      kind: anonymous
+"""
+
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # Find the MCP tool in the agent's tools
+        mcp_tools = self._get_mcp_tools(agent)
+        assert len(mcp_tools) == 1
+        mcp_tool = mcp_tools[0]
+
+        # Verify no headers or additional_properties are set
+        assert mcp_tool.headers is None
+        assert mcp_tool.additional_properties is None
+
+    def test_mcp_tool_without_connection_preserves_existing_behavior(self):
+        """Test that MCP tool without connection works as before (no headers or additional_properties)."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: simple-mcp-tool
+    url: https://api.example.com/mcp
+    approvalMode: never
+"""
+
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # Find the MCP tool in the agent's tools
+        mcp_tools = self._get_mcp_tools(agent)
+        assert len(mcp_tools) == 1
+        mcp_tool = mcp_tools[0]
+
+        # Verify tool is created correctly without connection
+        assert mcp_tool.name == "simple-mcp-tool"
+        assert str(mcp_tool.url) == "https://api.example.com/mcp"
+        assert mcp_tool.approval_mode == "never_require"
+        assert mcp_tool.headers is None
+        assert mcp_tool.additional_properties is None
+
+    def test_mcp_tool_with_remote_connection_with_endpoint(self):
+        """Test that MCP tool with RemoteConnection including endpoint sets it in additional_properties."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: endpoint-mcp-tool
+    url: https://api.example.com/mcp
+    connection:
+      kind: remote
+      authenticationMode: oauth
+      name: my-oauth-connection
+      endpoint: https://auth.example.com
+"""
+
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # Find the MCP tool in the agent's tools
+        mcp_tools = self._get_mcp_tools(agent)
+        assert len(mcp_tools) == 1
+        mcp_tool = mcp_tools[0]
+
+        # Verify additional_properties include endpoint
+        assert mcp_tool.additional_properties is not None
+        conn = mcp_tool.additional_properties["connection"]
+        assert conn["endpoint"] == "https://auth.example.com"

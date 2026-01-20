@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict
+from typing import Any, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -26,11 +26,8 @@ from azure.ai.projects.models import (
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import ValidationError
 
-from ._client import AzureAIClient
+from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
-
-if TYPE_CHECKING:
-    from agent_framework.openai import OpenAIResponsesOptions
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # pragma: no cover
@@ -46,7 +43,7 @@ logger = get_logger("agent_framework.azure")
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIResponsesOptions",
+    default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
@@ -193,9 +190,10 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
 
-        # Extract response_format from default_options if present
+        # Extract options from default_options if present
         opts = dict(default_options) if default_options else {}
         response_format = opts.get("response_format")
+        rai_config = opts.get("rai_config")
 
         args: dict[str, Any] = {"model": resolved_model}
 
@@ -205,6 +203,8 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             args["text"] = PromptAgentDefinitionText(
                 format=create_text_format_config(response_format)  # type: ignore[arg-type]
             )
+        if rai_config:
+            args["rai_config"] = rai_config
 
         # Normalize tools once and reuse for both Azure AI API and ChatAgent
         normalized_tools = normalize_tools(tools)
