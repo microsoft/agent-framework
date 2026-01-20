@@ -23,7 +23,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithClientFactory_AppliesFactoryCorrectly()
+    public async Task CreateAIAgentAsync_WithClientFactory_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -31,7 +31,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent",
@@ -53,7 +53,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with clientFactory using AsBuilder pattern works correctly.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithClientFactoryUsingAsBuilder_AppliesFactoryCorrectly()
+    public async Task CreateAIAgentAsync_WithClientFactoryUsingAsBuilder_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -62,7 +62,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             clientFactory: (innerClient) =>
@@ -83,7 +83,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with options and clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithOptionsAndClientFactory_AppliesFactoryCorrectly()
+    public async Task CreateAIAgentAsync_WithOptionsAndClientFactory_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -97,7 +97,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         };
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             options,
             clientFactory: (innerClient) => testChatClient);
@@ -117,14 +117,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent without clientFactory works normally.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithoutClientFactory_WorksNormally()
+    public async Task CreateAIAgentAsync_WithoutClientFactory_WorksNormallyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent");
@@ -142,14 +142,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with null clientFactory works normally.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullClientFactory_WorksNormally()
+    public async Task CreateAIAgentAsync_WithNullClientFactory_WorksNormallyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent",
@@ -168,11 +168,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent throws ArgumentNullException when client is null.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullClient_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullClient_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((AssistantClient)null!).CreateAIAgent("test-model"));
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            ((AssistantClient)null!).CreateAIAgentAsync("test-model"));
 
         Assert.Equal("client", exception.ParamName);
     }
@@ -181,14 +181,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent throws ArgumentNullException when model is null.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullModel_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullModel_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
 
         // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.CreateAIAgent(null!));
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient.CreateAIAgentAsync(null!));
 
         Assert.Equal("model", exception.ParamName);
     }
@@ -197,14 +197,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with options throws ArgumentNullException when options is null.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullOptions_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
 
         // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.CreateAIAgent("test-model", (ChatClientAgentOptions)null!));
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient.CreateAIAgentAsync("test-model", (ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }
@@ -284,33 +284,6 @@ public sealed class OpenAIAssistantClientExtensionsTests
         Assert.Equal("Original Name", agent.Name);
         Assert.Equal("Original Description", agent.Description);
         Assert.Equal("Original Instructions", agent.Instructions);
-    }
-
-    /// <summary>
-    /// Verify that GetAIAgent with agentId and options works correctly.
-    /// </summary>
-    [Fact]
-    public void GetAIAgent_WithAgentIdAndOptions_WorksCorrectly()
-    {
-        // Arrange
-        var assistantClient = new TestAssistantClient();
-        const string AgentId = "asst_abc123";
-
-        var options = new ChatClientAgentOptions
-        {
-            Name = "Override Name",
-            Description = "Override Description",
-            ChatOptions = new() { Instructions = "Override Instructions" }
-        };
-
-        // Act
-        var agent = assistantClient.GetAIAgent(AgentId, options);
-
-        // Assert
-        Assert.NotNull(agent);
-        Assert.Equal("Override Name", agent.Name);
-        Assert.Equal("Override Description", agent.Description);
-        Assert.Equal("Override Instructions", agent.Instructions);
     }
 
     /// <summary>
@@ -424,23 +397,6 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentException when agentId is empty.
-    /// </summary>
-    [Fact]
-    public void GetAIAgent_WithEmptyAgentId_ThrowsArgumentException()
-    {
-        // Arrange
-        var assistantClient = new TestAssistantClient();
-        var options = new ChatClientAgentOptions();
-
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            assistantClient.GetAIAgent(string.Empty, options));
-
-        Assert.Equal("agentId", exception.ParamName);
-    }
-
-    /// <summary>
     /// Verify that GetAIAgentAsync throws ArgumentException when agentId is empty.
     /// </summary>
     [Fact]
@@ -461,7 +417,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with services parameter correctly passes it through to the ChatClientAgent.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithServices_PassesServicesToAgent()
+    public async Task CreateAIAgentAsync_WithServices_PassesServicesToAgentAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -469,7 +425,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent",
@@ -490,7 +446,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with options and services parameter correctly passes it through to the ChatClientAgent.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithOptionsAndServices_PassesServicesToAgent()
+    public async Task CreateAIAgentAsync_WithOptionsAndServices_PassesServicesToAgentAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -503,7 +459,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         };
 
         // Act
-        var agent = assistantClient.CreateAIAgent(ModelId, options, services: serviceProvider);
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options, services: serviceProvider);
 
         // Assert
         Assert.NotNull(agent);
@@ -570,7 +526,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with both clientFactory and services works correctly.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithClientFactoryAndServices_AppliesBothCorrectly()
+    public async Task CreateAIAgentAsync_WithClientFactoryAndServices_AppliesBothCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -579,7 +535,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent",
@@ -622,14 +578,9 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
         }
 
-        public override ClientResult<Assistant> CreateAssistant(string model, AssistantCreationOptions? options = null, CancellationToken cancellationToken = default)
+        public override Task<ClientResult<Assistant>> CreateAssistantAsync(string model, AssistantCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}""")), new FakePipelineResponse())!;
-        }
-
-        public override ClientResult<Assistant> GetAssistant(string assistantId, CancellationToken cancellationToken = default)
-        {
-            return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}""")), new FakePipelineResponse())!;
+            return Task.FromResult<ClientResult<Assistant>>(ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}""")), new FakePipelineResponse())!);
         }
 
         public override async Task<ClientResult<Assistant>> GetAssistantAsync(string assistantId, CancellationToken cancellationToken = default)

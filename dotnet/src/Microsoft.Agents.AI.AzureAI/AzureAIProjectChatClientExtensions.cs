@@ -27,7 +27,7 @@ namespace Azure.AI.Projects;
 public static partial class AzureAIProjectChatClientExtensions
 {
     /// <summary>
-    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/>.
+    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentReference"/>.
     /// </summary>
     /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to create the <see cref="ChatClientAgent"/> with. Cannot be <see langword="null"/>.</param>
     /// <param name="agentReference">The <see cref="AgentReference"/> representing the name and version of the server side agent to create a <see cref="ChatClientAgent"/> for. Cannot be <see langword="null"/>.</param>
@@ -38,10 +38,10 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentReference"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
     /// <remarks>
-    /// When retrieving an agent by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
+    /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
     /// on <see cref="AIAgent.GetService(Type, object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
-    public static ChatClientAgent GetAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentReference agentReference,
         IList<AITool>? tools = null,
@@ -52,7 +52,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Throw.IfNull(agentReference);
         ThrowIfInvalidAgentName(agentReference.Name);
 
-        return CreateChatClientAgent(
+        return AsChatClientAgent(
             aiProjectClient,
             agentReference,
             new ChatClientAgentOptions()
@@ -61,40 +61,6 @@ public static partial class AzureAIProjectChatClientExtensions
                 Name = agentReference.Name,
                 ChatOptions = new() { Tools = tools },
             },
-            clientFactory,
-            services);
-    }
-
-    /// <summary>
-    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/>.
-    /// </summary>
-    /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to create the <see cref="ChatClientAgent"/> with. Cannot be <see langword="null"/>.</param>
-    /// <param name="name">The name of the server side agent to create a <see cref="ChatClientAgent"/> for. Cannot be <see langword="null"/> or whitespace.</param>
-    /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
-    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
-    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the named Azure AI Agent.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty or whitespace, or when the agent with the specified name was not found.</exception>
-    /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
-    public static ChatClientAgent GetAIAgent(
-        this AIProjectClient aiProjectClient,
-        string name,
-        IList<AITool>? tools = null,
-        Func<IChatClient, IChatClient>? clientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-    {
-        Throw.IfNull(aiProjectClient);
-        ThrowIfInvalidAgentName(name);
-
-        AgentRecord agentRecord = GetAgentRecordByName(aiProjectClient, name, cancellationToken);
-
-        return AsAIAgent(
-            aiProjectClient,
-            agentRecord,
-            tools,
             clientFactory,
             services);
     }
@@ -134,7 +100,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Gets a runnable agent instance from the provided agent record.
+    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentRecord"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to interact with Azure AI Agents. Cannot be <see langword="null"/>.</param>
     /// <param name="agentRecord">The agent record to be converted. The latest version will be used. Cannot be <see langword="null"/>.</param>
@@ -155,7 +121,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         var allowDeclarativeMode = tools is not { Count: > 0 };
 
-        return CreateChatClientAgent(
+        return AsChatClientAgent(
             aiProjectClient,
             agentRecord,
             tools,
@@ -165,7 +131,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Gets a runnable agent instance from a <see cref="AgentVersion"/> containing metadata about an Azure AI Agent.
+    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentVersion"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to interact with Azure AI Agents. Cannot be <see langword="null"/>.</param>
     /// <param name="agentVersion">The agent version to be converted. Cannot be <see langword="null"/>.</param>
@@ -186,7 +152,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         var allowDeclarativeMode = tools is not { Count: > 0 };
 
-        return CreateChatClientAgent(
+        return AsChatClientAgent(
             aiProjectClient,
             agentVersion,
             tools,
@@ -196,47 +162,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Creates a new Prompt AI Agent using the provided <see cref="AIProjectClient"/> and options.
-    /// </summary>
-    /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
-    /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
-    /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
-    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent GetAIAgent(
-        this AIProjectClient aiProjectClient,
-        ChatClientAgentOptions options,
-        Func<IChatClient, IChatClient>? clientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-    {
-        Throw.IfNull(aiProjectClient);
-        Throw.IfNull(options);
-
-        if (string.IsNullOrWhiteSpace(options.Name))
-        {
-            throw new ArgumentException("Agent name must be provided in the options.Name property", nameof(options));
-        }
-
-        ThrowIfInvalidAgentName(options.Name);
-
-        AgentRecord agentRecord = GetAgentRecordByName(aiProjectClient, options.Name, cancellationToken);
-        var agentVersion = agentRecord.Versions.Latest;
-
-        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: true);
-
-        return CreateChatClientAgent(
-            aiProjectClient,
-            agentVersion,
-            agentOptions,
-            clientFactory,
-            services);
-    }
-
-    /// <summary>
-    /// Creates a new Prompt AI Agent using the provided <see cref="AIProjectClient"/> and options.
+    /// Asynchronously retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
     /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
@@ -267,7 +193,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: true);
 
-        return CreateChatClientAgent(
+        return AsChatClientAgent(
             aiProjectClient,
             agentVersion,
             agentOptions,
@@ -276,49 +202,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Creates a new Prompt AI agent using the specified configuration parameters.
-    /// </summary>
-    /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
-    /// <param name="name">The name for the agent.</param>
-    /// <param name="model">The name of the model to use for the agent. Cannot be <see langword="null"/> or whitespace.</param>
-    /// <param name="instructions">The instructions that guide the agent's behavior. Cannot be <see langword="null"/> or whitespace.</param>
-    /// <param name="description">The description for the agent.</param>
-    /// <param name="tools">The tools to use when interacting with the agent, this is required when using prompt agent definitions with tools.</param>
-    /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
-    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/>, <paramref name="model"/>, or <paramref name="instructions"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> or <paramref name="instructions"/> is empty or whitespace.</exception>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
-    public static ChatClientAgent CreateAIAgent(
-        this AIProjectClient aiProjectClient,
-        string name,
-        string model,
-        string instructions,
-        string? description = null,
-        IList<AITool>? tools = null,
-        Func<IChatClient, IChatClient>? clientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-    {
-        Throw.IfNull(aiProjectClient);
-        ThrowIfInvalidAgentName(name);
-        Throw.IfNullOrWhitespace(model);
-        Throw.IfNullOrWhitespace(instructions);
-
-        return CreateAIAgent(
-            aiProjectClient,
-            name,
-            tools,
-            new AgentVersionCreationOptions(new PromptAgentDefinition(model) { Instructions = instructions }) { Description = description },
-            clientFactory,
-            services,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Creates a new Prompt AI agent using the specified configuration parameters.
+    /// Creates a new Prompt AI agent in the Foundry service using the specified configuration parameters, and exposes it as a <see cref="ChatClientAgent"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
     /// <param name="name">The name for the agent.</param>
@@ -360,73 +244,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Creates a new Prompt AI Agent using the provided <see cref="AIProjectClient"/> and options.
-    /// </summary>
-    /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
-    /// <param name="model">The name of the model to use for the agent. Cannot be <see langword="null"/> or whitespace.</param>
-    /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
-    /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
-    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace, or when the agent name is not provided in the options.</exception>
-    public static ChatClientAgent CreateAIAgent(
-        this AIProjectClient aiProjectClient,
-        string model,
-        ChatClientAgentOptions options,
-        Func<IChatClient, IChatClient>? clientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-    {
-        Throw.IfNull(aiProjectClient);
-        Throw.IfNull(options);
-        Throw.IfNullOrWhitespace(model);
-        const bool RequireInvocableTools = true;
-
-        if (string.IsNullOrWhiteSpace(options.Name))
-        {
-            throw new ArgumentException("Agent name must be provided in the options.Name property", nameof(options));
-        }
-
-        ThrowIfInvalidAgentName(options.Name);
-
-        PromptAgentDefinition agentDefinition = new(model)
-        {
-            Instructions = options.ChatOptions?.Instructions,
-            Temperature = options.ChatOptions?.Temperature,
-            TopP = options.ChatOptions?.TopP,
-            TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
-        };
-
-        // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
-        {
-            agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
-        }
-
-        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
-
-        AgentVersionCreationOptions? creationOptions = new(agentDefinition);
-        if (!string.IsNullOrWhiteSpace(options.Description))
-        {
-            creationOptions.Description = options.Description;
-        }
-
-        AgentVersion agentVersion = CreateAgentVersionWithProtocol(aiProjectClient, options.Name, creationOptions, cancellationToken);
-
-        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, RequireInvocableTools);
-
-        return CreateChatClientAgent(
-            aiProjectClient,
-            agentVersion,
-            agentOptions,
-            clientFactory,
-            services);
-    }
-
-    /// <summary>
-    /// Creates a new Prompt AI Agent using the provided <see cref="AIProjectClient"/> and options.
+    /// Creates a new Prompt AI agent in the Foundry service using the specified configuration parameters, and exposes it as a <see cref="ChatClientAgent"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
     /// <param name="model">The name of the model to use for the agent. Cannot be <see langword="null"/> or whitespace.</param>
@@ -483,7 +301,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         var agentOptions = CreateChatClientAgentOptions(agentVersion, options, RequireInvocableTools);
 
-        return CreateChatClientAgent(
+        return AsChatClientAgent(
             aiProjectClient,
             agentVersion,
             agentOptions,
@@ -492,42 +310,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Creates a new AI agent using the specified agent definition and optional configuration parameters.
-    /// </summary>
-    /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
-    /// <param name="name">The name for the agent.</param>
-    /// <param name="creationOptions">Settings that control the creation of the agent.</param>
-    /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="creationOptions"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// When using this extension method with a <see cref="PromptAgentDefinition"/> the tools are only declarative and not invocable.
-    /// Invocation of any in-process tools will need to be handled manually.
-    /// </remarks>
-    public static ChatClientAgent CreateAIAgent(
-        this AIProjectClient aiProjectClient,
-        string name,
-        AgentVersionCreationOptions creationOptions,
-        Func<IChatClient, IChatClient>? clientFactory = null,
-        CancellationToken cancellationToken = default)
-    {
-        Throw.IfNull(aiProjectClient);
-        ThrowIfInvalidAgentName(name);
-        Throw.IfNull(creationOptions);
-
-        return CreateAIAgent(
-            aiProjectClient,
-            name,
-            tools: null,
-            creationOptions,
-            clientFactory,
-            services: null,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Asynchronously creates a new AI agent using the specified agent definition and optional configuration
+    /// Creates a new Prompt AI agent in the Foundry service using the specified configuration parameters, and exposes it as a <see cref="ChatClientAgent"/>.
     /// parameters.
     /// </summary>
     /// <param name="aiProjectClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
@@ -567,18 +350,6 @@ public static partial class AzureAIProjectChatClientExtensions
     private static readonly ModelReaderWriterOptions s_modelWriterOptionsWire = new("W");
 
     /// <summary>
-    /// Retrieves an agent record by name using the Protocol method with user-agent header.
-    /// </summary>
-    private static AgentRecord GetAgentRecordByName(AIProjectClient aiProjectClient, string agentName, CancellationToken cancellationToken)
-    {
-        ClientResult protocolResponse = aiProjectClient.Agents.GetAgent(agentName, cancellationToken.ToRequestOptions(false));
-        var rawResponse = protocolResponse.GetRawResponse();
-        AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
-        return ClientResult.FromOptionalValue(result, rawResponse).Value!
-            ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
-    }
-
-    /// <summary>
     /// Asynchronously retrieves an agent record by name using the Protocol method with user-agent header.
     /// </summary>
     private static async Task<AgentRecord> GetAgentRecordByNameAsync(AIProjectClient aiProjectClient, string agentName, CancellationToken cancellationToken)
@@ -588,19 +359,6 @@ public static partial class AzureAIProjectChatClientExtensions
         AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
         return ClientResult.FromOptionalValue(result, rawResponse).Value!
             ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
-    }
-
-    /// <summary>
-    /// Creates an agent version using the Protocol method with user-agent header.
-    /// </summary>
-    private static AgentVersion CreateAgentVersionWithProtocol(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, CancellationToken cancellationToken)
-    {
-        using BinaryContent protocolRequest = BinaryContent.Create(ModelReaderWriter.Write(creationOptions, ModelReaderWriterOptions.Json, AzureAIProjectsContext.Default));
-        ClientResult protocolResponse = aiProjectClient.Agents.CreateAgentVersion(agentName, protocolRequest, cancellationToken.ToRequestOptions(false));
-
-        var rawResponse = protocolResponse.GetRawResponse();
-        AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
-        return ClientResult.FromValue(result, rawResponse).Value!;
     }
 
     /// <summary>
@@ -614,33 +372,6 @@ public static partial class AzureAIProjectChatClientExtensions
         var rawResponse = protocolResponse.GetRawResponse();
         AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
         return ClientResult.FromValue(result, rawResponse).Value!;
-    }
-
-    private static ChatClientAgent CreateAIAgent(
-        this AIProjectClient aiProjectClient,
-        string name,
-        IList<AITool>? tools,
-        AgentVersionCreationOptions creationOptions,
-        Func<IChatClient, IChatClient>? clientFactory,
-        IServiceProvider? services,
-        CancellationToken cancellationToken)
-    {
-        var allowDeclarativeMode = tools is not { Count: > 0 };
-
-        if (!allowDeclarativeMode)
-        {
-            ApplyToolsToAgentDefinition(creationOptions.Definition, tools);
-        }
-
-        AgentVersion agentVersion = CreateAgentVersionWithProtocol(aiProjectClient, name, creationOptions, cancellationToken);
-
-        return CreateChatClientAgent(
-            aiProjectClient,
-            agentVersion,
-            tools,
-            clientFactory,
-            !allowDeclarativeMode,
-            services);
     }
 
     private static async Task<ChatClientAgent> CreateAIAgentAsync(
@@ -661,7 +392,7 @@ public static partial class AzureAIProjectChatClientExtensions
 
         AgentVersion agentVersion = await CreateAgentVersionWithProtocolAsync(aiProjectClient, name, creationOptions, cancellationToken).ConfigureAwait(false);
 
-        return CreateChatClientAgent(
+        return AsChatClientAgent(
             aiProjectClient,
             agentVersion,
             tools,
@@ -671,7 +402,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
-    private static ChatClientAgent CreateChatClientAgent(
+    private static ChatClientAgent AsChatClientAgent(
         AIProjectClient aiProjectClient,
         AgentVersion agentVersion,
         ChatClientAgentOptions agentOptions,
@@ -689,7 +420,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
-    private static ChatClientAgent CreateChatClientAgent(
+    private static ChatClientAgent AsChatClientAgent(
         AIProjectClient aiProjectClient,
         AgentRecord agentRecord,
         ChatClientAgentOptions agentOptions,
@@ -707,7 +438,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
-    private static ChatClientAgent CreateChatClientAgent(
+    private static ChatClientAgent AsChatClientAgent(
         AIProjectClient aiProjectClient,
         AgentReference agentReference,
         ChatClientAgentOptions agentOptions,
@@ -725,14 +456,14 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
-    private static ChatClientAgent CreateChatClientAgent(
+    private static ChatClientAgent AsChatClientAgent(
         AIProjectClient AIProjectClient,
         AgentVersion agentVersion,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         bool requireInvocableTools,
         IServiceProvider? services)
-        => CreateChatClientAgent(
+        => AsChatClientAgent(
             AIProjectClient,
             agentVersion,
             CreateChatClientAgentOptions(agentVersion, new ChatOptions() { Tools = tools }, requireInvocableTools),
@@ -740,14 +471,14 @@ public static partial class AzureAIProjectChatClientExtensions
             services);
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
-    private static ChatClientAgent CreateChatClientAgent(
+    private static ChatClientAgent AsChatClientAgent(
         AIProjectClient AIProjectClient,
         AgentRecord agentRecord,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         bool requireInvocableTools,
         IServiceProvider? services)
-        => CreateChatClientAgent(
+        => AsChatClientAgent(
             AIProjectClient,
             agentRecord,
             CreateChatClientAgentOptions(agentRecord.Versions.Latest, new ChatOptions() { Tools = tools }, requireInvocableTools),
