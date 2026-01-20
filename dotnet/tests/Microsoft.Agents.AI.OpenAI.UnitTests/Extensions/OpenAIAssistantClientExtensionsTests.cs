@@ -210,10 +210,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with ClientResult and options works correctly.
+    /// Verify that AsAIAgent with ClientResult and options works correctly.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithClientResultAndOptions_WorksCorrectly()
+    public void AsAIAgent_WithClientResultAndOptions_WorksCorrectly()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -228,7 +228,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         };
 
         // Act
-        var agent = assistantClient.GetAIAgent(clientResult, options);
+        var agent = assistantClient.AsAIAgent(clientResult, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -238,10 +238,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with Assistant and options works correctly.
+    /// Verify that AsAIAgent with Assistant and options works correctly.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAssistantAndOptions_WorksCorrectly()
+    public void AsAIAgent_WithAssistantAndOptions_WorksCorrectly()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -255,7 +255,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         };
 
         // Act
-        var agent = assistantClient.GetAIAgent(assistant, options);
+        var agent = assistantClient.AsAIAgent(assistant, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -265,10 +265,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with Assistant and options falls back to assistant metadata when options are null.
+    /// Verify that AsAIAgent with Assistant and options falls back to assistant metadata when options are null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAssistantAndOptionsWithNullFields_FallsBackToAssistantMetadata()
+    public void AsAIAgent_WithAssistantAndOptionsWithNullFields_FallsBackToAssistantMetadata()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -277,7 +277,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         var options = new ChatClientAgentOptions(); // Empty options
 
         // Act
-        var agent = assistantClient.GetAIAgent(assistant, options);
+        var agent = assistantClient.AsAIAgent(assistant, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -341,10 +341,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with clientFactory parameter correctly applies the factory.
+    /// Verify that AsAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithClientFactory_AppliesFactoryCorrectly()
+    public void AsAIAgent_WithClientFactory_AppliesFactoryCorrectly()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -357,7 +357,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         };
 
         // Act
-        var agent = assistantClient.GetAIAgent(
+        var agent = assistantClient.AsAIAgent(
             assistant,
             options,
             clientFactory: (innerClient) => testChatClient);
@@ -373,10 +373,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when assistantClientResult is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when assistantClientResult is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithNullClientResult_ThrowsArgumentNullException()
+    public void AsAIAgent_WithNullClientResult_ThrowsArgumentNullException()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -384,16 +384,16 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.GetAIAgent((ClientResult<Assistant>)null!, options));
+            assistantClient.AsAIAgent(null!, options));
 
         Assert.Equal("assistantClientResult", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when assistant is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when assistant is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithNullAssistant_ThrowsArgumentNullException()
+    public void AsAIAgent_WithNullAssistant_ThrowsArgumentNullException()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -401,16 +401,16 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.GetAIAgent((Assistant)null!, options));
+            assistantClient.AsAIAgent((Assistant)null!, options));
 
         Assert.Equal("assistantMetadata", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when options is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when options is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    public void AsAIAgent_WithNullOptions_ThrowsArgumentNullException()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -418,7 +418,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.GetAIAgent(assistant, (ChatClientAgentOptions)null!));
+            assistantClient.AsAIAgent(assistant, (ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }
@@ -518,10 +518,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// Verify that AsAIAgent with services parameter correctly passes it through to the ChatClientAgent.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithServices_PassesServicesToAgent()
+    public void AsAIAgent_WithServices_PassesServicesToAgent()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -529,7 +529,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent"}"""))!;
 
         // Act
-        var agent = assistantClient.GetAIAgent(assistant, services: serviceProvider);
+        var agent = assistantClient.AsAIAgent(assistant, services: serviceProvider);
 
         // Assert
         Assert.NotNull(agent);

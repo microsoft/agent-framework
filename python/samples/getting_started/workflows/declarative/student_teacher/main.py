@@ -55,12 +55,12 @@ async def main() -> None:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create student and teacher agents
-    student_agent = chat_client.create_agent(
+    student_agent = chat_client.as_agent(
         name="StudentAgent",
         instructions=STUDENT_INSTRUCTIONS,
     )
 
-    teacher_agent = chat_client.create_agent(
+    teacher_agent = chat_client.as_agent(
         name="TeacherAgent",
         instructions=TEACHER_INSTRUCTIONS,
     )

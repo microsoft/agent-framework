@@ -34,7 +34,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         var testChatClient = new TestChatClient(chatClient.Beta.AsIChatClient());
 
         // Act
-        var agent = chatClient.Beta.CreateAIAgent(
+        var agent = chatClient.Beta.AsAIAgent(
             model: "test-model",
             instructions: "Test instructions",
             name: "Test Agent",
@@ -63,7 +63,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         TestChatClient? testChatClient = null;
 
         // Act
-        var agent = chatClient.Beta.CreateAIAgent(
+        var agent = chatClient.Beta.AsAIAgent(
             model: "test-model",
             instructions: "Test instructions",
             clientFactory: (innerClient) =>
@@ -95,7 +95,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         };
 
         // Act
-        var agent = chatClient.Beta.CreateAIAgent(
+        var agent = chatClient.Beta.AsAIAgent(
             options,
             clientFactory: (innerClient) => testChatClient);
 
@@ -120,7 +120,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         var chatClient = new TestAnthropicChatClient();
 
         // Act
-        var agent = chatClient.Beta.CreateAIAgent(
+        var agent = chatClient.Beta.AsAIAgent(
             model: "test-model",
             instructions: "Test instructions",
             name: "Test Agent");
@@ -144,7 +144,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         var chatClient = new TestAnthropicChatClient();
 
         // Act
-        var agent = chatClient.Beta.CreateAIAgent(
+        var agent = chatClient.Beta.AsAIAgent(
             model: "test-model",
             instructions: "Test instructions",
             name: "Test Agent",
@@ -167,7 +167,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((IBetaService)null!).CreateAIAgent("test-model"));
+            ((IBetaService)null!).AsAIAgent("test-model"));
 
         Assert.Equal("betaService", exception.ParamName);
     }
@@ -183,7 +183,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            chatClient.Beta.CreateAIAgent((ChatClientAgentOptions)null!));
+            chatClient.Beta.AsAIAgent((ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }

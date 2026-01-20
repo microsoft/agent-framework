@@ -38,7 +38,7 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Role,
+    normalize_messages,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
@@ -470,8 +470,8 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward all kwargs except the arg_name to support runtime context propagation
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k != arg_name}
+            # Forward runtime context kwargs, excluding arg_name and conversation_id.
+            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id")}
 
             if stream_callback is None:
                 # Use non-streaming mode
@@ -497,21 +497,6 @@ class BaseAgent(SerializationMixin):
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, text=messages)]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
 
 # region ChatAgent
@@ -678,7 +663,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
         )
-        self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
+        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         # Build chat options dict
@@ -720,7 +705,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         Returns:
             The ChatAgent instance.
         """
-        for context_manager in chain([self.chat_client], self._local_mcp_tools):
+        for context_manager in chain([self.chat_client], self.mcp_tools):
             if isinstance(context_manager, AbstractAsyncContextManager):
                 await self._async_exit_stack.enter_async_context(context_manager)
         return self
@@ -797,7 +782,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
@@ -817,7 +802,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)  # type: ignore
 
-        for mcp_server in self._local_mcp_tools:
+        for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
@@ -925,7 +910,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
@@ -944,7 +929,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)
 
-        for mcp_server in self._local_mcp_tools:
+        for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)

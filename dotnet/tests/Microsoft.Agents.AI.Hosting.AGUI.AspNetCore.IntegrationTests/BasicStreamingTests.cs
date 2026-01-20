@@ -30,7 +30,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Arrange
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -61,7 +61,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Arrange
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "test");
 
@@ -105,7 +105,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Arrange
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -124,7 +124,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Arrange
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentThread chatClientThread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
@@ -168,7 +168,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Arrange
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentThread chatClientThread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
 
@@ -200,7 +200,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Arrange
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentThread chatClientThread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         // Multiple user messages sent in one turn

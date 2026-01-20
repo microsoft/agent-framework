@@ -52,13 +52,13 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 # 1. Create multiple agents, each with its own instruction set and tools.
 chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-weather_agent = chat_client.create_agent(
+weather_agent = chat_client.as_agent(
     name="WeatherAgent",
     instructions="You are a helpful weather assistant. Provide current weather information.",
     tools=[get_weather],
 )
 
-math_agent = chat_client.create_agent(
+math_agent = chat_client.as_agent(
     name="MathAgent",
     instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
     tools=[calculate_tip],

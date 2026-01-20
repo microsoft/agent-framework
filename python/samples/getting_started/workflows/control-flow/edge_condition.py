@@ -131,28 +131,28 @@ async def to_email_assistant_request(
 def create_spam_detector_agent() -> ChatAgent:
     """Helper to create a spam detection agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
             "Include the original email content in email_content."
         ),
         name="spam_detection_agent",
-        response_format=DetectionResult,
+        default_options={"response_format": DetectionResult},
     )
 
 
 def create_email_assistant_agent() -> ChatAgent:
     """Helper to create an email assistant agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an email assistant that helps users draft professional responses to emails. "
             "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 

@@ -8,7 +8,7 @@ from functools import update_wrapper
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypedDict, TypeVar
 
 from ._serialization import SerializationMixin
-from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, prepare_messages
+from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, normalize_messages, prepare_messages
 from .exceptions import MiddlewareException
 
 if TYPE_CHECKING:
@@ -1225,7 +1225,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         if chat_middlewares:
             kwargs["middleware"] = chat_middlewares
 
-        normalized_messages = self._normalize_messages(messages)
+        normalized_messages = normalize_messages(messages)
 
         # Execute with middleware if available
         if agent_pipeline.has_middlewares:
@@ -1273,7 +1273,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         if chat_middlewares:
             kwargs["middleware"] = chat_middlewares
 
-        normalized_messages = self._normalize_messages(messages)
+        normalized_messages = normalize_messages(messages)
 
         # Execute with middleware if available
         if agent_pipeline.has_middlewares:

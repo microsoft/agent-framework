@@ -881,7 +881,7 @@ class MessageMapper:
             # Handle WorkflowOutputEvent separately to preserve output data
             if event_class == "WorkflowOutputEvent":
                 output_data = getattr(event, "data", None)
-                source_executor_id = getattr(event, "source_executor_id", "unknown")
+                executor_id = getattr(event, "executor_id", "unknown")
 
                 if output_data is not None:
                     # Import required types
@@ -942,7 +942,7 @@ class MessageMapper:
                     # Emit output_item.added for each yield_output
                     logger.debug(
                         f"WorkflowOutputEvent converted to output_item.added "
-                        f"(executor: {source_executor_id}, length: {len(text)})"
+                        f"(executor: {executor_id}, length: {len(text)})"
                     )
                     return [
                         ResponseOutputItemAddedEvent(
