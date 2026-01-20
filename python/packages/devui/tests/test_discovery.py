@@ -84,19 +84,15 @@ async def test_discovery_accepts_agents_with_only_run():
 
         init_file = agent_dir / "__init__.py"
         init_file.write_text("""
-from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
+from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, TextContent
 
 class NonStreamingAgent:
     id = "non_streaming"
     name = "Non-Streaming Agent"
     description = "Agent without run_stream"
 
-    @property
-    def display_name(self):
-        return self.name
-
     async def run(self, messages=None, *, thread=None, **kwargs):
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[ChatMessage(
                 role=Role.ASSISTANT,
                 contents=[TextContent(text="response")]
@@ -207,13 +203,13 @@ workflow = builder.build()
         agent_dir = temp_path / "my_agent"
         agent_dir.mkdir()
         (agent_dir / "agent.py").write_text("""
-from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
+from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, TextContent
 
 class TestAgent:
     name = "Test Agent"
 
     async def run(self, messages=None, *, thread=None, **kwargs):
-        return AgentRunResponse(
+        return AgentResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="test")])],
             response_id="test"
         )

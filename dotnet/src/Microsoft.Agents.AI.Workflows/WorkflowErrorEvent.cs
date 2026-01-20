@@ -10,4 +10,10 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="e">
 /// Optionally, the <see cref="Exception"/> representing the error.
 /// </param>
-public class WorkflowErrorEvent(Exception? e) : WorkflowEvent(e);
+public class WorkflowErrorEvent(Exception? e) : WorkflowEvent(e)
+{
+    /// <summary>
+    /// Gets the exception that caused the current operation to fail, if one occurred.
+    /// </summary>
+    public Exception? Exception => this.Data as Exception;
+}

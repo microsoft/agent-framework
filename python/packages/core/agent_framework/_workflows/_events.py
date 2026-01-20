@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeAlias
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+from agent_framework import AgentResponse, AgentResponseUpdate
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._typing_utils import deserialize_type, serialize_type
@@ -278,20 +278,20 @@ class WorkflowOutputEvent(WorkflowEvent):
     def __init__(
         self,
         data: Any,
-        source_executor_id: str,
+        executor_id: str,
     ):
         """Initialize the workflow output event.
 
         Args:
             data: The output yielded by the executor.
-            source_executor_id: ID of the executor that yielded the output.
+            executor_id: ID of the executor that yielded the output.
         """
         super().__init__(data)
-        self.source_executor_id = source_executor_id
+        self.executor_id = executor_id
 
     def __repr__(self) -> str:
         """Return a string representation of the workflow output event."""
-        return f"{self.__class__.__name__}(data={self.data}, source_executor_id={self.source_executor_id})"
+        return f"{self.__class__.__name__}(data={self.data}, executor_id={self.executor_id})"
 
 
 class SuperStepEvent(WorkflowEvent):
@@ -367,9 +367,9 @@ class ExecutorFailedEvent(ExecutorEvent):
 class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
-    data: AgentRunResponseUpdate | None
+    data: AgentResponseUpdate
 
-    def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
+    def __init__(self, executor_id: str, data: AgentResponseUpdate):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
 
@@ -381,9 +381,9 @@ class AgentRunUpdateEvent(ExecutorEvent):
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
 
-    data: AgentRunResponse | None
+    data: AgentResponse
 
-    def __init__(self, executor_id: str, data: AgentRunResponse | None = None):
+    def __init__(self, executor_id: str, data: AgentResponse):
         """Initialize the agent run event."""
         super().__init__(executor_id, data)
 

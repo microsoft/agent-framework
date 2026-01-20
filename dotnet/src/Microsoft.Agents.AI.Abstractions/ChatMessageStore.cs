@@ -152,7 +152,7 @@ public abstract class ChatMessageStore
         /// <value>
         /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
         /// </value>
-        public IEnumerable<ChatMessage> RequestMessages { get; }
+        public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
     }
 
     /// <summary>
@@ -174,7 +174,7 @@ public abstract class ChatMessageStore
         public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage> chatMessageStoreMessages)
         {
             this.RequestMessages = Throw.IfNull(requestMessages);
-            this.ChatMessageStoreMessages = chatMessageStoreMessages;
+            this.ChatMessageStoreMessages = Throw.IfNull(chatMessageStoreMessages);
         }
 
         /// <summary>
@@ -184,7 +184,7 @@ public abstract class ChatMessageStore
         /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
         /// This does not include any <see cref="ChatMessageStore"/> supplied messages.
         /// </value>
-        public IEnumerable<ChatMessage> RequestMessages { get; }
+        public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
 
         /// <summary>
         /// Gets the messages retrieved from the <see cref="ChatMessageStore"/> for this invocation, if any.
@@ -193,7 +193,7 @@ public abstract class ChatMessageStore
         /// A collection of <see cref="ChatMessage"/> instances that were retrieved from the <see cref="ChatMessageStore"/>,
         /// and were used by the agent as part of the invocation.
         /// </value>
-        public IEnumerable<ChatMessage> ChatMessageStoreMessages { get; }
+        public IEnumerable<ChatMessage> ChatMessageStoreMessages { get; set { field = Throw.IfNull(value); } }
 
         /// <summary>
         /// Gets or sets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.

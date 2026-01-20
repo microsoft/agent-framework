@@ -31,7 +31,7 @@ def safe_divide(
 
 async def main():
     # tools = Tools()
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="ToolAgent",
         instructions="Use the provided tools.",
         tools=[safe_divide],

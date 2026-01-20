@@ -45,7 +45,7 @@ var middlewareEnabledAgent = originalAgent
     .Use(GuardrailMiddleware, null)
     .Build();
 
-var thread = middlewareEnabledAgent.GetNewThread();
+var thread = await middlewareEnabledAgent.GetNewThreadAsync();
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
 var guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");
@@ -131,7 +131,7 @@ async ValueTask<object?> PerRequestFunctionCallingMiddleware(AIAgent agent, Func
 }
 
 // This middleware redacts PII information from input and output messages.
-async Task<AgentRunResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact PII information from input messages
     var filteredMessages = FilterMessages(messages);
@@ -171,7 +171,7 @@ async Task<AgentRunResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Ag
 }
 
 // This middleware enforces guardrails by redacting certain keywords from input and output messages.
-async Task<AgentRunResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact keywords from input messages
     var filteredMessages = FilterMessages(messages);
@@ -208,7 +208,7 @@ async Task<AgentRunResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messag
 }
 
 // This middleware handles Human in the loop console interaction for any user approval required during function calling.
-async Task<AgentRunResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     var response = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
 

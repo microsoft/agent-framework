@@ -19,8 +19,7 @@ import time
 
 import pytest
 import requests
-
-from .testutils import (
+from testutils import (
     SampleTestHelper,
     skip_if_azure_functions_integration_tests_disabled,
 )

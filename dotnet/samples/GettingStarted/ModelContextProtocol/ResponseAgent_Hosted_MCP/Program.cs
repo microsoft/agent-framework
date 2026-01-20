@@ -31,13 +31,13 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetResponsesClient(deploymentName)
-     .CreateAIAgent(
+     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
         tools: [mcpTool]);
 
 // You can then invoke the agent like any other AIAgent.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", thread));
 
 // **** MCP Tool with Approval Required ****
@@ -58,13 +58,13 @@ AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetResponsesClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgentWithApproval",
         tools: [mcpToolWithApproval]);
 
 // You can then invoke the agent like any other AIAgent.
-var threadWithRequiredApproval = agentWithRequiredApproval.GetNewThread();
+var threadWithRequiredApproval = await agentWithRequiredApproval.GetNewThreadAsync();
 var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", threadWithRequiredApproval);
 var userInputRequests = response.UserInputRequests.ToList();
 

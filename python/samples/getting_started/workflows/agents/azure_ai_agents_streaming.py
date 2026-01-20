@@ -27,7 +27,7 @@ Prerequisites:
 
 
 def create_writer_agent(client: AzureAIAgentClient) -> ChatAgent:
-    return client.create_agent(
+    return client.as_agent(
         name="Writer",
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
@@ -36,7 +36,7 @@ def create_writer_agent(client: AzureAIAgentClient) -> ChatAgent:
 
 
 def create_reviewer_agent(client: AzureAIAgentClient) -> ChatAgent:
-    return client.create_agent(
+    return client.as_agent(
         name="Reviewer",
         instructions=(
             "You are an excellent content reviewer. "

@@ -38,15 +38,15 @@ public sealed class InMemoryAgentThreadStore : AgentThreadStore
     }
 
     /// <inheritdoc/>
-    public override ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
         JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread) ? existingThread : null;
 
         return threadContent switch
         {
-            null => new ValueTask<AgentThread>(agent.GetNewThread()),
-            _ => new ValueTask<AgentThread>(agent.DeserializeThread(threadContent.Value)),
+            null => await agent.GetNewThreadAsync(cancellationToken).ConfigureAwait(false),
+            _ => await agent.DeserializeThreadAsync(threadContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
         };
     }
 

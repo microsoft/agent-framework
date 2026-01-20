@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient, OpenAIResponsesOptions
 
 """
 OpenAI Responses Client Reasoning Example
@@ -10,19 +10,20 @@ OpenAI Responses Client Reasoning Example
 This sample demonstrates advanced reasoning capabilities using OpenAI's gpt-5 models,
 showing step-by-step reasoning process visualization and complex problem-solving.
 
-This uses the additional_chat_options parameter to enable reasoning with high effort and detailed summaries.
-You can also set these options at the run level, since they are api and/or provider specific, you will need to lookup
-the correct values for your provider, since these are passed through as-is.
+This uses the default_options parameter to enable reasoning with high effort and detailed summaries.
+You can also set these options at the run level using the options parameter.
+Since these are api and/or provider specific, you will need to lookup
+the correct values for your provider, as they are passed through as-is.
 
 In this case they are here: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
 """
 
 
-agent = OpenAIResponsesClient(model_id="gpt-5").create_agent(
+agent = OpenAIResponsesClient[OpenAIResponsesOptions](model_id="gpt-5").as_agent(
     name="MathHelper",
     instructions="You are a personal math tutor. When asked a math question, "
     "reason over how best to approach the problem and share your thought process.",
-    additional_chat_options={"reasoning": {"effort": "high", "summary": "detailed"}},
+    default_options={"reasoning": {"effort": "high", "summary": "detailed"}},
 )
 
 

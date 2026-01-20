@@ -1248,6 +1248,75 @@ async def test_streamable_http_integration():
         assert result[0].text is not None
 
 
+@pytest.mark.flaky
+@skip_if_mcp_integration_tests_disabled
+async def test_mcp_connection_reset_integration():
+    """Test that connection reset works correctly with a real MCP server.
+
+    This integration test verifies:
+    1. Initial connection and tool execution works
+    2. Simulating connection failure triggers automatic reconnection
+    3. Tool execution works after reconnection
+    4. Exit stack cleanup happens properly during reconnection
+    """
+    url = os.environ.get("LOCAL_MCP_URL")
+
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+
+    async with tool:
+        # Verify initial connection
+        assert tool.session is not None
+        assert tool.is_connected is True
+        assert len(tool.functions) > 0, "The MCP server should have at least one function."
+
+        # Get the first function and invoke it
+        func = tool.functions[0]
+        first_result = await func.invoke(query="What is Agent Framework?")
+        assert first_result is not None
+        assert len(first_result) > 0
+
+        # Store the original session and exit stack for comparison
+        original_session = tool.session
+        original_exit_stack = tool._exit_stack
+        original_call_tool = tool.session.call_tool
+
+        # Simulate connection failure by making call_tool raise ClosedResourceError once
+        call_count = 0
+
+        async def call_tool_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call fails with connection error
+                from anyio.streams.memory import ClosedResourceError
+
+                raise ClosedResourceError
+            # After reconnection, delegate to the original method
+            return await original_call_tool(*args, **kwargs)
+
+        tool.session.call_tool = call_tool_with_error
+
+        # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
+        second_result = await func.invoke(query="What is Agent Framework?")
+        assert second_result is not None
+        assert len(second_result) > 0
+
+        # Verify we have a new session and exit stack after reconnection
+        assert tool.session is not None
+        assert tool.session is not original_session, "Session should be replaced after reconnection"
+        assert tool._exit_stack is not original_exit_stack, "Exit stack should be replaced after reconnection"
+        assert tool.is_connected is True
+
+        # Verify tools are still available after reconnection
+        assert len(tool.functions) > 0
+
+        # Both results should be valid (we don't compare content as it may vary)
+        if hasattr(first_result[0], "text"):
+            assert first_result[0].text is not None
+        if hasattr(second_result[0], "text"):
+            assert second_result[0].text is not None
+
+
 async def test_mcp_tool_message_handler_notification():
     """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
     notifications."""
@@ -1512,24 +1581,18 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com",
-        headers={"Auth": "token"},
-        timeout=30.0,
-        sse_read_timeout=10.0,
         terminate_on_close=True,
-        custom_param="test",
     )
 
-    with patch("agent_framework._mcp.streamablehttp_client") as mock_http_client:
+    with patch("agent_framework._mcp.streamable_http_client") as mock_http_client:
         tool.get_mcp_client()
 
-        # Verify all parameters were passed
+        # Verify streamable_http_client was called with None for http_client
+        # (since we didn't provide one, the API will create its own)
         mock_http_client.assert_called_once_with(
             url="http://example.com",
-            headers={"Auth": "token"},
-            timeout=30.0,
-            sse_read_timeout=10.0,
+            http_client=None,
             terminate_on_close=True,
-            custom_param="test",
         )
 
 
@@ -1555,7 +1618,6 @@ def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
         )
 
 
-@pytest.mark.asyncio
 async def test_mcp_tool_deduplication():
     """Test that MCP tools are not duplicated in MCPTool"""
     from agent_framework._mcp import MCPTool
@@ -1617,7 +1679,6 @@ async def test_mcp_tool_deduplication():
     assert added_count == 1  # Only 1 new function added
 
 
-@pytest.mark.asyncio
 async def test_load_tools_prevents_multiple_calls():
     """Test that connect() prevents calling load_tools() multiple times"""
     from unittest.mock import AsyncMock, MagicMock
@@ -1633,6 +1694,7 @@ async def test_load_tools_prevents_multiple_calls():
     mock_session = AsyncMock()
     mock_tool_list = MagicMock()
     mock_tool_list.tools = []
+    mock_tool_list.nextCursor = None  # No pagination
     mock_session.list_tools = AsyncMock(return_value=mock_tool_list)
     mock_session.initialize = AsyncMock()
 
@@ -1656,7 +1718,6 @@ async def test_load_tools_prevents_multiple_calls():
     assert mock_session.list_tools.call_count == 1  # Still 1, not incremented
 
 
-@pytest.mark.asyncio
 async def test_load_prompts_prevents_multiple_calls():
     """Test that connect() prevents calling load_prompts() multiple times"""
     from unittest.mock import AsyncMock, MagicMock
@@ -1672,6 +1733,7 @@ async def test_load_prompts_prevents_multiple_calls():
     mock_session = AsyncMock()
     mock_prompt_list = MagicMock()
     mock_prompt_list.prompts = []
+    mock_prompt_list.nextCursor = None  # No pagination
     mock_session.list_prompts = AsyncMock(return_value=mock_prompt_list)
 
     tool.session = mock_session
@@ -1692,3 +1754,613 @@ async def test_load_prompts_prevents_multiple_calls():
         tool._prompts_loaded = True
 
     assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented
+
+
+async def test_mcp_streamable_http_tool_httpx_client_cleanup():
+    """Test that MCPStreamableHTTPTool properly passes through httpx clients."""
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from agent_framework import MCPStreamableHTTPTool
+
+    # Mock the streamable_http_client to avoid actual connections
+    with (
+        patch("agent_framework._mcp.streamable_http_client") as mock_client,
+        patch("agent_framework._mcp.ClientSession") as mock_session_class,
+    ):
+        # Setup mock context manager for streamable_http_client
+        mock_transport = (Mock(), Mock())
+        mock_context_manager = Mock()
+        mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+        mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+        mock_client.return_value = mock_context_manager
+
+        # Setup mock session
+        mock_session = Mock()
+        mock_session.initialize = AsyncMock()
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        # Test 1: Tool without provided client (passes None to streamable_http_client)
+        tool1 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+        )
+        await tool1.connect()
+        # When no client is provided, _httpx_client should be None
+        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+
+        # Test 2: Tool with user-provided client
+        user_client = Mock()
+        tool2 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+            http_client=user_client,
+        )
+        await tool2.connect()
+
+        # Verify the user-provided client was stored
+        assert tool2._httpx_client is user_client, "User-provided client should be stored"
+
+        # Verify streamable_http_client was called with the user's client
+        # Get the last call (should be from tool2.connect())
+        call_args = mock_client.call_args
+        assert call_args.kwargs["http_client"] is user_client, "User's client should be passed through"
+
+
+async def test_load_tools_with_pagination():
+    """Test that load_tools handles pagination correctly."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Create paginated responses
+    page1 = MagicMock()
+    page1.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+        types.Tool(
+            name="tool_2",
+            description="Second tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.tools = [
+        types.Tool(
+            name="tool_3",
+            description="Third tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page2.nextCursor = "cursor_page3"
+
+    page3 = MagicMock()
+    page3.tools = [
+        types.Tool(
+            name="tool_4",
+            description="Fourth tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page3.nextCursor = None  # No more pages
+
+    # Mock list_tools to return different pages based on params
+    async def mock_list_tools(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        if params.cursor == "cursor_page3":
+            return page3
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    # Load tools with pagination
+    await tool.load_tools()
+
+    # Verify all pages were fetched
+    assert mock_session.list_tools.call_count == 3
+    assert len(tool._functions) == 4
+    assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
+
+
+async def test_load_prompts_with_pagination():
+    """Test that load_prompts handles pagination correctly."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Create paginated responses
+    page1 = MagicMock()
+    page1.prompts = [
+        types.Prompt(
+            name="prompt_1",
+            description="First prompt",
+            arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
+        ),
+        types.Prompt(
+            name="prompt_2",
+            description="Second prompt",
+            arguments=[types.PromptArgument(name="arg2", description="Arg 2", required=True)],
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.prompts = [
+        types.Prompt(
+            name="prompt_3",
+            description="Third prompt",
+            arguments=[types.PromptArgument(name="arg3", description="Arg 3", required=False)],
+        ),
+    ]
+    page2.nextCursor = None  # No more pages
+
+    # Mock list_prompts to return different pages based on params
+    async def mock_list_prompts(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_prompts = AsyncMock(side_effect=mock_list_prompts)
+
+    # Load prompts with pagination
+    await tool.load_prompts()
+
+    # Verify all pages were fetched
+    assert mock_session.list_prompts.call_count == 2
+    assert len(tool._functions) == 3
+    assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2", "prompt_3"]
+
+
+async def test_load_tools_pagination_with_duplicates():
+    """Test that load_tools prevents duplicates across paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Create paginated responses with duplicate tool names
+    page1 = MagicMock()
+    page1.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+        types.Tool(
+            name="tool_2",
+            description="Second tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.tools = [
+        types.Tool(
+            name="tool_1",  # Duplicate from page1
+            description="Duplicate tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+        types.Tool(
+            name="tool_3",
+            description="Third tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page2.nextCursor = None
+
+    # Mock list_tools to return different pages
+    async def mock_list_tools(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    # Load tools with pagination
+    await tool.load_tools()
+
+    # Verify duplicates were skipped
+    assert mock_session.list_tools.call_count == 2
+    assert len(tool._functions) == 3
+    assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3"]
+
+
+async def test_load_prompts_pagination_with_duplicates():
+    """Test that load_prompts prevents duplicates across paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Create paginated responses with duplicate prompt names
+    page1 = MagicMock()
+    page1.prompts = [
+        types.Prompt(
+            name="prompt_1",
+            description="First prompt",
+            arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
+        ),
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.prompts = [
+        types.Prompt(
+            name="prompt_1",  # Duplicate from page1
+            description="Duplicate prompt",
+            arguments=[types.PromptArgument(name="arg2", description="Arg 2", required=False)],
+        ),
+        types.Prompt(
+            name="prompt_2",
+            description="Second prompt",
+            arguments=[types.PromptArgument(name="arg3", description="Arg 3", required=True)],
+        ),
+    ]
+    page2.nextCursor = None
+
+    # Mock list_prompts to return different pages
+    async def mock_list_prompts(params=None):
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_prompts = AsyncMock(side_effect=mock_list_prompts)
+
+    # Load prompts with pagination
+    await tool.load_prompts()
+
+    # Verify duplicates were skipped
+    assert mock_session.list_prompts.call_count == 2
+    assert len(tool._functions) == 2
+    assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2"]
+
+
+async def test_load_tools_pagination_exception_handling():
+    """Test that load_tools handles exceptions during pagination gracefully."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Mock list_tools to raise an exception on first call
+    mock_session.list_tools = AsyncMock(side_effect=RuntimeError("Connection error"))
+
+    # Load tools should raise the exception (not handled gracefully)
+    with pytest.raises(RuntimeError, match="Connection error"):
+        await tool.load_tools()
+
+    # Verify exception was raised on first call
+    assert mock_session.list_tools.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_load_prompts_pagination_exception_handling():
+    """Test that load_prompts handles exceptions during pagination gracefully."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Mock list_prompts to raise an exception on first call
+    mock_session.list_prompts = AsyncMock(side_effect=RuntimeError("Connection error"))
+
+    # Load prompts should raise the exception (not handled gracefully)
+    with pytest.raises(RuntimeError, match="Connection error"):
+        await tool.load_prompts()
+
+    # Verify exception was raised on first call
+    assert mock_session.list_prompts.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_load_tools_empty_pagination():
+    """Test that load_tools handles empty paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    # Create empty response
+    page1 = MagicMock()
+    page1.tools = []
+    page1.nextCursor = None
+
+    mock_session.list_tools = AsyncMock(return_value=page1)
+
+    # Load tools
+    await tool.load_tools()
+
+    # Verify
+    assert mock_session.list_tools.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_load_prompts_empty_pagination():
+    """Test that load_prompts handles empty paginated results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Mock the session
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    # Create empty response
+    page1 = MagicMock()
+    page1.prompts = []
+    page1.nextCursor = None
+
+    mock_session.list_prompts = AsyncMock(return_value=page1)
+
+    # Load prompts
+    await tool.load_prompts()
+
+    # Verify
+    assert mock_session.list_prompts.call_count == 1
+    assert len(tool._functions) == 0
+
+
+async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_error():
+    """Test that verifies reconnection on ClosedResourceError for issue #2884.
+
+    This test verifies the fix for issue #2884: the tool tries operations optimistically
+    and only reconnects when ClosedResourceError is encountered, avoiding extra latency.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio.streams.memory import ClosedResourceError
+
+    from agent_framework._mcp import MCPStdioTool
+    from agent_framework.exceptions import ToolExecutionException
+
+    # Create a mock MCP tool
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=True,
+    )
+
+    # Mock the session
+    mock_session = MagicMock()
+    mock_session._request_id = 1
+    mock_session.call_tool = AsyncMock()
+
+    # Mock _exit_stack.aclose to track cleanup calls
+    original_exit_stack = tool._exit_stack
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock connect() to avoid trying to start actual process
+    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+
+        async def restore_session(*, reset=False):
+            if reset:
+                await original_exit_stack.aclose()
+            tool.session = mock_session
+            tool.is_connected = True
+            tool._tools_loaded = True
+
+        mock_connect.side_effect = restore_session
+
+        # Simulate initial connection
+        tool.session = mock_session
+        tool.is_connected = True
+        tool._tools_loaded = True
+
+        # First call should work - connection is valid
+        mock_session.call_tool.return_value = MagicMock(content=[])
+        result = await tool.call_tool("test_tool", arg1="value1")
+        assert result is not None
+
+        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
+        # Simulate ClosedResourceError on first call, then succeed
+        call_count = 0
+
+        async def call_tool_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClosedResourceError
+            return MagicMock(content=[])
+
+        mock_session.call_tool = call_tool_with_error
+
+        # This call should trigger reconnection after ClosedResourceError
+        result = await tool.call_tool("test_tool", arg1="value2")
+        assert result is not None
+        # Verify reconnect was attempted with reset=True
+        assert mock_connect.call_count >= 1
+        mock_connect.assert_called_with(reset=True)
+        # Verify _exit_stack.aclose was called during reconnection
+        original_exit_stack.aclose.assert_called()
+
+        # Test Case 2: Reconnection failure
+        # Reset counters
+        call_count = 0
+        mock_connect.reset_mock()
+        original_exit_stack.aclose.reset_mock()
+
+        # Make call_tool always raise ClosedResourceError
+        async def always_fail(*args, **kwargs):
+            raise ClosedResourceError
+
+        mock_session.call_tool = always_fail
+
+        # Change mock_connect to simulate failed reconnection
+        mock_connect.side_effect = Exception("Failed to reconnect")
+
+        # This should raise ToolExecutionException when reconnection fails
+        with pytest.raises(ToolExecutionException) as exc_info:
+            await tool.call_tool("test_tool", arg1="value3")
+
+        # Verify reconnection was attempted
+        assert mock_connect.call_count >= 1
+        # Verify error message indicates reconnection failure
+        assert "failed to reconnect" in str(exc_info.value).lower()
+
+
+async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
+    """Test that get_prompt also reconnects on ClosedResourceError.
+
+    This verifies that the fix for issue #2884 applies to get_prompt as well,
+    and that _exit_stack.aclose() is properly called during reconnection.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio.streams.memory import ClosedResourceError
+
+    from agent_framework._mcp import MCPStdioTool
+    from agent_framework.exceptions import ToolExecutionException
+
+    # Create a mock MCP tool
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_prompts=True,
+    )
+
+    # Mock the session
+    mock_session = MagicMock()
+    mock_session._request_id = 1
+    mock_session.get_prompt = AsyncMock()
+
+    # Mock _exit_stack.aclose to track cleanup calls
+    original_exit_stack = tool._exit_stack
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock connect() to avoid trying to start actual process
+    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+
+        async def restore_session(*, reset=False):
+            if reset:
+                await original_exit_stack.aclose()
+            tool.session = mock_session
+            tool.is_connected = True
+            tool._prompts_loaded = True
+
+        mock_connect.side_effect = restore_session
+
+        # Simulate initial connection
+        tool.session = mock_session
+        tool.is_connected = True
+        tool._prompts_loaded = True
+
+        # First call should work - connection is valid
+        mock_session.get_prompt.return_value = MagicMock(messages=[])
+        result = await tool.get_prompt("test_prompt", arg1="value1")
+        assert result is not None
+
+        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
+        # Simulate ClosedResourceError on first call, then succeed
+        call_count = 0
+
+        async def get_prompt_with_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ClosedResourceError
+            return MagicMock(messages=[])
+
+        mock_session.get_prompt = get_prompt_with_error
+
+        # This call should trigger reconnection after ClosedResourceError
+        result = await tool.get_prompt("test_prompt", arg1="value2")
+        assert result is not None
+        # Verify reconnect was attempted with reset=True
+        assert mock_connect.call_count >= 1
+        mock_connect.assert_called_with(reset=True)
+        # Verify _exit_stack.aclose was called during reconnection
+        original_exit_stack.aclose.assert_called()
+
+        # Test Case 2: Reconnection failure
+        # Reset counters
+        call_count = 0
+        mock_connect.reset_mock()
+        original_exit_stack.aclose.reset_mock()
+
+        # Make get_prompt always raise ClosedResourceError
+        async def always_fail(*args, **kwargs):
+            raise ClosedResourceError
+
+        mock_session.get_prompt = always_fail
+
+        # Change mock_connect to simulate failed reconnection
+        mock_connect.side_effect = Exception("Failed to reconnect")
+
+        # This should raise ToolExecutionException when reconnection fails
+        with pytest.raises(ToolExecutionException) as exc_info:
+            await tool.get_prompt("test_prompt", arg1="value3")
+
+        # Verify reconnection was attempted
+        assert mock_connect.call_count >= 1
+        # Verify error message indicates reconnection failure
+        assert "failed to reconnect" in str(exc_info.value).lower()

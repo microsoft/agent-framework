@@ -101,7 +101,7 @@ public sealed class AIAgentExtensionsTests
             ["responseKey1"] = "responseValue1",
             ["responseKey2"] = 123
         };
-        AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
         {
             AdditionalProperties = additionalProps
         };
@@ -130,7 +130,7 @@ public sealed class AIAgentExtensionsTests
     public async Task MapA2A_WhenResponseHasNullAdditionalProperties_ReturnsAgentMessageWithNullMetadataAsync()
     {
         // Arrange
-        AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
         {
             AdditionalProperties = null
         };
@@ -154,7 +154,7 @@ public sealed class AIAgentExtensionsTests
     public async Task MapA2A_WhenResponseHasEmptyAdditionalProperties_ReturnsAgentMessageWithNullMetadataAsync()
     {
         // Arrange
-        AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
         {
             AdditionalProperties = []
         };
@@ -175,29 +175,29 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewThread()).Returns(new TestAgentThread());
+        agentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(new TestAgentThread());
         agentMock
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Callback<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken>(
                 (_, _, options, _) => optionsCallback(options))
-            .ReturnsAsync(new AgentRunResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
+            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
 
         return agentMock;
     }
 
-    private static Mock<AIAgent> CreateAgentMockWithResponse(AgentRunResponse response)
+    private static Mock<AIAgent> CreateAgentMockWithResponse(AgentResponse response)
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewThread()).Returns(new TestAgentThread());
+        agentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(new TestAgentThread());
         agentMock
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),

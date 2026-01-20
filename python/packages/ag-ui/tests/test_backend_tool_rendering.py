@@ -12,7 +12,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentRunResponseUpdate, FunctionCallContent, FunctionResultContent, TextContent
+from agent_framework import AgentResponseUpdate, FunctionCallContent, FunctionResultContent, TextContent
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
@@ -28,7 +28,7 @@ async def test_tool_call_flow():
         arguments={"location": "Seattle"},
     )
 
-    update1 = AgentRunResponseUpdate(contents=[tool_call])
+    update1 = AgentResponseUpdate(contents=[tool_call])
     events1 = await bridge.from_agent_run_update(update1)
 
     # Should have: ToolCallStartEvent, ToolCallArgsEvent
@@ -49,11 +49,11 @@ async def test_tool_call_flow():
         result="Weather in Seattle: Rainy, 52°F",
     )
 
-    update2 = AgentRunResponseUpdate(contents=[tool_result])
+    update2 = AgentResponseUpdate(contents=[tool_result])
     events2 = await bridge.from_agent_run_update(update2)
 
-    # Should have: ToolCallEndEvent, ToolCallResultEvent, MessagesSnapshotEvent
-    assert len(events2) == 3
+    # Should have: ToolCallEndEvent, ToolCallResultEvent
+    assert len(events2) == 2
     assert isinstance(events2[0], ToolCallEndEvent)
     assert isinstance(events2[1], ToolCallResultEvent)
 
@@ -78,7 +78,7 @@ async def test_text_with_tool_call():
         arguments={"location": "San Francisco", "days": 3},
     )
 
-    update = AgentRunResponseUpdate(contents=[text_content, tool_call])
+    update = AgentResponseUpdate(contents=[text_content, tool_call])
     events = await bridge.from_agent_run_update(update)
 
     # Should have: TextMessageStart, TextMessageContent, ToolCallStart, ToolCallArgs
@@ -107,7 +107,7 @@ async def test_multiple_tool_results():
         FunctionResultContent(call_id="tool-3", result="Result 3"),
     ]
 
-    update = AgentRunResponseUpdate(contents=results)
+    update = AgentResponseUpdate(contents=results)
     events = await bridge.from_agent_run_update(update)
 
     # Should have 3 pairs of ToolCallEndEvent + ToolCallResultEvent = 6 events

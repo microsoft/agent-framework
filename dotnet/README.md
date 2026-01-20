@@ -21,7 +21,7 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 
 var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetOpenAIResponseClient(deploymentName)
-    .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```

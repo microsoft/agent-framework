@@ -25,7 +25,7 @@ internal sealed class A2AAgentClient : AgentClientBase
         this._uri = baseUri;
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -37,7 +37,7 @@ internal sealed class A2AAgentClient : AgentClientBase
         var contextId = threadId ?? Guid.NewGuid().ToString("N");
 
         // Convert and send messages via A2A without try-catch in yield method
-        var results = new List<AgentRunResponseUpdate>();
+        var results = new List<AgentResponseUpdate>();
 
         try
         {
@@ -60,7 +60,7 @@ internal sealed class A2AAgentClient : AgentClientBase
                 var responseMessage = message.ToChatMessage();
                 if (responseMessage is { Contents.Count: > 0 })
                 {
-                    results.Add(new AgentRunResponseUpdate(responseMessage.Role, responseMessage.Contents)
+                    results.Add(new AgentResponseUpdate(responseMessage.Role, responseMessage.Contents)
                     {
                         MessageId = message.MessageId,
                         CreatedAt = DateTimeOffset.UtcNow
@@ -90,7 +90,7 @@ internal sealed class A2AAgentClient : AgentClientBase
                                 RawRepresentation = artifact,
                             };
 
-                            results.Add(new AgentRunResponseUpdate(chatMessage.Role, chatMessage.Contents)
+                            results.Add(new AgentResponseUpdate(chatMessage.Role, chatMessage.Contents)
                             {
                                 MessageId = agentTask.Id,
                                 CreatedAt = DateTimeOffset.UtcNow
@@ -108,7 +108,7 @@ internal sealed class A2AAgentClient : AgentClientBase
         {
             this._logger.LogError(ex, "Error running agent {AgentName} via A2A", agentName);
 
-            results.Add(new AgentRunResponseUpdate(ChatRole.Assistant, $"Error: {ex.Message}")
+            results.Add(new AgentResponseUpdate(ChatRole.Assistant, $"Error: {ex.Message}")
             {
                 MessageId = Guid.NewGuid().ToString("N"),
                 CreatedAt = DateTimeOffset.UtcNow

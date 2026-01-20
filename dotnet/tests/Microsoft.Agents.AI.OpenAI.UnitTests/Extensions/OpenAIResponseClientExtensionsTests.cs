@@ -75,7 +75,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var testChatClient = new TestChatClient(responseClient.AsIChatClient());
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             description: "Test description",
@@ -102,7 +102,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var responseClient = new TestOpenAIResponseClient();
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent");
 
@@ -125,7 +125,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var responseClient = new TestOpenAIResponseClient();
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             clientFactory: null);
@@ -147,7 +147,7 @@ public sealed class OpenAIResponseClientExtensionsTests
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((ResponsesClient)null!).CreateAIAgent());
+            ((ResponsesClient)null!).AsAIAgent());
 
         Assert.Equal("client", exception.ParamName);
     }
@@ -163,7 +163,7 @@ public sealed class OpenAIResponseClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            responseClient.CreateAIAgent((ChatClientAgentOptions)null!));
+            responseClient.AsAIAgent((ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }
@@ -179,7 +179,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var serviceProvider = new TestServiceProvider();
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             services: serviceProvider);
@@ -211,7 +211,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         };
 
         // Act
-        var agent = responseClient.CreateAIAgent(options, services: serviceProvider);
+        var agent = responseClient.AsAIAgent(options, services: serviceProvider);
 
         // Assert
         Assert.NotNull(agent);
@@ -237,7 +237,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var testChatClient = new TestChatClient(responseClient.AsIChatClient());
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             clientFactory: (innerClient) => testChatClient,

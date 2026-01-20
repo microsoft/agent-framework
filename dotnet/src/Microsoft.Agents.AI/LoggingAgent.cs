@@ -55,7 +55,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    protected override async Task<AgentRunResponse> RunCoreAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         if (this._logger.IsEnabled(LogLevel.Debug))
@@ -72,7 +72,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
 
         try
         {
-            AgentRunResponse response = await base.RunCoreAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            AgentResponse response = await base.RunCoreAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
 
             if (this._logger.IsEnabled(LogLevel.Debug))
             {
@@ -101,7 +101,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (this._logger.IsEnabled(LogLevel.Debug))
@@ -116,7 +116,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
             }
         }
 
-        IAsyncEnumerator<AgentRunResponseUpdate> e;
+        IAsyncEnumerator<AgentResponseUpdate> e;
         try
         {
             e = base.RunCoreStreamingAsync(messages, thread, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
@@ -134,7 +134,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
 
         try
         {
-            AgentRunResponseUpdate? update = null;
+            AgentResponseUpdate? update = null;
             while (true)
             {
                 try
