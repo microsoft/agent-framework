@@ -67,7 +67,7 @@ async def run_agent_framework() -> None:
 
     assistants_client = OpenAIAssistantsClient()
     # AF converts the decorated function into an assistant-compatible tool.
-    async with assistants_client.create_agent(
+    async with assistants_client.as_agent(
         name="WeatherHelper",
         instructions="Call get_forecast to fetch weather details.",
         model=ASSISTANT_MODEL,

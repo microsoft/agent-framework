@@ -17,7 +17,7 @@ This sample demonstrates using Anthropic with:
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    agent = AnthropicClient[AnthropicChatOptions]().create_agent(
+    agent = AnthropicClient[AnthropicChatOptions]().as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[

@@ -108,7 +108,7 @@ async def run_agent_framework() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create triage agent
-    triage_agent = client.create_agent(
+    triage_agent = client.as_agent(
         name="triage",
         instructions=(
             "You are a triage agent. Analyze the user's request and route to the appropriate specialist:\n"
@@ -119,14 +119,14 @@ async def run_agent_framework() -> None:
     )
 
     # Create billing specialist
-    billing_agent = client.create_agent(
+    billing_agent = client.as_agent(
         name="billing_agent",
         instructions="You are a billing specialist. Help with payment and billing questions. Provide clear assistance.",
         description="Handles billing and payment questions",
     )
 
     # Create technical support specialist
-    tech_support = client.create_agent(
+    tech_support = client.as_agent(
         name="technical_support",
         instructions="You are technical support. Help with technical issues. Provide clear assistance.",
         description="Handles technical support questions",

@@ -104,13 +104,13 @@ class AgentFunctionApp(DFAppBase):
         from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIChatClient(...).create_agent(
+        weather_agent = AzureOpenAIChatClient(...).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIChatClient(...).create_agent(
+        math_agent = AzureOpenAIChatClient(...).as_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],

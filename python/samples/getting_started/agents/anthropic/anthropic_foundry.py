@@ -28,7 +28,7 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).create_agent(
+    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[

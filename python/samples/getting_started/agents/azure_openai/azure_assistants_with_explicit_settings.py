@@ -34,7 +34,7 @@ async def main() -> None:
         endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         deployment_name=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
-    ).create_agent(
+    ).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
