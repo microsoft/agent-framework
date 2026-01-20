@@ -592,6 +592,48 @@ async def test_get_streaming(
     )
 
 
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_streaming_with_none_delta(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    """Test streaming handles None delta from async content filtering."""
+    # First chunk has None delta (simulates async filtering)
+    chunk_choice_with_none = ChunkChoice.model_construct(index=0, delta=None, finish_reason=None)
+    chunk_with_none_delta = ChatCompletionChunk.model_construct(
+        id="test_id",
+        choices=[chunk_choice_with_none],
+        created=0,
+        model="test",
+        object="chat.completion.chunk",
+    )
+    # Second chunk has actual content
+    chunk_with_content = ChatCompletionChunk(
+        id="test_id",
+        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        created=0,
+        model="test",
+        object="chat.completion.chunk",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk_with_none_delta, chunk_with_content]
+    mock_create.return_value = stream
+
+    chat_history.append(ChatMessage(text="hello world", role="user"))
+    azure_chat_client = AzureOpenAIChatClient()
+
+    results: list[ChatResponseUpdate] = []
+    async for msg in azure_chat_client.get_streaming_response(messages=chat_history):
+        results.append(msg)
+
+    assert len(results) > 0
+    assert any(
+        isinstance(content, TextContent) and content.text == "test" for msg in results for content in msg.contents
+    )
+    assert any(msg.contents for msg in results)
+
+
 @ai_function
 def get_story_text() -> str:
     """Returns a story about Emily and David."""

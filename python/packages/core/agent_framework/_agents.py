@@ -38,7 +38,7 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Role,
+    normalize_messages,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
@@ -470,8 +470,8 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward all kwargs except the arg_name to support runtime context propagation
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k != arg_name}
+            # Forward runtime context kwargs, excluding arg_name and conversation_id.
+            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id")}
 
             if stream_callback is None:
                 # Use non-streaming mode
@@ -497,21 +497,6 @@ class BaseAgent(SerializationMixin):
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, text=messages)]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
 
 # region ChatAgent
@@ -797,7 +782,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
@@ -925,7 +910,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
