@@ -10,9 +10,11 @@ consulted: taochenosu, moonbox3, dmytrostruk, giles17
 
 ## Context and Problem Statement
 
-In Python we currently use a set of decorators that can be applied to ChatClients and Agents, those are for function calling, telemetry and middleware. However we currently do not allow a user to compose these themselves, for example to create a ChatClient that does not do function calling, but does have tools being passed to a API. Or to only have telemetry enabled on a chat client, but not on the agent. Up to this point, that has been a sensible decision because it makes getting started very easy. However as we add more features, and more ways to customize the behavior of clients and agents, this becomes a limitation.
+In Python we currently use a set of decorators that can be applied to ChatClients and Agents: function calling, telemetry, and middleware. However, we do not allow users to compose these themselves. For example, a user cannot create a ChatClient that passes tools to an API but doesn't invoke them locally, or only enable telemetry on a chat client but not on the agent.
 
-We have also seen latency issues, and every decorator adds some overhead, so being able to compose a client or agent with only the features you need would help with that as well, and it will at least make this a very explicit tradeoff. Note all the ChatClientBuilderExtensions in the C# version [here](https://github.com/dotnet/extensions/tree/main/src/Libraries/Microsoft.Extensions.AI/ChatCompletion)
+Up to this point, this has been a sensible decision because it makes getting started very easy. However, as we add more features and more ways to customize behavior, this becomes a limitation.
+
+We have also seen latency issues, and every decorator adds overhead. Being able to compose a client or agent with only the features you need would help with performance, and it would make the tradeoffs explicit. See also the [ChatClientBuilderExtensions in the C# version](https://github.com/dotnet/extensions/tree/main/src/Libraries/Microsoft.Extensions.AI/ChatCompletion) for reference.
 
 ## Decision Drivers
 
@@ -20,135 +22,242 @@ We have also seen latency issues, and every decorator adds some overhead, so bei
 - Flexibility in composing client and agent features
 - Maintainability of the codebase
 - Performance considerations
+- Extensibility for third-party additions
 
-## Considered Options
+## Approaches for Adding Functionality
 
-1. Current design with fixed decorators
-2. Decorator based composition
-3. Builder pattern with fluent API
-4. Builder pattern with wrapper-based composition
-5. Parameter driven composition
+We define two primary approaches for adding functionality to ChatClients and Agents:
 
-## Options
+### Approach 1: Mixin Class (Built-in Functionality)
 
-### Option 1: Current design with fixed decorators
-Currently each ChatClient implementation and the ChatAgent class have fixed decorators applied to them. This makes it very easy for new users to get started, but it limits flexibility and can lead to performance overhead.
+A **Mixin** is a class that provides additional attributes and method overrides through multiple inheritance. Mixins are used for functionality that should **always be present** and is fundamental to how the class operates.
 
-- Good: getting started is very easy
-- Good: code is centralized and maintainable
-- Good: consistent behavior across all clients
-- Bad: limited flexibility in composing clients and agents
-- Bad: potential performance overhead from unnecessary decorators
-- Bad: users cannot opt-out of features they don't need
-- Bad: becomes increasingly complex as we add more features
+**Characteristics:**
+- Defined as a separate class that is inherited alongside the base class
+- Adds attributes to the class (e.g., configuration, state)
+- Overrides methods while preserving the method signature and return type
+- Uses `super()` to call the next class in the MRO (Method Resolution Order)
+- Functionality is always available on all instances of the class
+- Cannot be opted out of at runtime (it's part of the class definition)
+- Low overhead since it's baked into the class hierarchy
 
-### Option 2: Decorator based composition
-Allow users to manually apply decorators to compose their clients and agents with desired capabilities.
-
-Example:
+**Example:**
 ```python
-from agent_framework import with_telemetry, with_function_calling
+class SampleMixin:
+    """Mixin that adds functionality to a chat client."""
 
+    sample_config: Configuration | None = None  # Adds attribute
+
+    async def get_response(self, messages, *, thread: AgentThread, stream: bool = False, options: dict | None = None) -> ChatResponse:
+
+        # prepare
+        options.setdefault("sample_option", True)
+
+        # Override method, keeping same signature and return type
+        response = await super().get_response(messages=messages, thread=thread, stream=stream, options=options)
+
+        # do something with response
+
+        return response
+
+
+class OpenAIChatClient(SampleMixin, BaseChatClient):
+    """OpenAI client with function invocation support baked in."""
+    ...
+```
+
+**When to use Mixins:**
+- The functionality is essential to how the class operates
+- All users will need this functionality
+- The functionality needs access to internal class state
+- The method signature and return type must remain unchanged
+- Order of execution relative to other class methods is important
+
+### Approach 2: Wrapper Class (Optional Functionality)
+
+A **Wrapper** is used for **optional functionality** that users might want to add to a ChatClient or Agent. Wrappers implement the same protocol as the wrapped class and delegate calls while adding behavior.
+
+**Characteristics:**
+- Applied at instantiation time by users
+- Can be opted in or out of per instance
+- Can be composed in different orders
+- Each wrapper adds a small overhead
+- Suitable for features that are genuinely optional
+- Third parties can create their own wrappers
+
+**Example:**
+```python
+class CachingChatClient:
+    """Wrapper that adds caching to any chat client."""
+
+    def __init__(self, inner_client: ChatClientProtocol, cache: Cache):
+        self._inner = inner_client
+        self._cache = cache
+
+    @property
+    def additional_properties(self) -> dict[str, Any]:
+        return self._inner.additional_properties
+
+    async def get_response(self, messages, **kwargs) -> ChatResponse:
+        # Check cache first
+        cache_key = self._compute_cache_key(messages, **kwargs)
+        if cached := await self._cache.get(cache_key):
+            return cached
+
+        # Delegate to inner client
+        response = await self._inner.get_response(messages, **kwargs)
+
+        # Store in cache
+        await self._cache.set(cache_key, response)
+        return response
+
+    def get_streaming_response(self, messages, **kwargs) -> AsyncIterable[ChatResponseUpdate]:
+        # Streaming typically bypasses cache, delegate directly
+        return self._inner.get_streaming_response(messages, **kwargs)
+
+
+# Usage: wrap any client with caching
 client = OpenAIChatClient(...)
-client = with_function_calling(client)
-client = with_telemetry(client)
+client = CachingChatClient(client, cache=InMemoryCache())
+
+# Can compose multiple wrappers
+client = LoggingChatClient(CachingChatClient(OpenAIChatClient(...), cache), logger)
 ```
 
-- Good: familiar Python pattern
-- Good: explicit control over which features are enabled
-- Good: no new abstractions needed
-- Good: users can see the exact composition order
-- Good: performance optimization by only including needed decorators
-- Bad: verbose and repetitive for common cases
-- Bad: order of decorators matters and can be confusing
-- Bad: no validation of decorator compatibility or ordering (limited validation could be done, through checking of flags on clients)
-- Bad: harder to discover available decorators and their usage
+**When to use Wrappers:**
+- The functionality is optional and not all users need it
+- Users should be able to compose different combinations
+- Third-party extensibility is desired
+- The overhead of the wrapper is acceptable for the use case
+- The functionality needs additional methods on the class, not just overrides, for instance like the [DistributedCachingChatClient](https://github.com/dotnet/extensions/blob/main/src/Libraries/Microsoft.Extensions.AI/ChatCompletion/DistributedCachingChatClient.cs) in dotnet.
 
-### Option 3: Builder pattern with fluent API
-Use a builder class with named methods for each capability. The builder constructs clients through a pipeline pattern.
+## Current State
 
-Example:
-```python
-client = ChatClientBuilder(OpenAIChatClient(...)) \
-    .with_telemetry(logger_factory) \
-    .with_function_calling() \
-    .with_capability(custom_capability) \
-    .build()
-```
+### ChatClient Decorators
 
-- Good: clear and discoverable API
-- Good: can validate configuration before building
-- Good: follows established builder patterns, for instance for Workflows
-- Good: easier to understand for new users (method names are self-documenting)
-- Good: can provide sensible defaults while allowing customization
-- Good: can validate ordering and either raise or adjust as needed
-- Bad: all methods must be defined in core builder
-- Bad: method explosion as features grow
-- Bad: more verbose than current approach for simple cases
-- Bad: steeper learning curve compared to current approach
-- Bad: requires new builder abstraction
-- Note: A generic method like `.with(wrapper)` could be added alongside named methods to enable third-party extensibility (combining advantages of Option 4), allowing both discoverable built-in methods and flexible custom wrappers
+| Decorator | Purpose | Currently Applied To |
+|-----------|---------|---------------------|
+| `@use_function_invocation` | Enables automatic function/tool calling and result handling | All ChatClient implementations |
+| `@use_instrumentation` | Adds OpenTelemetry tracing and metrics for chat operations | All ChatClient implementations |
+| `@use_chat_middleware` | Enables middleware pipeline for chat operations | BaseChatClient |
 
-### Option 4: Builder pattern with wrapper-based composition
-Use a builder class with a generic method (e.g., `use`) that accepts capability decorators. Each capability is implemented as a class decorator.
+### ChatAgent Decorators
 
-Example:
-```python
-client = ChatClientBuilder(OpenAIChatClient(...)) \
-    .use(TelemetryWrapper(logger_factory)) \
-    .use(FunctionCallingWrapper(...)) \
-    .use(custom_wrapper) \
-    .build()
-```
-
-- Good: very flexible and extensible by third parties
-- Good: clear separation between core client and capabilities
-- Good: can validate some configuration before building
-- Good: supports both simple and complex use cases
-- Good: easier to test individual capabilities
-- Good: third parties can create their own wrapper classes without modifying core
-- Bad: more verbose than current approach for simple cases
-- Bad: less discoverable than fluent methods (need to know wrapper class names)
-- Bad: steeper learning curve for new users
-- Bad: requires new builder abstraction and wrapper classes
-- Bad: wrapper objects add another layer of abstraction
-
-### Option 5: Parameter driven composition
-Add parameters to the client/agent constructors to control which features are enabled.
-
-Example:
-```python
-client = OpenAIChatClient(
-    ...,
-    enable_telemetry=True,
-    enable_function_calling=False,
-    middleware=[custom_middleware1, custom_middleware2]
-)
-```
-
-- Good: simple and intuitive API
-- Good: easy to understand for new users
-- Good: works well for binary enable/disable flags
-- Good: configuration can be loaded from files/environment
-- Good: still relatively easy to get started
-- Bad: can lead to many constructor parameters as features grow
-- Bad: less flexible for custom middleware with complex configuration
-- Bad: parameter explosion problem (each feature needs its own parameter)
-- Bad: depending on the setup, might still have overhead from unused features
+| Decorator | Purpose | Currently Applied To |
+|-----------|---------|---------------------|
+| `@use_agent_middleware` | Enables middleware pipeline for agent operations | ChatAgent |
+| `@use_agent_instrumentation` | Adds OpenTelemetry tracing for agent operations | ChatAgent |
 
 ## Decision Outcome
 
-Option 2: Decorator based composition
+For each decorator, we evaluate whether it should be a **Mixin** (always present) or a **Wrapper** (optional), based on the decision drivers above.
 
-We currently have three decorators on ChatClients: function calling, telemetry and middleware. And two on Agents: telemetry and middleware.
+---
 
-Details:
-- ChatClient:
-    - Function calling, updated to this new pattern, move FunctionInvocationConfiguration into the decorator arguments
-    - Telemetry, updated to this new pattern, keep `capture_usage` parameter
-    - Middleware, since that is a parameter on the ChatClient already, build the code paths into the BaseChatClient, remove the decorator.
-- Agent:
-    - Telemetry, updated to this new pattern, keep `capture_usage` parameter
-        - Should this look for and if necessary auto apply telemetry to the underlying client (for ChatAgent)?
-        - Look into a single telemetry decorator that can be applied to both ChatClients and Agents?
-    - Middleware, since that is a parameter on the ChatAgent already, build the code paths into the ChatAgent, remove the decorator.
+### ChatClient Decisions
+
+#### 1. Function Invocation (`@use_function_invocation`)
+
+**Decision: Convert to Mixin**
+
+**Rationale:**
+- Function invocation is a core capability that most users expect from a chat client
+- We should improve and clarify the configuration via the additional attributes
+- The mixin approach allows the functionality to be built into the class hierarchy
+- When no tools are provided or config is disabled, the overhead is minimal
+- Keeps the same method signatures and return types
+
+---
+
+#### 2. Telemetry/Instrumentation (`@use_instrumentation`)
+
+**Decision: Keep as Mixin, Environment-Controlled**
+
+**Rationale:**
+- Telemetry is already opt-in via environment variable (`ENABLE_INSTRUMENTATION`)
+- When disabled, the overhead is minimal (a simple boolean check)
+- Users shouldn't need to remember to wrap every client with telemetry
+- Consistent telemetry across all clients is valuable
+- The decorator already checks `OBSERVABILITY_SETTINGS.ENABLED` before doing any work
+
+**Implementation:**
+- Rebuild as a mixin class for all ChatClient implementations
+- Use `capture_usage` attribute to control whether to capture usage metrics, might be enough to do `_capture_usage` as it is more a agent type that determines this then the user.
+- Add otel_provider_name attribute based on a default per client.
+- Continue using `ENABLE_INSTRUMENTATION` environment variable to control
+
+---
+
+#### 3. Middleware (`@use_chat_middleware`)
+
+**Decision: Keep as Mixin, Parameter-Driven**
+
+**Rationale:**
+- Middleware is already opt-in via the `middleware` parameter on ChatClient
+- When no middleware is provided, overhead is minimal
+- The infrastructure needs to be present for middleware to work
+- Users pass middleware at instantiation or call time
+
+**Implementation:**
+- Rebuild as a mixin class for all ChatClient implementations
+- Middleware is controlled via `middleware` parameter
+- Minimal changes needed to current approach
+
+---
+
+### ChatAgent Decisions
+
+#### 4. Agent Middleware (`@use_agent_middleware`)
+
+**Decision: Keep as Mixin, Parameter-Driven**
+
+**Rationale:**
+- Middleware is already opt-in via the `middleware` parameter on ChatAgent
+- When no middleware is provided, overhead is minimal
+- The infrastructure needs to be present for middleware to work
+- Middleware can be agent-level, function-level, or chat-level - all managed together
+
+**Implementation:**
+- Rebuild as a mixin class for all Agent implementations that need it
+- Middleware is controlled via `middleware` parameter
+- Minimal changes needed to current approach
+
+---
+
+#### 5. Agent Instrumentation (`@use_agent_instrumentation`)
+
+**Decision: Keep as Mixin, Environment-Controlled**
+
+**Rationale:**
+- Same rationale as ChatClient telemetry
+- Consistent observability is valuable
+- Opt-in via environment variable
+- Minimal overhead when disabled
+- The `capture_usage` parameter allows avoiding double-counting with client telemetry
+
+**Implementation:**
+- Rebuild as a mixin class for all Agent implementations
+- Continue using `ENABLE_INSTRUMENTATION` environment variable to control
+- Minimal changes needed to current approach
+
+---
+
+## Summary Table
+
+| Component | Current Decorator | Decision | Control Mechanism |
+|-----------|------------------|----------|-------------------|
+| ChatClient - Function Invocation | `@use_function_invocation` | Mixin | extra class attributes |
+| ChatClient - Telemetry | `@use_instrumentation` | Mixin | Environment variable |
+| ChatClient - Middleware | `@use_chat_middleware` | Mixin | Constructor parameter |
+| ChatAgent - Middleware | `@use_agent_middleware` | Mixin | Constructor parameter |
+| ChatAgent - Telemetry | `@use_agent_instrumentation` | Mixin | Environment variable |
+
+## Future Considerations
+
+- Additional wrappers could be created for:
+  - `CachingChatClient` - for response caching
+  - `RetryingChatClient` - for automatic retries with backoff
+  - `RateLimitingChatClient` - for rate limiting
+- Third parties can create their own wrappers following the same pattern
+- Middleware can sometimes be used to do something similar, we should document best practices
+- A Wrapper protocol could help standardize third-party implementations
