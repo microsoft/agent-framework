@@ -86,7 +86,7 @@ class EmailPayload(BaseModel):
     email_content: str
 
 
-def _build_client_kwargs() -> Dict[str, Any]:
+def _build_client_kwargs() -> dict[str, Any]:
     endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
     if not endpoint:
         raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
@@ -95,7 +95,7 @@ def _build_client_kwargs() -> Dict[str, Any]:
     if not deployment:
         raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
 
-    client_kwargs: Dict[str, Any] = {
+    client_kwargs: dict[str, Any] = {
         "endpoint": endpoint,
         "deployment_name": deployment,
     }

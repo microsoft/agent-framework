@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict, fields, is_dataclass
 import types
+from dataclasses import asdict, fields, is_dataclass
 from typing import Any, Union, get_args, get_origin
 
 from agent_framework import (
@@ -252,13 +252,13 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
         try:
             return reconstruct_agent_executor_request(data)
         except Exception:
-            pass
+            logger.debug("Could not reconstruct as AgentExecutorRequest, trying next strategy")
 
     if type_name == "AgentExecutorResponse" or ("executor_id" in data and "agent_run_response" in data):
         try:
             return reconstruct_agent_executor_response(data)
         except Exception:
-            pass
+            logger.debug("Could not reconstruct as AgentExecutorResponse, trying next strategy")
 
     if not type_name:
         return data
@@ -278,9 +278,7 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
                 module = importlib.import_module(module_name)
                 target_type = getattr(module, type_name, None)
             except Exception:
-                # Ignore import errors - type may not be available in this context
-                # Will fall back to returning the raw dict below
-                pass
+                logger.debug("Could not import module %s for type %s", module_name, type_name)
 
     if target_type:
         # Remove metadata before reconstruction
@@ -289,9 +287,7 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
             if is_dataclass(target_type) or issubclass(target_type, BaseModel):
                 return target_type(**clean_data)
         except Exception:
-            # Ignore reconstruction errors (e.g., missing fields, type mismatches)
-            # Will fall back to returning the raw dict below
-            pass
+            logger.debug("Could not reconstruct type %s from data", type_name)
 
     return data
 
@@ -309,13 +305,7 @@ def reconstruct_agent_executor_response(data: dict[str, Any]) -> AgentExecutorRe
     """Helper to reconstruct AgentExecutorResponse from dict."""
     # Reconstruct AgentRunResponse
     arr_data = data.get("agent_run_response", {})
-
-    agent_run_response = None
-    if isinstance(arr_data, dict):
-        # Use from_dict for proper reconstruction
-        agent_run_response = AgentRunResponse.from_dict(arr_data)
-    else:
-        agent_run_response = arr_data
+    agent_run_response = AgentRunResponse.from_dict(arr_data) if isinstance(arr_data, dict) else arr_data
 
     # Reconstruct full_conversation
     fc_data = data.get("full_conversation", [])
@@ -371,7 +361,7 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
                             element_types.extend(get_args(arg))
                         else:
                             element_types.append(arg)
-        
+
         # Recursively reconstruct each item in the list
         return [reconstruct_message_for_handler(item, element_types or flattened_types) for item in data]
 
@@ -383,14 +373,14 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
         try:
             return reconstruct_agent_executor_response(data)
         except Exception:
-            pass
+            logger.debug("Could not reconstruct as AgentExecutorResponse in handler context")
 
     # Try AgentExecutorRequest - also needs special handling for nested ChatMessage objects
     if "messages" in data and "should_respond" in data:
         try:
             return reconstruct_agent_executor_request(data)
         except Exception:
-            pass
+            logger.debug("Could not reconstruct as AgentExecutorRequest in handler context")
 
     # Try deserialize_value which uses embedded type metadata (__type__, __module__)
     if "__type__" in data:
@@ -400,7 +390,7 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
 
     # Try to match against input types by checking dict keys vs dataclass fields
     # Filter out metadata keys when comparing
-    data_keys = {k for k in data.keys() if not k.startswith("__")}
+    data_keys = {k for k in data if not k.startswith("__")}
     for msg_type in flattened_types:
         if is_dataclass(msg_type):
             # Check if the dict keys match the dataclass fields
@@ -411,6 +401,6 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
                     clean_data = {k: v for k, v in data.items() if not k.startswith("__")}
                     return msg_type(**clean_data)
                 except Exception:
-                    pass
+                    logger.debug("Could not construct %s from matching fields", msg_type.__name__)
 
     return data

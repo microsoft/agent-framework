@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Workflow Execution for Durable Functions
+"""Workflow Execution for Durable Functions.
 
 This module provides the workflow orchestration engine that executes MAF Workflows
 using Azure Durable Functions. It reuses MAF's edge group routing logic while
@@ -186,8 +186,8 @@ def run_workflow_orchestrator(
     max_iterations = workflow.max_iterations
     workflow_outputs: list[Any] = []
 
-    # Track pending sources for FanInEdgeGroups
-    # Structure: {group_id: {source_id: [(message, source_executor_id)]}}
+    # Track pending sources for FanInEdgeGroups.
+    # Maps group_id to a dict of source_id to list of (message, source_executor_id) tuples.
     fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {}
 
     # Initialize fan-in tracking for all FanInEdgeGroups
@@ -229,45 +229,45 @@ def run_workflow_orchestrator(
 
             # Process groups - if only one message per agent, can run all in parallel
             # If multiple messages to same agent, need sequential within that agent
-            
+
             # First pass: create tasks for the first message of each agent (parallel)
             agent_tasks = []
             agent_task_metadata = []  # (executor_id, message, source_executor_id, remaining_messages)
-            
+
             for executor_id, messages_list in agent_groups.items():
                 first_msg = messages_list[0]
                 remaining = messages_list[1:]
-                
+
                 message = first_msg[1]
                 source_executor_id = first_msg[2]
-                
+
                 agent_name = executor_id
                 logger.debug("Preparing agent task for: %s", agent_name)
-                
+
                 message_content = _extract_message_content(message)
                 session_id = AgentSessionId(name=agent_name, key=context.instance_id)
                 thread = DurableAgentThread(session_id=session_id)
-                
+
                 az_executor = AzureFunctionsAgentExecutor(context)
                 agent = DurableAIAgent(az_executor, agent_name)
                 task = agent.run(message_content, thread=thread)
-                
+
                 agent_tasks.append(task)
                 agent_task_metadata.append((executor_id, message, source_executor_id, remaining))
-            
+
             # Execute first batch of agent tasks in parallel
             if agent_tasks:
                 logger.debug("Executing %d agent tasks in parallel", len(agent_tasks))
                 agent_responses = yield context.task_all(agent_tasks)
                 logger.debug("All %d agent tasks completed", len(agent_tasks))
-                
+
                 # Process results and handle remaining messages for agents with multiple inputs
                 remaining_to_process: list[tuple[str, Any, str]] = []
-                
+
                 for idx, agent_response in enumerate(agent_responses):
                     executor_id, message, source_executor_id, remaining = agent_task_metadata[idx]
                     logger.debug("Durable Entity %s returned: %s", executor_id, agent_response)
-                    
+
                     # Build AgentExecutorResponse from the typed AgentRunResponse
                     response_text = agent_response.text if agent_response else None
                     structured_response = None
@@ -276,33 +276,33 @@ def run_workflow_orchestrator(
                             structured_response = agent_response.value.model_dump()
                         elif isinstance(agent_response.value, dict):
                             structured_response = agent_response.value
-                    
+
                     output_message = build_agent_executor_response(
                         executor_id=executor_id,
                         response_text=response_text,
                         structured_response=structured_response,
                         previous_message=message,
                     )
-                    
+
                     all_results.append((executor_id, output_message, None))
-                    
+
                     # Queue remaining messages for sequential processing
                     remaining_to_process.extend(remaining)
-                
+
                 # Process remaining messages sequentially (these are additional messages to same agent)
-                for executor_id, message, source_executor_id in remaining_to_process:
+                for executor_id, message, _source_executor_id in remaining_to_process:
                     agent_name = executor_id
                     logger.debug("Processing additional message for agent: %s (sequential)", agent_name)
-                    
+
                     message_content = _extract_message_content(message)
                     session_id = AgentSessionId(name=agent_name, key=context.instance_id)
                     thread = DurableAgentThread(session_id=session_id)
-                    
+
                     az_executor = AzureFunctionsAgentExecutor(context)
                     agent = DurableAIAgent(az_executor, agent_name)
                     agent_response: AgentRunResponse = yield agent.run(message_content, thread=thread)
                     logger.debug("Durable Entity %s returned: %s", agent_name, agent_response)
-                    
+
                     response_text = agent_response.text if agent_response else None
                     structured_response = None
                     if agent_response and agent_response.value is not None:
@@ -310,14 +310,14 @@ def run_workflow_orchestrator(
                             structured_response = agent_response.value.model_dump()
                         elif isinstance(agent_response.value, dict):
                             structured_response = agent_response.value
-                    
+
                     output_message = build_agent_executor_response(
                         executor_id=executor_id,
                         response_text=response_text,
                         structured_response=structured_response,
                         previous_message=message,
                     )
-                    
+
                     all_results.append((executor_id, output_message, None))
 
         # Process Activity Executors in parallel
@@ -367,11 +367,15 @@ def run_workflow_orchestrator(
                 if shared_state and result:
                     if result.get("shared_state_updates"):
                         updates = result["shared_state_updates"]
-                        logger.debug("[workflow] Applying SharedState updates from activity %s: %s", executor_id, updates)
+                        logger.debug(
+                            "[workflow] Applying SharedState updates from activity %s: %s", executor_id, updates
+                        )
                         yield from shared_state.update(updates)
                     if result.get("shared_state_deletes"):
                         deletes = result["shared_state_deletes"]
-                        logger.debug("[workflow] Applying SharedState deletes from activity %s: %s", executor_id, deletes)
+                        logger.debug(
+                            "[workflow] Applying SharedState deletes from activity %s: %s", executor_id, deletes
+                        )
                         for key in deletes:
                             yield from shared_state.delete(key)
 
@@ -462,7 +466,8 @@ def run_workflow_orchestrator(
         pending_messages = next_pending_messages
         iteration += 1
 
-    return workflow_outputs
+    # Durable Functions runtime extracts return value from StopIteration
+    return workflow_outputs  # noqa: B901
 
 
 def _extract_message_content(message: Any) -> str:

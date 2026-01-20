@@ -362,10 +362,7 @@ class AgentFunctionApp(DFAppBase):
             input_data = context.get_input()
 
             # Ensure input is a string for the agent
-            if isinstance(input_data, (dict, list)):
-                initial_message = json.dumps(input_data)
-            else:
-                initial_message = str(input_data)
+            initial_message = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
 
             # Only create DurableSharedState if enabled to avoid extra entity calls
             shared_state = None
@@ -373,7 +370,8 @@ class AgentFunctionApp(DFAppBase):
                 shared_state = DurableSharedState(context, context.instance_id)
 
             outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
-            return outputs
+            # Durable Functions runtime extracts return value from StopIteration
+            return outputs  # noqa: B901
 
         @self.route(route="workflow/run", methods=["POST"])
         @self.durable_client_input(client_name="client")

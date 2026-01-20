@@ -1116,9 +1116,11 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity"):
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration"):
-                app = AgentFunctionApp(workflow=mock_workflow)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
 
         assert app.workflow is mock_workflow
 
@@ -1135,10 +1137,12 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {"WorkflowAgent": mock_executor}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity"):
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration"):
-                with patch.object(AgentFunctionApp, "_setup_agent_functions"):
-                    app = AgentFunctionApp(workflow=mock_workflow)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
 
         assert "WorkflowAgent" in app.agents
 
@@ -1147,9 +1151,11 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec:
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch:
-                AgentFunctionApp(workflow=mock_workflow)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=mock_workflow)
 
         setup_exec.assert_called_once()
         setup_orch.assert_called_once()
@@ -1159,9 +1165,11 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity"):
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration"):
-                app = AgentFunctionApp(workflow=mock_workflow)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
 
         assert app.enable_shared_state is True
 
@@ -1170,9 +1178,11 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity"):
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration"):
-                app = AgentFunctionApp(workflow=mock_workflow, enable_shared_state=False)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow, enable_shared_state=False)
 
         assert app.enable_shared_state is False
 
@@ -1181,9 +1191,11 @@ class TestAgentFunctionAppWorkflow:
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec:
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch:
-                AgentFunctionApp(agents=[mock_agent])
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(agents=[mock_agent])
 
         setup_exec.assert_not_called()
         setup_orch.assert_not_called()
@@ -1193,9 +1205,11 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity"):
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration"):
-                app = AgentFunctionApp(workflow=mock_workflow)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
 
         url = app._build_status_url("http://localhost:7071/api/workflow/run", "instance-123")
 
@@ -1206,9 +1220,11 @@ class TestAgentFunctionAppWorkflow:
         mock_workflow = Mock()
         mock_workflow.executors = {}
 
-        with patch.object(AgentFunctionApp, "_setup_executor_activity"):
-            with patch.object(AgentFunctionApp, "_setup_workflow_orchestration"):
-                app = AgentFunctionApp(workflow=mock_workflow)
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
 
         url = app._build_status_url("http://localhost:7071/", "instance-456")
 

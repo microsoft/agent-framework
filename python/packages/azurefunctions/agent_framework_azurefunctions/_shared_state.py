@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Durable Shared State for Workflow Execution
+"""Durable Shared State for Workflow Execution.
 
 This module provides a durable SharedState implementation that allows executors
 in a workflow to share state across the execution lifecycle. Unlike MAF's in-memory
@@ -111,7 +111,8 @@ class DurableSharedState:
             Generator that yields the value or default
         """
         result = yield self._context.call_entity(self._entity_id, "get", {"key": key, "default": default})
-        return result
+        # Durable Functions runtime extracts return value from StopIteration
+        return result  # noqa: B901
 
     def set(self, key: str, value: Any) -> Generator[Any, Any, None]:
         """Set a value in the shared state.
@@ -132,7 +133,8 @@ class DurableSharedState:
             Generator that yields True if key exists, False otherwise
         """
         result = yield self._context.call_entity(self._entity_id, "has", {"key": key})
-        return result
+        # Durable Functions runtime extracts return value from StopIteration
+        return result  # noqa: B901
 
     def delete(self, key: str) -> Generator[Any, Any, bool]:
         """Delete a key from the shared state.
@@ -144,7 +146,8 @@ class DurableSharedState:
             Generator that yields True if key was deleted, False if it didn't exist
         """
         result = yield self._context.call_entity(self._entity_id, "delete", {"key": key})
-        return result
+        # Durable Functions runtime extracts return value from StopIteration
+        return result  # noqa: B901
 
     def get_all(self) -> Generator[Any, Any, dict[str, Any]]:
         """Get all shared state as a dictionary.
@@ -153,7 +156,8 @@ class DurableSharedState:
             Generator that yields the complete state dictionary
         """
         result = yield self._context.call_entity(self._entity_id, "get_all", None)
-        return result if result else {}
+        # Durable Functions runtime extracts return value from StopIteration
+        return result if result else {}  # noqa: B901
 
     def update(self, updates: dict[str, Any]) -> Generator[Any, Any, None]:
         """Update multiple keys at once.
