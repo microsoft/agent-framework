@@ -235,7 +235,9 @@ def _prepare_activity_task(
         "source_executor_ids": [source_executor_id],
     }
     activity_input_json = json.dumps(activity_input)
-    return context.call_activity("ExecuteExecutor", activity_input_json)
+    # Use the prefixed activity name that matches the registered function
+    activity_name = f"dafx-{executor_id}"
+    return context.call_activity(activity_name, activity_input_json)
 
 
 # ============================================================================

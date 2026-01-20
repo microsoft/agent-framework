@@ -225,8 +225,10 @@ class AgentFunctionApp(DFAppBase):
             for executor in workflow.executors.values():
                 if isinstance(executor, AgentExecutor):
                     agents.append(executor.agent)
+                else:
+                    # Setup individual activity for each non-agent executor
+                    self._setup_executor_activity(executor.id)
 
-            self._setup_executor_activity()
             self._setup_workflow_orchestration()
 
         if agents:
@@ -241,12 +243,22 @@ class AgentFunctionApp(DFAppBase):
 
         logger.debug("[AgentFunctionApp] Initialization complete")
 
-    def _setup_executor_activity(self) -> None:
-        """Register the activity for executing standard executors."""
+    def _setup_executor_activity(self, executor_id: str) -> None:
+        """Register an activity for executing a specific non-agent executor.
 
+        Args:
+            executor_id: The ID of the executor to create an activity for.
+        """
+        activity_name = f"dafx-{executor_id}"
+        logger.debug(f"[AgentFunctionApp] Registering activity '{activity_name}' for executor '{executor_id}'")
+
+        # Capture executor_id in closure
+        captured_executor_id = executor_id
+
+        @self.function_name(activity_name)
         @self.activity_trigger(input_name="inputData")
-        def ExecuteExecutor(inputData: str) -> str:
-            """Activity to execute non-agent executors.
+        def executor_activity(inputData: str) -> str:
+            """Activity to execute a specific non-agent executor.
 
             Note: We use str type annotations instead of dict to work around
             Azure Functions worker type validation issues with dict[str, Any].
@@ -256,7 +268,6 @@ class AgentFunctionApp(DFAppBase):
             from agent_framework import SharedState
 
             data = json_module.loads(inputData)
-            executor_id = data["executor_id"]
             message_data = data["message"]
             shared_state_snapshot = data.get("shared_state_snapshot", {})
             source_executor_ids = data.get("source_executor_ids", ["__orchestrator__"])
@@ -264,9 +275,9 @@ class AgentFunctionApp(DFAppBase):
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
 
-            executor = self.workflow.executors.get(executor_id)
+            executor = self.workflow.executors.get(captured_executor_id)
             if not executor:
-                raise ValueError(f"Unknown executor: {executor_id}")
+                raise ValueError(f"Unknown executor: {captured_executor_id}")
 
             # Reconstruct message - try to match handler's expected types using public input_types
             message = reconstruct_message_for_handler(message_data, executor.input_types)
@@ -333,6 +344,9 @@ class AgentFunctionApp(DFAppBase):
 
             result = asyncio.run(run())
             return json_module.dumps(result)
+
+        # Ensure the function is registered (prevents garbage collection)
+        _ = executor_activity
 
     def _setup_workflow_orchestration(self) -> None:
         """Register the workflow orchestration and related HTTP endpoints."""
