@@ -106,7 +106,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 @executor(id="to_detection_result")
 async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowContext[DetectionResult]) -> None:
     # Parse the detector JSON into a typed model. Attach the current email id for downstream lookups.
-    parsed = DetectionResultAgent.model_validate_json(response.agent_run_response.text)
+    parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(spam_decision=parsed.spam_decision, reason=parsed.reason, email_id=email_id))
 
@@ -127,7 +127,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Terminal step for the drafting branch. Yield the email response as output.
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -154,7 +154,7 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
 
 def create_spam_detection_agent() -> ChatAgent:
     """Create and return the spam detection agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Be less confident in your assessments. "
@@ -162,16 +162,16 @@ def create_spam_detection_agent() -> ChatAgent:
             "and 'reason' (string)."
         ),
         name="spam_detection_agent",
-        response_format=DetectionResultAgent,
+        default_options={"response_format": DetectionResultAgent},
     )
 
 
 def create_email_assistant_agent() -> ChatAgent:
     """Create and return the email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 

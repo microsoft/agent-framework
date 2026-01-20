@@ -19,7 +19,7 @@ using HttpClient httpClient = new()
 
 AGUIChatClient chatClient = new(httpClient, serverUrl);
 
-AIAgent baseAgent = chatClient.CreateAIAgent(
+AIAgent baseAgent = chatClient.AsAIAgent(
     name: "recipe-client",
     description: "AG-UI Recipe Client Agent");
 
@@ -70,7 +70,7 @@ try
 
         Console.WriteLine();
 
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
 

@@ -275,7 +275,7 @@ async def run_self_reflection_batch(
     agent = AzureOpenAIChatClient(
         credential=AzureCliCredential(),
         deployment_name=agent_model,
-    ).create_agent(
+    ).as_agent(
         instructions="You are a helpful agent.",
     )
 

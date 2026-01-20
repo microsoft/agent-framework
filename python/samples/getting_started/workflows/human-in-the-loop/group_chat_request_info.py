@@ -27,7 +27,7 @@ import asyncio
 from agent_framework import (
     AgentExecutorResponse,
     AgentRequestInfoResponse,
-    AgentRunResponse,
+    AgentResponse,
     AgentRunUpdateEvent,
     ChatMessage,
     GroupChatBuilder,
@@ -44,7 +44,7 @@ async def main() -> None:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents for a group discussion
-    optimist = chat_client.create_agent(
+    optimist = chat_client.as_agent(
         name="optimist",
         instructions=(
             "You are an optimistic team member. You see opportunities and potential "
@@ -53,7 +53,7 @@ async def main() -> None:
         ),
     )
 
-    pragmatist = chat_client.create_agent(
+    pragmatist = chat_client.as_agent(
         name="pragmatist",
         instructions=(
             "You are a pragmatic team member. You focus on practical implementation "
@@ -62,7 +62,7 @@ async def main() -> None:
         ),
     )
 
-    creative = chat_client.create_agent(
+    creative = chat_client.as_agent(
         name="creative",
         instructions=(
             "You are a creative team member. You propose innovative solutions and "
@@ -72,7 +72,7 @@ async def main() -> None:
     )
 
     # Orchestrator coordinates the discussion
-    orchestrator = chat_client.create_agent(
+    orchestrator = chat_client.as_agent(
         name="orchestrator",
         instructions=(
             "You are a discussion manager coordinating a team conversation between participants. "
@@ -138,8 +138,8 @@ async def main() -> None:
                     print(f"About to call agent: {event.source_executor_id}")
                     print("-" * 40)
                     print("Conversation context:")
-                    agent_run_response: AgentRunResponse = event.data.agent_run_response
-                    messages: list[ChatMessage] = agent_run_response.messages
+                    agent_response: AgentResponse = event.data.agent_response
+                    messages: list[ChatMessage] = agent_response.messages
                     recent: list[ChatMessage] = messages[-3:] if len(messages) > 3 else messages  # type: ignore
                     for msg in recent:
                         name = msg.author_name or "unknown"

@@ -12,8 +12,8 @@ import json
 import logging
 from typing import Any, cast
 
-from agent_framework import AgentRunResponse
 import azure.functions as func
+from agent_framework import AgentResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
@@ -29,12 +29,12 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 def _create_agents() -> list[Any]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physicist = chat_client.create_agent(
+    physicist = chat_client.as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
-    chemist = chat_client.create_agent(
+    chemist = chat_client.as_agent(
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )
@@ -71,8 +71,8 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     # Execute both tasks concurrently using task_all
     task_results = yield context.task_all([physicist_task, chemist_task])
 
-    physicist_result = cast(AgentRunResponse, task_results[0])
-    chemist_result = cast(AgentRunResponse, task_results[1])
+    physicist_result = cast(AgentResponse, task_results[0])
+    chemist_result = cast(AgentResponse, task_results[1])
 
     return {
         "physicist": physicist_result.text,

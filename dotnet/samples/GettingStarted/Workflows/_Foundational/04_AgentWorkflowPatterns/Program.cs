@@ -88,7 +88,7 @@ public static class Program
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
             await foreach (WorkflowEvent evt in run.WatchStreamAsync())
             {
-                if (evt is AgentRunUpdateEvent e)
+                if (evt is AgentResponseUpdateEvent e)
                 {
                     if (e.ExecutorId != lastExecutorId)
                     {

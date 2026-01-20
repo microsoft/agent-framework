@@ -9,8 +9,8 @@ import pytest
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
@@ -31,6 +31,7 @@ from agent_framework import (
     TextContent,
     Workflow,
     WorkflowCheckpoint,
+    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
     WorkflowOutputEvent,
@@ -158,9 +159,9 @@ class StubAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
-        return AgentRunResponse(messages=[response])
+        return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
         self,
@@ -168,9 +169,9 @@ class StubAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _stream() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
                 contents=[TextContent(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
@@ -341,7 +342,8 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
         events.append(ev)
 
     idle_status = next(
-        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE),
+        None,
     )
     assert idle_status is not None
     # Check that we got workflow output via WorkflowOutputEvent
@@ -424,8 +426,8 @@ class StubManagerAgent(BaseAgent):
         *,
         thread: Any = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
+    ) -> AgentResponse:
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
     def run_stream(
         self,
@@ -433,9 +435,9 @@ class StubManagerAgent(BaseAgent):
         *,
         thread: Any = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _gen() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _gen() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
         return _gen()
 
@@ -538,14 +540,14 @@ class StubThreadAgent(BaseAgent):
         super().__init__(name=name or "agentA")
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="thread-ok")],
             author_name=self.name,
             role=Role.ASSISTANT,
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="thread-ok", author_name=self.name)])
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="thread-ok", author_name=self.name)])
 
 
 class StubAssistantsClient:
@@ -560,16 +562,14 @@ class StubAssistantsAgent(BaseAgent):
         self.chat_client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        yield AgentRunResponseUpdate(
+        yield AgentResponseUpdate(
             contents=[TextContent(text="assistants-ok")],
             author_name=self.name,
             role=Role.ASSISTANT,
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentRunResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, text="assistants-ok", author_name=self.name)]
-        )
+        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="assistants-ok", author_name=self.name)])
 
 
 async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[ChatMessage]:
@@ -586,7 +586,9 @@ async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[Cha
         if isinstance(ev, AgentRunUpdateEvent):
             captured.append(
                 ChatMessage(
-                    role=ev.data.role or Role.ASSISTANT, text=ev.data.text or "", author_name=ev.data.author_name
+                    role=ev.data.role or Role.ASSISTANT,
+                    text=ev.data.text or "",
+                    author_name=ev.data.author_name,
                 )
             )
 
@@ -606,7 +608,9 @@ async def test_agent_executor_invoke_with_assistants_client_messages():
     assert any((m.author_name == agent.name and "ok" in (m.text or "")) for m in captured)
 
 
-async def _collect_checkpoints(storage: InMemoryCheckpointStorage) -> list[WorkflowCheckpoint]:
+async def _collect_checkpoints(
+    storage: InMemoryCheckpointStorage,
+) -> list[WorkflowCheckpoint]:
     checkpoints = await storage.list_checkpoints()
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
@@ -721,7 +725,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
         .build()
     )
 
-    with pytest.raises(ValueError, match="Workflow graph has changed"):
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
         async for _ in renamed_workflow.run_stream(
             checkpoint_id=target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
         ):
@@ -762,7 +766,8 @@ async def test_magentic_stall_and_reset_reach_limits():
         events.append(ev)
 
     idle_status = next(
-        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE), None
+        (e for e in events if isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE),
+        None,
     )
     assert idle_status is not None
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
@@ -801,7 +806,10 @@ async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
     """Test that runtime checkpoint storage overrides build-time configuration."""
     import tempfile
 
-    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+    with (
+        tempfile.TemporaryDirectory() as temp_dir1,
+        tempfile.TemporaryDirectory() as temp_dir2,
+    ):
         from agent_framework._workflows._checkpoint import FileCheckpointStorage
 
         buildtime_storage = FileCheckpointStorage(temp_dir1)

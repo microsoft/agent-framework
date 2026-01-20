@@ -51,13 +51,13 @@ public class WorkflowHostSmokeTests
             return new(new Thread());
         }
 
-        protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             return await this.RunStreamingAsync(messages, thread, options, cancellationToken)
-                             .ToAgentRunResponseAsync(cancellationToken);
+                             .ToAgentResponseAsync(cancellationToken);
         }
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             const string ErrorMessage = "Simulated agent failure.";
             if (failByThrowing)
@@ -65,7 +65,7 @@ public class WorkflowHostSmokeTests
                 throw new ExpectedException(ErrorMessage);
             }
 
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, [new ErrorContent(ErrorMessage)]);
+            yield return new AgentResponseUpdate(ChatRole.Assistant, [new ErrorContent(ErrorMessage)]);
         }
     }
 
@@ -91,13 +91,13 @@ public class WorkflowHostSmokeTests
         Workflow workflow = CreateWorkflow(failByThrowing);
 
         // Act
-        List<AgentRunResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
+        List<AgentResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
                                                              .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
                                                              .ToListAsync();
 
         // Assert
         bool hadErrorContent = false;
-        foreach (AgentRunResponseUpdate update in updates)
+        foreach (AgentResponseUpdate update in updates)
         {
             if (update.Contents.Any())
             {

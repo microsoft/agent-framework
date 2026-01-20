@@ -57,6 +57,12 @@ from ._events import (
     WorkflowStartedEvent,
     WorkflowStatusEvent,
 )
+from ._exceptions import (
+    WorkflowCheckpointException,
+    WorkflowConvergenceException,
+    WorkflowException,
+    WorkflowRunnerException,
+)
 from ._executor import (
     Executor,
     handler,
@@ -109,7 +115,11 @@ from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
-from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
+from ._workflow_executor import (
+    SubWorkflowRequestMessage,
+    SubWorkflowResponseMessage,
+    WorkflowExecutor,
+)
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -185,17 +195,21 @@ __all__ = [
     "WorkflowAgent",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
+    "WorkflowCheckpointException",
     "WorkflowCheckpointSummary",
     "WorkflowContext",
+    "WorkflowConvergenceException",
     "WorkflowErrorDetails",
     "WorkflowEvent",
     "WorkflowEventSource",
+    "WorkflowException",
     "WorkflowExecutor",
     "WorkflowFailedEvent",
     "WorkflowLifecycleEvent",
     "WorkflowOutputEvent",
     "WorkflowRunResult",
     "WorkflowRunState",
+    "WorkflowRunnerException",
     "WorkflowStartedEvent",
     "WorkflowStatusEvent",
     "WorkflowValidationError",

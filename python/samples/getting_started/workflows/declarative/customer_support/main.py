@@ -168,44 +168,44 @@ async def main() -> None:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents with structured outputs
-    self_service_agent = chat_client.create_agent(
+    self_service_agent = chat_client.as_agent(
         name="SelfServiceAgent",
         instructions=SELF_SERVICE_INSTRUCTIONS,
-        response_format=SelfServiceResponse,
+        default_options={"response_format": SelfServiceResponse},
     )
 
-    ticketing_agent = chat_client.create_agent(
+    ticketing_agent = chat_client.as_agent(
         name="TicketingAgent",
         instructions=TICKETING_INSTRUCTIONS,
         tools=plugin.get_functions(),
-        response_format=TicketingResponse,
+        default_options={"response_format": TicketingResponse},
     )
 
-    routing_agent = chat_client.create_agent(
+    routing_agent = chat_client.as_agent(
         name="TicketRoutingAgent",
         instructions=TICKET_ROUTING_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        response_format=RoutingResponse,
+        default_options={"response_format": RoutingResponse},
     )
 
-    windows_support_agent = chat_client.create_agent(
+    windows_support_agent = chat_client.as_agent(
         name="WindowsSupportAgent",
         instructions=WINDOWS_SUPPORT_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        response_format=SupportResponse,
+        default_options={"response_format": SupportResponse},
     )
 
-    resolution_agent = chat_client.create_agent(
+    resolution_agent = chat_client.as_agent(
         name="TicketResolutionAgent",
         instructions=RESOLUTION_INSTRUCTIONS,
         tools=[plugin.resolve_ticket],
     )
 
-    escalation_agent = chat_client.create_agent(
+    escalation_agent = chat_client.as_agent(
         name="TicketEscalationAgent",
         instructions=ESCALATION_INSTRUCTIONS,
         tools=[plugin.get_ticket, plugin.send_notification],
-        response_format=EscalationResponse,
+        default_options={"response_format": EscalationResponse},
     )
 
     # Agent registry for lookup

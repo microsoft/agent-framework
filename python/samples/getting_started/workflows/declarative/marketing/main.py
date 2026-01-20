@@ -52,15 +52,15 @@ async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    analyst_agent = chat_client.create_agent(
+    analyst_agent = chat_client.as_agent(
         name="AnalystAgent",
         instructions=ANALYST_INSTRUCTIONS,
     )
-    writer_agent = chat_client.create_agent(
+    writer_agent = chat_client.as_agent(
         name="WriterAgent",
         instructions=WRITER_INSTRUCTIONS,
     )
-    editor_agent = chat_client.create_agent(
+    editor_agent = chat_client.as_agent(
         name="EditorAgent",
         instructions=EDITOR_INSTRUCTIONS,
     )

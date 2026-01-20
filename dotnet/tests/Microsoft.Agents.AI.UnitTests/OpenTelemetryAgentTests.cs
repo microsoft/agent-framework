@@ -82,7 +82,7 @@ public class OpenTelemetryAgentTests
             RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
             {
                 await Task.Yield();
-                return new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
+                return new AgentResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
                 {
                     ResponseId = "id123",
                     Usage = new UsageDetails
@@ -107,7 +107,7 @@ public class OpenTelemetryAgentTests
                 null,
         };
 
-        async static IAsyncEnumerable<AgentRunResponseUpdate> CallbackAsync(
+        async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
@@ -115,13 +115,13 @@ public class OpenTelemetryAgentTests
             foreach (string text in new[] { "The ", "blue ", "whale,", " ", "", "I", " think." })
             {
                 await Task.Yield();
-                yield return new AgentRunResponseUpdate(ChatRole.Assistant, text)
+                yield return new AgentResponseUpdate(ChatRole.Assistant, text)
                 {
                     ResponseId = "id123",
                 };
             }
 
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new UsageContent(new()
                 {
@@ -307,7 +307,7 @@ public class OpenTelemetryAgentTests
             RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
             {
                 await Task.Yield();
-                return new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
+                return new AgentResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
                 {
                     ResponseId = "id123",
                     Usage = new UsageDetails
@@ -332,7 +332,7 @@ public class OpenTelemetryAgentTests
                 null,
         };
 
-        async static IAsyncEnumerable<AgentRunResponseUpdate> CallbackAsync(
+        async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
@@ -340,13 +340,13 @@ public class OpenTelemetryAgentTests
             foreach (string text in new[] { "The ", "blue ", "whale,", " ", "", "I", " think." })
             {
                 await Task.Yield();
-                yield return new AgentRunResponseUpdate(ChatRole.Assistant, text)
+                yield return new AgentResponseUpdate(ChatRole.Assistant, text)
                 {
                     ResponseId = "id123",
                 };
             }
 
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new UsageContent(new()
                 {

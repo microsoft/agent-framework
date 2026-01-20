@@ -78,12 +78,12 @@ public sealed class AIAgentWithOpenAIExtensionsTests
 
         mockAgent
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new AgentRunResponse([responseMessage]));
+            .ReturnsAsync(new AgentResponse([responseMessage]));
 
         // Act
         var result = await mockAgent.Object.RunAsync(openAiMessages, mockThread.Object, options, cancellationToken);
@@ -160,7 +160,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             OpenAIChatMessage.CreateUserMessage(TestMessageText)
         };
 
-        var responseUpdates = new List<AgentRunResponseUpdate>
+        var responseUpdates = new List<AgentResponseUpdate>
         {
             new(ChatRole.Assistant, ResponseText1),
             new(ChatRole.Assistant, ResponseText2)
@@ -168,7 +168,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
 
         mockAgent
             .Protected()
-            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentThread?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
@@ -199,9 +199,9 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     }
 
     /// <summary>
-    /// Helper method to convert a list of AgentRunResponseUpdate to an async enumerable.
+    /// Helper method to convert a list of AgentResponseUpdate to an async enumerable.
     /// </summary>
-    private static async IAsyncEnumerable<AgentRunResponseUpdate> ToAsyncEnumerableAsync(IEnumerable<AgentRunResponseUpdate> updates)
+    private static async IAsyncEnumerable<AgentResponseUpdate> ToAsyncEnumerableAsync(IEnumerable<AgentResponseUpdate> updates)
     {
         foreach (var update in updates)
         {

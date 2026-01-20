@@ -117,7 +117,7 @@ async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowCont
     2) Retrieve the current email_id from shared state.
     3) Send a typed DetectionResult for conditional routing.
     """
-    parsed = DetectionResultAgent.model_validate_json(response.agent_run_response.text)
+    parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(is_spam=parsed.is_spam, reason=parsed.reason, email_id=email_id))
 
@@ -142,7 +142,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     """Validate the drafted reply and yield the final output."""
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -157,12 +157,12 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 
 def create_spam_detection_agent() -> ChatAgent:
     """Creates a spam detection agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        response_format=DetectionResultAgent,
+        default_options={"response_format": DetectionResultAgent},
         # response_format enforces structured JSON from each agent.
         name="spam_detection_agent",
     )
@@ -170,13 +170,13 @@ def create_spam_detection_agent() -> ChatAgent:
 
 def create_email_assistant_agent() -> ChatAgent:
     """Creates an email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         # response_format enforces structured JSON from each agent.
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
         name="email_assistant_agent",
     )
 

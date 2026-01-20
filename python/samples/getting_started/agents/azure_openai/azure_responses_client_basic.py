@@ -30,7 +30,7 @@ async def non_streaming_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -47,7 +47,7 @@ async def streaming_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

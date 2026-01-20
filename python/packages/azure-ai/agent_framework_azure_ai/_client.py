@@ -1,38 +1,39 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Mapping, MutableSequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, cast
+from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
+    ChatAgent,
     ChatMessage,
+    ChatMessageStoreProtocol,
+    ContextProvider,
     HostedMCPTool,
+    Middleware,
     TextContent,
+    ToolProtocol,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
+from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
-    ResponseTextFormatConfigurationJsonObject,
-    ResponseTextFormatConfigurationJsonSchema,
-    ResponseTextFormatConfigurationText,
+    RaiConfig,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
-from ._shared import AzureAISettings
-
-if TYPE_CHECKING:
-    from agent_framework.openai import OpenAIResponsesOptions
+from ._shared import AzureAISettings, create_text_format_config
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -50,10 +51,18 @@ else:
 
 logger = get_logger("agent_framework.azure")
 
+
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions):
+    """Azure AI Project Agent options."""
+
+    rai_config: RaiConfig
+    """Configuration for Responsible AI (RAI) content filtering and safety features."""
+
+
 TAzureAIClientOptions = TypeVar(
     "TAzureAIClientOptions",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIResponsesOptions",
+    default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
@@ -286,47 +295,6 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         """Close the project_client."""
         await self._close_client_if_needed()
 
-    def _create_text_format_config(
-        self, response_format: type[BaseModel] | Mapping[str, Any]
-    ) -> (
-        ResponseTextFormatConfigurationJsonSchema
-        | ResponseTextFormatConfigurationJsonObject
-        | ResponseTextFormatConfigurationText
-    ):
-        """Convert response_format into Azure text format configuration."""
-        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            schema = response_format.model_json_schema()
-            # Ensure additionalProperties is explicitly false to satisfy Azure validation
-            if isinstance(schema, dict):
-                schema.setdefault("additionalProperties", False)
-            return ResponseTextFormatConfigurationJsonSchema(
-                name=response_format.__name__,
-                schema=schema,
-            )
-
-        if isinstance(response_format, Mapping):
-            format_config = self._convert_response_format(response_format)
-            format_type = format_config.get("type")
-            if format_type == "json_schema":
-                # Ensure schema includes additionalProperties=False to satisfy Azure validation
-                schema = dict(format_config.get("schema", {}))  # type: ignore[assignment]
-                schema.setdefault("additionalProperties", False)
-                config_kwargs: dict[str, Any] = {
-                    "name": format_config.get("name") or "response",
-                    "schema": schema,
-                }
-                if "strict" in format_config:
-                    config_kwargs["strict"] = format_config["strict"]
-                if "description" in format_config:
-                    config_kwargs["description"] = format_config["description"]
-                return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
-            if format_type == "json_object":
-                return ResponseTextFormatConfigurationJsonObject()
-            if format_type == "text":
-                return ResponseTextFormatConfigurationText()
-
-        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
-
     async def _get_agent_reference_or_create(
         self,
         run_options: dict[str, Any],
@@ -380,7 +348,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
             if chat_options and (response_format := chat_options.get("response_format")):
-                args["text"] = PromptAgentDefinitionText(format=self._create_text_format_config(response_format))
+                args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             combined_instructions = [
@@ -436,6 +404,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             "model",
             "tools",
             "response_format",
+            "rai_config",
             "temperature",
             "top_p",
             "text",
@@ -555,3 +524,59 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                         mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
         return mcp
+
+    @override
+    def as_agent(
+        self,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        default_options: TAzureAIClientOptions | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> ChatAgent[TAzureAIClientOptions]:
+        """Convert this chat client to a ChatAgent.
+
+        This method creates a ChatAgent instance with this client pre-configured.
+        It does NOT create an agent on the Azure AI service - the actual agent
+        will be created on the server during the first invocation (run).
+
+        For creating and managing persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead.
+
+        Keyword Args:
+            id: The unique identifier for the agent. Will be created automatically if not provided.
+            name: The name of the agent.
+            description: A brief description of the agent's purpose.
+            instructions: Optional instructions for the agent.
+            tools: The tools to use for the request.
+            default_options: A TypedDict containing chat options.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+            context_provider: Context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
+            kwargs: Any additional keyword arguments.
+
+        Returns:
+            A ChatAgent instance configured with this chat client.
+        """
+        return super().as_agent(
+            id=id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )

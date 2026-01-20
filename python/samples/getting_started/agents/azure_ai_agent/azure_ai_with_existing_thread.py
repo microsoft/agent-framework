@@ -5,8 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -28,28 +27,29 @@ def get_weather(
 
 
 async def main() -> None:
-    print("=== Azure AI Chat Client with Existing Thread ===")
+    print("=== Azure AI Agent with Existing Thread ===")
 
-    # Create the client
+    # Create the client and provider
     async with (
         AzureCliCredential() as credential,
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
+        AzureAIAgentsProvider(agents_client=agents_client) as provider,
     ):
-        # Create an thread that will persist
+        # Create a thread that will persist
         created_thread = await agents_client.threads.create()
 
         try:
-            async with ChatAgent(
-                # passing in the client is optional here, so if you take the agent_id from the portal
-                # you can use it directly without the two lines above.
-                chat_client=AzureAIAgentClient(agents_client=agents_client),
+            # Create agent using provider
+            agent = await provider.create_agent(
+                name="WeatherAgent",
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
-            ) as agent:
-                thread = agent.get_new_thread(service_thread_id=created_thread.id)
-                assert thread.is_initialized
-                result = await agent.run("What's the weather like in Tokyo?", thread=thread)
-                print(f"Result: {result}\n")
+            )
+
+            thread = agent.get_new_thread(service_thread_id=created_thread.id)
+            assert thread.is_initialized
+            result = await agent.run("What's the weather like in Tokyo?", thread=thread)
+            print(f"Result: {result}\n")
         finally:
             # Clean up the thread manually
             await agents_client.threads.delete(created_thread.id)

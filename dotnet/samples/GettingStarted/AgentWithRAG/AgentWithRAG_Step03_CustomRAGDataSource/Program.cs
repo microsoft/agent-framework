@@ -26,7 +26,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(new ChatClientAgentOptions
+    .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions))

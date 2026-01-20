@@ -28,7 +28,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(new ChatClientAgentOptions()
+    .AsAIAgent(new ChatClientAgentOptions()
     {
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined

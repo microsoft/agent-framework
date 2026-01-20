@@ -33,12 +33,12 @@ from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Role,
+    normalize_messages,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
@@ -177,16 +177,16 @@ class AgentProtocol(Protocol):
 
                 async def run(self, messages=None, *, thread=None, **kwargs):
                     # Your custom implementation
-                    from agent_framework import AgentRunResponse
+                    from agent_framework import AgentResponse
 
-                    return AgentRunResponse(messages=[], response_id="custom-response")
+                    return AgentResponse(messages=[], response_id="custom-response")
 
                 def run_stream(self, messages=None, *, thread=None, **kwargs):
                     # Your custom streaming implementation
                     async def _stream():
-                        from agent_framework import AgentRunResponseUpdate
+                        from agent_framework import AgentResponseUpdate
 
-                        yield AgentRunResponseUpdate()
+                        yield AgentResponseUpdate()
 
                     return _stream()
 
@@ -210,15 +210,15 @@ class AgentProtocol(Protocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentRunResponse object. The caller is blocked until
+        as a single AgentResponse object. The caller is blocked until
         the final result is available.
 
         Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of AgentRunResponseUpdate
+        intermediate steps and the final result as a stream of AgentResponseUpdate
         objects. Streaming only the final result is not feasible because the timing of
         the final result's availability is unknown, and blocking the caller until then
         is undesirable in streaming scenarios.
@@ -241,13 +241,13 @@ class AgentProtocol(Protocol):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Run the agent as a stream.
 
         This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+        agent's execution as a stream of AgentResponseUpdate objects to the caller.
 
-        Note: An AgentRunResponseUpdate object contains a chunk of a message.
+        Note: An AgentResponseUpdate object contains a chunk of a message.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -283,19 +283,19 @@ class BaseAgent(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseAgent, AgentThread, AgentRunResponse
+            from agent_framework import BaseAgent, AgentThread, AgentResponse
 
 
             # Create a concrete subclass that implements the protocol
             class SimpleAgent(BaseAgent):
                 async def run(self, messages=None, *, thread=None, **kwargs):
                     # Custom implementation
-                    return AgentRunResponse(messages=[], response_id="simple-response")
+                    return AgentResponse(messages=[], response_id="simple-response")
 
                 def run_stream(self, messages=None, *, thread=None, **kwargs):
                     async def _stream():
                         # Custom streaming implementation
-                        yield AgentRunResponseUpdate()
+                        yield AgentResponseUpdate()
 
                     return _stream()
 
@@ -412,8 +412,8 @@ class BaseAgent(SerializationMixin):
         description: str | None = None,
         arg_name: str = "task",
         arg_description: str | None = None,
-        stream_callback: Callable[[AgentRunResponseUpdate], None]
-        | Callable[[AgentRunResponseUpdate], Awaitable[None]]
+        stream_callback: Callable[[AgentResponseUpdate], None]
+        | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
     ) -> AIFunction[BaseModel, str]:
         """Create an AIFunction tool that wraps this agent.
@@ -470,15 +470,15 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward all kwargs except the arg_name to support runtime context propagation
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k != arg_name}
+            # Forward runtime context kwargs, excluding arg_name and conversation_id.
+            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id")}
 
             if stream_callback is None:
                 # Use non-streaming mode
                 return (await self.run(input_text, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
-            response_updates: list[AgentRunResponseUpdate] = []
+            response_updates: list[AgentResponseUpdate] = []
             async for update in self.run_stream(input_text, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
@@ -487,7 +487,7 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentRunResponse.from_agent_run_response_updates(response_updates).text
+            return AgentResponse.from_agent_run_response_updates(response_updates).text
 
         agent_tool: AIFunction[BaseModel, str] = AIFunction(
             name=tool_name,
@@ -497,21 +497,6 @@ class BaseAgent(SerializationMixin):
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, text=messages)]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
 
 # region ChatAgent
@@ -678,7 +663,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
         )
-        self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
+        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         # Build chat options dict
@@ -720,7 +705,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         Returns:
             The ChatAgent instance.
         """
-        for context_manager in chain([self.chat_client], self._local_mcp_tools):
+        for context_manager in chain([self.chat_client], self.mcp_tools):
             if isinstance(context_manager, AbstractAsyncContextManager):
                 await self._async_exit_stack.enter_async_context(context_manager)
         return self
@@ -766,7 +751,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | None = None,
         options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Run the agent with the given messages and options.
 
         Note:
@@ -789,7 +774,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 Will only be passed to functions that are called.
 
         Returns:
-            An AgentRunResponse containing the agent's response.
+            An AgentResponse containing the agent's response.
         """
         # Build options dict from provided options
         opts = dict(options) if options else {}
@@ -797,7 +782,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
@@ -817,7 +802,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)  # type: ignore
 
-        for mcp_server in self._local_mcp_tools:
+        for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
@@ -872,7 +857,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             response.messages,
             **{k: v for k, v in kwargs.items() if k != "thread"},
         )
-        return AgentRunResponse(
+        return AgentResponse(
             messages=response.messages,
             response_id=response.response_id,
             created_at=response.created_at,
@@ -894,7 +879,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | None = None,
         options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Stream the agent with the given messages and options.
 
         Note:
@@ -917,7 +902,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 Will only be passed to functions that are called.
 
         Yields:
-            AgentRunResponseUpdate objects containing chunks of the agent's response.
+            AgentResponseUpdate objects containing chunks of the agent's response.
         """
         # Build options dict from provided options
         opts = dict(options) if options else {}
@@ -925,7 +910,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
@@ -944,7 +929,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)
 
-        for mcp_server in self._local_mcp_tools:
+        for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
@@ -989,7 +974,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             if update.author_name is None:
                 update.author_name = agent_name
 
-            yield AgentRunResponseUpdate(
+            yield AgentResponseUpdate(
                 contents=update.contents,
                 role=update.role,
                 author_name=update.author_name,

@@ -149,7 +149,7 @@ public sealed partial class ChatClientAgent : AIAgent
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
     /// <inheritdoc/>
-    protected override Task<AgentRunResponse> RunCoreAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -160,9 +160,9 @@ public sealed partial class ChatClientAgent : AIAgent
             return chatClient.GetResponseAsync(threadMessages, chatOptions, ct);
         }
 
-        static AgentRunResponse CreateResponse(ChatResponse chatResponse)
+        static AgentResponse CreateResponse(ChatResponse chatResponse)
         {
-            return new AgentRunResponse(chatResponse)
+            return new AgentResponse(chatResponse)
             {
                 ContinuationToken = WrapContinuationToken(chatResponse.ContinuationToken)
             };
@@ -196,7 +196,7 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -406,14 +406,14 @@ public sealed partial class ChatClientAgent : AIAgent
 
     #region Private
 
-    private async Task<TAgentRunResponse> RunCoreAsync<TAgentRunResponse, TChatClientResponse>(
+    private async Task<TAgentResponse> RunCoreAsync<TAgentResponse, TChatClientResponse>(
         Func<IChatClient, List<ChatMessage>, ChatOptions?, CancellationToken, Task<TChatClientResponse>> chatClientRunFunc,
-        Func<TChatClientResponse, TAgentRunResponse> agentResponseFactoryFunc,
+        Func<TChatClientResponse, TAgentResponse> agentResponseFactoryFunc,
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-        where TAgentRunResponse : AgentRunResponse
+        where TAgentResponse : AgentResponse
         where TChatClientResponse : ChatResponse
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
@@ -519,16 +519,16 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
-        // If no agent chat options were provided, return the request chat options as is.
+        // If no agent chat options were provided, return the request chat options with just agent run options overrides.
         if (this._agentOptions?.ChatOptions is null)
         {
-            return GetContinuationTokenAndApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+            return ApplyAgentRunOptionsOverrides(requestChatOptions, runOptions);
         }
 
-        // If no request chat options were provided, use the agent's chat options clone.
+        // If no request chat options were provided, use the agent's chat options clone with agent run options overrides.
         if (requestChatOptions is null)
         {
-            return GetContinuationTokenAndApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
+            return ApplyAgentRunOptionsOverrides(this._agentOptions?.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -557,9 +557,9 @@ public sealed partial class ChatClientAgent : AIAgent
         // Merge only the additional properties from the agent if they are not already set in the request options.
         if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
         {
-            foreach (var propertyKey in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
+            foreach (var kvp in this._agentOptions.ChatOptions.AdditionalProperties)
             {
-                _ = requestChatOptions.AdditionalProperties.TryAdd(propertyKey, this._agentOptions.ChatOptions.AdditionalProperties[propertyKey]);
+                _ = requestChatOptions.AdditionalProperties.TryAdd(kvp.Key, kvp.Value);
             }
         }
         else
@@ -624,9 +624,9 @@ public sealed partial class ChatClientAgent : AIAgent
             }
         }
 
-        return GetContinuationTokenAndApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+        return ApplyAgentRunOptionsOverrides(requestChatOptions, runOptions);
 
-        static (ChatOptions?, ChatClientAgentContinuationToken?) GetContinuationTokenAndApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
+        static (ChatOptions?, ChatClientAgentContinuationToken?) ApplyAgentRunOptionsOverrides(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
         {
             if (agentRunOptions?.AllowBackgroundResponses is not null)
             {
@@ -641,6 +641,17 @@ public sealed partial class ChatClientAgent : AIAgent
                 agentContinuationToken = ChatClientAgentContinuationToken.FromToken(continuationToken);
                 chatOptions ??= new ChatOptions();
                 chatOptions.ContinuationToken = agentContinuationToken!.InnerToken;
+            }
+
+            // Add/Replace any additional properties from the AgentRunOptions, since they should always take precedence.
+            if (agentRunOptions?.AdditionalProperties is { Count: > 0 })
+            {
+                chatOptions ??= new ChatOptions();
+                chatOptions.AdditionalProperties ??= new();
+                foreach (var kvp in agentRunOptions.AdditionalProperties)
+                {
+                    chatOptions.AdditionalProperties[kvp.Key] = kvp.Value;
+                }
             }
 
             return (chatOptions, agentContinuationToken);

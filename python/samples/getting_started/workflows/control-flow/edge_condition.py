@@ -85,7 +85,7 @@ def get_condition(expected_result: bool):
         try:
             # Prefer parsing a structured DetectionResult from the agent JSON text.
             # Using model_validate_json ensures type safety and raises if the shape is wrong.
-            detection = DetectionResult.model_validate_json(message.agent_run_response.text)
+            detection = DetectionResult.model_validate_json(message.agent_response.text)
             # Route only when the spam flag matches the expected path.
             return detection.is_spam == expected_result
         except Exception:
@@ -99,14 +99,14 @@ def get_condition(expected_result: bool):
 @executor(id="send_email")
 async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Downstream of the email assistant. Parse a validated EmailResponse and yield the workflow output.
-    email_response = EmailResponse.model_validate_json(response.agent_run_response.text)
+    email_response = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent:\n{email_response.response}")
 
 
 @executor(id="handle_spam")
 async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Spam path. Confirm the DetectionResult and yield the workflow output. Guard against accidental non spam input.
-    detection = DetectionResult.model_validate_json(response.agent_run_response.text)
+    detection = DetectionResult.model_validate_json(response.agent_response.text)
     if detection.is_spam:
         await ctx.yield_output(f"Email marked as spam: {detection.reason}")
     else:
@@ -123,7 +123,7 @@ async def to_email_assistant_request(
     Extracts DetectionResult.email_content and forwards it as a user message.
     """
     # Bridge executor. Converts a structured DetectionResult into a ChatMessage and forwards it as a new request.
-    detection = DetectionResult.model_validate_json(response.agent_run_response.text)
+    detection = DetectionResult.model_validate_json(response.agent_response.text)
     user_msg = ChatMessage(Role.USER, text=detection.email_content)
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
@@ -131,28 +131,28 @@ async def to_email_assistant_request(
 def create_spam_detector_agent() -> ChatAgent:
     """Helper to create a spam detection agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
             "Include the original email content in email_content."
         ),
         name="spam_detection_agent",
-        response_format=DetectionResult,
+        default_options={"response_format": DetectionResult},
     )
 
 
 def create_email_assistant_agent() -> ChatAgent:
     """Helper to create an email assistant agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an email assistant that helps users draft professional responses to emails. "
             "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         name="email_assistant_agent",
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
 

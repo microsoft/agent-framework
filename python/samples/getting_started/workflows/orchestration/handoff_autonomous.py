@@ -5,7 +5,7 @@ import logging
 from typing import cast
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatAgent,
     ChatMessage,
@@ -44,7 +44,7 @@ def create_agents(
     chat_client: AzureOpenAIChatClient,
 ) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
     """Create coordinator and specialists for autonomous iteration."""
-    coordinator = chat_client.create_agent(
+    coordinator = chat_client.as_agent(
         instructions=(
             "You are a coordinator. You break down a user query into a research task and a summary task. "
             "Assign the two tasks to the appropriate specialists, one after the other."
@@ -52,7 +52,7 @@ def create_agents(
         name="coordinator",
     )
 
-    research_agent = chat_client.create_agent(
+    research_agent = chat_client.as_agent(
         instructions=(
             "You are a research specialist that explores topics thoroughly using web search. "
             "When given a research task, break it down into multiple aspects and explore each one. "
@@ -65,7 +65,7 @@ def create_agents(
         tools=[HostedWebSearchTool()],
     )
 
-    summary_agent = chat_client.create_agent(
+    summary_agent = chat_client.as_agent(
         instructions=(
             "You summarize research findings. Provide a concise, well-organized summary. When done, return "
             "control to the coordinator."
@@ -82,7 +82,7 @@ last_response_id: str | None = None
 def _display_event(event: WorkflowEvent) -> None:
     """Print the final conversation snapshot from workflow output events."""
     if isinstance(event, AgentRunUpdateEvent) and event.data:
-        update: AgentRunResponseUpdate = event.data
+        update: AgentResponseUpdate = event.data
         if not update.text:
             return
         global last_response_id

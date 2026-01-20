@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
-from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.openai import OpenAIAssistantsClient
+from agent_framework import AgentResponseUpdate, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework.openai import OpenAIAssistantProvider
+from openai import AsyncOpenAI
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
     RunStepDelta,
@@ -20,7 +22,7 @@ for Python code execution and mathematical problem solving.
 """
 
 
-def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
+def get_code_interpreter_chunk(chunk: AgentResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""
     if (
         isinstance(chunk.raw_representation, ChatResponseUpdate)
@@ -41,13 +43,19 @@ def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
 
 async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with OpenAI Assistants."""
-    print("=== OpenAI Assistants Agent with Code Interpreter Example ===")
+    print("=== OpenAI Assistants Provider with Code Interpreter Example ===")
 
-    async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+    client = AsyncOpenAI()
+    provider = OpenAIAssistantProvider(client)
+
+    agent = await provider.create_agent(
+        name="CodeHelper",
+        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=HostedCodeInterpreterTool(),
-    ) as agent:
+        tools=[HostedCodeInterpreterTool()],
+    )
+
+    try:
         query = "Use code to get the factorial of 100?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
@@ -60,6 +68,8 @@ async def main() -> None:
                 generated_code += code_interpreter_chunk
 
         print(f"\nGenerated code:\n{generated_code}")
+    finally:
+        await client.beta.assistants.delete(agent.id)
 
 
 if __name__ == "__main__":

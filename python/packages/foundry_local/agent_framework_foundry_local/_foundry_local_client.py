@@ -169,7 +169,7 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
 
                 client = FoundryLocalClient(model_id="phi-4-mini")
 
-                agent = client.create_agent(
+                agent = client.as_agent(
                     name="LocalAgent",
                     instructions="You are a helpful agent.",
                     tools=get_weather,

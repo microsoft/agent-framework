@@ -79,7 +79,7 @@ class _AggregateAgentConversations(Executor):
       [ single_user_prompt?, agent1_final_assistant, agent2_final_assistant, ... ]
 
     - Extracts a single user prompt (first user message seen across results).
-    - For each result, selects the final assistant message (prefers agent_run_response.messages).
+    - For each result, selects the final assistant message (prefers agent_response.messages).
     - Avoids duplicating the same user message per agent.
     """
 
@@ -107,7 +107,7 @@ class _AggregateAgentConversations(Executor):
         assistant_replies: list[ChatMessage] = []
 
         for r in results:
-            resp_messages = list(getattr(r.agent_run_response, "messages", []) or [])
+            resp_messages = list(getattr(r.agent_response, "messages", []) or [])
             conv = r.full_conversation if r.full_conversation is not None else resp_messages
 
             logger.debug(
@@ -213,7 +213,7 @@ class ConcurrentBuilder:
         # Custom aggregator via callback (sync or async). The callback receives
         # list[AgentExecutorResponse] and its return value becomes the workflow's output.
         def summarize(results: list[AgentExecutorResponse]) -> str:
-            return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+            return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_aggregator(summarize).build()
@@ -223,7 +223,7 @@ class ConcurrentBuilder:
         class MyAggregator(Executor):
             @handler
             async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
-                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+                await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
         workflow = (
@@ -416,7 +416,7 @@ class ConcurrentBuilder:
             class CustomAggregator(Executor):
                 @handler
                 async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext) -> None:
-                    await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+                    await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(CustomAggregator()).build()
@@ -424,7 +424,7 @@ class ConcurrentBuilder:
 
             # Callback-based aggregator (string result)
             async def summarize(results: list[AgentExecutorResponse]) -> str:
-                return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+                return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
@@ -432,7 +432,7 @@ class ConcurrentBuilder:
 
             # Callback-based aggregator (yield result)
             async def summarize(results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
-                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+                await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()

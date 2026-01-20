@@ -27,7 +27,7 @@ async def example_global_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
@@ -65,7 +65,7 @@ async def example_per_operation_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
@@ -113,14 +113,14 @@ async def example_multiple_agents() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
             context_provider=Mem0Provider(
                 agent_id=agent_id_1,
             ),
         ) as personal_agent,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
             context_provider=Mem0Provider(

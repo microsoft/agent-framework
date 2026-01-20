@@ -35,7 +35,7 @@ async def main() -> None:
     workflow = (
         GroupChatBuilder()
         .with_agent_orchestrator(
-            OpenAIChatClient().create_agent(
+            OpenAIChatClient().as_agent(
                 name="Orchestrator",
                 instructions="You coordinate a team conversation to solve the user's task.",
             )

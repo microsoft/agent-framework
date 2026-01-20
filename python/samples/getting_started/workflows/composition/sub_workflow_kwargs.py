@@ -75,7 +75,7 @@ async def main() -> None:
     chat_client = OpenAIChatClient()
 
     # Create an agent with tools that use kwargs
-    inner_agent = chat_client.create_agent(
+    inner_agent = chat_client.as_agent(
         name="data_agent",
         instructions=(
             "You are a data access agent. Use the available tools to help users. "

@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework.openai import OpenAIAssistantsClient
+from agent_framework.openai import OpenAIAssistantProvider
+from openai import AsyncOpenAI
 from pydantic import Field
 
 """
@@ -22,7 +23,7 @@ def get_weather(
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}C."
 
 
 def get_time() -> str:
@@ -35,13 +36,19 @@ async def tools_on_agent_level() -> None:
     """Example showing tools defined when creating the agent."""
     print("=== Tools Defined on Agent Level ===")
 
+    client = AsyncOpenAI()
+    provider = OpenAIAssistantProvider(client)
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+    agent = await provider.create_agent(
+        name="InfoAssistant",
+        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that can provide weather and time information.",
         tools=[get_weather, get_time],  # Tools defined at agent creation
-    ) as agent:
+    )
+
+    try:
         # First query - agent can use weather tool
         query1 = "What's the weather like in New York?"
         print(f"User: {query1}")
@@ -59,47 +66,63 @@ async def tools_on_agent_level() -> None:
         print(f"User: {query3}")
         result3 = await agent.run(query3)
         print(f"Agent: {result3}\n")
+    finally:
+        await client.beta.assistants.delete(agent.id)
 
 
 async def tools_on_run_level() -> None:
     """Example showing tools passed to the run method."""
     print("=== Tools Passed to Run Method ===")
 
-    # Agent created without tools
-    async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+    client = AsyncOpenAI()
+    provider = OpenAIAssistantProvider(client)
+
+    # Agent created with base tools, additional tools can be passed at run time
+    agent = await provider.create_agent(
+        name="FlexibleAssistant",
+        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant.",
-        # No tools defined here
-    ) as agent:
-        # First query with weather tool
+        tools=[get_weather],  # Base tool
+    )
+
+    try:
+        # First query using base weather tool
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
-        result1 = await agent.run(query1, tools=[get_weather])  # Tool passed to run method
+        result1 = await agent.run(query1)
         print(f"Agent: {result1}\n")
 
-        # Second query with time tool
+        # Second query with additional time tool
         query2 = "What's the current UTC time?"
         print(f"User: {query2}")
-        result2 = await agent.run(query2, tools=[get_time])  # Different tool for this query
+        result2 = await agent.run(query2, tools=[get_time])  # Additional tool for this query
         print(f"Agent: {result2}\n")
 
-        # Third query with multiple tools
+        # Third query with both tools
         query3 = "What's the weather in Chicago and what's the current UTC time?"
         print(f"User: {query3}")
-        result3 = await agent.run(query3, tools=[get_weather, get_time])  # Multiple tools
+        result3 = await agent.run(query3, tools=[get_time])  # Time tool adds to weather
         print(f"Agent: {result3}\n")
+    finally:
+        await client.beta.assistants.delete(agent.id)
 
 
 async def mixed_tools_example() -> None:
     """Example showing both agent-level tools and run-method tools."""
     print("=== Mixed Tools Example (Agent + Run Method) ===")
 
+    client = AsyncOpenAI()
+    provider = OpenAIAssistantProvider(client)
+
     # Agent created with some base tools
-    async with ChatAgent(
-        chat_client=OpenAIAssistantsClient(),
+    agent = await provider.create_agent(
+        name="ComprehensiveAssistant",
+        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a comprehensive assistant that can help with various information requests.",
         tools=[get_weather],  # Base tool available for all queries
-    ) as agent:
+    )
+
+    try:
         # Query using both agent tool and additional run-method tools
         query = "What's the weather in Denver and what's the current UTC time?"
         print(f"User: {query}")
@@ -110,10 +133,12 @@ async def mixed_tools_example() -> None:
             tools=[get_time],  # Additional tools for this specific query
         )
         print(f"Agent: {result}\n")
+    finally:
+        await client.beta.assistants.delete(agent.id)
 
 
 async def main() -> None:
-    print("=== OpenAI Assistants Chat Client Agent with Function Tools Examples ===\n")
+    print("=== OpenAI Assistants Provider with Function Tools Examples ===\n")
 
     await tools_on_agent_level()
     await tools_on_run_level()

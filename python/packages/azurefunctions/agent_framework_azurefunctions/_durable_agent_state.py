@@ -35,7 +35,7 @@ from enum import Enum
 from typing import Any, cast
 
 from agent_framework import (
-    AgentRunResponse,
+    AgentResponse,
     BaseContent,
     ChatMessage,
     DataContent,
@@ -693,8 +693,8 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         )
 
     @staticmethod
-    def from_run_response(correlation_id: str, response: AgentRunResponse) -> DurableAgentStateResponse:
-        """Creates a DurableAgentStateResponse from an AgentRunResponse."""
+    def from_run_response(correlation_id: str, response: AgentResponse) -> DurableAgentStateResponse:
+        """Creates a DurableAgentStateResponse from an AgentResponse."""
         return DurableAgentStateResponse(
             correlation_id=correlation_id,
             created_at=_parse_created_at(response.created_at),

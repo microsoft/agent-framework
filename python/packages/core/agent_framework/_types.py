@@ -29,8 +29,8 @@ else:
 
 
 __all__ = [
-    "AgentRunResponse",
-    "AgentRunResponseUpdate",
+    "AgentResponse",
+    "AgentResponseUpdate",
     "AnnotatedRegions",
     "Annotations",
     "BaseAnnotation",
@@ -66,6 +66,8 @@ __all__ = [
     "UsageContent",
     "UsageDetails",
     "merge_chat_options",
+    "normalize_messages",
+    "normalize_tools",
     "prepare_function_call_results",
     "prepend_instructions_to_messages",
     "validate_chat_options",
@@ -188,7 +190,7 @@ _T = TypeVar("_T")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TToolMode = TypeVar("TToolMode", bound="ToolMode")
-TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentRunResponse")
+TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentResponse")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -2494,6 +2496,22 @@ def prepare_messages(
     return return_messages
 
 
+def normalize_messages(
+    messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+) -> list[ChatMessage]:
+    """Normalize message inputs to a list of ChatMessage objects."""
+    if messages is None:
+        return []
+
+    if isinstance(messages, str):
+        return [ChatMessage(role=Role.USER, text=messages)]
+
+    if isinstance(messages, ChatMessage):
+        return [messages]
+
+    return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
+
+
 def prepend_instructions_to_messages(
     messages: list[ChatMessage],
     instructions: str | Sequence[str] | None,
@@ -2541,7 +2559,7 @@ def prepend_instructions_to_messages(
 
 
 def _process_update(
-    response: "ChatResponse | AgentRunResponse", update: "ChatResponseUpdate | AgentRunResponseUpdate"
+    response: "ChatResponse | AgentResponse", update: "ChatResponseUpdate | AgentResponseUpdate"
 ) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
@@ -2645,7 +2663,7 @@ def _coalesce_text_content(
     contents.extend(coalesced_contents)
 
 
-def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
+def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, TextContent)
@@ -2843,13 +2861,12 @@ class ChatResponse(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self.value = value
+        self._value: Any | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
-
-        if response_format:
-            self.try_parse_value(output_format_type=response_format)
 
     @classmethod
     def from_chat_response_updates(
@@ -2915,12 +2932,13 @@ class ChatResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        response_format = output_format_type if isinstance(output_format_type, type) else None
+        msg = cls(messages=[], response_format=response_format)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
-            msg.try_parse_value(output_format_type)
+        if response_format and issubclass(response_format, BaseModel):
+            msg.try_parse_value(response_format)
         return msg
 
     @property
@@ -2928,16 +2946,64 @@ class ChatResponse(SerializationMixin):
         """Returns the concatenated text of all messages in the response."""
         return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
 
+    @property
+    def value(self) -> Any | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = self._response_format.model_validate_json(self.text)
+            self._value_parsed = True
+        return self._value
+
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from chat response text: %s", ex)
+    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+        """Try to parse the text into a typed value.
+
+        This is the safe alternative to accessing the value property directly.
+        Returns the parsed value on success, or None on failure.
+
+        Args:
+            output_format_type: The Pydantic model type to parse into.
+                               If None, uses the response_format from initialization.
+
+        Returns:
+            The parsed value as the specified type, or None if parsing fails.
+        """
+        format_type = output_format_type or self._response_format
+        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
+            return None
+
+        # Cache the result unless a different schema than the configured response_format is requested.
+        # This prevents calls with a different schema from polluting the cached value.
+        use_cache = (
+            self._response_format is None or output_format_type is None or output_format_type is self._response_format
+        )
+
+        if use_cache and self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value, no-any-return]
+        try:
+            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            if use_cache:
+                self._value = parsed_value
+                self._value_parsed = True
+            return parsed_value  # type: ignore[return-value]
+        except ValidationError as ex:
+            logger.warning("Failed to parse value from chat response text: %s", ex)
+            return None
 
 
 # region ChatResponseUpdate
@@ -3067,10 +3133,10 @@ class ChatResponseUpdate(SerializationMixin):
         return self.text
 
 
-# region AgentRunResponse
+# region AgentResponse
 
 
-class AgentRunResponse(SerializationMixin):
+class AgentResponse(SerializationMixin):
     """Represents the response to an Agent run request.
 
     Provides one or more response messages and metadata about the response.
@@ -3080,11 +3146,11 @@ class AgentRunResponse(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentRunResponse, ChatMessage
+            from agent_framework import AgentResponse, ChatMessage
 
             # Create agent response
             msg = ChatMessage(role="assistant", text="Task completed successfully.")
-            response = AgentRunResponse(messages=[msg], response_id="run_123")
+            response = AgentResponse(messages=[msg], response_id="run_123")
             print(response.text)  # "Task completed successfully."
 
             # Access user input requests
@@ -3092,20 +3158,20 @@ class AgentRunResponse(SerializationMixin):
             print(len(user_requests))  # 0
 
             # Combine streaming updates
-            updates = [...]  # List of AgentRunResponseUpdate objects
-            response = AgentRunResponse.from_agent_run_response_updates(updates)
+            updates = [...]  # List of AgentResponseUpdate objects
+            response = AgentResponse.from_agent_run_response_updates(updates)
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
-            # {'type': 'agent_run_response', 'messages': [...], 'response_id': 'run_123',
+            # {'type': 'agent_response', 'messages': [...], 'response_id': 'run_123',
             #  'additional_properties': {}}
-            restored_response = AgentRunResponse.from_dict(response_dict)
+            restored_response = AgentResponse.from_dict(response_dict)
             print(restored_response.response_id)  # "run_123"
 
             # Serialization - to_json and from_json
             response_json = response.to_json()
-            # '{"type": "agent_run_response", "messages": [...], "response_id": "run_123", ...}'
-            restored_from_json = AgentRunResponse.from_json(response_json)
+            # '{"type": "agent_response", "messages": [...], "response_id": "run_123", ...}'
+            restored_from_json = AgentResponse.from_json(response_json)
             print(restored_from_json.text)  # "Task completed successfully."
     """
 
@@ -3123,11 +3189,12 @@ class AgentRunResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
         value: Any | None = None,
+        response_format: type[BaseModel] | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an AgentRunResponse.
+        """Initialize an AgentResponse.
 
         Keyword Args:
             messages: The list of chat messages in the response.
@@ -3135,6 +3202,7 @@ class AgentRunResponse(SerializationMixin):
             created_at: A timestamp for the chat response.
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
+            response_format: Optional response format for the agent response.
             additional_properties: Any additional properties associated with the chat response.
             raw_representation: The raw representation of the chat response from an underlying implementation.
             **kwargs: Additional properties to set on the response.
@@ -3162,7 +3230,9 @@ class AgentRunResponse(SerializationMixin):
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
-        self.value = value
+        self._value: Any | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation = raw_representation
@@ -3171,6 +3241,27 @@ class AgentRunResponse(SerializationMixin):
     def text(self) -> str:
         """Get the concatenated text of all messages."""
         return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @property
+    def value(self) -> Any | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = self._response_format.model_validate_json(self.text)
+            self._value_parsed = True
+        return self._value
 
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:
@@ -3185,19 +3276,19 @@ class AgentRunResponse(SerializationMixin):
     @classmethod
     def from_agent_run_response_updates(
         cls: type[TAgentRunResponse],
-        updates: Sequence["AgentRunResponseUpdate"],
+        updates: Sequence["AgentResponseUpdate"],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentRunResponse.
+        """Joins multiple updates into a single AgentResponse.
 
         Args:
-            updates: A sequence of AgentRunResponseUpdate objects to combine.
+            updates: A sequence of AgentResponseUpdate objects to combine.
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3208,19 +3299,19 @@ class AgentRunResponse(SerializationMixin):
     @classmethod
     async def from_agent_response_generator(
         cls: type[TAgentRunResponse],
-        updates: AsyncIterable["AgentRunResponseUpdate"],
+        updates: AsyncIterable["AgentResponseUpdate"],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentRunResponse.
+        """Joins multiple updates into a single AgentResponse.
 
         Args:
-            updates: An async iterable of AgentRunResponseUpdate objects to combine.
+            updates: An async iterable of AgentResponseUpdate objects to combine.
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data
         """
-        msg = cls(messages=[])
+        msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3231,28 +3322,55 @@ class AgentRunResponse(SerializationMixin):
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from agent run response text: %s", ex)
+    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+        """Try to parse the text into a typed value.
+
+        This is the safe alternative when you need to parse the response text into a typed value.
+        Returns the parsed value on success, or None on failure.
+
+        Args:
+            output_format_type: The Pydantic model type to parse into.
+                               If None, uses the response_format from initialization.
+
+        Returns:
+            The parsed value as the specified type, or None if parsing fails.
+        """
+        format_type = output_format_type or self._response_format
+        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
+            return None
+
+        # Cache the result unless a different schema than the configured response_format is requested.
+        # This prevents calls with a different schema from polluting the cached value.
+        use_cache = (
+            self._response_format is None or output_format_type is None or output_format_type is self._response_format
+        )
+
+        if use_cache and self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value, no-any-return]
+        try:
+            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            if use_cache:
+                self._value = parsed_value
+                self._value_parsed = True
+            return parsed_value  # type: ignore[return-value]
+        except ValidationError as ex:
+            logger.warning("Failed to parse value from agent run response text: %s", ex)
+            return None
 
 
-# region AgentRunResponseUpdate
+# region AgentResponseUpdate
 
 
-class AgentRunResponseUpdate(SerializationMixin):
+class AgentResponseUpdate(SerializationMixin):
     """Represents a single streaming response chunk from an Agent.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentRunResponseUpdate, TextContent
+            from agent_framework import AgentResponseUpdate, TextContent
 
             # Create an agent run update
-            update = AgentRunResponseUpdate(
+            update = AgentResponseUpdate(
                 contents=[TextContent(text="Processing...")],
                 role="assistant",
                 response_id="run_123",
@@ -3264,15 +3382,15 @@ class AgentRunResponseUpdate(SerializationMixin):
 
             # Serialization - to_dict and from_dict
             update_dict = update.to_dict()
-            # {'type': 'agent_run_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
+            # {'type': 'agent_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
             #  'role': {'type': 'role', 'value': 'assistant'}, 'response_id': 'run_123'}
-            restored_update = AgentRunResponseUpdate.from_dict(update_dict)
+            restored_update = AgentResponseUpdate.from_dict(update_dict)
             print(restored_update.response_id)  # "run_123"
 
             # Serialization - to_json and from_json
             update_json = update.to_json()
-            # '{"type": "agent_run_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
-            restored_from_json = AgentRunResponseUpdate.from_json(update_json)
+            # '{"type": "agent_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
+            restored_from_json = AgentResponseUpdate.from_json(update_json)
             print(restored_from_json.text)  # "Processing..."
     """
 
@@ -3292,7 +3410,7 @@ class AgentRunResponseUpdate(SerializationMixin):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an AgentRunResponseUpdate.
+        """Initialize an AgentResponseUpdate.
 
         Keyword Args:
             contents: Optional list of BaseContent items or dicts to include in the update.
@@ -3490,6 +3608,60 @@ async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def normalize_tools(
+    tools: (
+        ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None
+    ),
+) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    """Normalize tools into a list.
+
+    Converts callables to AIFunction objects and ensures all tools are either
+    ToolProtocol instances or MutableMappings.
+
+    Args:
+        tools: Tools to normalize - can be a single tool, callable, or sequence.
+
+    Returns:
+        Normalized list of tools.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import normalize_tools, ai_function
+
+
+            @ai_function
+            def my_tool(x: int) -> int:
+                return x * 2
+
+
+            # Single tool
+            tools = normalize_tools(my_tool)
+
+            # List of tools
+            tools = normalize_tools([my_tool, another_tool])
+    """
+    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+    if not tools:
+        return final_tools
+    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
+        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
+        if not isinstance(tools, (ToolProtocol, MutableMapping)):
+            return [ai_function(tools)]
+        return [tools]
+    for tool in tools:
+        if isinstance(tool, (ToolProtocol, MutableMapping)):
+            final_tools.append(tool)
+        else:
+            # Convert callable to AIFunction
+            final_tools.append(ai_function(tool))
+    return final_tools
+
+
 async def validate_tools(
     tools: (
         ToolProtocol
@@ -3528,16 +3700,12 @@ async def validate_tools(
             # List of tools
             tools = await validate_tools([my_tool, another_tool])
     """
-    # Sequence of tools - convert callables and expand MCP tools
+    # Use normalize_tools for common sync logic (converts callables to AIFunction)
+    normalized = normalize_tools(tools)
+
+    # Handle MCP tool expansion (async-only)
     final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
-    if not tools:
-        return final_tools
-    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
-        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
-        if not isinstance(tools, (ToolProtocol, MutableMapping)):
-            return [ai_function(tools)]
-        return [tools]
-    for tool in tools:
+    for tool in normalized:
         # Import MCPTool here to avoid circular imports
         from ._mcp import MCPTool
 
@@ -3546,11 +3714,9 @@ async def validate_tools(
             if not tool.is_connected:
                 await tool.connect()
             final_tools.extend(tool.functions)  # type: ignore
-        elif isinstance(tool, (ToolProtocol, MutableMapping)):
-            final_tools.append(tool)
         else:
-            # Convert callable to AIFunction
-            final_tools.append(ai_function(tool))
+            final_tools.append(tool)
+
     return final_tools
 
 

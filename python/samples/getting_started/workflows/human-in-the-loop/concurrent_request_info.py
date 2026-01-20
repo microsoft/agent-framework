@@ -64,7 +64,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 
     for r in results:
         try:
-            messages = getattr(r.agent_run_response, "messages", [])
+            messages = getattr(r.agent_response, "messages", [])
             final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
             expert_sections.append(f"{getattr(r, 'executor_id', 'analyst')}:\n{final_text}")
 
@@ -99,7 +99,7 @@ async def main() -> None:
     _chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents that analyze from different perspectives
-    technical_analyst = _chat_client.create_agent(
+    technical_analyst = _chat_client.as_agent(
         name="technical_analyst",
         instructions=(
             "You are a technical analyst. When given a topic, provide a technical "
@@ -108,7 +108,7 @@ async def main() -> None:
         ),
     )
 
-    business_analyst = _chat_client.create_agent(
+    business_analyst = _chat_client.as_agent(
         name="business_analyst",
         instructions=(
             "You are a business analyst. When given a topic, provide a business "
@@ -117,7 +117,7 @@ async def main() -> None:
         ),
     )
 
-    user_experience_analyst = _chat_client.create_agent(
+    user_experience_analyst = _chat_client.as_agent(
         name="ux_analyst",
         instructions=(
             "You are a UX analyst. When given a topic, provide a user experience "
@@ -161,7 +161,7 @@ async def main() -> None:
                     print("\n" + "-" * 40)
                     print("INPUT REQUESTED")
                     print(
-                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_run_response.text}'. "
+                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
                         "Please provide your feedback."
                     )
                     print("-" * 40)

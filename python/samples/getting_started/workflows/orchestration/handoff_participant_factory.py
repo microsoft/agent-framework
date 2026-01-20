@@ -5,8 +5,8 @@ import logging
 from typing import Annotated, cast
 
 from agent_framework import (
+    AgentResponse,
     AgentRunEvent,
-    AgentRunResponse,
     ChatAgent,
     ChatMessage,
     HandoffAgentUserRequest,
@@ -67,7 +67,7 @@ def process_return(order_number: Annotated[str, "Order number to process return 
 
 def create_triage_agent() -> ChatAgent:
     """Factory function to create a triage agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
@@ -78,7 +78,7 @@ def create_triage_agent() -> ChatAgent:
 
 def create_refund_agent() -> ChatAgent:
     """Factory function to create a refund agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -88,7 +88,7 @@ def create_refund_agent() -> ChatAgent:
 
 def create_order_status_agent() -> ChatAgent:
     """Factory function to create an order status agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -98,7 +98,7 @@ def create_order_status_agent() -> ChatAgent:
 
 def create_return_agent() -> ChatAgent:
     """Factory function to create a return agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -163,14 +163,14 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
     return requests
 
 
-def _print_handoff_agent_user_request(response: AgentRunResponse) -> None:
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
     """Display the agent's response messages when requesting user input.
 
     This will happen when an agent generates a response that doesn't trigger
     a handoff, i.e., the agent is asking the user for more information.
 
     Args:
-        response: The AgentRunResponse from the agent requesting user input
+        response: The AgentResponse from the agent requesting user input
     """
     if not response.messages:
         raise RuntimeError("Cannot print agent responses: response has no messages.")

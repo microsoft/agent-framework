@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ChatAgent,
     ChatContext,
     ChatMessage,
@@ -372,7 +372,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 
@@ -878,7 +878,7 @@ class TestMiddlewareDynamicRebuild:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
 
         # First streaming execution
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test stream message 1"):
             updates.append(update)
 
@@ -1085,7 +1085,7 @@ class TestRunLevelMiddleware:
         run_middleware = StreamingTrackingMiddleware("run_stream")
 
         # Execute streaming with run middleware
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
             updates.append(update)
 
@@ -1711,7 +1711,7 @@ class TestChatAgentChatMiddleware:
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 
@@ -1902,3 +1902,59 @@ class TestChatAgentChatMiddleware:
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
+
+
+class TestMiddlewareWithProtocolOnlyAgent:
+    """Test use_agent_middleware with agents implementing only AgentProtocol."""
+
+    async def test_middleware_with_protocol_only_agent(self) -> None:
+        """Verify middleware works without BaseAgent inheritance for both run and run_stream."""
+        from collections.abc import AsyncIterable
+
+        from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate, use_agent_middleware
+
+        execution_order: list[str] = []
+
+        class TrackingMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_order.append("before")
+                await next(context)
+                execution_order.append("after")
+
+        @use_agent_middleware
+        class ProtocolOnlyAgent:
+            """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
+
+            def __init__(self):
+                self.id = "protocol-only-agent"
+                self.name = "Protocol Only Agent"
+                self.description = "Test agent"
+                self.middleware = [TrackingMiddleware()]
+
+            async def run(self, messages=None, *, thread=None, **kwargs) -> AgentResponse:
+                return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+            def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentResponseUpdate]:
+                async def _stream():
+                    yield AgentResponseUpdate()
+
+                return _stream()
+
+            def get_new_thread(self, **kwargs):
+                return None
+
+        agent = ProtocolOnlyAgent()
+        assert isinstance(agent, AgentProtocol)
+
+        # Test run (non-streaming)
+        response = await agent.run("test message")
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
+        # Test run_stream (streaming)
+        execution_order.clear()
+        async for _ in agent.run_stream("test message"):
+            pass
+        assert execution_order == ["before", "after"]
