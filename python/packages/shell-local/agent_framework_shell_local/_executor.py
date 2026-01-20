@@ -90,7 +90,7 @@ class LocalShellExecutor(ShellExecutor):
         Returns:
             ShellResult containing the command output and execution status.
         """
-        if working_directory is not None and not os.path.isdir(working_directory):  # noqa: ASYNC240
+        if working_directory is not None and not await asyncio.to_thread(os.path.isdir, working_directory):
             return ShellResult(
                 exit_code=-1,
                 stderr=f"Working directory does not exist: {working_directory}",

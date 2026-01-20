@@ -6,7 +6,7 @@ import platform
 import re
 import shlex
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple, TypedDict
 
 from ._serialization import SerializationMixin
 from ._tools import BaseTool
@@ -70,12 +70,12 @@ def _matches_pattern(pattern: CommandPattern, command: str) -> bool:
             return False
 
     # Check for shell metacharacters in the rest of the command
-    # These indicate command chaining which should not be whitelisted
+    # These indicate command chaining which should not be allowlisted
     remaining = parts[1] if len(parts) > 1 else ""
     if remaining and _SHELL_METACHAR_PATTERN.search(remaining):
-        # Shell metacharacters detected - block this from simple string whitelist
+        # Shell metacharacters detected - block this from simple string allowlist
         # to prevent command injection via chaining (e.g., "ls && rm -rf /")
-        # Users should use regex patterns for complex whitelisting needs
+        # Users should use regex patterns for complex allowlisting needs
         return False
 
     # Handle paths like /usr/bin/ls -> ls
@@ -108,12 +108,11 @@ def _contains_privilege_command(command: str, privilege_commands: frozenset[str]
     return False
 
 
-class _ValidationResult:
+class _ValidationResult(NamedTuple):
     """Internal result of command validation."""
 
-    def __init__(self, is_valid: bool, error_message: str | None = None) -> None:
-        self.is_valid = is_valid
-        self.error_message = error_message
+    is_valid: bool
+    error_message: str | None = None
 
     def __bool__(self) -> bool:
         return self.is_valid
@@ -127,8 +126,8 @@ class ShellToolOptions(TypedDict, total=False):
         timeout_seconds: Command execution timeout in seconds. Defaults to 60.
         max_output_bytes: Maximum output size before truncation. Defaults to 50KB.
         approval_mode: Human-in-the-loop approval mode. Defaults to "always_require".
-        whitelist_patterns: List of allowed command patterns (str for prefix, re.Pattern for regex).
-        blacklist_patterns: List of blocked command patterns.
+        allowlist_patterns: List of allowed command patterns (str for prefix, re.Pattern for regex).
+        denylist_patterns: List of denied command patterns.
         allowed_paths: Paths that commands can access.
         blocked_paths: Paths that commands cannot access (takes precedence).
         block_privilege_escalation: Block sudo/runas commands. Defaults to True.
@@ -139,8 +138,8 @@ class ShellToolOptions(TypedDict, total=False):
     timeout_seconds: int
     max_output_bytes: int
     approval_mode: Literal["always_require", "never_require"]
-    whitelist_patterns: list[CommandPattern]
-    blacklist_patterns: list[CommandPattern]
+    allowlist_patterns: list[CommandPattern]
+    denylist_patterns: list[CommandPattern]
     allowed_paths: list[str]
     blocked_paths: list[str]
     block_privilege_escalation: bool
@@ -338,8 +337,8 @@ class ShellTool(BaseTool):
         self.approval_mode: Literal["always_require", "never_require"] = self._options.get(
             "approval_mode", "always_require"
         )
-        self.whitelist_patterns = self._options.get("whitelist_patterns", [])
-        self.blacklist_patterns = self._options.get("blacklist_patterns", [])
+        self.allowlist_patterns = self._options.get("allowlist_patterns", [])
+        self.denylist_patterns = self._options.get("denylist_patterns", [])
         self.allowed_paths = self._options.get("allowed_paths", [])
         self.blocked_paths = self._options.get("blocked_paths", [])
         self.block_privilege_escalation = self._options.get("block_privilege_escalation", True)
@@ -356,11 +355,11 @@ class ShellTool(BaseTool):
         if not result.is_valid:
             return result
 
-        result = self._validate_blacklist(command)
+        result = self._validate_denylist(command)
         if not result.is_valid:
             return result
 
-        result = self._validate_whitelist(command)
+        result = self._validate_allowlist(command)
         if not result.is_valid:
             return result
 
@@ -416,29 +415,29 @@ class ShellTool(BaseTool):
                 )
         return _ValidationResult(is_valid=True)
 
-    def _validate_blacklist(self, command: str) -> _ValidationResult:
-        """Check if command matches blacklist patterns."""
-        for pattern in self.blacklist_patterns:
+    def _validate_denylist(self, command: str) -> _ValidationResult:
+        """Check if command matches denylist patterns."""
+        for pattern in self.denylist_patterns:
             if _matches_pattern(pattern, command):
                 pattern_str = pattern.pattern if isinstance(pattern, re.Pattern) else pattern
                 return _ValidationResult(
                     is_valid=False,
-                    error_message=f"Command matches blacklist pattern '{pattern_str}'",
+                    error_message=f"Command matches denylist pattern '{pattern_str}'",
                 )
         return _ValidationResult(is_valid=True)
 
-    def _validate_whitelist(self, command: str) -> _ValidationResult:
-        """Check if command matches whitelist patterns."""
-        if not self.whitelist_patterns:
+    def _validate_allowlist(self, command: str) -> _ValidationResult:
+        """Check if command matches allowlist patterns."""
+        if not self.allowlist_patterns:
             return _ValidationResult(is_valid=True)
 
-        for pattern in self.whitelist_patterns:
+        for pattern in self.allowlist_patterns:
             if _matches_pattern(pattern, command):
                 return _ValidationResult(is_valid=True)
 
         return _ValidationResult(
             is_valid=False,
-            error_message="Command does not match any whitelist pattern",
+            error_message="Command does not match any allowlist pattern",
         )
 
     def _validate_paths(self, command: str) -> _ValidationResult:
