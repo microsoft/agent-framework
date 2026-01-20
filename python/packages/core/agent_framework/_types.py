@@ -12,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Final, Literal, TypedDict, TypeVar, overload
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -312,6 +312,8 @@ TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TToolMode = TypeVar("TToolMode", bound="ToolMode")
 TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentResponse")
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -1911,7 +1913,7 @@ def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
         _coalesce_text_content(msg.contents, "text_reasoning")
 
 
-class ChatResponse(SerializationMixin):
+class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     """Represents the response to a chat request.
 
     Attributes:
@@ -1974,7 +1976,7 @@ class ChatResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2009,7 +2011,7 @@ class ChatResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2044,7 +2046,7 @@ class ChatResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | dict[str, Any] | None = None,
         usage_details: UsageDetails | dict[str, Any] | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2101,12 +2103,30 @@ class ChatResponse(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self._value: Any | None = value
+        self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    @overload
+    @classmethod
+    def from_chat_response_updates(
+        cls: type["ChatResponse[Any]"],
+        updates: Sequence["ChatResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "ChatResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    def from_chat_response_updates(
+        cls: type["ChatResponse[Any]"],
+        updates: Sequence["ChatResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "ChatResponse[Any]": ...
 
     @classmethod
     def from_chat_response_updates(
@@ -2146,12 +2166,30 @@ class ChatResponse(SerializationMixin):
             msg.try_parse_value(output_format_type)
         return msg
 
+    @overload
+    @classmethod
+    async def from_chat_response_generator(
+        cls: type["ChatResponse[Any]"],
+        updates: AsyncIterable["ChatResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "ChatResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    async def from_chat_response_generator(
+        cls: type["ChatResponse[Any]"],
+        updates: AsyncIterable["ChatResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "ChatResponse[Any]": ...
+
     @classmethod
     async def from_chat_response_generator(
         cls: type[TChatResponse],
         updates: AsyncIterable["ChatResponseUpdate"],
         *,
-        output_format_type: type[BaseModel] | Mapping[str, Any] | None = None,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2187,7 +2225,7 @@ class ChatResponse(SerializationMixin):
         return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
 
     @property
-    def value(self) -> Any | None:
+    def value(self) -> TResponseModel | None:
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
@@ -2203,14 +2241,20 @@ class ChatResponse(SerializationMixin):
             and isinstance(self._response_format, type)
             and issubclass(self._response_format, BaseModel)
         ):
-            self._value = self._response_format.model_validate_json(self.text)
+            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
             self._value_parsed = True
         return self._value
 
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+    @overload
+    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
+
+    @overload
+    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
+
+    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
         """Try to parse the text into a typed value.
 
         This is the safe alternative to accessing the value property directly.
@@ -2238,7 +2282,7 @@ class ChatResponse(SerializationMixin):
         try:
             parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             if use_cache:
-                self._value = parsed_value
+                self._value = cast(TResponseModel, parsed_value)
                 self._value_parsed = True
             return parsed_value  # type: ignore[return-value]
         except ValidationError as ex:
@@ -2376,7 +2420,7 @@ class ChatResponseUpdate(SerializationMixin):
 # region AgentResponse
 
 
-class AgentResponse(SerializationMixin):
+class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     """Represents the response to an Agent run request.
 
     Provides one or more response messages and metadata about the response.
@@ -2428,7 +2472,7 @@ class AgentResponse(SerializationMixin):
         response_id: str | None = None,
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -2469,7 +2513,7 @@ class AgentResponse(SerializationMixin):
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
-        self._value: Any | None = value
+        self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
@@ -2482,7 +2526,7 @@ class AgentResponse(SerializationMixin):
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
     @property
-    def value(self) -> Any | None:
+    def value(self) -> TResponseModel | None:
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
@@ -2498,7 +2542,7 @@ class AgentResponse(SerializationMixin):
             and isinstance(self._response_format, type)
             and issubclass(self._response_format, BaseModel)
         ):
-            self._value = self._response_format.model_validate_json(self.text)
+            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
             self._value_parsed = True
         return self._value
 
@@ -2511,6 +2555,24 @@ class AgentResponse(SerializationMixin):
             for content in msg.contents
             if isinstance(content, Content) and content.user_input_request
         ]
+
+    @overload
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type["AgentResponse[Any]"],
+        updates: Sequence["AgentResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "AgentResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type["AgentResponse[Any]"],
+        updates: Sequence["AgentResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "AgentResponse[Any]": ...
 
     @classmethod
     def from_agent_run_response_updates(
@@ -2534,6 +2596,24 @@ class AgentResponse(SerializationMixin):
         if output_format_type:
             msg.try_parse_value(output_format_type)
         return msg
+
+    @overload
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type["AgentResponse[Any]"],
+        updates: AsyncIterable["AgentResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "AgentResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type["AgentResponse[Any]"],
+        updates: AsyncIterable["AgentResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "AgentResponse[Any]": ...
 
     @classmethod
     async def from_agent_response_generator(
@@ -2561,7 +2641,13 @@ class AgentResponse(SerializationMixin):
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+    @overload
+    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
+
+    @overload
+    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
+
+    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
         """Try to parse the text into a typed value.
 
         This is the safe alternative when you need to parse the response text into a typed value.
@@ -2589,7 +2675,7 @@ class AgentResponse(SerializationMixin):
         try:
             parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             if use_cache:
-                self._value = parsed_value
+                self._value = cast(TResponseModel, parsed_value)
                 self._value_parsed = True
             return parsed_value  # type: ignore[return-value]
         except ValidationError as ex:
@@ -2718,7 +2804,7 @@ class ToolMode(TypedDict, total=False):
 # region TypedDict-based Chat Options
 
 
-class ChatOptions(TypedDict, total=False):
+class ChatOptions(TypedDict, Generic[TResponseModel], total=False):
     """Common request settings for AI services as a TypedDict.
 
     All fields are optional (total=False) to allow partial specification.
@@ -2771,7 +2857,7 @@ class ChatOptions(TypedDict, total=False):
     allow_multiple_tool_calls: bool
 
     # Response configuration
-    response_format: type[BaseModel] | dict[str, Any]
+    response_format: type[TResponseModel] | Mapping[str, Any] | None
 
     # Metadata
     metadata: dict[str, Any]

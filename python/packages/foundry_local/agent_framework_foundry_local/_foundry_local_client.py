@@ -11,6 +11,7 @@ from agent_framework.openai._chat_client import OpenAIBaseChatClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -24,11 +25,13 @@ __all__ = [
     "FoundryLocalSettings",
 ]
 
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+
 
 # region Foundry Local Chat Options TypedDict
 
 
-class FoundryLocalChatOptions(ChatOptions, total=False):
+class FoundryLocalChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Azure Foundry Local (local model deployment) chat options dict.
 
     Extends base ChatOptions for local model inference via Foundry Local.

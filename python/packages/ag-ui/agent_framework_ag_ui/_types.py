@@ -3,7 +3,7 @@
 """Type definitions for AG-UI integration."""
 
 import sys
-from typing import Any, TypedDict
+from typing import Any, Generic, TypedDict
 
 from agent_framework import ChatOptions
 from pydantic import BaseModel, Field
@@ -12,6 +12,10 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar
 else:
     from typing_extensions import TypeVar
+
+
+TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 class PredictStateConfig(TypedDict):
@@ -76,7 +80,7 @@ class AGUIRequest(BaseModel):
 # region AG-UI Chat Options TypedDict
 
 
-class AGUIChatOptions(ChatOptions, total=False):
+class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """AG-UI protocol-specific chat options dict.
 
     Extends base ChatOptions for the AG-UI (Agent-UI) protocol.
@@ -139,8 +143,6 @@ class AGUIChatOptions(ChatOptions, total=False):
 
 AGUI_OPTION_TRANSLATIONS: dict[str, str] = {}
 """Maps ChatOptions keys to AG-UI parameter names (protocol uses standard names)."""
-
-TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion

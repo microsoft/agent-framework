@@ -14,7 +14,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
@@ -54,6 +54,8 @@ __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+
 
 # region OpenAI Chat Options TypedDict
 
@@ -72,7 +74,7 @@ class Prediction(TypedDict, total=False):
     content: str | list[PredictionTextContent]
 
 
-class OpenAIChatOptions(ChatOptions, total=False):
+class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """OpenAI-specific chat options dict.
 
     Extends ChatOptions with options specific to OpenAI's Chat Completions API.

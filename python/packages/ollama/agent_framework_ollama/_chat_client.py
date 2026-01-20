@@ -40,7 +40,7 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -55,11 +55,13 @@ else:
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
 
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+
 
 # region Ollama Chat Options TypedDict
 
 
-class OllamaChatOptions(ChatOptions, total=False):
+class OllamaChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Ollama-specific chat options dict.
 
     Extends base ChatOptions with Ollama-specific parameters.

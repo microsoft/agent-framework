@@ -82,6 +82,7 @@ else:
 
 logger = get_logger("agent_framework.openai")
 
+
 __all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions"]
 
 
@@ -108,7 +109,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-class OpenAIResponsesOptions(ChatOptions, total=False):
+TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel | None, default=None)
+
+
+class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseFormat], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.

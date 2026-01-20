@@ -84,7 +84,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
     original_get_response = chat_client.get_response
 
     @wraps(original_get_response)
-    async def response_wrapper(self: Any, *args: Any, **kwargs: Any) -> ChatResponse:
+    async def response_wrapper(self: Any, *args: Any, **kwargs: Any) -> ChatResponse[Any]:
         response = await original_get_response(self, *args, **kwargs)
         if response.messages:
             for message in response.messages:

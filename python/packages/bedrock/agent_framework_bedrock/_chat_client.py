@@ -33,7 +33,7 @@ from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -54,6 +54,8 @@ __all__ = [
     "BedrockGuardrailConfig",
     "BedrockSettings",
 ]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Bedrock Chat Options TypedDict
@@ -82,7 +84,7 @@ class BedrockGuardrailConfig(TypedDict, total=False):
     """How to process guardrails during streaming (sync blocks, async does not)."""
 
 
-class BedrockChatOptions(ChatOptions, total=False):
+class BedrockChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Amazon Bedrock Converse API-specific chat options dict.
 
     Extends base ChatOptions with Bedrock-specific parameters.

@@ -10,7 +10,7 @@ from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agent_framework import (
     Annotation,
@@ -42,6 +42,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 __all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
 
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+
 
 # region Azure OpenAI Chat Options TypedDict
 
@@ -68,7 +70,7 @@ class AzureUserSecurityContext(TypedDict, total=False):
     """The original client's IP address."""
 
 
-class AzureOpenAIChatOptions(OpenAIChatOptions, total=False):
+class AzureOpenAIChatOptions(OpenAIChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Azure OpenAI-specific chat options dict.
 
     Extends OpenAIChatOptions with Azure-specific options including
