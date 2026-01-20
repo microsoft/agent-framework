@@ -214,7 +214,6 @@ class OpenAIBaseResponsesClient(
                 response = await client.responses.parse(stream=False, **run_options)
             else:
                 response = await client.responses.create(stream=False, **run_options)
-            return self._parse_response_from_openai(response, options=options)
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -230,6 +229,7 @@ class OpenAIBaseResponsesClient(
                 f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
+        return self._parse_response_from_openai(response, options=options)
 
     @override
     async def _inner_get_streaming_response(
