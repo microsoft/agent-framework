@@ -34,7 +34,7 @@ AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDate
 AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent originalAgent = aiProjectClient.CreateAIAgent(
+AIAgent originalAgent = await aiProjectClient.CreateAIAgentAsync(
     name: AssistantName,
     model: deploymentName,
     instructions: AssistantInstructions,
@@ -69,7 +69,7 @@ Console.WriteLine($"Function calling response: {functionCallResponse}");
 // Special per-request middleware agent.
 Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
-AIAgent humanInTheLoopAgent = aiProjectClient.CreateAIAgent(
+AIAgent humanInTheLoopAgent = await aiProjectClient.CreateAIAgentAsync(
     name: "HumanInTheLoopAgent",
     model: deploymentName,
     instructions: "You are an Human in the loop testing AI assistant that helps people find information.",

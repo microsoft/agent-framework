@@ -45,7 +45,7 @@ internal sealed class Program
 
         string workflowInput = GetWorkflowInput(args);
 
-        AIAgent agent = aiProjectClient.GetAIAgent(agentVersion);
+        AIAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
         AgentThread thread = await agent.GetNewThreadAsync();
 
