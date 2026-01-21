@@ -80,13 +80,13 @@ graph TD
 
 #### Declarative Workflows
 
-Microsoft Agent Framework supports a delcartive format for workflows which is shared with other teams within Microsoft e.g. Foundry Workflows. The declarative format uses YAML as the file format and the schema is implemented by the Agent Object Model.
+Microsoft Agent Framework supports a declarative format for workflows which is shared with other teams within Microsoft e.g. Foundry Workflows. The declarative format uses YAML as the file format and the schema is implemented by the Agent Object Model.
 
 For examples of declarative workflows go [here](https://github.com/microsoft/agent-framework/tree/main/workflow-samples)
 
 #### Declarative Agents
 
-Microsoft Agent Framework supports a delcartive format for agents which is shared with other teams within Microsoft e.g. Copilot Studio agents. The declarative format uses YAML as the file format and the schema is implemented by the Agent Object Model.
+Microsoft Agent Framework supports a declarative format for agents which is shared with other teams within Microsoft e.g. Copilot Studio agents. The declarative format uses YAML as the file format and the schema is implemented by the Agent Object Model.
 
 For examples of declarative agents go [here](https://github.com/microsoft/agent-framework/tree/main/agent-samples)
 
