@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import re
+from typing import Any
 
 import pytest
 
 from agent_framework import Content, ShellExecutor, ShellTool, ShellToolOptions
 from agent_framework._shell_tool import (
+    DEFAULT_DENYLIST_PATTERNS,
     DEFAULT_SHELL_MAX_OUTPUT_BYTES,
     DEFAULT_SHELL_TIMEOUT_SECONDS,
     _matches_pattern,
@@ -23,12 +25,11 @@ class MockShellExecutor(ShellExecutor):
         timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
         max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
-    ) -> Content:
-        outputs = [
+    ) -> list[dict[str, Any]]:
+        return [
             {"stdout": f"executed: {cmd}", "stderr": "", "exit_code": 0, "timed_out": False, "truncated": False}
             for cmd in commands
         ]
-        return Content.from_shell_result(outputs=outputs)
 
 
 # region Pattern matching tests
@@ -338,7 +339,7 @@ def test_shell_tool_default_options():
     assert tool.block_privilege_escalation is True
     assert tool.capture_stderr is True
     assert tool.allowlist_patterns == []
-    assert tool.denylist_patterns == []
+    assert len(tool.denylist_patterns) == len(DEFAULT_DENYLIST_PATTERNS)
     assert tool.allowed_paths == []
     assert tool.blocked_paths == []
 
@@ -393,36 +394,34 @@ def test_shell_tool_as_ai_function_parameters():
 
 
 async def test_shell_tool_ai_function_invoke_success():
-    """Test AIFunction invoke returns JSON-formatted result."""
-    import json
-
+    """Test AIFunction invoke returns Content result."""
     executor = MockShellExecutor()
     tool = ShellTool(executor=executor, options={"allowlist_patterns": ["echo"]})
 
     ai_func = tool.as_ai_function()
     result = await ai_func.invoke(commands=["echo hello"])
 
-    parsed = json.loads(result)
-    assert parsed["type"] == "shell_result"
-    assert len(parsed["outputs"]) == 1
-    assert parsed["outputs"][0]["exit_code"] == 0
-    assert "echo hello" in parsed["outputs"][0]["stdout"]
+    assert isinstance(result, Content)
+    assert result.type == "shell_result"
+    assert len(result.outputs) == 1
+    assert result.outputs[0]["exit_code"] == 0
+    assert "echo hello" in result.outputs[0]["stdout"]
 
 
 async def test_shell_tool_ai_function_invoke_validation_error():
-    """Test AIFunction invoke returns error JSON for validation failures."""
-    import json
-
+    """Test AIFunction invoke returns Content with error for validation failures."""
     executor = MockShellExecutor()
     tool = ShellTool(executor=executor, options={"allowlist_patterns": ["echo"]})
 
     ai_func = tool.as_ai_function()
     result = await ai_func.invoke(commands=["rm file.txt"])
 
-    parsed = json.loads(result)
-    assert parsed["error"] is True
-    assert "allowlist" in parsed["message"].lower()
-    assert parsed["exit_code"] == -1
+    assert isinstance(result, Content)
+    assert result.type == "shell_result"
+    assert len(result.outputs) == 1
+    assert result.outputs[0]["error"] is True
+    assert "allowlist" in result.outputs[0]["message"].lower()
+    assert result.outputs[0]["exit_code"] == -1
 
 
 # region Security fix tests

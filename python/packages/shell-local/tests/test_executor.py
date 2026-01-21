@@ -17,12 +17,11 @@ def executor() -> LocalShellExecutor:
 async def test_local_shell_executor_basic_command(executor: LocalShellExecutor) -> None:
     result = await executor.execute(["echo hello"])
 
-    assert result.type == "shell_result"
-    assert len(result.outputs) == 1
-    assert result.outputs[0]["exit_code"] == 0
-    assert "hello" in result.outputs[0]["stdout"]
-    assert not result.outputs[0]["timed_out"]
-    assert not result.outputs[0]["truncated"]
+    assert len(result) == 1
+    assert result[0]["exit_code"] == 0
+    assert "hello" in result[0]["stdout"]
+    assert not result[0]["timed_out"]
+    assert not result[0]["truncated"]
 
 
 async def test_local_shell_executor_failed_command(executor: LocalShellExecutor) -> None:
@@ -31,8 +30,8 @@ async def test_local_shell_executor_failed_command(executor: LocalShellExecutor)
     else:
         result = await executor.execute(["exit 1"])
 
-    assert result.outputs[0]["exit_code"] != 0
-    assert not result.outputs[0]["timed_out"]
+    assert result[0]["exit_code"] != 0
+    assert not result[0]["timed_out"]
 
 
 async def test_local_shell_executor_timeout(executor: LocalShellExecutor) -> None:
@@ -41,7 +40,7 @@ async def test_local_shell_executor_timeout(executor: LocalShellExecutor) -> Non
     else:
         result = await executor.execute(["sleep 10"], timeout_seconds=1)
 
-    assert result.outputs[0]["timed_out"]
+    assert result[0]["timed_out"]
 
 
 async def test_local_shell_executor_truncation(executor: LocalShellExecutor) -> None:
@@ -56,8 +55,8 @@ async def test_local_shell_executor_truncation(executor: LocalShellExecutor) -> 
             max_output_bytes=100,
         )
 
-    assert result.outputs[0]["truncated"]
-    assert len(result.outputs[0]["stdout"].encode("utf-8")) <= 100
+    assert result[0]["truncated"]
+    assert len(result[0]["stdout"].encode("utf-8")) <= 100
 
 
 async def test_local_shell_executor_working_directory(executor: LocalShellExecutor) -> None:
@@ -70,15 +69,15 @@ async def test_local_shell_executor_working_directory(executor: LocalShellExecut
             result = await executor.execute(["pwd"], working_directory=tmpdir)
             tmpdir_basename = tmpdir.split("/")[-1]
 
-        assert result.outputs[0]["exit_code"] == 0
-        assert tmpdir_basename in result.outputs[0]["stdout"]
+        assert result[0]["exit_code"] == 0
+        assert tmpdir_basename in result[0]["stdout"]
 
 
 async def test_local_shell_executor_invalid_working_directory(executor: LocalShellExecutor) -> None:
     result = await executor.execute(["echo hello"], working_directory="/nonexistent/path/12345")
 
-    assert result.outputs[0]["exit_code"] == -1
-    assert "Working directory does not exist" in result.outputs[0]["stderr"]
+    assert result[0]["exit_code"] == -1
+    assert "Working directory does not exist" in result[0]["stderr"]
 
 
 async def test_local_shell_executor_stderr_captured(executor: LocalShellExecutor) -> None:
@@ -93,7 +92,7 @@ async def test_local_shell_executor_stderr_captured(executor: LocalShellExecutor
             capture_stderr=True,
         )
 
-    assert "error" in result.outputs[0]["stderr"]
+    assert "error" in result[0]["stderr"]
 
 
 async def test_local_shell_executor_stderr_not_captured(executor: LocalShellExecutor) -> None:
@@ -108,16 +107,15 @@ async def test_local_shell_executor_stderr_not_captured(executor: LocalShellExec
             capture_stderr=False,
         )
 
-    assert result.outputs[0]["stderr"] == ""
+    assert result[0]["stderr"] == ""
 
 
 async def test_local_shell_executor_multiple_commands(executor: LocalShellExecutor) -> None:
     result = await executor.execute(["echo first", "echo second"])
 
-    assert result.type == "shell_result"
-    assert len(result.outputs) == 2
-    assert "first" in result.outputs[0]["stdout"]
-    assert "second" in result.outputs[1]["stdout"]
+    assert len(result) == 2
+    assert "first" in result[0]["stdout"]
+    assert "second" in result[1]["stdout"]
 
 
 async def test_shell_tool_with_local_executor(executor: LocalShellExecutor) -> None:

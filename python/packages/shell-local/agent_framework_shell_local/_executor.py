@@ -10,7 +10,6 @@ from typing import Any, Literal
 from agent_framework import (
     DEFAULT_SHELL_MAX_OUTPUT_BYTES,
     DEFAULT_SHELL_TIMEOUT_SECONDS,
-    Content,
     ShellExecutor,
 )
 
@@ -135,7 +134,7 @@ class LocalShellExecutor(ShellExecutor):
         timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
         max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
-    ) -> Content:
+    ) -> list[dict[str, Any]]:
         """Execute shell commands locally.
 
         Args:
@@ -148,7 +147,7 @@ class LocalShellExecutor(ShellExecutor):
             capture_stderr: Whether to capture stderr.
 
         Returns:
-            Content with type 'shell_result' containing the command outputs.
+            List of output dictionaries containing the command output.
         """
         outputs: list[dict[str, Any]] = []
         for command in commands:
@@ -161,4 +160,4 @@ class LocalShellExecutor(ShellExecutor):
             )
             outputs.append(result)
 
-        return Content.from_shell_result(outputs=outputs)
+        return outputs

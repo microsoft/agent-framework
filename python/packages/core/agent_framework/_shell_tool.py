@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import os
 import platform
 import re
@@ -15,6 +14,7 @@ if TYPE_CHECKING:
     from ._types import Content
 
 __all__ = [
+    "DEFAULT_DENYLIST_PATTERNS",
     "DEFAULT_SHELL_MAX_OUTPUT_BYTES",
     "DEFAULT_SHELL_TIMEOUT_SECONDS",
     "ShellExecutor",
@@ -28,6 +28,15 @@ CommandPattern = str | re.Pattern[str]
 # Default configuration values
 DEFAULT_SHELL_TIMEOUT_SECONDS = 60
 DEFAULT_SHELL_MAX_OUTPUT_BYTES = 50 * 1024  # 50 KB
+
+# Default denylist of dangerous command patterns
+DEFAULT_DENYLIST_PATTERNS: list[CommandPattern] = [
+    # Recursive deletion of root or important directories
+    re.compile(r"rm\s+(-[rf]+\s+)*/\s*$"),
+    re.compile(r"rm\s+(-[rf]+\s+)*(~|/home|/root|/etc|/var|/usr)\s*$"),
+    re.compile(r"rmdir\s+/s\s+/q\s+[A-Za-z]:\\$", re.IGNORECASE),
+    re.compile(r"del\s+/f\s+/s\s+/q\s+[A-Za-z]:\\$", re.IGNORECASE),
+]
 
 
 _SHELL_METACHAR_PATTERN = re.compile(r"[;|&`$()]")
@@ -144,7 +153,7 @@ class ShellExecutor(ABC):
         timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
         max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
-    ) -> "Content":
+    ) -> list[dict[str, Any]]:
         """Execute shell commands.
 
         Args:
@@ -157,7 +166,7 @@ class ShellExecutor(ABC):
             capture_stderr: Whether to capture stderr.
 
         Returns:
-            Content with type 'shell_result' containing the command outputs.
+            List of output dictionaries containing the command outputs.
         """
         ...
 
@@ -289,11 +298,12 @@ class ShellTool(BaseTool):
             "approval_mode", "always_require"
         )
         self.allowlist_patterns = self._options.get("allowlist_patterns", [])
-        self.denylist_patterns = self._options.get("denylist_patterns", [])
+        self.denylist_patterns = self._options.get("denylist_patterns", DEFAULT_DENYLIST_PATTERNS.copy())
         self.allowed_paths = self._options.get("allowed_paths", [])
         self.blocked_paths = self._options.get("blocked_paths", [])
         self.block_privilege_escalation = self._options.get("block_privilege_escalation", True)
         self.capture_stderr = self._options.get("capture_stderr", True)
+        self._cached_ai_function: "AIFunction[Any, Content] | None" = None
 
     def _validate_command(self, command: str) -> _ValidationResult:
         """Validate a command against all security policies."""
@@ -446,50 +456,54 @@ class ShellTool(BaseTool):
         Raises:
             ValueError: If any command fails validation.
         """
+        from ._types import Content
+
         for cmd in commands:
             validation = self._validate_command(cmd)
             if not validation.is_valid:
                 raise ValueError(validation.error_message)
 
-        return await self.executor.execute(
+        outputs = await self.executor.execute(
             commands,
             working_directory=self.working_directory,
             timeout_seconds=self.timeout_seconds,
             max_output_bytes=self.max_output_bytes,
             capture_stderr=self.capture_stderr,
         )
+        return Content.from_shell_result(outputs=outputs)
 
-    def as_ai_function(self) -> "AIFunction[Any, str]":
+    def as_ai_function(self) -> "AIFunction[Any, Content]":
         """Convert this ShellTool to an AIFunction.
 
         Returns:
             An AIFunction that wraps the shell command execution.
         """
         from ._tools import AIFunction
+        from ._types import Content
 
-        cached: AIFunction[Any, str] | None = getattr(self, "_cached_ai_function", None)
-        if cached is not None:
-            return cached
+        if self._cached_ai_function is not None:
+            return self._cached_ai_function
 
         shell_tool = self
 
         async def execute_shell_commands(
             commands: Annotated[list[str], "List of shell commands to execute"],
-        ) -> str:
+        ) -> Content:
             try:
-                result = await shell_tool.execute(commands)
-                return json.dumps(result.to_dict(), indent=2)
+                return await shell_tool.execute(commands)
             except ValueError as e:
-                return json.dumps({"error": True, "message": str(e), "exit_code": -1})
+                return Content.from_shell_result(outputs=[{"error": True, "message": str(e), "exit_code": -1}])
             except Exception as e:
-                return json.dumps({"error": True, "message": f"Execution failed: {e}", "exit_code": -1})
+                return Content.from_shell_result(
+                    outputs=[{"error": True, "message": f"Execution failed: {e}", "exit_code": -1}]
+                )
 
-        ai_function: AIFunction[Any, str] = AIFunction(
+        ai_function: AIFunction[Any, Content] = AIFunction(
             name=self.name,
             description=self.description,
             func=execute_shell_commands,
             approval_mode=self.approval_mode,
         )
 
-        self._cached_ai_function: AIFunction[Any, str] = ai_function
-        return ai_function
+        self._cached_ai_function = ai_function
+        return self._cached_ai_function
