@@ -2,6 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.Extensions.AI;
 
@@ -138,6 +139,42 @@ public sealed class DurableAgentStateContentTests
         Assert.Equal(
             JsonSerializer.Serialize(functionResultContent.Result),
             JsonSerializer.Serialize(convertedFunctionResultContent.Result));
+    }
+
+    [Fact]
+    public void FunctionResultContentWithTextContentResult_SerializationDeserialization()
+    {
+        // This test covers the scenario when MCP tools return AIContent types (like TextContent)
+        // as function results. Without proper serialization options, this would fail with:
+        // "JsonTypeInfo metadata for type 'Microsoft.Extensions.AI.TextContent' was not provided
+        // by TypeInfoResolver of type '...DurableAgentStateJsonContext'"
+
+        // Arrange
+        TextContent textResult = new("MCP tool returned this text");
+        FunctionResultContent functionResultContent = new("call-456", textResult);
+
+        DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(functionResultContent);
+
+        // Act
+        string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
+
+        DurableAgentStateContent? convertedJsonContent =
+            (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
+
+        // Assert
+        Assert.NotNull(convertedJsonContent);
+
+        AIContent convertedContent = convertedJsonContent.ToAIContent();
+
+        FunctionResultContent convertedFunctionResultContent = Assert.IsType<FunctionResultContent>(convertedContent);
+
+        Assert.Equal(functionResultContent.CallId, convertedFunctionResultContent.CallId);
+        Assert.NotNull(convertedFunctionResultContent.Result);
+
+        // Verify the result contains the TextContent data
+        Assert.Equal(
+            JsonSerializer.Serialize(functionResultContent.Result, DurableAgentJsonUtilities.DefaultOptions),
+            JsonSerializer.Serialize(convertedFunctionResultContent.Result, DurableAgentJsonUtilities.DefaultOptions));
     }
 
     [Theory]

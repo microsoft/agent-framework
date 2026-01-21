@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed JSON serialization failure when MCP tools return AIContent types (e.g., TextContent) as function results
+
 ### Changed
 
 - Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
