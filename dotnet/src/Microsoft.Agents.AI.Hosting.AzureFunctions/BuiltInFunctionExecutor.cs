@@ -154,6 +154,18 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             return;
         }
 
+        // Handle workflow MCP tool trigger
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint)
+        {
+            if (mcpToolInvocationContext is null)
+            {
+                throw new InvalidOperationException($"MCP tool invocation context binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowMcpToolAsync(mcpToolInvocationContext, durableTaskClient, context);
+            return;
+        }
+
         throw new InvalidOperationException($"Unsupported function entry point '{context.FunctionDefinition.EntryPoint}' for invocation {context.InvocationId}.");
     }
 }

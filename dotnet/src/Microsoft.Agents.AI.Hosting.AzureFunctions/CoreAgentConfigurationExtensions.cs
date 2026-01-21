@@ -72,6 +72,7 @@ internal static class CoreAgentConfigurationExtensions
     {
         return string.Equals(entryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal)
             || string.Equals(entryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal)
+            || string.Equals(entryPoint, BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint, StringComparison.Ordinal)
             || string.Equals(entryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
             || string.Equals(entryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
             || string.Equals(entryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal);

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -21,10 +22,8 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
         int expectedMetadataCount)
     {
         // Arrange
-        Dictionary<string, Func<IServiceProvider, AIAgent>> agents = new()
-        {
-            { "testAgent", _ => new TestAgent("testAgent", "Test agent description") }
-        };
+        DurableAgentsOptions durableAgentsOptions = new();
+        durableAgentsOptions.AddAIAgentFactory("testAgent", _ => new TestAgent("testAgent", "Test agent description"));
 
         FunctionsAgentOptions options = new();
 
@@ -39,7 +38,7 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
         List<IFunctionMetadata> metadataList = BuildFunctionMetadataList(initialMetadataEntryCount);
 
         DurableAgentFunctionMetadataTransformer transformer = new(
-            agents,
+            durableAgentsOptions,
             NullLogger<DurableAgentFunctionMetadataTransformer>.Instance,
             new FakeServiceProvider(),
             agentOptionsProvider);
@@ -74,12 +73,11 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
     public void Transform_AddsTriggers_ForMultipleAgents()
     {
         // Arrange
-        Dictionary<string, Func<IServiceProvider, AIAgent>> agents = new()
-        {
-            { "agentA", _ => new TestAgent("testAgentA", "Test agent description") },
-            { "agentB", _ => new TestAgent("testAgentB", "Test agent description") },
-            { "agentC", _ => new TestAgent("testAgentC", "Test agent description") }
-        };
+        string[] agentNames = ["agentA", "agentB", "agentC"];
+        DurableAgentsOptions durableAgentsOptions = new();
+        durableAgentsOptions.AddAIAgentFactory("agentA", _ => new TestAgent("testAgentA", "Test agent description"));
+        durableAgentsOptions.AddAIAgentFactory("agentB", _ => new TestAgent("testAgentB", "Test agent description"));
+        durableAgentsOptions.AddAIAgentFactory("agentC", _ => new TestAgent("testAgentC", "Test agent description"));
 
         // Helper to create options with configurable triggers
         static FunctionsAgentOptions CreateFunctionsAgentOptions(bool httpEnabled, bool mcpEnabled)
@@ -103,7 +101,7 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
 
         IFunctionsAgentOptionsProvider agentOptionsProvider = new FakeOptionsProvider(functionsAgentOptions);
         DurableAgentFunctionMetadataTransformer transformer = new(
-            agents,
+            durableAgentsOptions,
             NullLogger<DurableAgentFunctionMetadataTransformer>.Instance,
             new FakeServiceProvider(),
             agentOptionsProvider);
@@ -115,9 +113,9 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
         transformer.Transform(metadataList);
 
         // Assert
-        Assert.Equal(InitialMetadataEntryCount + (agents.Count * 2) + 2, metadataList.Count);
+        Assert.Equal(InitialMetadataEntryCount + (agentNames.Length * 2) + 2, metadataList.Count);
 
-        foreach (string agentName in agents.Keys)
+        foreach (string agentName in agentNames)
         {
             // The agent's entity trigger name is prefixed with "dafx-"
             DefaultFunctionMetadata entityMeta =
