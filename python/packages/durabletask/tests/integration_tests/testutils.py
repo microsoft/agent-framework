@@ -9,6 +9,48 @@ from typing import Any
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.client import OrchestrationStatus
 
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+def create_dts_client(endpoint: str, taskhub: str) -> DurableTaskSchedulerClient:
+    """
+    Create a DurableTaskSchedulerClient with common configuration.
+
+    Args:
+        endpoint: The DTS endpoint address
+        taskhub: The task hub name
+
+    Returns:
+        A configured DurableTaskSchedulerClient instance
+    """
+    return DurableTaskSchedulerClient(
+        host_address=endpoint,
+        secure_channel=False,
+        taskhub=taskhub,
+        token_credential=None,
+    )
+
+
+def create_agent_client(
+    endpoint: str,
+    taskhub: str,
+    max_poll_retries: int = 90,
+) -> tuple[DurableTaskSchedulerClient, DurableAIAgentClient]:
+    """
+    Create a DurableAIAgentClient with the underlying DTS client.
+
+    Args:
+        endpoint: The DTS endpoint address
+        taskhub: The task hub name
+        max_poll_retries: Max poll retries for the agent client
+
+    Returns:
+        A tuple of (DurableTaskSchedulerClient, DurableAIAgentClient)
+    """
+    dts_client = create_dts_client(endpoint, taskhub)
+    agent_client = DurableAIAgentClient(dts_client, max_poll_retries=max_poll_retries)
+    return dts_client, agent_client
+
 
 class OrchestrationHelper:
     """Helper class for orchestration-related test operations."""

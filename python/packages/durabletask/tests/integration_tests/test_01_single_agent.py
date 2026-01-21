@@ -13,9 +13,7 @@ Tests basic agent operations including:
 from typing import Any
 
 import pytest
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
-
-from agent_framework_durabletask import DurableAIAgentClient
+from testutils import create_agent_client
 
 # Module-level markers - applied to all tests in this module
 pytestmark = [
@@ -36,13 +34,7 @@ class TestSingleAgent:
         self.taskhub: str = str(worker_process["taskhub"])
 
         # Create agent client
-        dts_client = DurableTaskSchedulerClient(
-            host_address=self.endpoint,
-            secure_channel=False,
-            taskhub=self.taskhub,
-            token_credential=None,
-        )
-        self.agent_client = DurableAIAgentClient(dts_client)
+        _, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
 
     def test_agent_registration(self) -> None:
         """Test that the Joker agent is registered and accessible."""

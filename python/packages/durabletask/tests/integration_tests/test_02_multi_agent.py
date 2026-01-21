@@ -14,9 +14,7 @@ from typing import Any
 
 import pytest
 from agent_framework import FunctionCallContent
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
-
-from agent_framework_durabletask import DurableAIAgentClient
+from testutils import create_agent_client
 
 # Agent names from the 02_multi_agent sample
 WEATHER_AGENT_NAME: str = "WeatherAgent"
@@ -41,13 +39,7 @@ class TestMultiAgent:
         self.taskhub: str = str(worker_process["taskhub"])
 
         # Create agent client
-        dts_client = DurableTaskSchedulerClient(
-            host_address=self.endpoint,
-            secure_channel=False,
-            taskhub=self.taskhub,
-            token_credential=None,
-        )
-        self.agent_client = DurableAIAgentClient(dts_client)
+        _, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
 
     def test_multiple_agents_registered(self) -> None:
         """Test that both agents are registered and accessible."""

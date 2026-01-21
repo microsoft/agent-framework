@@ -17,6 +17,9 @@ import redis.asyncio as aioredis
 from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
+# Add the integration_tests directory to the path so testutils can be imported
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Load environment variables from .env file
 load_dotenv()
 

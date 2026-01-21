@@ -26,11 +26,7 @@ from typing import Any
 
 import pytest
 import redis.asyncio as aioredis
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
-
-from agent_framework_durabletask import DurableAIAgentClient
-
-from .testutils import OrchestrationHelper
+from testutils import OrchestrationHelper, create_agent_client
 
 # Add sample directory to path to import RedisStreamResponseHandler
 SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / "03_single_agent_streaming"
@@ -58,13 +54,7 @@ class TestSampleReliableStreaming:
         self.taskhub: str = str(worker_process["taskhub"])
 
         # Create agent client
-        dts_client = DurableTaskSchedulerClient(
-            host_address=self.endpoint,
-            secure_channel=False,
-            taskhub=self.taskhub,
-            token_credential=None,
-        )
-        self.agent_client = DurableAIAgentClient(dts_client)
+        dts_client, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
         self.helper = OrchestrationHelper(dts_client)
 
         # Redis configuration
@@ -152,27 +142,38 @@ class TestSampleReliableStreaming:
 
         # Poll Redis stream with retries to handle race conditions
         # The agent may take a few seconds to process and start writing to Redis
-        max_retries = 20  # Try for up to 40 seconds (20 * 2 seconds)
+        # We use cursor-based resumption to continue reading from where we left off
+        max_retries = 20
         retry_count = 0
-        text = ""
+        accumulated_text = ""
         is_complete = False
+        cursor: str | None = None
 
-        while retry_count < max_retries:
-            text, is_complete, _ = asyncio.run(self._stream_from_redis(thread_id, timeout=5.0))
+        while retry_count < max_retries and not is_complete:
+            text, is_complete, last_cursor = asyncio.run(
+                self._stream_from_redis(thread_id, cursor=cursor, timeout=10.0)
+            )
+            accumulated_text += text
+            cursor = last_cursor  # Resume from last position on next read
 
-            if len(text) > 0 or is_complete:
-                # We got content or completion marker
+            if is_complete:
+                # Stream completed successfully
                 break
 
-            # Wait before retrying
-            time.sleep(3)
+            if len(accumulated_text) > 0:
+                # Got content but not completion marker yet - keep reading without delay
+                # The agent may still be streaming or about to write completion marker
+                continue
+
+            # No content yet - wait before retrying
+            time.sleep(2)
             retry_count += 1
 
         # Verify we got content
-        assert len(text) > 0, (
+        assert len(accumulated_text) > 0, (
             f"Expected text content but got empty string for thread_id: {thread_id} after {retry_count} retries"
         )
-        assert "seattle" in text.lower(), f"Expected 'seattle' in response but got: {text}"
+        assert "seattle" in accumulated_text.lower(), f"Expected 'seattle' in response but got: {accumulated_text}"
         assert is_complete, "Expected stream to be complete"
 
     def test_stream_with_cursor_resumption(self) -> None:

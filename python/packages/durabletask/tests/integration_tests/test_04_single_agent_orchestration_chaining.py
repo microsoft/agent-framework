@@ -14,12 +14,8 @@ import logging
 from typing import Any
 
 import pytest
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.client import OrchestrationStatus
-
-from agent_framework_durabletask import DurableAIAgentClient
-
-from .testutils import OrchestrationHelper
+from testutils import OrchestrationHelper, create_agent_client
 
 # Agent name from the 04_single_agent_orchestration_chaining sample
 WRITER_AGENT_NAME: str = "WriterAgent"
@@ -45,16 +41,8 @@ class TestSingleAgentOrchestrationChaining:
         self.endpoint: str = dts_endpoint
         self.taskhub: str = str(worker_process["taskhub"])
 
-        # Create DTS client for orchestrations
-        self.dts_client = DurableTaskSchedulerClient(
-            host_address=self.endpoint,
-            secure_channel=False,
-            taskhub=self.taskhub,
-            token_credential=None,
-        )
-
-        # Create agent client
-        self.agent_client = DurableAIAgentClient(self.dts_client)
+        # Create agent client and DTS client
+        self.dts_client, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
 
         # Create orchestration helper
         self.orch_helper = OrchestrationHelper(self.dts_client)
