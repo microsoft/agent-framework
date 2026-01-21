@@ -21,7 +21,7 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
 # Configure logging to reduce noise during tests
 logging.basicConfig(level=logging.WARNING)
