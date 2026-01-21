@@ -33,8 +33,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -42,10 +42,10 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
         ChatMessage userMessage = new(ChatRole.User, "update state");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -54,7 +54,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         updates.Should().NotBeEmpty();
 
         // Should receive state snapshot as DataContent with application/json media type
-        AgentRunResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
+        AgentResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
         stateUpdate.Should().NotBeNull("should receive state snapshot update");
 
         DataContent? dataContent = stateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
@@ -76,8 +76,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -85,16 +85,16 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
         ChatMessage userMessage = new(ChatRole.User, "process");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
 
         // Assert
-        AgentRunResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
+        AgentResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
         stateUpdate.Should().NotBeNull();
 
         ChatResponseUpdate chatUpdate = stateUpdate!.AsChatResponseUpdate();
@@ -118,8 +118,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(complexState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -127,16 +127,16 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
         ChatMessage userMessage = new(ChatRole.User, "process complex state");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
 
         // Assert
-        AgentRunResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
+        AgentResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
         stateUpdate.Should().NotBeNull();
 
         DataContent? dataContent = stateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
@@ -158,8 +158,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -167,16 +167,16 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
         ChatMessage userMessage = new(ChatRole.User, "increment");
 
-        List<AgentRunResponseUpdate> firstRoundUpdates = [];
+        List<AgentResponseUpdate> firstRoundUpdates = [];
 
         // Act - First round
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             firstRoundUpdates.Add(update);
         }
 
         // Extract state snapshot from first round
-        AgentRunResponseUpdate? firstStateUpdate = firstRoundUpdates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
+        AgentResponseUpdate? firstStateUpdate = firstRoundUpdates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
         firstStateUpdate.Should().NotBeNull();
         DataContent? firstStateContent = firstStateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
 
@@ -184,14 +184,14 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage secondStateMessage = new(ChatRole.System, [firstStateContent!]);
         ChatMessage secondUserMessage = new(ChatRole.User, "increment again");
 
-        List<AgentRunResponseUpdate> secondRoundUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([secondUserMessage, secondStateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        List<AgentResponseUpdate> secondRoundUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage, secondStateMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             secondRoundUpdates.Add(update);
         }
 
         // Assert - Second round should have incremented counter again
-        AgentRunResponseUpdate? secondStateUpdate = secondRoundUpdates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
+        AgentResponseUpdate? secondStateUpdate = secondRoundUpdates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
         secondStateUpdate.Should().NotBeNull();
 
         DataContent? secondStateContent = secondStateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
@@ -209,15 +209,15 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -242,8 +242,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(emptyState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -251,10 +251,10 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -279,8 +279,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -289,7 +289,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage userMessage = new(ChatRole.User, "process");
 
         // Act
-        AgentRunResponse response = await agent.RunAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None);
+        AgentResponse response = await agent.RunAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None);
 
         // Assert
         response.Should().NotBeNull();
@@ -342,12 +342,12 @@ internal sealed class FakeStateAgent : AIAgent
 {
     public override string? Description => "Agent for state testing";
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -396,7 +396,7 @@ internal sealed class FakeStateAgent : AIAgent
                 byte[] modifiedStateBytes = System.Text.Encoding.UTF8.GetBytes(modifiedStateJson);
                 DataContent modifiedStateContent = new(modifiedStateBytes, "application/json");
 
-                yield return new AgentRunResponseUpdate
+                yield return new AgentResponseUpdate
                 {
                     MessageId = Guid.NewGuid().ToString("N"),
                     Role = ChatRole.Assistant,
@@ -407,7 +407,7 @@ internal sealed class FakeStateAgent : AIAgent
 
         // Always return a text response
         string messageId = Guid.NewGuid().ToString("N");
-        yield return new AgentRunResponseUpdate
+        yield return new AgentResponseUpdate
         {
             MessageId = messageId,
             Role = ChatRole.Assistant,
@@ -417,12 +417,11 @@ internal sealed class FakeStateAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override AgentThread GetNewThread() => new FakeInMemoryAgentThread();
+    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentThread());
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
-    }
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions));
 
     private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
     {

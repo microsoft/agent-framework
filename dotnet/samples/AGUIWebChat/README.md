@@ -86,7 +86,7 @@ AzureOpenAIClient azureOpenAIClient = new AzureOpenAIClient(
 ChatClient chatClient = azureOpenAIClient.GetChatClient(deploymentName);
 
 // Create AI agent
-ChatClientAgent agent = chatClient.AsIChatClient().CreateAIAgent(
+ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
     name: "ChatAssistant",
     instructions: "You are a helpful assistant.");
 
@@ -175,7 +175,7 @@ dotnet run
 Edit the instructions in `Server/Program.cs`:
 
 ```csharp
-ChatClientAgent agent = chatClient.AsIChatClient().CreateAIAgent(
+ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
     name: "ChatAssistant",
     instructions: "You are a helpful coding assistant specializing in C# and .NET.");
 ```

@@ -41,14 +41,19 @@ async def main() -> None:
     print(f"User: {message}")
     if stream:
         response = await ChatResponse.from_chat_response_generator(
-            client.get_streaming_response(message, tools=get_weather, response_format=OutputStruct),
+            client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
             output_format_type=OutputStruct,
         )
-        print(f"Assistant: {response.value}")
-
+        if result := response.try_parse_value(OutputStruct):
+            print(f"Assistant: {result}")
+        else:
+            print(f"Assistant: {response.text}")
     else:
-        response = await client.get_response(message, tools=get_weather, response_format=OutputStruct)
-        print(f"Assistant: {response.value}")
+        response = await client.get_response(message, tools=get_weather, options={"response_format": OutputStruct})
+        if result := response.try_parse_value(OutputStruct):
+            print(f"Assistant: {result}")
+        else:
+            print(f"Assistant: {response.text}")
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ interface BackendEntityInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
+  context_provider?: string[];
   middleware?: string[];
   // Workflow-specific fields (present when type === "workflow")
   executors?: string[];
@@ -77,7 +77,7 @@ const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential b
 function getBackendUrl(): string {
   const stored = localStorage.getItem("devui_backend_url");
   if (stored) return stored;
-  
+
   return DEFAULT_API_BASE_URL;
 }
 
@@ -221,13 +221,13 @@ class ApiClient {
           instructions: entity.instructions,
           model_id: entity.model_id,
           chat_client_type: entity.chat_client_type,
-          context_providers: entity.context_providers,
+          context_provider: entity.context_provider,
           middleware: entity.middleware,
         };
       } else {
         // Workflow - prefer executors field, fall back to tools for backward compatibility
         const executorList = entity.executors || entity.tools || [];
-        
+
         // Determine start_executor_id: use entity value, or first executor if it's a string
         let startExecutorId = entity.start_executor_id || "";
         if (!startExecutorId && executorList.length > 0) {
@@ -236,7 +236,7 @@ class ApiClient {
             startExecutorId = firstExecutor;
           }
         }
-        
+
         return {
           id: entity.id,
           name: entity.name,
@@ -398,7 +398,11 @@ class ApiClient {
   async listConversationItems(
     conversationId: string,
     options?: { limit?: number; after?: string; order?: "asc" | "desc" }
-  ): Promise<{ data: unknown[]; has_more: boolean }> {
+  ): Promise<{
+    data: unknown[];
+    has_more: boolean;
+    metadata?: { traces?: unknown[] };
+  }> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.after) params.set("after", options.after);
@@ -409,7 +413,11 @@ class ApiClient {
       queryString ? `?${queryString}` : ""
     }`;
 
-    return this.request<{ data: unknown[]; has_more: boolean }>(url);
+    return this.request<{
+      data: unknown[];
+      has_more: boolean;
+      metadata?: { traces?: unknown[] };
+    }>(url);
   }
 
   async getConversationItem(
@@ -485,10 +493,10 @@ class ApiClient {
         if (!resumeResponseId) {
           currentResponseId = storedState.responseId;
         }
-        
+
         lastSequenceNumber = storedState.lastSequenceNumber;
         lastMessageId = storedState.lastMessageId;
-        
+
         // Replay stored events only if we're not explicitly resuming
         // (explicit resume means the caller already has the events)
         if (!resumeResponseId) {
@@ -800,34 +808,68 @@ class ApiClient {
     yield* this.streamOpenAIResponse(openAIRequest, request.conversation_id, signal);
   }
 
-  // REMOVED: Legacy streaming methods - use streamAgentExecutionOpenAI and streamWorkflowExecutionOpenAI instead
+  // ========================================
+  // Non-Streaming Execution Methods
+  // ========================================
 
-  // Non-streaming execution (for testing)
-  async runAgent(
+  // Non-streaming agent execution using /v1/responses with stream=false
+  async runAgentSync(
     agentId: string,
     request: RunAgentRequest
-  ): Promise<{
-    conversation_id: string;
-    result: unknown[];
-    message_count: number;
-  }> {
-    return this.request(`/agents/${agentId}/run`, {
+  ): Promise<import("@/types/openai").OpenAIResponse> {
+    // Check if OAI proxy mode is enabled
+    const { oaiMode } = await import("@/stores").then((m) => ({
+      oaiMode: m.useDevUIStore.getState().oaiMode,
+    }));
+
+    const openAIRequest: AgentFrameworkRequest = {
+      metadata: { entity_id: agentId },
+      input: request.input,
+      stream: false,
+      conversation: request.conversation_id,
+    };
+
+    // Apply OAI mode settings if enabled
+    if (oaiMode.enabled) {
+      openAIRequest.model = oaiMode.model;
+      if (oaiMode.temperature !== undefined) {
+        openAIRequest.temperature = oaiMode.temperature;
+      }
+      if (oaiMode.max_output_tokens !== undefined) {
+        openAIRequest.max_output_tokens = oaiMode.max_output_tokens;
+      }
+    }
+
+    const headers: Record<string, string> = {};
+    if (oaiMode.enabled) {
+      headers["X-Proxy-Backend"] = "openai";
+    }
+
+    return this.request<import("@/types/openai").OpenAIResponse>("/v1/responses", {
       method: "POST",
-      body: JSON.stringify(request),
+      headers,
+      body: JSON.stringify(openAIRequest),
     });
   }
 
-  async runWorkflow(
+  // Non-streaming workflow execution using /v1/responses with stream=false
+  async runWorkflowSync(
     workflowId: string,
     request: RunWorkflowRequest
-  ): Promise<{
-    result: string;
-    events: number;
-    message_count: number;
-  }> {
-    return this.request(`/workflows/${workflowId}/run`, {
+  ): Promise<import("@/types/openai").OpenAIResponse> {
+    const openAIRequest: AgentFrameworkRequest = {
+      metadata: { entity_id: workflowId },
+      input: JSON.stringify(request.input_data || {}),
+      stream: false,
+      conversation: request.conversation_id,
+      extra_body: request.checkpoint_id
+        ? { entity_id: workflowId, checkpoint_id: request.checkpoint_id }
+        : undefined,
+    };
+
+    return this.request<import("@/types/openai").OpenAIResponse>("/v1/responses", {
       method: "POST",
-      body: JSON.stringify(request),
+      body: JSON.stringify(openAIRequest),
     });
   }
 

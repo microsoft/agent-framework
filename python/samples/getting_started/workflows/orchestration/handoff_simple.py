@@ -1,119 +1,104 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import AsyncIterable
-from typing import cast
+from typing import Annotated, cast
 
 from agent_framework import (
+    AgentResponse,
+    AgentRunEvent,
     ChatAgent,
     ChatMessage,
+    HandoffAgentUserRequest,
     HandoffBuilder,
-    HandoffUserInputRequest,
+    HandoffSentEvent,
     RequestInfoEvent,
     WorkflowEvent,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
+    ai_function,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-"""Sample: Simple handoff workflow with single-tier triage-to-specialist routing.
+"""Sample: Simple handoff workflow.
 
-This sample demonstrates the basic handoff pattern where only the triage agent can
-route to specialists. Specialists cannot hand off to other specialists - after any
-specialist responds, control returns to the user for the next input.
-
-Routing Pattern:
-    User → Triage Agent → Specialist → Back to User → Triage Agent → ...
-
-This is the simplest handoff configuration, suitable for straightforward support
-scenarios where a triage agent dispatches to domain specialists, and each specialist
-works independently.
-
-For multi-tier specialist-to-specialist handoffs, see handoff_specialist_to_specialist.py.
+A handoff workflow defines a pattern that assembles agents in a mesh topology, allowing
+them to transfer control to each other based on the conversation context.
 
 Prerequisites:
     - `az login` (Azure CLI authentication)
     - Environment variables configured for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
 
 Key Concepts:
-    - Single-tier routing: Only triage agent has handoff capabilities
-    - Auto-registered handoff tools: HandoffBuilder creates tools automatically
+    - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
+      for each participant, allowing the coordinator to transfer control to specialists
     - Termination condition: Controls when the workflow stops requesting user input
     - Request/response cycle: Workflow requests input, user responds, cycle continues
 """
 
 
+@ai_function
+def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
+    """Simulated function to process a refund for a given order number."""
+    return f"Refund processed successfully for order {order_number}."
+
+
+@ai_function
+def check_order_status(order_number: Annotated[str, "Order number to check status for"]) -> str:
+    """Simulated function to check the status of a given order number."""
+    return f"Order {order_number} is currently being processed and will ship in 2 business days."
+
+
+@ai_function
+def process_return(order_number: Annotated[str, "Order number to process return for"]) -> str:
+    """Simulated function to process a return for a given order number."""
+    return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
+
+
 def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
     """Create and configure the triage and specialist agents.
 
-    The triage agent is responsible for:
-    - Receiving all user input first
-    - Deciding whether to handle the request directly or hand off to a specialist
-    - Signaling handoff by calling one of the explicit handoff tools exposed to it
-
-    Specialist agents are invoked only when the triage agent explicitly hands off to them.
-    After a specialist responds, control returns to the triage agent.
+    Args:
+        chat_client: The AzureOpenAIChatClient to use for creating agents.
 
     Returns:
-        Tuple of (triage_agent, refund_agent, order_agent, support_agent)
+        Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    # NOTE: The instructions explicitly tell it to call the correct handoff tool when routing.
-    # The HandoffBuilder intercepts these tool calls and routes to the matching specialist.
-    triage = chat_client.create_agent(
+    triage_agent = chat_client.as_agent(
         instructions=(
-            "You are frontline support triage. Read the latest user message and decide whether "
-            "to hand off to refund_agent, order_agent, or support_agent. Provide a brief natural-language "
-            "response for the user. When delegation is required, call the matching handoff tool "
-            "(`handoff_to_refund_agent`, `handoff_to_order_agent`, or `handoff_to_support_agent`)."
+            "You are frontline support triage. Route customer issues to the appropriate specialist agents "
+            "based on the problem described."
         ),
         name="triage_agent",
     )
 
     # Refund specialist: Handles refund requests
-    refund = chat_client.create_agent(
-        instructions=(
-            "You handle refund workflows. Ask for any order identifiers you require and outline the refund steps."
-        ),
+    refund_agent = chat_client.as_agent(
+        instructions="You process refund requests.",
         name="refund_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[process_refund],
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order = chat_client.create_agent(
-        instructions=(
-            "You resolve shipping and fulfillment issues. Clarify the delivery problem and describe the actions "
-            "you will take to remedy it."
-        ),
+    order_agent = chat_client.as_agent(
+        instructions="You handle order and shipping inquiries.",
         name="order_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[check_order_status],
     )
 
-    # General support specialist: Fallback for other issues
-    support = chat_client.create_agent(
-        instructions=(
-            "You are a general support agent. Offer empathetic troubleshooting and gather missing details if the "
-            "issue does not match other specialists."
-        ),
-        name="support_agent",
+    # Return specialist: Handles return requests
+    return_agent = chat_client.as_agent(
+        instructions="You manage product return requests.",
+        name="return_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[process_return],
     )
 
-    return triage, refund, order, support
-
-
-async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
-    """Collect all events from an async stream into a list.
-
-    This helper drains the workflow's event stream so we can process events
-    synchronously after each workflow step completes.
-
-    Args:
-        stream: Async iterable of WorkflowEvent
-
-    Returns:
-        List of all events from the stream
-    """
-    return [event async for event in stream]
+    return triage_agent, refund_agent, order_agent, return_agent
 
 
 def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
@@ -134,12 +119,25 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
     requests: list[RequestInfoEvent] = []
 
     for event in events:
+        # AgentRunEvent: Contains messages generated by agents during their turn
+        if isinstance(event, AgentRunEvent):
+            for message in event.data.messages:
+                if not message.text:
+                    # Skip messages without text (e.g., tool calls)
+                    continue
+                speaker = message.author_name or message.role.value
+                print(f"- {speaker}: {message.text}")
+
+        # HandoffSentEvent: Indicates a handoff has been initiated
+        if isinstance(event, HandoffSentEvent):
+            print(f"\n[Handoff from {event.source} to {event.target} initiated.]")
+
         # WorkflowStatusEvent: Indicates workflow state changes
         if isinstance(event, WorkflowStatusEvent) and event.state in {
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         }:
-            print(f"[status] {event.state.name}")
+            print(f"\n[Workflow Status] {event.state.name}")
 
         # WorkflowOutputEvent: Contains the final conversation when workflow terminates
         elif isinstance(event, WorkflowOutputEvent):
@@ -148,32 +146,39 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
                 print("\n=== Final Conversation Snapshot ===")
                 for message in conversation:
                     speaker = message.author_name or message.role.value
-                    print(f"- {speaker}: {message.text}")
+                    print(f"- {speaker}: {message.text or [content.type for content in message.contents]}")
                 print("===================================")
 
         # RequestInfoEvent: Workflow is requesting user input
         elif isinstance(event, RequestInfoEvent):
-            if isinstance(event.data, HandoffUserInputRequest):
-                _print_handoff_request(event.data)
+            if isinstance(event.data, HandoffAgentUserRequest):
+                _print_handoff_agent_user_request(event.data.agent_response)
             requests.append(event)
 
     return requests
 
 
-def _print_handoff_request(request: HandoffUserInputRequest) -> None:
-    """Display a user input request prompt with conversation context.
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
+    """Display the agent's response messages when requesting user input.
 
-    The HandoffUserInputRequest contains the full conversation history so far,
-    allowing the user to see what's been discussed before providing their next input.
+    This will happen when an agent generates a response that doesn't trigger
+    a handoff, i.e., the agent is asking the user for more information.
 
     Args:
-        request: The user input request containing conversation and prompt
+        response: The AgentResponse from the agent requesting user input
     """
-    print("\n=== User Input Requested ===")
-    for message in request.conversation:
+    if not response.messages:
+        raise RuntimeError("Cannot print agent responses: response has no messages.")
+
+    print("\n[Agent is requesting your input...]")
+
+    # Print agent responses
+    for message in response.messages:
+        if not message.text:
+            # Skip messages without text (e.g., tool calls)
+            continue
         speaker = message.author_name or message.role.value
         print(f"- {speaker}: {message.text}")
-    print("============================")
 
 
 async def main() -> None:
@@ -196,20 +201,24 @@ async def main() -> None:
     triage, refund, order, support = create_agents(chat_client)
 
     # Build the handoff workflow
-    # - participants: All agents that can participate (triage MUST be first or explicitly set as set_coordinator)
-    # - set_coordinator: The triage agent receives all user input first
-    # - with_termination_condition: Custom logic to stop the request/response loop
-    #   Default is 10 user messages; here we terminate after 4 to match our scripted demo
+    # - participants: All agents that can participate in the workflow
+    # - with_start_agent: The triage agent is designated as the start agent, which means
+    #   it receives all user input first and orchestrates handoffs to specialists
+    # - with_termination_condition: Custom logic to stop the request/response loop.
+    #   Without this, the default behavior continues requesting user input until max_turns
+    #   is reached. Here we use a custom condition that checks if the conversation has ended
+    #   naturally (when one of the agents says something like "you're welcome").
     workflow = (
         HandoffBuilder(
             name="customer_support_handoff",
             participants=[triage, refund, order, support],
         )
-        .set_coordinator("triage_agent")
+        .with_start_agent(triage)
         .with_termination_condition(
-            # Terminate after 4 user messages (initial + 3 scripted responses)
-            # Count only USER role messages to avoid counting agent responses
-            lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 4
+            # Custom termination: Check if one of the agents has provided a closing message.
+            # This looks for the last message containing "welcome", which indicates the
+            # conversation has concluded naturally.
+            lambda conversation: len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
         )
         .build()
     )
@@ -219,32 +228,42 @@ async def main() -> None:
     #   user_input = input("Your response: ")
     # or integrate with a UI/chat interface
     scripted_responses = [
-        "My order 1234 arrived damaged and the packaging was destroyed.",
-        "Yes, I'd like a refund if that's possible.",
+        "My order 1234 arrived damaged and the packaging was destroyed. I'd like to return it.",
+        "Please also process a refund for order 1234.",
         "Thanks for resolving this.",
     ]
 
     # Start the workflow with the initial user message
     # run_stream() returns an async iterator of WorkflowEvent
-    print("\n[Starting workflow with initial user message...]")
-    events = await _drain(workflow.run_stream("Hello, I need assistance with my recent purchase."))
-    pending_requests = _handle_events(events)
+    print("[Starting workflow with initial user message...]\n")
+    initial_message = "Hello, I need assistance with my recent purchase."
+    print(f"- User: {initial_message}")
+    workflow_result = await workflow.run(initial_message)
+    pending_requests = _handle_events(workflow_result)
 
     # Process the request/response cycle
     # The workflow will continue requesting input until:
-    # 1. The termination condition is met (4 user messages in this case), OR
+    # 1. The termination condition is met, OR
     # 2. We run out of scripted responses
-    while pending_requests and scripted_responses:
-        # Get the next scripted response
-        user_response = scripted_responses.pop(0)
-        print(f"\n[User responding: {user_response}]")
+    while pending_requests:
+        if not scripted_responses:
+            # No more scripted responses; terminate the workflow
+            responses = {req.request_id: HandoffAgentUserRequest.terminate() for req in pending_requests}
+        else:
+            # Get the next scripted response
+            user_response = scripted_responses.pop(0)
+            print(f"\n- User: {user_response}")
 
-        # Send response(s) to all pending requests
-        # In this demo, there's typically one request per cycle, but the API supports multiple
-        responses = {req.request_id: user_response for req in pending_requests}
+            # Send response(s) to all pending requests
+            # In this demo, there's typically one request per cycle, but the API supports multiple
+            responses = {
+                req.request_id: HandoffAgentUserRequest.create_response(user_response) for req in pending_requests
+            }
 
         # Send responses and get new events
-        events = await _drain(workflow.send_responses_streaming(responses))
+        # We use send_responses() to get events from the workflow, allowing us to
+        # display agent responses and handle new requests as they arrive
+        events = await workflow.send_responses(responses)
         pending_requests = _handle_events(events)
 
     """
@@ -252,84 +271,30 @@ async def main() -> None:
 
     [Starting workflow with initial user message...]
 
-    === User Input Requested ===
+    - User: Hello, I need assistance with my recent purchase.
+    - triage_agent: Could you please provide more details about the issue you're experiencing with your recent purchase? This will help me route you to the appropriate specialist.
+
+    [Workflow Status] IDLE_WITH_PENDING_REQUESTS
+
+    - User: My order 1234 arrived damaged and the packaging was destroyed. I'd like to return it.
+    - triage_agent: I've directed your request to our return agent, who will assist you with returning the damaged order. Thank you for your patience!
+    - return_agent: The return for your order 1234 has been successfully initiated. You will receive return instructions via email shortly. If you have any other questions or need further assistance, feel free to ask!
+
+    [Workflow Status] IDLE_WITH_PENDING_REQUESTS
+
+    - User: Thanks for resolving this.
+
+    === Final Conversation Snapshot ===
     - user: Hello, I need assistance with my recent purchase.
-    - triage_agent: I'd be happy to help you with your recent purchase. Could you please provide more details about the issue you're experiencing?
-    ============================
-    [status] IDLE_WITH_PENDING_REQUESTS
-
-    [User responding: My order 1234 arrived damaged and the packaging was destroyed.]
-
-    === User Input Requested ===
-    - user: Hello, I need assistance with my recent purchase.
-    - triage_agent: I'd be happy to help you with your recent purchase. Could you please provide more details about the issue you're experiencing?
-    - user: My order 1234 arrived damaged and the packaging was destroyed.
-    - triage_agent: I'm sorry to hear that your order arrived damaged and the packaging was destroyed. I will connect you with a specialist who can assist you further with this issue.
-
-    Tool Call: handoff_to_support_agent (awaiting approval)
-    - support_agent: I'm so sorry to hear that your order arrived in such poor condition. I'll help you get this sorted out.
-
-    To assist you better, could you please let me know:
-    - Which item(s) from order 1234 arrived damaged?
-    - Could you describe the damage, or provide photos if possible?
-    - Would you prefer a replacement or a refund?
-
-    Once I have this information, I can help resolve this for you as quickly as possible.
-    ============================
-    [status] IDLE_WITH_PENDING_REQUESTS
-
-    [User responding: Yes, I'd like a refund if that's possible.]
-
-    === User Input Requested ===
-    - user: Hello, I need assistance with my recent purchase.
-    - triage_agent: I'd be happy to help you with your recent purchase. Could you please provide more details about the issue you're experiencing?
-    - user: My order 1234 arrived damaged and the packaging was destroyed.
-    - triage_agent: I'm sorry to hear that your order arrived damaged and the packaging was destroyed. I will connect you with a specialist who can assist you further with this issue.
-
-    Tool Call: handoff_to_support_agent (awaiting approval)
-    - support_agent: I'm so sorry to hear that your order arrived in such poor condition. I'll help you get this sorted out.
-
-    To assist you better, could you please let me know:
-    - Which item(s) from order 1234 arrived damaged?
-    - Could you describe the damage, or provide photos if possible?
-    - Would you prefer a replacement or a refund?
-
-    Once I have this information, I can help resolve this for you as quickly as possible.
-    - user: Yes, I'd like a refund if that's possible.
-    - triage_agent: Thank you for letting me know you'd prefer a refund. I'll connect you with a specialist who can process your refund request.
-
-    Tool Call: handoff_to_refund_agent (awaiting approval)
-    - refund_agent: Thank you for confirming that you'd like a refund for order 1234.
-
-    Here's what will happen next:
-
-    ...
-
-    Tool Call: handoff_to_refund_agent (awaiting approval)
-    - refund_agent: Thank you for confirming that you'd like a refund for order 1234.
-
-    Here's what will happen next:
-
-    **1. Verification:**
-    I will need to verify a few more details to proceed.
-    - Can you confirm the items in order 1234 that arrived damaged?
-    - Do you have any photos of the damaged items/packaging? (Photos help speed up the process.)
-
-    **2. Refund Request Submission:**
-    - Once I have the details, I will submit your refund request for review.
-
-    **3. Return Instructions (if needed):**
-    - In some cases, we may provide instructions on how to return the damaged items.
-    - You will receive a prepaid return label if necessary.
-
-    **4. Refund Processing:**
-    - After your request is approved (and any returns are received if required), your refund will be processed.
-    - Refunds usually appear on your original payment method within 5-10 business days.
-
-    Could you please reply with the specific item(s) damaged and, if possible, attach photos? This will help me get your refund started right away.
+    - triage_agent: Could you please provide more details about the issue you're experiencing with your recent purchase? This will help me route you to the appropriate specialist.
+    - user: My order 1234 arrived damaged and the packaging was destroyed. I'd like to return it.
+    - triage_agent: I've directed your request to our return agent, who will assist you with returning the damaged order. Thank you for your patience!
+    - return_agent: The return for your order 1234 has been successfully initiated. You will receive return instructions via email shortly. If you have any other questions or need further assistance, feel free to ask!
     - user: Thanks for resolving this.
+    - triage_agent: You're welcome! If you have any more questions or need assistance in the future, feel free to reach out. Have a great day!
     ===================================
-    [status] IDLE
+
+    [Workflow Status] IDLE
     """  # noqa: E501
 
 

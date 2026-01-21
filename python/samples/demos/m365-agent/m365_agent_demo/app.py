@@ -93,7 +93,7 @@ def get_weather(
 
 def build_agent() -> ChatAgent:
     """Create and return the chat agent instance with weather tool registered."""
-    return OpenAIChatClient().create_agent(
+    return OpenAIChatClient().as_agent(
         name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
     )
 
@@ -189,7 +189,7 @@ def create_app(config: AppConfig) -> web.Application:
         web.Application: Fully initialized web application.
     """
     middleware_fn = build_anonymous_claims_middleware(config.use_anonymous_mode)
-    app = web.Application(middlewares=[middleware_fn])
+    app = web.Application(middleware=[middleware_fn])
 
     storage = MemoryStorage()
     agent = build_agent()

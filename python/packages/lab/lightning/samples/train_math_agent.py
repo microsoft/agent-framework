@@ -18,7 +18,7 @@ import string
 from typing import TypedDict, cast
 
 import sympy  # type: ignore[import-untyped,reportMissingImports]
-from agent_framework import AgentRunResponse, ChatAgent, MCPStdioTool
+from agent_framework import AgentResponse, ChatAgent, MCPStdioTool
 from agent_framework.lab.lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import LLM, Dataset, Trainer, rollout
@@ -102,7 +102,7 @@ def _is_result_correct(prediction: str, ground_truth: str) -> float:
     return float(_scalar_are_results_same(prediction, ground_truth, 1e-2))
 
 
-def evaluate(result: AgentRunResponse, ground_truth: str) -> float:
+def evaluate(result: AgentResponse, ground_truth: str) -> float:
     """Main evaluation function that extracts the agent's answer and compares with ground truth.
 
     This function:

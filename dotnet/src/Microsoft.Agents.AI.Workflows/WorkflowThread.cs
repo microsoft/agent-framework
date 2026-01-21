@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -17,14 +18,16 @@ internal sealed class WorkflowThread : AgentThread
 {
     private readonly Workflow _workflow;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+    private readonly bool _includeExceptionDetails;
 
     private readonly CheckpointManager _checkpointManager;
     private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null)
+    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
+        this._includeExceptionDetails = includeExceptionDetails;
 
         // If the user provided an external checkpoint manager, use that, otherwise rely on an in-memory one.
         // TODO: Implement persist-only-last functionality for in-memory checkpoint manager, to avoid unbounded
@@ -35,7 +38,7 @@ internal sealed class WorkflowThread : AgentThread
         this.MessageStore = new WorkflowMessageStore();
     }
 
-    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
@@ -80,16 +83,17 @@ internal sealed class WorkflowThread : AgentThread
         return marshaller.Marshal(info);
     }
 
-    public AgentRunResponseUpdate CreateUpdate(string responseId, params AIContent[] parts)
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, params AIContent[] parts)
     {
         Throw.IfNullOrEmpty(parts);
 
-        AgentRunResponseUpdate update = new(ChatRole.Assistant, parts)
+        AgentResponseUpdate update = new(ChatRole.Assistant, parts)
         {
             CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
             Role = ChatRole.Assistant,
-            ResponseId = responseId
+            ResponseId = responseId,
+            RawRepresentation = raw
         };
 
         this.MessageStore.AddMessages(update.ToChatMessage());
@@ -126,7 +130,7 @@ internal sealed class WorkflowThread : AgentThread
     }
 
     internal async
-    IAsyncEnumerable<AgentRunResponseUpdate> InvokeStageAsync(
+    IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         try
@@ -147,14 +151,33 @@ internal sealed class WorkflowThread : AgentThread
             {
                 switch (evt)
                 {
-                    case AgentRunUpdateEvent agentUpdate:
+                    case AgentResponseUpdateEvent agentUpdate:
                         yield return agentUpdate.Update;
                         break;
 
                     case RequestInfoEvent requestInfo:
                         FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
-                        AgentRunResponseUpdate update = this.CreateUpdate(this.LastResponseId, fcContent);
+                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, fcContent);
                         yield return update;
+                        break;
+
+                    case WorkflowErrorEvent workflowError:
+                        Exception? exception = workflowError.Exception;
+                        if (exception is TargetInvocationException tie && tie.InnerException != null)
+                        {
+                            exception = tie.InnerException;
+                        }
+
+                        if (exception != null)
+                        {
+                            string message = this._includeExceptionDetails
+                                           ? exception.Message
+                                           : "An error occurred while executing the workflow.";
+
+                            ErrorContent errorContent = new(message);
+                            yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
+                        }
+
                         break;
 
                     case SuperStepCompletedEvent stepCompleted:
@@ -163,7 +186,7 @@ internal sealed class WorkflowThread : AgentThread
 
                     default:
                         // Emit all other workflow events for observability (DevUI, logging, etc.)
-                        yield return new AgentRunResponseUpdate(ChatRole.Assistant, [])
+                        yield return new AgentResponseUpdate(ChatRole.Assistant, [])
                         {
                             CreatedAt = DateTimeOffset.UtcNow,
                             MessageId = Guid.NewGuid().ToString("N"),

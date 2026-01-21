@@ -3,14 +3,14 @@ import asyncio
 from pathlib import Path
 
 import aiofiles
-from agent_framework import DataContent
-from agent_framework.azure import AzureAIClient
+from agent_framework import DataContent, HostedImageGenerationTool
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Image Generation Example
 
-This sample demonstrates basic usage of AzureAIClient to create an agent
+This sample demonstrates basic usage of AzureAIProjectAgentProvider to create an agent
 that can generate images based on user requirements.
 
 Pre-requisites:
@@ -20,30 +20,32 @@ Pre-requisites:
 
 
 async def main() -> None:
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="ImageGenAgent",
             instructions="Generate images based on user requirements.",
             tools=[
-                {
-                    "type": "image_generation",
-                    "model": "gpt-image-1-mini",
-                    "quality": "low",
-                    "size": "1024x1024",
-                }
+                HostedImageGenerationTool(
+                    options={
+                        "model": "gpt-image-1-mini",
+                        "quality": "low",
+                        "size": "1024x1024",
+                    }
+                )
             ],
-        ) as agent,
-    ):
+        )
+
         query = "Generate an image of Microsoft logo."
         print(f"User: {query}")
         result = await agent.run(
             query,
             # These additional options are required for image generation
-            additional_chat_options={
+            options={
                 "extra_headers": {"x-ms-oai-image-generation-deployment": "gpt-image-1-mini"},
             },
         )

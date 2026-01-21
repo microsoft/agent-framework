@@ -4,16 +4,16 @@ from collections.abc import AsyncIterable
 from typing import Any, ClassVar
 
 from agent_framework import (
-    AgentMiddlewares,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentMiddlewareTypes,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
-    AggregateContextProvider,
     BaseAgent,
     ChatMessage,
+    Content,
     ContextProvider,
     Role,
-    TextContent,
+    normalize_messages,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
@@ -79,8 +79,8 @@ class CopilotStudioAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: AgentMiddlewares | list[AgentMiddlewares] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: list[AgentMiddlewareTypes] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
@@ -107,8 +107,8 @@ class CopilotStudioAgent(BaseAgent):
             id: id of the CopilotAgent
             name: Name of the CopilotAgent
             description: Description of the CopilotAgent
-            context_providers: Context Providers, to be used by the copilot agent.
-            middleware: Agent middlewares used by the agent.
+            context_provider: Context Provider, to be used by the copilot agent.
+            middleware: Agent middleware used by the agent, should be a list of AgentMiddlewareTypes.
             environment_id: Environment ID of the Power Platform environment containing
                 the Copilot Studio app. Can also be set via COPILOTSTUDIOAGENT__ENVIRONMENTID
                 environment variable.
@@ -138,7 +138,7 @@ class CopilotStudioAgent(BaseAgent):
             id=id,
             name=name,
             description=description,
-            context_providers=context_providers,
+            context_provider=context_provider,
             middleware=middleware,
         )
         if not client:
@@ -211,15 +211,15 @@ class CopilotStudioAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentRunResponse object. The caller is blocked until
+        as a single AgentResponse object. The caller is blocked until
         the final result is available.
 
         Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of AgentRunResponseUpdate
+        intermediate steps and the final result as a stream of AgentResponseUpdate
         objects. Streaming only the final result is not feasible because the timing of
         the final result's availability is unknown, and blocking the caller until then
         is undesirable in streaming scenarios.
@@ -238,7 +238,7 @@ class CopilotStudioAgent(BaseAgent):
             thread = self.get_new_thread()
         thread.service_thread_id = await self._start_new_conversation()
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
@@ -249,7 +249,7 @@ class CopilotStudioAgent(BaseAgent):
         response_messages = [message async for message in self._process_activities(activities, streaming=False)]
         response_id = response_messages[0].message_id if response_messages else None
 
-        return AgentRunResponse(messages=response_messages, response_id=response_id)
+        return AgentResponse(messages=response_messages, response_id=response_id)
 
     async def run_stream(
         self,
@@ -257,13 +257,13 @@ class CopilotStudioAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Run the agent as a stream.
 
         This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+        agent's execution as a stream of AgentResponseUpdate objects to the caller.
 
-        Note: An AgentRunResponseUpdate object contains a chunk of a message.
+        Note: An AgentResponseUpdate object contains a chunk of a message.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -279,14 +279,14 @@ class CopilotStudioAgent(BaseAgent):
             thread = self.get_new_thread()
         thread.service_thread_id = await self._start_new_conversation()
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
         activities = self.client.ask_question(question, thread.service_thread_id)
 
         async for message in self._process_activities(activities, streaming=True):
-            yield AgentRunResponseUpdate(
+            yield AgentResponseUpdate(
                 role=message.role,
                 contents=message.contents,
                 author_name=message.author_name,
@@ -332,7 +332,7 @@ class CopilotStudioAgent(BaseAgent):
             ):
                 yield ChatMessage(
                     role=Role.ASSISTANT,
-                    contents=[TextContent(activity.text)],
+                    contents=[Content.from_text(activity.text)],
                     author_name=activity.from_property.name if activity.from_property else None,
                     message_id=activity.id,
                     raw_representation=activity,

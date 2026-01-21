@@ -7,6 +7,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask.Client;
+using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -22,14 +23,14 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
 
     // Exposed as an entity trigger via AgentFunctionsProvider
-    public static async Task InvokeAgentAsync(
-        [EntityTrigger] TaskEntityDispatcher dispatcher,
+    public static Task<string> InvokeAgentAsync(
         [DurableClient] DurableTaskClient client,
+        string encodedEntityRequest,
         FunctionContext functionContext)
     {
         // This should never be null except if the function trigger is misconfigured.
-        ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(encodedEntityRequest);
         ArgumentNullException.ThrowIfNull(functionContext);
 
         // Create a combined service provider that includes both the existing services
@@ -38,7 +39,8 @@ internal static class BuiltInFunctions
 
         // This method is the entry point for the agent entity.
         // It will be invoked by the Azure Functions runtime when the entity is called.
-        await dispatcher.DispatchAsync(new AgentEntity(combinedServiceProvider, functionContext.CancellationToken));
+        AgentEntity entity = new(combinedServiceProvider, functionContext.CancellationToken);
+        return GrpcEntityRunner.LoadAndRunAsync(encodedEntityRequest, entity, combinedServiceProvider);
     }
 
     public static async Task<HttpResponseData> RunAgentHttpAsync(
@@ -117,7 +119,7 @@ internal static class BuiltInFunctions
 
         if (waitForResponse)
         {
-            AgentRunResponse agentResponse = await agentProxy.RunAsync(
+            AgentResponse agentResponse = await agentProxy.RunAsync(
                 message: new ChatMessage(ChatRole.User, message),
                 thread: new DurableAgentThread(sessionId),
                 options: options,
@@ -168,7 +170,7 @@ internal static class BuiltInFunctions
 
         AIAgent agentProxy = client.AsDurableAgentProxy(functionContext, agentName);
 
-        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+        AgentResponse agentResponse = await agentProxy.RunAsync(
             message: new ChatMessage(ChatRole.User, query),
             thread: new DurableAgentThread(sessionId),
             options: null);
@@ -222,7 +224,7 @@ internal static class BuiltInFunctions
         FunctionContext context,
         HttpStatusCode statusCode,
         string threadId,
-        AgentRunResponse agentResponse)
+        AgentResponse agentResponse)
     {
         HttpResponseData response = req.CreateResponse(statusCode);
         response.Headers.Add("x-ms-thread-id", threadId);
@@ -319,7 +321,7 @@ internal static class BuiltInFunctions
     private sealed record AgentRunSuccessResponse(
         [property: JsonPropertyName("status")] int Status,
         [property: JsonPropertyName("thread_id")] string ThreadId,
-        [property: JsonPropertyName("response")] AgentRunResponse Response);
+        [property: JsonPropertyName("response")] AgentResponse Response);
 
     /// <summary>
     /// Represents an accepted (fire-and-forget) agent run response.

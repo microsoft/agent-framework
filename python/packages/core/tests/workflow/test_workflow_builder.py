@@ -7,8 +7,8 @@ import pytest
 
 from agent_framework import (
     AgentExecutor,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -29,11 +29,11 @@ class DummyAgent(BaseAgent):
                     norm.append(m)
                 elif isinstance(m, str):
                     norm.append(ChatMessage(role=Role.USER, text=m))
-        return AgentRunResponse(messages=norm)
+        return AgentResponse(messages=norm)
 
     async def run_stream(self, messages=None, *, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
         # Minimal async generator
-        yield AgentRunResponseUpdate()
+        yield AgentResponseUpdate()
 
 
 def test_builder_accepts_agents_directly():
@@ -245,7 +245,8 @@ def test_register_multiple_executors():
 
     # Build workflow with edges using registered names
     workflow = (
-        builder.set_start_executor("ExecutorA")
+        builder
+        .set_start_executor("ExecutorA")
         .add_edge("ExecutorA", "ExecutorB")
         .add_edge("ExecutorB", "ExecutorC")
         .build()
@@ -426,7 +427,8 @@ def test_register_with_fan_in_edges():
     # Add fan-in edges using registered names
     # Both Source1 and Source2 need to be reachable, so connect Source1 to Source2
     workflow = (
-        builder.set_start_executor("Source1")
+        builder
+        .set_start_executor("Source1")
         .add_edge("Source1", "Source2")
         .add_fan_in_edges(["Source1", "Source2"], "Aggregator")
         .build()

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -10,7 +11,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AIFunction,
@@ -19,13 +20,8 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    Contents,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
-    TextReasoningContent,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -46,6 +42,229 @@ from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import ValidationError
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+
+__all__ = ["OllamaChatClient", "OllamaChatOptions"]
+
+
+# region Ollama Chat Options TypedDict
+
+
+class OllamaChatOptions(ChatOptions, total=False):
+    """Ollama-specific chat options dict.
+
+    Extends base ChatOptions with Ollama-specific parameters.
+    Ollama passes model parameters through the `options` field.
+
+    See: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+    Keys:
+        # Inherited from ChatOptions (mapped to Ollama options):
+        model_id: The model name, translates to ``model`` in Ollama API.
+        temperature: Sampling temperature, translates to ``options.temperature``.
+        top_p: Nucleus sampling, translates to ``options.top_p``.
+        max_tokens: Maximum tokens to generate, translates to ``options.num_predict``.
+        stop: Stop sequences, translates to ``options.stop``.
+        seed: Random seed for reproducibility, translates to ``options.seed``.
+        frequency_penalty: Frequency penalty, translates to ``options.frequency_penalty``.
+        presence_penalty: Presence penalty, translates to ``options.presence_penalty``.
+        tools: List of function tools.
+        response_format: Output format, translates to ``format``.
+            Use 'json' for JSON mode or a JSON schema dict for structured output.
+
+        # Options not supported in Ollama:
+        tool_choice: Ollama only supports auto tool choice.
+        allow_multiple_tool_calls: Not configurable.
+        user: Not supported.
+        store: Not supported.
+        logit_bias: Not supported.
+        metadata: Not supported.
+
+        # Ollama model-level options (placed in `options` dict):
+        # See: https://github.com/ollama/ollama/blob/main/docs/modelfile.mdx#valid-parameters-and-values
+        num_predict: Maximum number of tokens to predict (alternative to max_tokens).
+        top_k: Top-k sampling: limits tokens to k most likely. Higher = more diverse.
+        min_p: Minimum probability threshold for token selection.
+        typical_p: Locally typical sampling parameter (0.0-1.0).
+        repeat_penalty: Penalty for repeating tokens. Higher = less repetition.
+        repeat_last_n: Number of tokens to consider for repeat penalty.
+        penalize_newline: Whether to penalize newline characters.
+        num_ctx: Context window size (number of tokens).
+        num_batch: Batch size for prompt processing.
+        num_keep: Number of tokens to keep from initial prompt.
+        num_gpu: Number of layers to offload to GPU.
+        main_gpu: Main GPU for computation.
+        use_mmap: Whether to use memory-mapped files.
+        num_thread: Number of threads for CPU computation.
+        numa: Enable NUMA optimization.
+
+        # Ollama-specific top-level options:
+        keep_alive: How long to keep model loaded (default: '5m').
+        think: Whether thinking models should think before responding.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_ollama import OllamaChatOptions
+
+            # Basic usage - standard options automatically mapped
+            options: OllamaChatOptions = {
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "seed": 42,
+            }
+
+            # With Ollama-specific model options
+            options: OllamaChatOptions = {
+                "top_k": 40,
+                "num_ctx": 4096,
+                "keep_alive": "10m",
+            }
+
+            # With JSON output format
+            options: OllamaChatOptions = {
+                "response_format": "json",
+            }
+
+            # With structured output (JSON schema)
+            options: OllamaChatOptions = {
+                "response_format": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                },
+            }
+    """
+
+    # Ollama model-level options (will be placed in `options` dict)
+    num_predict: int
+    """Maximum number of tokens to predict (equivalent to max_tokens)."""
+
+    top_k: int
+    """Top-k sampling: limits tokens to k most likely. Higher = more diverse."""
+
+    min_p: float
+    """Minimum probability threshold for token selection."""
+
+    typical_p: float
+    """Locally typical sampling parameter (0.0-1.0)."""
+
+    repeat_penalty: float
+    """Penalty for repeating tokens. Higher = less repetition."""
+
+    repeat_last_n: int
+    """Number of tokens to consider for repeat penalty."""
+
+    penalize_newline: bool
+    """Whether to penalize newline characters."""
+
+    num_ctx: int
+    """Context window size (number of tokens)."""
+
+    num_batch: int
+    """Batch size for prompt processing."""
+
+    num_keep: int
+    """Number of tokens to keep from initial prompt."""
+
+    num_gpu: int
+    """Number of layers to offload to GPU."""
+
+    main_gpu: int
+    """Main GPU for computation."""
+
+    use_mmap: bool
+    """Whether to use memory-mapped files."""
+
+    num_thread: int
+    """Number of threads for CPU computation."""
+
+    numa: bool
+    """Enable NUMA optimization."""
+
+    # Ollama-specific top-level options
+    keep_alive: str | int
+    """How long to keep the model loaded in memory after request.
+    Can be duration string (e.g., '5m', '1h') or seconds as int.
+    Set to 0 to unload immediately after request."""
+
+    think: bool
+    """For thinking models: whether the model should think before responding."""
+
+    # ChatOptions fields not supported in Ollama
+    tool_choice: None  # type: ignore[misc]
+    """Not supported. Ollama only supports auto tool choice."""
+
+    allow_multiple_tool_calls: None  # type: ignore[misc]
+    """Not supported. Not configurable in Ollama."""
+
+    user: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+    store: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+    logit_bias: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+    metadata: None  # type: ignore[misc]
+    """Not supported in Ollama."""
+
+
+OLLAMA_OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",
+    "response_format": "format",
+}
+"""Maps ChatOptions keys to Ollama API parameter names."""
+
+# Keys that should be placed in the nested `options` dict for the Ollama API
+OLLAMA_MODEL_OPTIONS: set[str] = {
+    # From ChatOptions (mapped to options.*)
+    "temperature",
+    "top_p",
+    "max_tokens",  # -> num_predict
+    "stop",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    # Ollama-specific model options
+    "num_predict",
+    "top_k",
+    "min_p",
+    "typical_p",
+    "repeat_penalty",
+    "repeat_last_n",
+    "penalize_newline",
+    "num_ctx",
+    "num_batch",
+    "num_keep",
+    "num_gpu",
+    "main_gpu",
+    "use_mmap",
+    "num_thread",
+    "numa",
+}
+
+# Translations for options that go into the nested `options` dict
+OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
+    "max_tokens": "num_predict",
+}
+"""Maps ChatOptions keys to Ollama model option parameter names."""
+
+TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
+
+
+# endregion
+
 
 class OllamaSettings(AFBaseSettings):
     """Ollama settings."""
@@ -62,7 +281,7 @@ logger = get_logger("agent_framework.ollama")
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OllamaChatClient(BaseChatClient):
+class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOptions]):
     """Ollama Chat completion class."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
@@ -110,16 +329,19 @@ class OllamaChatClient(BaseChatClient):
 
         super().__init__(**kwargs)
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        options_dict = self._prepare_options(messages, chat_options)
+        # prepare
+        options_dict = self._prepare_options(messages, options)
 
         try:
+            # execute
             response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                 stream=False,
                 **options_dict,
@@ -128,18 +350,22 @@ class OllamaChatClient(BaseChatClient):
         except Exception as ex:
             raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
 
-        return self._ollama_response_to_agent_framework_response(response)
+        # process
+        return self._parse_response_from_ollama(response)
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        options_dict = self._prepare_options(messages, chat_options)
+        # prepare
+        options_dict = self._prepare_options(messages, options)
 
         try:
+            # execute
             response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                 stream=True,
                 **options_dict,
@@ -148,49 +374,67 @@ class OllamaChatClient(BaseChatClient):
         except Exception as ex:
             raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
+        # process
         async for part in response_object:
-            yield self._ollama_streaming_response_to_agent_framework_response(part)
+            yield self._parse_streaming_response_from_ollama(part)
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        # Preprocess web search tool if it exists
-        options_dict = chat_options.to_dict(exclude={"instructions", "type"})
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+        # Handle instructions by prepending to messages as system message
+        instructions = options.get("instructions")
+        if instructions:
+            from agent_framework._types import prepend_instructions_to_messages
 
-        # Promote additional_properties to the top level of options_dict
-        additional_props = options_dict.pop("additional_properties", {})
-        options_dict.update(additional_props)
+            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
-        # Prepare Messages from Agent Framework format to Ollama format
-        if messages and "messages" not in options_dict:
-            options_dict["messages"] = self._prepare_chat_history_for_request(messages)
-        if "messages" not in options_dict:
+        # Keys to exclude from processing
+        exclude_keys = {"instructions", "tool_choice"}
+
+        # Build run_options and model_options separately
+        run_options: dict[str, Any] = {}
+        model_options: dict[str, Any] = {}
+
+        for key, value in options.items():
+            if key in exclude_keys or value is None:
+                continue
+
+            if key in OLLAMA_MODEL_OPTIONS:
+                # Apply model option translations (e.g., max_tokens -> num_predict)
+                translated_key = OLLAMA_MODEL_OPTION_TRANSLATIONS.get(key, key)
+                model_options[translated_key] = value
+            else:
+                # Apply top-level translations (e.g., model_id -> model)
+                translated_key = OLLAMA_OPTION_TRANSLATIONS.get(key, key)
+                run_options[translated_key] = value
+
+        # Add model options to run_options if any
+        if model_options:
+            run_options["options"] = model_options
+
+        # messages
+        if messages and "messages" not in run_options:
+            run_options["messages"] = self._prepare_messages_for_ollama(messages)
+        if "messages" not in run_options:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
 
-        # Prepare Tools from Agent Framework format to Json Schema format
-        if chat_options.tools:
-            options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
+        # model id
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_id must be a non-empty string")
+            run_options["model"] = self.model_id
 
-        # Currently Ollama only supports auto tool choice
-        if chat_options.tool_choice == "required":
-            raise ServiceInvalidRequestError("Ollama does not support required tool choice.")
-        # Always auto: remove tool_choice since Ollama does not expose configuration to force or disable tools.
-        if "tool_choice" in options_dict:
-            del options_dict["tool_choice"]
+        # tools
+        tools = options.get("tools")
+        if tools and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+            run_options["tools"] = prepared_tools
 
-        # Rename model_id to model for Ollama API, if no model is provided use the one from client initialization
-        if "model_id" in options_dict:
-            options_dict["model"] = options_dict.pop("model_id")
+        return run_options
 
-        if "model_id" not in options_dict:
-            options_dict["model"] = self.model_id
-
-        return options_dict
-
-    def _prepare_chat_history_for_request(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
-        ollama_messages = [self._agent_framework_message_to_ollama_message(msg) for msg in messages]
+    def _prepare_messages_for_ollama(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
+        ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
-    def _agent_framework_message_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
             Role.SYSTEM.value: self._format_system_message,
             Role.USER.value: self._format_user_message,
@@ -203,30 +447,31 @@ class OllamaChatClient(BaseChatClient):
         return [OllamaMessage(role="system", content=message.text)]
 
     def _format_user_message(self, message: ChatMessage) -> list[OllamaMessage]:
-        if not any(isinstance(c, (DataContent, TextContent)) for c in message.contents) and not message.text:
+        if not any(c.type in {"text", "data"} for c in message.contents) and not message.text:
             raise ServiceInvalidRequestError(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
             )
 
-        if not any(isinstance(c, DataContent) for c in message.contents):
+        if not any(c.type == "data" for c in message.contents):
             return [OllamaMessage(role="user", content=message.text)]
 
         user_message = OllamaMessage(role="user", content=message.text)
-        data_contents = [c for c in message.contents if isinstance(c, DataContent)]
+        data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
             if not any(c.has_top_level_media_type("image") for c in data_contents):
                 raise ServiceInvalidRequestError("Only image data content is supported for user messages in Ollama.")
             # Ollama expects base64 strings without prefix
-            user_message["images"] = [c.uri.split(",")[1] for c in data_contents]
+            user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
         text_content = message.text
-        reasoning_contents = "".join(c.text for c in message.contents if isinstance(c, TextReasoningContent))
+        # Ollama shouldn't have encrypted reasoning, so we just process text.
+        reasoning_contents = "".join((c.text or "") for c in message.contents if c.type == "text_reasoning")
 
         assistant_message = OllamaMessage(role="assistant", content=text_content, thinking=reasoning_contents)
 
-        tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
+        tool_calls = [item for item in message.contents if item.type == "function_call"]
         if tool_calls:
             assistant_message["tool_calls"] = [
                 {
@@ -247,24 +492,22 @@ class OllamaChatClient(BaseChatClient):
         return [
             OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
             for item in message.contents
-            if isinstance(item, FunctionResultContent)
+            if item.type == "function_result"
         ]
 
-    def _ollama_response_to_agent_framework_content(self, response: OllamaChatResponse) -> list[Contents]:
-        contents: list[Contents] = []
+    def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
+        contents: list[Content] = []
         if response.message.thinking:
-            contents.append(TextReasoningContent(text=response.message.thinking))
+            contents.append(Content.from_text_reasoning(text=response.message.thinking))
         if response.message.content:
-            contents.append(TextContent(text=response.message.content))
+            contents.append(Content.from_text(text=response.message.content))
         if response.message.tool_calls:
-            tool_calls = self._parse_ollama_tool_calls(response.message.tool_calls)
+            tool_calls = self._parse_tool_calls_from_ollama(response.message.tool_calls)
             contents.extend(tool_calls)
         return contents
 
-    def _ollama_streaming_response_to_agent_framework_response(
-        self, response: OllamaChatResponse
-    ) -> ChatResponseUpdate:
-        contents = self._ollama_response_to_agent_framework_content(response)
+    def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+        contents = self._parse_contents_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
             role=Role.ASSISTANT,
@@ -272,8 +515,8 @@ class OllamaChatClient(BaseChatClient):
             created_at=response.created_at,
         )
 
-    def _ollama_response_to_agent_framework_response(self, response: OllamaChatResponse) -> ChatResponse:
-        contents = self._ollama_response_to_agent_framework_content(response)
+    def _parse_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponse:
+        contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
@@ -285,10 +528,10 @@ class OllamaChatClient(BaseChatClient):
             ),
         )
 
-    def _parse_ollama_tool_calls(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Contents]:
-        resp: list[Contents] = []
+    def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
+        resp: list[Content] = []
         for tool in tool_calls:
-            fcc = FunctionCallContent(
+            fcc = Content.from_function_call(
                 call_id=tool.function.name,  # Use name of function as call ID since Ollama doesn't provide a call ID
                 name=tool.function.name,
                 arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
@@ -297,7 +540,7 @@ class OllamaChatClient(BaseChatClient):
             resp.append(fcc)
         return resp
 
-    def _chat_to_tool_spec(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+    def _prepare_tools_for_ollama(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         chat_tools: list[dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, ToolProtocol):

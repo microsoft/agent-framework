@@ -9,13 +9,9 @@ from agent_framework import (
     BaseChatClient,
     ChatMessage,
     ChatResponseUpdate,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     HostedWebSearchTool,
-    TextContent,
-    TextReasoningContent,
-    UriContent,
+    ai_function,
     chat_middleware,
 )
 from agent_framework.exceptions import (
@@ -113,6 +109,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
     )
 
 
+@ai_function
 def hello_world(arg1: str) -> str:
     return "Hello World"
 
@@ -199,19 +196,6 @@ async def test_empty_messages() -> None:
         await ollama_chat_client.get_response(messages=[])
 
 
-async def test_function_choice_required_argument() -> None:
-    ollama_chat_client = OllamaChatClient(
-        host="http://localhost:12345",
-        model_id="test-model",
-    )
-    with pytest.raises(ServiceInvalidRequestError):
-        await ollama_chat_client.get_response(
-            messages=[ChatMessage(text="hello world", role="user")],
-            tool_choice="required",
-            tools=[hello_world],
-        )
-
-
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc(
     mock_chat: AsyncMock,
@@ -242,7 +226,7 @@ async def test_cmc_reasoning(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    reasoning = "".join(c.text for c in result.messages.pop().contents if isinstance(c, TextReasoningContent))
+    reasoning = "".join(c.text for c in result.messages.pop().contents if c.type == "text_reasoning")
     assert reasoning == "test"
 
 
@@ -297,7 +281,7 @@ async def test_cmc_streaming_reasoning(
     result = ollama_client.get_streaming_response(messages=chat_history)
 
     async for chunk in result:
-        reasoning = "".join(c.text for c in chunk.contents if isinstance(c, TextReasoningContent))
+        reasoning = "".join(c.text for c in chunk.contents if c.type == "text_reasoning")
         assert reasoning == "test"
 
 
@@ -337,21 +321,21 @@ async def test_cmc_streaming_with_tool_call(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history, tools=[hello_world])
+    result = ollama_client.get_streaming_response(messages=chat_history, options={"tools": [hello_world]})
 
     chunks: list[ChatResponseUpdate] = []
     async for chunk in result:
         chunks.append(chunk)
 
     # Check parsed Toolcalls
-    assert isinstance(chunks[0].contents[0], FunctionCallContent)
+    assert chunks[0].contents[0].type == "function_call"
     tool_call = chunks[0].contents[0]
     assert tool_call.name == "hello_world"
     assert tool_call.arguments == {"arg1": "value1"}
-    assert isinstance(chunks[1].contents[0], FunctionResultContent)
+    assert chunks[1].contents[0].type == "function_result"
     tool_result = chunks[1].contents[0]
     assert tool_result.result == "Hello World"
-    assert isinstance(chunks[2].contents[0], TextContent)
+    assert chunks[2].contents[0].type == "text"
     text_result = chunks[2].contents[0]
     assert text_result.text == "test"
 
@@ -373,7 +357,9 @@ async def test_cmc_with_hosted_tool_call(
         ollama_client = OllamaChatClient()
         await ollama_client.get_response(
             messages=chat_history,
-            tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+            options={
+                "tools": HostedWebSearchTool(additional_properties=additional_properties),
+            },
         )
 
 
@@ -387,7 +373,7 @@ async def test_cmc_with_data_content_type(
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
         ChatMessage(
-            contents=[DataContent(uri="data:image/png;base64,xyz", media_type="image/png")],
+            contents=[Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png")],
             role="user",
         )
     )
@@ -410,7 +396,7 @@ async def test_cmc_with_invalid_data_content_media_type(
         # Remote Uris are not supported by Ollama client
         chat_history.append(
             ChatMessage(
-                contents=[DataContent(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
+                contents=[Content.from_uri(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
                 role="user",
             )
         )
@@ -433,7 +419,7 @@ async def test_cmc_with_invalid_content_type(
         # Remote Uris are not supported by Ollama client
         chat_history.append(
             ChatMessage(
-                contents=[UriContent(uri="http://example.com/image.png", media_type="image/png")],
+                contents=[Content.from_uri(uri="http://example.com/image.png", media_type="image/png")],
                 role="user",
             )
         )
@@ -450,10 +436,10 @@ async def test_cmc_integration_with_tool_call(
     chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = await ollama_client.get_response(messages=chat_history, tools=[hello_world])
+    result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
 
     assert "hello" in result.text.lower() and "world" in result.text.lower()
-    assert isinstance(result.messages[-2].contents[0], FunctionResultContent)
+    assert result.messages[-2].contents[0].type == "function_result"
     tool_result = result.messages[-2].contents[0]
     assert tool_result.result == "Hello World"
 
@@ -478,7 +464,7 @@ async def test_cmc_streaming_integration_with_tool_call(
 
     ollama_client = OllamaChatClient()
     result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(
-        messages=chat_history, tools=[hello_world]
+        messages=chat_history, options={"tools": [hello_world]}
     )
 
     chunks: list[ChatResponseUpdate] = []
@@ -487,10 +473,10 @@ async def test_cmc_streaming_integration_with_tool_call(
 
     for c in chunks:
         if len(c.contents) > 0:
-            if isinstance(c.contents[0], FunctionResultContent):
+            if c.contents[0].type == "function_result":
                 tool_result = c.contents[0]
                 assert tool_result.result == "Hello World"
-            if isinstance(c.contents[0], FunctionCallContent):
+            if c.contents[0].type == "function_call":
                 tool_call = c.contents[0]
                 assert tool_call.name == "hello_world"
 
