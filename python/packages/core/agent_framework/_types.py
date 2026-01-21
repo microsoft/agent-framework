@@ -2881,7 +2881,7 @@ class _ChatOptionsBase(TypedDict, total=False):
 if TYPE_CHECKING:
 
     class ChatOptions(_ChatOptionsBase, Generic[TResponseModel], total=False):
-        response_format: type[TResponseModel] | Mapping[str, Any] | None
+        response_format: type[TResponseModel] | Mapping[str, Any] | None  # type: ignore[misc]
 
 else:
     ChatOptions = _ChatOptionsBase

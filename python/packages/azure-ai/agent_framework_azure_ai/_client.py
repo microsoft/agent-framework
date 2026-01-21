@@ -551,7 +551,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIClientOptions | None = None,
+        default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[Middleware] | None = None,
