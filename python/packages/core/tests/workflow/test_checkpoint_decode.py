@@ -7,6 +7,7 @@ from typing import Any, cast
 from agent_framework._workflows._checkpoint_encoding import (
     DATACLASS_MARKER,
     MODEL_MARKER,
+    PRESERVED_MARKER,
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
@@ -154,10 +155,10 @@ def test_encode_allows_value_key_without_marker_key() -> None:
 
 
 def test_encode_allows_marker_with_value_key() -> None:
-    """Test that encoding a dict with marker and 'value' keys is allowed.
+    """Test that encoding a dict with marker and 'value' keys wraps it in preservation envelope.
 
-    This is allowed because legitimate encoded data may contain these keys,
-    and security is enforced at deserialization time by validating class types.
+    User data that looks like a marker pattern is preserved to prevent confusion
+    during deserialization.
     """
     dict_with_both = {
         MODEL_MARKER: "some.module:SomeClass",
@@ -165,8 +166,12 @@ def test_encode_allows_marker_with_value_key() -> None:
         "strategy": "to_dict",
     }
     encoded = encode_checkpoint_value(dict_with_both)
-    assert MODEL_MARKER in encoded
+    # Should be wrapped in preservation envelope
+    assert PRESERVED_MARKER in encoded
+    assert encoded[PRESERVED_MARKER] is True
     assert "value" in encoded
+    # Original dict is inside the envelope
+    assert MODEL_MARKER in encoded["value"]
 
 
 class NotADataclass:
@@ -221,10 +226,10 @@ def test_decode_rejects_non_model_with_model_marker() -> None:
 
 
 def test_encode_allows_nested_dict_with_marker_keys() -> None:
-    """Test that encoding allows nested dicts containing marker patterns.
+    """Test that encoding wraps nested dicts containing marker patterns in preservation envelope.
 
-    Security is enforced at deserialization time, not serialization time,
-    so legitimate encoded data can contain markers at any nesting level.
+    User data that looks like marker patterns is preserved at any nesting level
+    to prevent confusion during deserialization.
     """
     nested_data = {
         "outer": {
@@ -235,4 +240,6 @@ def test_encode_allows_nested_dict_with_marker_keys() -> None:
 
     encoded = encode_checkpoint_value(nested_data)
     assert "outer" in encoded
-    assert MODEL_MARKER in encoded["outer"]
+    # Nested dict should be wrapped in preservation envelope
+    assert PRESERVED_MARKER in encoded["outer"]
+    assert encoded["outer"][PRESERVED_MARKER] is True
