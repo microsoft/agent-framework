@@ -8,21 +8,21 @@ from azure.identity import DefaultAzureCredential  # pyright: ignore[reportUnkno
 
 def main():
     # Create agents
-    researcher = AzureOpenAIChatClient(credential=DefaultAzureCredential()).create_agent(
+    researcher = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(
         instructions=(
             "You're an expert market and product researcher. "
             "Given a prompt, provide concise, factual insights, opportunities, and risks."
         ),
         name="researcher",
     )
-    marketer = AzureOpenAIChatClient(credential=DefaultAzureCredential()).create_agent(
+    marketer = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(
         instructions=(
             "You're a creative marketing strategist. "
             "Craft compelling value propositions and target messaging aligned to the prompt."
         ),
         name="marketer",
     )
-    legal = AzureOpenAIChatClient(credential=DefaultAzureCredential()).create_agent(
+    legal = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. "
             "Highlight constraints, disclaimers, and policy concerns based on the prompt."

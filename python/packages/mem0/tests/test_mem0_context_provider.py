@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Context, Role
+from agent_framework import ChatMessage, Content, Context, Role
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.mem0 import Mem0Provider
 
@@ -409,14 +409,13 @@ class TestMem0ProviderModelInvoking:
         self, mock_mem0_client: AsyncMock
     ) -> None:
         """Test invoking with function approval response content messages returns context with None instructions."""
-        from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
 
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        function_call = FunctionCallContent(call_id="1", name="test_func", arguments='{"arg1": "value1"}')
+        function_call = Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}')
         message = ChatMessage(
             role=Role.USER,
             contents=[
-                FunctionApprovalResponseContent(
+                Content.from_function_approval_response(
                     id="approval_1",
                     function_call=function_call,
                     approved=True,

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
-from agent_framework import ChatMessage, TextContent
+from agent_framework import ChatMessage, Content
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -92,7 +92,7 @@ def _serialize_content_recursive(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         serialized = [_serialize_content_recursive(item) for item in value]
         # For single-item lists containing text Content, extract just the text
-        # This handles the MCP case where result = [TextContent(text="Hello")]
+        # This handles the MCP case where result = [Content.from_text(text="Hello")]
         # and we want output = "Hello" not output = '[{"type": "text", "text": "Hello"}]'
         if len(serialized) == 1 and isinstance(serialized[0], dict) and serialized[0].get("type") == "text":
             return serialized[0].get("text", "")
@@ -127,18 +127,18 @@ class MessageMapper:
 
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
-            "TextContent": self._map_text_content,
-            "TextReasoningContent": self._map_reasoning_content,
-            "FunctionCallContent": self._map_function_call_content,
-            "FunctionResultContent": self._map_function_result_content,
-            "ErrorContent": self._map_error_content,
-            "UsageContent": self._map_usage_content,
-            "DataContent": self._map_data_content,
-            "UriContent": self._map_uri_content,
-            "HostedFileContent": self._map_hosted_file_content,
-            "HostedVectorStoreContent": self._map_hosted_vector_store_content,
-            "FunctionApprovalRequestContent": self._map_approval_request_content,
-            "FunctionApprovalResponseContent": self._map_approval_response_content,
+            "text": self._map_text_content,
+            "text_reasoning": self._map_reasoning_content,
+            "function_call": self._map_function_call_content,
+            "function_result": self._map_function_result_content,
+            "error": self._map_error_content,
+            "usage": self._map_usage_content,
+            "data": self._map_data_content,
+            "uri": self._map_uri_content,
+            "hosted_file": self._map_hosted_file_content,
+            "hosted_vector_store": self._map_hosted_vector_store_content,
+            "function_approval_request": self._map_approval_request_content,
+            "function_approval_response": self._map_approval_response_content,
         }
 
     async def convert_event(self, raw_event: Any, request: AgentFrameworkRequest) -> Sequence[Any]:
@@ -603,7 +603,7 @@ class MessageMapper:
                 return events
 
             # Check if we're streaming text content
-            has_text_content = any(isinstance(content, TextContent) for content in update.contents)
+            has_text_content = any(content.type == "text" for content in update.contents)
 
             # Check if we're in an executor context with an existing item
             executor_id = context.get("current_executor_id")
@@ -647,10 +647,8 @@ class MessageMapper:
 
             # Process each content item
             for content in update.contents:
-                content_type = content.__class__.__name__
-
                 # Special handling for TextContent to use proper delta events
-                if content_type == "TextContent" and "current_message_id" in context:
+                if content.type == "text" and "current_message_id" in context:
                     # Stream text content via proper delta events
                     events.append(
                         ResponseTextDeltaEvent(
@@ -663,9 +661,9 @@ class MessageMapper:
                             sequence_number=self._next_sequence(context),
                         )
                     )
-                elif content_type in self.content_mappers:
+                elif content.type in self.content_mappers:
                     # Use existing mappers for other content types
-                    mapped_events = await self.content_mappers[content_type](content, context)
+                    mapped_events = await self.content_mappers[content.type](content, context)
                     if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
                         if isinstance(mapped_events, list):
                             events.extend(mapped_events)
@@ -676,7 +674,7 @@ class MessageMapper:
                     events.append(await self._create_unknown_content_event(content, context))
 
                 # Don't increment content_index for text deltas within the same part
-                if content_type != "TextContent":
+                if content.type != "text":
                     context["content_index"] = context.get("content_index", 0) + 1
 
         except Exception as e:
@@ -708,10 +706,8 @@ class MessageMapper:
             for message in messages:
                 if hasattr(message, "contents") and message.contents:
                     for content in message.contents:
-                        content_type = content.__class__.__name__
-
-                        if content_type in self.content_mappers:
-                            mapped_events = await self.content_mappers[content_type](content, context)
+                        if content.type in self.content_mappers:
+                            mapped_events = await self.content_mappers[content.type](content, context)
                             if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
                                 if isinstance(mapped_events, list):
                                     events.extend(mapped_events)
@@ -726,9 +722,7 @@ class MessageMapper:
             # Add usage information if present
             usage_details = getattr(response, "usage_details", None)
             if usage_details:
-                from agent_framework import UsageContent
-
-                usage_content = UsageContent(details=usage_details)
+                usage_content = Content.from_usage(usage_details=usage_details)
                 await self._map_usage_content(usage_content, context)
                 # Note: _map_usage_content returns None - it accumulates usage for final Response.usage
 
@@ -1421,11 +1415,11 @@ class MessageMapper:
         Returns:
             None - no event emitted (usage goes in final Response.usage)
         """
-        # Extract usage from UsageContent.details (UsageDetails object)
-        details = getattr(content, "details", None)
-        total_tokens = getattr(details, "total_token_count", 0) or 0
-        prompt_tokens = getattr(details, "input_token_count", 0) or 0
-        completion_tokens = getattr(details, "output_token_count", 0) or 0
+        # Extract usage from UsageContent.usage_details (UsageDetails object)
+        details = content.usage_details or {}
+        total_tokens = details.get("total_token_count", 0)
+        prompt_tokens = details.get("input_token_count", 0)
+        completion_tokens = details.get("output_token_count", 0)
 
         # Accumulate for final Response.usage
         request_id = context.get("request_id", "default")

@@ -27,7 +27,7 @@ Prerequisites:
 
 
 def create_writer_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
@@ -36,7 +36,7 @@ def create_writer_agent():
 
 
 def create_reviewer_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."

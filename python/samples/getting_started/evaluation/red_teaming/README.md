@@ -113,7 +113,7 @@ async def main() -> None:
     credential = AzureCliCredential()
 
     # 2. Create agent inline
-    agent = AzureOpenAIChatClient(credential=credential).create_agent(
+    agent = AzureOpenAIChatClient(credential=credential).as_agent(
         model="gpt-4o",
         instructions="You are a helpful financial advisor..."
     )

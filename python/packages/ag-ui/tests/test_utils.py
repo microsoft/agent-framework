@@ -122,6 +122,20 @@ def test_make_json_safe_model_dump():
     assert result == {"type": "model", "data": "dump"}
 
 
+class ToDictObject:
+    """Object with to_dict method (like SerializationMixin)."""
+
+    def to_dict(self):
+        return {"type": "serialization_mixin", "method": "to_dict"}
+
+
+def test_make_json_safe_to_dict():
+    """Test object with to_dict method (SerializationMixin pattern)."""
+    obj = ToDictObject()
+    result = make_json_safe(obj)
+    assert result == {"type": "serialization_mixin", "method": "to_dict"}
+
+
 class DictObject:
     """Object with dict method."""
 
@@ -201,6 +215,41 @@ def test_make_json_safe_fallback():
     result = make_json_safe(obj)
     # Objects with __dict__ return their __dict__ dict
     assert isinstance(result, dict)
+
+
+def test_make_json_safe_dataclass_with_nested_to_dict_object():
+    """Test dataclass containing a to_dict object (like HandoffAgentUserRequest with AgentResponse).
+
+    This test verifies the fix for the AG-UI JSON serialization error when
+    HandoffAgentUserRequest (a dataclass) contains an AgentResponse (SerializationMixin).
+    """
+
+    class NestedToDictObject:
+        """Simulates SerializationMixin objects like AgentResponse."""
+
+        def __init__(self, contents: list[str]):
+            self.contents = contents
+
+        def to_dict(self):
+            return {"type": "response", "contents": self.contents}
+
+    @dataclass
+    class ContainerDataclass:
+        """Simulates HandoffAgentUserRequest dataclass."""
+
+        response: NestedToDictObject
+
+    obj = ContainerDataclass(response=NestedToDictObject(contents=["hello", "world"]))
+    result = make_json_safe(obj)
+
+    # Verify the nested to_dict object was properly serialized
+    assert result == {"response": {"type": "response", "contents": ["hello", "world"]}}
+
+    # Verify the result is actually JSON serializable
+    import json
+
+    json_str = json.dumps(result)
+    assert json_str is not None
 
 
 def test_convert_tools_to_agui_format_with_ai_function():

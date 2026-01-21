@@ -32,7 +32,7 @@ using var tracerProvider = tracerProviderBuilder.Build();
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = aiProjectClient.CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions)
+AIAgent agent = (await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions))
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();

@@ -5,7 +5,7 @@
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import ChatMessage, Role, TextContent
+from agent_framework import ChatMessage, Role
 from chatkit.types import UserMessageTextContent
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
@@ -133,7 +133,7 @@ class TestThreadItemConverter:
         )
 
         result = converter.tag_to_message_content(tag)
-        assert isinstance(result, TextContent)
+        assert result.type == "text"
         # Since data is a dict, getattr won't work, so it will fall back to text
         assert result.text == "<TAG>Name:john</TAG>"
 
@@ -150,7 +150,7 @@ class TestThreadItemConverter:
         )
 
         result = converter.tag_to_message_content(tag)
-        assert isinstance(result, TextContent)
+        assert result.type == "text"
         assert result.text == "<TAG>Name:jane</TAG>"
 
     async def test_attachment_to_message_content_file_without_fetcher(self, converter):
@@ -169,7 +169,6 @@ class TestThreadItemConverter:
 
     async def test_attachment_to_message_content_image_with_preview_url(self, converter):
         """Test that ImageAttachment with preview_url creates UriContent."""
-        from agent_framework import UriContent
         from chatkit.types import ImageAttachment
 
         attachment = ImageAttachment(
@@ -181,13 +180,12 @@ class TestThreadItemConverter:
         )
 
         result = await converter.attachment_to_message_content(attachment)
-        assert isinstance(result, UriContent)
+        assert result.type == "uri"
         assert result.uri == "https://example.com/photo.jpg"
         assert result.media_type == "image/jpeg"
 
     async def test_attachment_to_message_content_with_data_fetcher(self):
         """Test attachment conversion with data fetcher."""
-        from agent_framework import DataContent
         from chatkit.types import FileAttachment
 
         # Mock data fetcher
@@ -204,14 +202,13 @@ class TestThreadItemConverter:
         )
 
         result = await converter.attachment_to_message_content(attachment)
-        assert isinstance(result, DataContent)
+        assert result.type == "data"
         assert result.media_type == "application/pdf"
 
     async def test_to_agent_input_with_image_attachment(self):
         """Test converting user message with text and image attachment."""
         from datetime import datetime
 
-        from agent_framework import UriContent
         from chatkit.types import ImageAttachment, UserMessageItem
 
         attachment = ImageAttachment(
@@ -241,11 +238,11 @@ class TestThreadItemConverter:
         assert len(message.contents) == 2
 
         # First content should be text
-        assert isinstance(message.contents[0], TextContent)
+        assert message.contents[0].type == "text"
         assert message.contents[0].text == "Check out this photo!"
 
         # Second content should be UriContent for the image
-        assert isinstance(message.contents[1], UriContent)
+        assert message.contents[1].type == "uri"
         assert message.contents[1].uri == "https://example.com/photo.jpg"
         assert message.contents[1].media_type == "image/jpeg"
 
@@ -253,7 +250,6 @@ class TestThreadItemConverter:
         """Test converting user message with file attachment using data fetcher."""
         from datetime import datetime
 
-        from agent_framework import DataContent
         from chatkit.types import FileAttachment, UserMessageItem
 
         attachment = FileAttachment(
@@ -285,10 +281,10 @@ class TestThreadItemConverter:
         assert len(message.contents) == 2
 
         # First content should be text
-        assert isinstance(message.contents[0], TextContent)
+        assert message.contents[0].type == "text"
 
         # Second content should be DataContent for the file
-        assert isinstance(message.contents[1], DataContent)
+        assert message.contents[1].type == "data"
         assert message.contents[1].media_type == "application/pdf"
 
     def test_task_to_input(self, converter):

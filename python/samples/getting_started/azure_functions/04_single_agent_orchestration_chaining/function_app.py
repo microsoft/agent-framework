@@ -32,7 +32,7 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

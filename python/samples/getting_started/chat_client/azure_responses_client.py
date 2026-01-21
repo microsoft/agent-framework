@@ -44,11 +44,16 @@ async def main() -> None:
             client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
             output_format_type=OutputStruct,
         )
-        print(f"Assistant: {response.value}")
-
+        if result := response.try_parse_value(OutputStruct):
+            print(f"Assistant: {result}")
+        else:
+            print(f"Assistant: {response.text}")
     else:
         response = await client.get_response(message, tools=get_weather, options={"response_format": OutputStruct})
-        print(f"Assistant: {response.value}")
+        if result := response.try_parse_value(OutputStruct):
+            print(f"Assistant: {result}")
+        else:
+            print(f"Assistant: {response.text}")
 
 
 if __name__ == "__main__":

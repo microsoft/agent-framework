@@ -12,7 +12,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponseUpdate, FunctionCallContent, FunctionResultContent, TextContent
+from agent_framework import AgentResponseUpdate, Content
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
@@ -22,7 +22,7 @@ async def test_tool_call_flow():
     bridge = AgentFrameworkEventBridge(run_id="test-run", thread_id="test-thread")
 
     # Step 1: Tool call starts
-    tool_call = FunctionCallContent(
+    tool_call = Content.from_function_call(
         call_id="weather-123",
         name="get_weather",
         arguments={"location": "Seattle"},
@@ -44,7 +44,7 @@ async def test_tool_call_flow():
     assert "Seattle" in args_event.delta
 
     # Step 2: Tool result comes back
-    tool_result = FunctionResultContent(
+    tool_result = Content.from_function_result(
         call_id="weather-123",
         result="Weather in Seattle: Rainy, 52°F",
     )
@@ -71,8 +71,8 @@ async def test_text_with_tool_call():
     bridge = AgentFrameworkEventBridge(run_id="test-run", thread_id="test-thread")
 
     # Agent says something then calls a tool
-    text_content = TextContent(text="Let me check the weather for you.")
-    tool_call = FunctionCallContent(
+    text_content = Content.from_text(text="Let me check the weather for you.")
+    tool_call = Content.from_function_call(
         call_id="weather-456",
         name="get_forecast",
         arguments={"location": "San Francisco", "days": 3},
@@ -102,9 +102,9 @@ async def test_multiple_tool_results():
 
     # Multiple tool results
     results = [
-        FunctionResultContent(call_id="tool-1", result="Result 1"),
-        FunctionResultContent(call_id="tool-2", result="Result 2"),
-        FunctionResultContent(call_id="tool-3", result="Result 3"),
+        Content.from_function_result(call_id="tool-1", result="Result 1"),
+        Content.from_function_result(call_id="tool-2", result="Result 2"),
+        Content.from_function_result(call_id="tool-3", result="Result 3"),
     ]
 
     update = AgentResponseUpdate(contents=results)

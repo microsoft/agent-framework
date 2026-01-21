@@ -3,7 +3,6 @@
 import base64
 import json
 import re
-import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -13,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypedDict, TypeVar, cast, overload
+from typing import Any, ClassVar, Final, Literal, TypedDict, TypeVar, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -22,50 +21,25 @@ from ._serialization import SerializationMixin
 from ._tools import ToolProtocol, ai_function
 from .exceptions import AdditionItemMismatch, ContentError
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
-
 __all__ = [
     "AgentResponse",
     "AgentResponseUpdate",
-    "AnnotatedRegions",
-    "Annotations",
-    "BaseAnnotation",
-    "BaseContent",
+    "Annotation",
     "ChatMessage",
-    "ChatOptions",  # Backward compatibility alias
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
-    "CitationAnnotation",
-    "CodeInterpreterToolCallContent",
-    "CodeInterpreterToolResultContent",
-    "Contents",
-    "DataContent",
-    "ErrorContent",
+    "Content",
     "FinishReason",
-    "FunctionApprovalRequestContent",
-    "FunctionApprovalResponseContent",
-    "FunctionCallContent",
-    "FunctionResultContent",
-    "HostedFileContent",
-    "HostedVectorStoreContent",
-    "ImageGenerationToolCallContent",
-    "ImageGenerationToolResultContent",
-    "MCPServerToolCallContent",
-    "MCPServerToolResultContent",
     "Role",
-    "TextContent",
-    "TextReasoningContent",
+    "TextSpanRegion",
     "TextSpanRegion",
     "ToolMode",
-    "UriContent",
-    "UsageContent",
     "UsageDetails",
+    "add_usage_details",
+    "detect_media_type_from_base64",
     "merge_chat_options",
+    "normalize_messages",
     "normalize_tools",
     "prepare_function_call_results",
     "prepend_instructions_to_messages",
@@ -102,63 +76,7 @@ class EnumLike(type):
         return cls
 
 
-def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
-    """Parse a single content data dictionary into the appropriate Content object.
-
-    Args:
-        content_data: Content data (dict)
-
-    Returns:
-        Content object
-
-    Raises:
-        ContentError if parsing fails
-    """
-    content_type: str | None = content_data.get("type", None)
-    match content_type:
-        case "text":
-            return TextContent.from_dict(content_data)
-        case "data":
-            return DataContent.from_dict(content_data)
-        case "uri":
-            return UriContent.from_dict(content_data)
-        case "error":
-            return ErrorContent.from_dict(content_data)
-        case "function_call":
-            return FunctionCallContent.from_dict(content_data)
-        case "function_result":
-            return FunctionResultContent.from_dict(content_data)
-        case "usage":
-            return UsageContent.from_dict(content_data)
-        case "hosted_file":
-            return HostedFileContent.from_dict(content_data)
-        case "hosted_vector_store":
-            return HostedVectorStoreContent.from_dict(content_data)
-        case "code_interpreter_tool_call":
-            return CodeInterpreterToolCallContent.from_dict(content_data)
-        case "code_interpreter_tool_result":
-            return CodeInterpreterToolResultContent.from_dict(content_data)
-        case "image_generation_tool_call":
-            return ImageGenerationToolCallContent.from_dict(content_data)
-        case "image_generation_tool_result":
-            return ImageGenerationToolResultContent.from_dict(content_data)
-        case "mcp_server_tool_call":
-            return MCPServerToolCallContent.from_dict(content_data)
-        case "mcp_server_tool_result":
-            return MCPServerToolResultContent.from_dict(content_data)
-        case "function_approval_request":
-            return FunctionApprovalRequestContent.from_dict(content_data)
-        case "function_approval_response":
-            return FunctionApprovalResponseContent.from_dict(content_data)
-        case "text_reasoning":
-            return TextReasoningContent.from_dict(content_data)
-        case None:
-            raise ContentError("Content type is missing")
-        case _:
-            raise ContentError(f"Unknown content type '{content_type}'")
-
-
-def _parse_content_list(contents_data: Sequence[Any]) -> list["Contents"]:
+def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
     """Parse a list of content data dictionaries into appropriate Content objects.
 
     Args:
@@ -167,19 +85,224 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Contents"]:
     Returns:
         List of Content objects with unknown types logged and ignored
     """
-    contents: list["Contents"] = []
+    contents: list["Content"] = []
     for content_data in contents_data:
-        if isinstance(content_data, dict):
-            try:
-                content = _parse_content(content_data)
-                contents.append(content)
-            except ContentError as exc:
-                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-        else:
-            # If it's already a content object, keep it as is
+        if isinstance(content_data, Content):
             contents.append(content_data)
+            continue
+        try:
+            contents.append(Content.from_dict(content_data))
+        except ContentError as exc:
+            logger.warning(f"Skipping unknown content type or invalid content: {exc}")
 
     return contents
+
+
+# region Internal Helper functions for unified Content
+
+
+def detect_media_type_from_base64(
+    *,
+    data_bytes: bytes | None = None,
+    data_str: str | None = None,
+    data_uri: str | None = None,
+) -> str | None:
+    """Detect media type from base64-encoded data by examining magic bytes.
+
+    This function examines the binary signature (magic bytes) at the start of the data
+    to identify common media types. It's reliable for binary formats like images, audio,
+    video, and documents, but cannot detect text-based formats like JSON or plain text.
+
+    Args:
+        data_bytes: Raw binary data.
+        data_str: Base64-encoded data (without data URI prefix).
+        data_uri: Full data URI string (e.g., "data:image/png;base64,iVBORw0KGgo...").
+            This will look at the actual data to determine the media_type and not at the URI prefix.
+            Will also not compare those two values.
+
+    Raises:
+        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
+
+    Returns:
+        The detected media type (e.g., 'image/png', 'audio/wav', 'application/pdf')
+        or None if the format is not recognized.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import detect_media_type_from_base64
+
+            # Detect from base64 string
+            base64_data = "iVBORw0KGgo..."
+            media_type = detect_media_type_from_base64(base64_data)
+            # Returns: "image/png"
+
+            # Works with data URIs too
+            data_uri = "data:image/png;base64,iVBORw0KGgo..."
+            media_type = detect_media_type_from_base64(data_uri)
+            # Returns: "image/png"
+    """
+    data: bytes | None = None
+    if data_bytes is not None:
+        data = data_bytes
+    if data_uri is not None:
+        if data is not None:
+            raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
+        # Remove data URI prefix if present
+        data_str = data_uri.split(";base64,", 1)[1]
+    if data_str is not None:
+        if data is not None:
+            raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
+        try:
+            data = base64.b64decode(data_str)
+        except Exception as exc:
+            raise ValueError("Invalid base64 data provided.") from exc
+    if data is None:
+        raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
+
+    # Check magic bytes for common formats
+    # Images
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if data.startswith(b"<svg") or data.startswith(b"<?xml"):
+        return "image/svg+xml"
+
+    # Documents
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+
+    # Audio
+    if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WAVE":
+        return "audio/wav"
+    if data.startswith(b"ID3") or data.startswith(b"\xff\xfb") or data.startswith(b"\xff\xf3"):
+        return "audio/mpeg"
+    if data.startswith(b"OggS"):
+        return "audio/ogg"
+    if data.startswith(b"fLaC"):
+        return "audio/flac"
+
+    return None
+
+
+def _get_data_bytes_as_str(content: "Content") -> str | None:
+    """Extract base64 data string from data URI.
+
+    Args:
+        content: The Content instance to extract data from.
+
+    Returns:
+        The base64-encoded data as a string, or None if not a data content type.
+
+    Raises:
+        ContentError: If the URI is not a valid data URI.
+    """
+    if content.type not in ("data", "uri"):
+        return None
+
+    uri = getattr(content, "uri", None)
+    if not uri:
+        return None
+
+    if not uri.startswith("data:"):
+        return None
+
+    if ";base64," not in uri:
+        raise ContentError("Data URI must use base64 encoding")
+
+    _, data = uri.split(";base64,", 1)
+    return data  # type: ignore[return-value, no-any-return]
+
+
+def _get_data_bytes(content: "Content") -> bytes | None:
+    """Extract and decode binary data from data URI.
+
+    Args:
+        content: The Content instance to extract data from.
+
+    Returns:
+        The decoded binary data, or None if not a data content type.
+
+    Raises:
+        ContentError: If the URI is not a valid data URI or decoding fails.
+    """
+    data_str = _get_data_bytes_as_str(content)
+    if data_str is None:
+        return None
+
+    try:
+        return base64.b64decode(data_str)
+    except Exception as e:
+        raise ContentError(f"Failed to decode base64 data: {e}") from e
+
+
+KNOWN_URI_SCHEMAS: Final[set[str]] = {"http", "https", "ftp", "ftps", "file", "s3", "gs", "azure", "blob"}
+
+
+def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
+    """Validate URI format and return validation result.
+
+    Args:
+        uri: The URI to validate.
+        media_type: Optional media type associated with the URI.
+
+    Returns:
+        If valid, returns a dict, with "type" key indicating "data" or "uri", along with the uri and media_type.
+    """
+    if not uri:
+        raise ContentError("URI cannot be empty")
+
+    # Check for data URI
+    if uri.startswith("data:"):
+        if "," not in uri:
+            raise ContentError("Data URI must contain a comma separating metadata and data")
+        prefix, _ = uri.split(",", 1)
+        if ";" in prefix:
+            parts = prefix.split(";")
+            if len(parts) < 2:
+                raise ContentError("Invalid data URI format")
+            # Check encoding
+            encoding = parts[-1]
+            if encoding not in ("base64", ""):
+                raise ContentError(f"Unsupported data URI encoding: {encoding}")
+            if media_type is None:
+                # attempt to extract:
+                media_type = parts[0][5:]  # Remove 'data:'
+        return {"type": "data", "uri": uri, "media_type": media_type}
+
+    # Check for common URI schemes
+    if ":" in uri:
+        scheme = uri.split(":", 1)[0].lower()
+        if not media_type:
+            logger.warning("Using URI without media type is not recommended.")
+        if scheme not in KNOWN_URI_SCHEMAS:
+            logger.info(f"Unknown URI scheme: {scheme}, allowed schemes are {KNOWN_URI_SCHEMAS}.")
+        return {"type": "uri", "uri": uri, "media_type": media_type}
+
+    # No scheme found
+    raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
+
+
+def _serialize_value(value: Any, exclude_none: bool) -> Any:
+    """Recursively serialize a value for to_dict."""
+    if value is None:
+        return None
+    if isinstance(value, Content):
+        return value.to_dict(exclude_none=exclude_none)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_serialize_value(item, exclude_none) for item in value]
+    if isinstance(value, Mapping):
+        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}
+    if hasattr(value, "to_dict"):
+        return value.to_dict()  # type: ignore[call-arg]
+    return value
 
 
 # endregion
@@ -222,1918 +345,1040 @@ KNOWN_MEDIA_TYPES = [
     "text/xml",
 ]
 
+# region Unified Content Types
 
-class UsageDetails(SerializationMixin):
-    """Provides usage details about a request/response.
+ContentType = Literal[
+    "text",
+    "text_reasoning",
+    "data",
+    "uri",
+    "error",
+    "function_call",
+    "function_result",
+    "usage",
+    "hosted_file",
+    "hosted_vector_store",
+    "code_interpreter_tool_call",
+    "code_interpreter_tool_result",
+    "image_generation_tool_call",
+    "image_generation_tool_result",
+    "mcp_server_tool_call",
+    "mcp_server_tool_result",
+    "function_approval_request",
+    "function_approval_response",
+]
 
-    Attributes:
-        input_token_count: The number of tokens in the input.
-        output_token_count: The number of tokens in the output.
-        total_token_count: The total number of tokens used to produce the response.
-        additional_counts: A dictionary of additional token counts, can be set by passing kwargs.
+
+class TextSpanRegion(TypedDict, total=False):
+    """TypedDict representation of a text span region annotation."""
+
+    type: Literal["text_span"]
+    start_index: int
+    end_index: int
+
+
+class Annotation(TypedDict, total=False):
+    """TypedDict representation of an annotation."""
+
+    type: Literal["citation"]
+    title: str
+    url: str
+    file_id: str
+    tool_name: str
+    snippet: str
+    annotated_regions: Sequence[TextSpanRegion]
+    additional_properties: dict[str, Any]
+    raw_representation: Any
+
+
+TContent = TypeVar("TContent", bound="Content")
+
+# endregion
+
+
+class UsageDetails(TypedDict, total=False):
+    """A dictionary representing usage details.
+
+    This is a non-closed dictionary, so any specific provider fields can be added as needed.
+    Whenever they can be mapped to standard fields, they will be.
+    """
+
+    input_token_count: int | None
+    output_token_count: int | None
+    total_token_count: int | None
+
+
+def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
+    """Add two UsageDetails dictionaries by summing all numeric values.
+
+    Args:
+        usage1: First usage details dictionary.
+        usage2: Second usage details dictionary.
+
+    Returns:
+        A new UsageDetails dictionary with summed values.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import UsageDetails
+            from agent_framework import UsageDetails, add_usage_details
 
-            # Create usage details
-            usage = UsageDetails(
-                input_token_count=100,
-                output_token_count=50,
-                total_token_count=150,
-            )
-            print(usage.total_token_count)  # 150
-
-            # With additional counts
-            usage = UsageDetails(
-                input_token_count=100,
-                output_token_count=50,
-                total_token_count=150,
-                reasoning_tokens=25,
-            )
-            print(usage.additional_counts["reasoning_tokens"])  # 25
-
-            # Combine usage details
-            usage1 = UsageDetails(input_token_count=100, output_token_count=50)
-            usage2 = UsageDetails(input_token_count=200, output_token_count=100)
-            combined = usage1 + usage2
-            print(combined.input_token_count)  # 300
+            usage1 = UsageDetails(input_token_count=5, output_token_count=10)
+            usage2 = UsageDetails(input_token_count=3, output_token_count=6)
+            combined = add_usage_details(usage1, usage2)
+            # Result: {'input_token_count': 8, 'output_token_count': 16}
     """
+    if usage1 is None:
+        return usage2 or UsageDetails()
+    if usage2 is None:
+        return usage1
 
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"_extra_counts"}
+    result = UsageDetails()
 
-    def __init__(
-        self,
-        input_token_count: int | None = None,
-        output_token_count: int | None = None,
-        total_token_count: int | None = None,
-        **kwargs: int,
-    ) -> None:
-        """Initializes the UsageDetails instance.
+    # Combine all keys from both dictionaries
+    all_keys = set(usage1.keys()) | set(usage2.keys())
 
-        Args:
-            input_token_count: The number of tokens in the input.
-            output_token_count: The number of tokens in the output.
-            total_token_count: The total number of tokens used to produce the response.
+    for key in all_keys:
+        val1 = usage1.get(key)
+        val2 = usage2.get(key)
 
-        Keyword Args:
-            **kwargs: Additional token counts, can be set by passing keyword arguments.
-                They can be retrieved through the `additional_counts` property.
-        """
-        self.input_token_count = input_token_count
-        self.output_token_count = output_token_count
-        self.total_token_count = total_token_count
+        # Sum if both present, otherwise use the non-None value
+        if val1 is not None and val2 is not None:
+            result[key] = val1 + val2  # type: ignore[literal-required, operator]
+        elif val1 is not None:
+            result[key] = val1  # type: ignore[literal-required]
+        elif val2 is not None:
+            result[key] = val2  # type: ignore[literal-required]
 
-        # Validate that all kwargs are integers (preserving Pydantic behavior)
-        self._extra_counts: dict[str, int] = {}
-        for key, value in kwargs.items():
-            if not isinstance(value, int):
-                raise ValueError(f"Additional counts must be integers, got {type(value).__name__}")
-            self._extra_counts[key] = value
-
-    def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Convert the UsageDetails instance to a dictionary.
-
-        Keyword Args:
-            exclude_none: Whether to exclude None values from the output.
-            exclude: Set of field names to exclude from the output.
-
-        Returns:
-            Dictionary representation of the UsageDetails instance.
-        """
-        # Get the base dict from parent class
-        result = super().to_dict(exclude_none=exclude_none, exclude=exclude)
-
-        # Add additional counts (extra fields)
-        if exclude is None:
-            exclude = set()
-
-        for key, value in self._extra_counts.items():
-            if key in exclude:
-                continue
-            if exclude_none and value is None:
-                continue
-            result[key] = value
-
-        return result
-
-    def __str__(self) -> str:
-        """Returns a string representation of the usage details."""
-        return self.to_json()
-
-    @property
-    def additional_counts(self) -> dict[str, int]:
-        """Represents well-known additional counts for usage. This is not an exhaustive list.
-
-        Remarks:
-            To make it possible to avoid collisions between similarly-named, but unrelated, additional counts
-            between different AI services, any keys not explicitly defined here should be prefixed with the
-            name of the AI service, e.g., "openai." or "azure.". The separator "." was chosen because it cannot
-            be a legal character in a JSON key.
-
-            Over time additional counts may be added to the base class.
-        """
-        return self._extra_counts
-
-    def __setitem__(self, key: str, value: int) -> None:
-        """Sets an additional count for the usage details."""
-        if not isinstance(value, int):
-            raise ValueError("Additional counts must be integers.")
-        self._extra_counts[key] = value
-
-    def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
-        """Combines two `UsageDetails` instances."""
-        if not other:
-            return self
-        if not isinstance(other, UsageDetails):
-            raise ValueError("Can only add two usage details objects together.")
-
-        additional_counts = self.additional_counts.copy()
-        if other.additional_counts:
-            for key, value in other.additional_counts.items():
-                additional_counts[key] = additional_counts.get(key, 0) + (value or 0)
-
-        return UsageDetails(
-            input_token_count=(self.input_token_count or 0) + (other.input_token_count or 0),
-            output_token_count=(self.output_token_count or 0) + (other.output_token_count or 0),
-            total_token_count=(self.total_token_count or 0) + (other.total_token_count or 0),
-            **additional_counts,
-        )
-
-    def __iadd__(self, other: "UsageDetails | None") -> Self:
-        if not other:
-            return self
-        if not isinstance(other, UsageDetails):
-            raise ValueError("Can only add usage details objects together.")
-
-        self.input_token_count = (self.input_token_count or 0) + (other.input_token_count or 0)
-        self.output_token_count = (self.output_token_count or 0) + (other.output_token_count or 0)
-        self.total_token_count = (self.total_token_count or 0) + (other.total_token_count or 0)
-
-        for key, value in other.additional_counts.items():
-            self.additional_counts[key] = self.additional_counts.get(key, 0) + (value or 0)
-
-        return self
-
-    def __eq__(self, other: object) -> bool:
-        """Check if two UsageDetails instances are equal."""
-        if not isinstance(other, UsageDetails):
-            return False
-
-        return (
-            self.input_token_count == other.input_token_count
-            and self.output_token_count == other.output_token_count
-            and self.total_token_count == other.total_token_count
-            and self.additional_counts == other.additional_counts
-        )
+    return result
 
 
-# region BaseAnnotation
+# region Content Class
 
 
-class TextSpanRegion(SerializationMixin):
-    """Represents a region of text that has been annotated.
+class Content:
+    """Unified content container covering all content variants.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import TextSpanRegion
-
-            # Create a text span region
-            region = TextSpanRegion(start_index=0, end_index=10)
-            print(region.type)  # "text_span"
+    This class provides a single unified type that handles all content variants.
+    Use the class methods like `Content.from_text()`, `Content.from_data()`,
+    `Content.from_uri()`, etc. to create instances.
     """
 
     def __init__(
         self,
+        type: ContentType,
         *,
-        start_index: int | None = None,
-        end_index: int | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize TextSpanRegion.
-
-        Keyword Args:
-            start_index: The start index of the text span.
-            end_index: The end index of the text span.
-            **kwargs: Additional keyword arguments.
-        """
-        self.type: Literal["text_span"] = "text_span"
-        self.start_index = start_index
-        self.end_index = end_index
-
-        # Handle any additional kwargs
-        for key, value in kwargs.items():
-            if not hasattr(self, key):
-                setattr(self, key, value)
-
-
-AnnotatedRegions = TextSpanRegion
-
-
-class BaseAnnotation(SerializationMixin):
-    """Base class for all AI Annotation types."""
-
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
-
-    def __init__(
-        self,
-        *,
-        annotated_regions: list[AnnotatedRegions] | list[MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize BaseAnnotation.
-
-        Keyword Args:
-            annotated_regions: A list of regions that have been annotated. Can be region objects or dicts.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content from an underlying implementation.
-            **kwargs: Additional keyword arguments (merged into additional_properties).
-        """
-        # Handle annotated_regions conversion from dict format (for SerializationMixin support)
-        self.annotated_regions: list[AnnotatedRegions] | None = None
-        if annotated_regions is not None:
-            converted_regions: list[AnnotatedRegions] = []
-            for region_data in annotated_regions:
-                if isinstance(region_data, MutableMapping):
-                    if region_data.get("type", "") == "text_span":
-                        converted_regions.append(TextSpanRegion.from_dict(region_data))
-                    else:
-                        logger.warning(f"Unknown region type: {region_data.get('type', '')} in {region_data}")
-                else:
-                    # Already a region object, keep as is
-                    converted_regions.append(region_data)
-            self.annotated_regions = converted_regions
-
-        # Merge kwargs into additional_properties
-        self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs)
-
-        self.raw_representation = raw_representation
-
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
-        """Convert the instance to a dictionary.
-
-        Extracts additional_properties fields to the root level.
-
-        Keyword Args:
-            exclude: Set of field names to exclude from serialization.
-            exclude_none: Whether to exclude None values from the output. Defaults to True.
-
-        Returns:
-            Dictionary representation of the instance.
-        """
-        # Get the base dict from SerializationMixin
-        result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-
-        # Extract additional_properties to root level
-        if self.additional_properties:
-            result.update(self.additional_properties)
-
-        return result
-
-
-class CitationAnnotation(BaseAnnotation):
-    """Represents a citation annotation.
-
-    Attributes:
-        type: The type of content, which is always "citation" for this class.
-        title: The title of the cited content.
-        url: The URL of the cited content.
-        file_id: The file identifier of the cited content, if applicable.
-        tool_name: The name of the tool that generated the citation, if applicable.
-        snippet: A snippet of the cited content, if applicable.
-        annotated_regions: A list of regions that have been annotated with this citation.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content from an underlying implementation.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import CitationAnnotation, TextSpanRegion
-
-            # Create a citation annotation
-            citation = CitationAnnotation(
-                title="Agent Framework Documentation",
-                url="https://example.com/docs",
-                snippet="This is a relevant excerpt...",
-                annotated_regions=[TextSpanRegion(start_index=0, end_index=25)],
-            )
-            print(citation.title)  # "Agent Framework Documentation"
-    """
-
-    def __init__(
-        self,
-        *,
-        title: str | None = None,
-        url: str | None = None,
-        file_id: str | None = None,
-        tool_name: str | None = None,
-        snippet: str | None = None,
-        annotated_regions: list[AnnotatedRegions] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize CitationAnnotation.
-
-        Keyword Args:
-            title: The title of the cited content.
-            url: The URL of the cited content.
-            file_id: The file identifier of the cited content, if applicable.
-            tool_name: The name of the tool that generated the citation, if applicable.
-            snippet: A snippet of the cited content, if applicable.
-            annotated_regions: A list of regions that have been annotated with this citation.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content from an underlying implementation.
-            **kwargs: Additional keyword arguments.
-        """
-        super().__init__(
-            annotated_regions=annotated_regions,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.title = title
-        self.url = url
-        self.file_id = file_id
-        self.tool_name = tool_name
-        self.snippet = snippet
-        self.type: Literal["citation"] = "citation"
-
-
-Annotations = CitationAnnotation
-
-
-# region BaseContent
-
-TContents = TypeVar("TContents", bound="BaseContent")
-
-
-class BaseContent(SerializationMixin):
-    """Represents content used by AI services.
-
-    Attributes:
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content from an underlying implementation.
-
-    """
-
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
-
-    def __init__(
-        self,
-        *,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize BaseContent.
-
-        Keyword Args:
-            annotations: Optional annotations associated with the content. Can be annotation objects or dicts.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content from an underlying implementation.
-            **kwargs: Additional keyword arguments (merged into additional_properties).
-        """
-        self.annotations: list[Annotations] | None = None
-        # Handle annotations conversion from dict format (for SerializationMixin support)
-        if annotations is not None:
-            converted_annotations: list[Annotations] = []
-            for annotation_data in annotations:
-                if isinstance(annotation_data, Annotations):
-                    # If it's already an annotation object, keep it as is
-                    converted_annotations.append(annotation_data)
-                elif isinstance(annotation_data, MutableMapping) and annotation_data.get("type", "") == "citation":
-                    converted_annotations.append(CitationAnnotation.from_dict(annotation_data))
-                else:
-                    logger.debug(
-                        f"Unknown annotation found: {annotation_data.get('type', 'no_type')}"
-                        f" with data: {annotation_data}"
-                    )
-            self.annotations = converted_annotations
-
-        # Merge kwargs into additional_properties
-        self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs)
-
-        self.raw_representation = raw_representation
-
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
-        """Convert the instance to a dictionary.
-
-        Extracts additional_properties fields to the root level.
-
-        Keyword Args:
-            exclude: Set of field names to exclude from serialization.
-            exclude_none: Whether to exclude None values from the output. Defaults to True.
-
-        Returns:
-            Dictionary representation of the instance.
-        """
-        # Get the base dict from SerializationMixin
-        result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-
-        # Extract additional_properties to root level
-        if self.additional_properties:
-            result.update(self.additional_properties)
-
-        return result
-
-
-class TextContent(BaseContent):
-    """Represents text content in a chat.
-
-    Attributes:
-        text: The text content represented by this instance.
-        type: The type of content, which is always "text" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import TextContent
-
-            # Create basic text content
-            text = TextContent(text="Hello, world!")
-            print(text.text)  # "Hello, world!"
-
-            # Concatenate text content
-            text1 = TextContent(text="Hello, ")
-            text2 = TextContent(text="world!")
-            combined = text1 + text2
-            print(combined.text)  # "Hello, world!"
-    """
-
-    def __init__(
-        self,
-        text: str,
-        *,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        **kwargs: Any,
-    ):
-        """Initializes a TextContent instance.
-
-        Args:
-            text: The text content represented by this instance.
-
-        Keyword Args:
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            annotations: Optional annotations associated with the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.text = text
-        self.type: Literal["text"] = "text"
-
-    def __add__(self, other: "TextContent") -> "TextContent":
-        """Concatenate two TextContent instances.
-
-        The following things happen:
-        The text is concatenated.
-        The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
-        The raw_representations are combined into a list of them, if they both have one.
-        """
-        if not isinstance(other, TextContent):
-            raise TypeError("Incompatible type")
-
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if self.annotations is None:
-            annotations = other.annotations
-        elif other.annotations is None:
-            annotations = self.annotations
-        else:
-            annotations = self.annotations + other.annotations
-
-        # Create new instance using from_dict for proper deserialization
-        result_dict = {
-            "text": self.text + other.text,
-            "type": "text",
-            "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
-            "additional_properties": {
-                **(other.additional_properties or {}),
-                **(self.additional_properties or {}),
-            },
-            "raw_representation": raw_representation,
-        }
-        return TextContent.from_dict(result_dict)
-
-    def __iadd__(self, other: "TextContent") -> Self:
-        """In-place concatenation of two TextContent instances.
-
-        The following things happen:
-        The text is concatenated.
-        The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
-        The raw_representations are combined into a list of them, if they both have one.
-        """
-        if not isinstance(other, TextContent):
-            raise TypeError("Incompatible type")
-
-        # Concatenate text
-        self.text += other.text
-
-        # Merge additional properties (self takes precedence)
-        if self.additional_properties is None:
-            self.additional_properties = {}
-        if other.additional_properties:
-            # Update from other first, then restore self's values to maintain precedence
-            self_props = self.additional_properties.copy()
-            self.additional_properties.update(other.additional_properties)
-            self.additional_properties.update(self_props)
-
-        # Merge raw representations
-        if self.raw_representation is None:
-            self.raw_representation = other.raw_representation
-        elif other.raw_representation is not None:
-            self.raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if other.annotations:
-            if self.annotations is None:
-                self.annotations = []
-            self.annotations.extend(other.annotations)
-
-        return self
-
-
-class TextReasoningContent(BaseContent):
-    """Represents text reasoning content in a chat.
-
-    Remarks:
-        This class and `TextContent` are superficially similar, but distinct.
-
-    Attributes:
-        text: The text content represented by this instance.
-        type: The type of content, which is always "text_reasoning" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import TextReasoningContent
-
-            # Create reasoning content
-            reasoning = TextReasoningContent(text="Let me think step by step...")
-            print(reasoning.text)  # "Let me think step by step..."
-
-            # Concatenate reasoning content
-            reasoning1 = TextReasoningContent(text="First, ")
-            reasoning2 = TextReasoningContent(text="second, ")
-            combined = reasoning1 + reasoning2
-            print(combined.text)  # "First, second, "
-    """
-
-    def __init__(
-        self,
-        text: str | None,
-        *,
+        # Text content fields
+        text: str | None = None,
         protected_data: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        **kwargs: Any,
-    ):
-        """Initializes a TextReasoningContent instance.
-
-        Args:
-            text: The text content represented by this instance.
-
-        Keyword Args:
-            protected_data: This property is used to store data from a provider that should be roundtripped back to the
-                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
-                information that is only intended to be sent back to the provider and not displayed to the user. It's
-                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
-                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
-
-                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
-                to only be understood by the provider that created it. The data is often represented as a more complex
-                object, so it should be serialized to a string before storing so that the whole object is easily
-                serializable without loss.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            annotations: Optional annotations associated with the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.text = text
-        self.protected_data = protected_data
-        self.type: Literal["text_reasoning"] = "text_reasoning"
-
-    def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
-        """Concatenate two TextReasoningContent instances.
-
-        The following things happen:
-        The text is concatenated.
-        The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
-        The raw_representations are combined into a list of them, if they both have one.
-        """
-        if not isinstance(other, TextReasoningContent):
-            raise TypeError("Incompatible type")
-
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if self.annotations is None:
-            annotations = other.annotations
-        elif other.annotations is None:
-            annotations = self.annotations
-        else:
-            annotations = self.annotations + other.annotations
-
-        # Replace protected data.
-        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
-        protected_data = other.protected_data or self.protected_data
-
-        # Create new instance using from_dict for proper deserialization
-        result_dict = {
-            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
-            "type": "text_reasoning",
-            "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
-            "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
-            "raw_representation": raw_representation,
-            "protected_data": protected_data,
-        }
-        return TextReasoningContent.from_dict(result_dict)
-
-    def __iadd__(self, other: "TextReasoningContent") -> Self:
-        """In-place concatenation of two TextReasoningContent instances.
-
-        The following things happen:
-        The text is concatenated.
-        The annotations are combined.
-        The additional properties are merged, with the values of shared keys of the first instance taking precedence.
-        The raw_representations are combined into a list of them, if they both have one.
-        """
-        if not isinstance(other, TextReasoningContent):
-            raise TypeError("Incompatible type")
-
-        # Concatenate text
-        if self.text is not None or other.text is not None:
-            self.text = (self.text or "") + (other.text or "")
-        # if both are None, should keep as None
-
-        # Merge additional properties (self takes precedence)
-        if self.additional_properties is None:
-            self.additional_properties = {}
-        if other.additional_properties:
-            # Update from other first, then restore self's values to maintain precedence
-            self_props = self.additional_properties.copy()
-            self.additional_properties.update(other.additional_properties)
-            self.additional_properties.update(self_props)
-
-        # Merge raw representations
-        if self.raw_representation is None:
-            self.raw_representation = other.raw_representation
-        elif other.raw_representation is not None:
-            self.raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Replace protected data.
-        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
-        if other.protected_data is not None:
-            self.protected_data = other.protected_data
-
-        # Merge annotations
-        if other.annotations:
-            if self.annotations is None:
-                self.annotations = []
-            self.annotations.extend(other.annotations)
-
-        return self
-
-
-TDataContent = TypeVar("TDataContent", bound="DataContent")
-
-
-class DataContent(BaseContent):
-    """Represents binary data content with an associated media type (also known as a MIME type).
-
-    Important:
-        This is for binary data that is represented as a data URI, not for online resources.
-        Use ``UriContent`` for online resources.
-
-    Attributes:
-        uri: The URI of the data represented by this instance, typically in the form of a data URI.
-            Should be in the form: "data:{media_type};base64,{base64_data}".
-        media_type: The media type of the data.
-        type: The type of content, which is always "data" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import DataContent
-
-            # Create from binary data
-            image_data = b"raw image bytes"
-            data_content = DataContent(data=image_data, media_type="image/png")
-
-            # Create from base64-encoded string
-            base64_string = "iVBORw0KGgoAAAANS..."
-            data_content = DataContent(data=base64_string, media_type="image/png")
-
-            # Create from data URI
-            data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
-            data_content = DataContent(uri=data_uri)
-
-            # Check media type
-            if data_content.has_top_level_media_type("image"):
-                print("This is an image")
-    """
-
-    @overload
-    def __init__(
-        self,
-        *,
-        uri: str,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a DataContent instance with a URI.
-
-        Important:
-            This is for binary data that is represented as a data URI, not for online resources.
-            Use ``UriContent`` for online resources.
-
-        Keyword Args:
-            uri: The URI of the data represented by this instance.
-                Should be in the form: "data:{media_type};base64,{base64_data}".
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-
-    @overload
-    def __init__(
-        self,
-        *,
-        data: bytes,
-        media_type: str,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a DataContent instance with binary data.
-
-        Important:
-            This is for binary data that is represented as a data URI, not for online resources.
-            Use ``UriContent`` for online resources.
-
-        Keyword Args:
-            data: The binary data represented by this instance.
-                The data is transformed into a base64-encoded data URI.
-            media_type: The media type of the data.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-
-    @overload
-    def __init__(
-        self,
-        *,
-        data: str,
-        media_type: str,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a DataContent instance with base64-encoded string data.
-
-        Important:
-            This is for binary data that is represented as a data URI, not for online resources.
-            Use ``UriContent`` for online resources.
-
-        Keyword Args:
-            data: The base64-encoded string data represented by this instance.
-                The data is used directly to construct a data URI.
-            media_type: The media type of the data.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-
-    def __init__(
-        self,
-        *,
+        # Data/URI content fields
         uri: str | None = None,
-        data: bytes | str | None = None,
         media_type: str | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a DataContent instance.
-
-        Important:
-            This is for binary data that is represented as a data URI, not for online resources.
-            Use ``UriContent`` for online resources.
-
-        Keyword Args:
-            uri: The URI of the data represented by this instance.
-                Should be in the form: "data:{media_type};base64,{base64_data}".
-            data: The binary data or base64-encoded string represented by this instance.
-                If bytes, the data is transformed into a base64-encoded data URI.
-                If str, it is assumed to be already base64-encoded and used directly.
-            media_type: The media type of the data.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        if uri is None:
-            if data is None or media_type is None:
-                raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-
-            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
-            uri = f"data:{media_type};base64,{base64_data}"
-
-        # Validate URI format and extract media type if not provided
-        validated_uri = self._validate_uri(uri)
-        if media_type is None:
-            match = URI_PATTERN.match(validated_uri)
-            if match:
-                media_type = match.group("media_type")
-
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.uri = validated_uri
-        self.media_type = media_type
-        self.type: Literal["data"] = "data"
-
-    @classmethod
-    def _validate_uri(cls, uri: str) -> str:
-        """Validates the URI format and extracts the media type.
-
-        Minimal data URI parser based on RFC 2397: https://datatracker.ietf.org/doc/html/rfc2397.
-        """
-        match = URI_PATTERN.match(uri)
-        if not match:
-            raise ValueError(f"Invalid data URI format: {uri}")
-        media_type = match.group("media_type")
-        if media_type not in KNOWN_MEDIA_TYPES:
-            raise ValueError(f"Unknown media type: {media_type}")
-        return uri
-
-    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
-        return _has_top_level_media_type(self.media_type, top_level_media_type)
-
-    @staticmethod
-    def detect_image_format_from_base64(image_base64: str) -> str:
-        """Detect image format from base64 data by examining the binary header.
-
-        Args:
-            image_base64: Base64 encoded image data
-
-        Returns:
-            Image format as string (png, jpeg, webp, gif) with png as fallback
-        """
-        try:
-            # Constants for image format detection
-            # ~75 bytes of binary data should be enough to detect most image formats
-            FORMAT_DETECTION_BASE64_CHARS = 100
-
-            # Decode a small portion to detect format
-            decoded_data = base64.b64decode(image_base64[:FORMAT_DETECTION_BASE64_CHARS])
-            if decoded_data.startswith(b"\x89PNG"):
-                return "png"
-            if decoded_data.startswith(b"\xff\xd8\xff"):
-                return "jpeg"
-            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
-                return "webp"
-            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
-                return "gif"
-            return "png"  # Default fallback
-        except Exception:
-            return "png"  # Fallback if decoding fails
-
-    @staticmethod
-    def create_data_uri_from_base64(image_base64: str) -> tuple[str, str]:
-        """Create a data URI and media type from base64 image data.
-
-        Args:
-            image_base64: Base64 encoded image data
-
-        Returns:
-            Tuple of (data_uri, media_type)
-        """
-        format_type = DataContent.detect_image_format_from_base64(image_base64)
-        uri = f"data:image/{format_type};base64,{image_base64}"
-        media_type = f"image/{format_type}"
-        return uri, media_type
-
-    def get_data_bytes_as_str(self) -> str:
-        """Extracts and returns the base64-encoded data from the data URI.
-
-        Returns:
-            The binary data as str.
-        """
-        match = URI_PATTERN.match(self.uri)
-        if not match:
-            raise ValueError(f"Invalid data URI format: {self.uri}")
-        return match.group("base64_data")
-
-    def get_data_bytes(self) -> bytes:
-        """Extracts and returns the binary data from the data URI.
-
-        Returns:
-            The binary data as bytes.
-        """
-        base64_data = self.get_data_bytes_as_str()
-        return base64.b64decode(base64_data)
-
-
-class UriContent(BaseContent):
-    """Represents a URI content.
-
-    Important:
-        This is used for content that is identified by a URI, such as an image or a file.
-        For (binary) data URIs, use ``DataContent`` instead.
-
-    Attributes:
-        uri: The URI of the content, e.g., 'https://example.com/image.png'.
-        media_type: The media type of the content, e.g., 'image/png', 'application/json', etc.
-        type: The type of content, which is always "uri" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import UriContent
-
-            # Create URI content for an image
-            image_uri = UriContent(
-                uri="https://example.com/image.png",
-                media_type="image/png",
-            )
-
-            # Create URI content for a document
-            doc_uri = UriContent(
-                uri="https://example.com/document.pdf",
-                media_type="application/pdf",
-            )
-
-            # Check if it's an image
-            if image_uri.has_top_level_media_type("image"):
-                print("This is an image URI")
-    """
-
-    def __init__(
-        self,
-        uri: str,
-        media_type: str,
-        *,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a UriContent instance.
-
-        Remarks:
-            This is used for content that is identified by a URI, such as an image or a file.
-            For (binary) data URIs, use `DataContent` instead.
-
-        Args:
-            uri: The URI of the content.
-            media_type: The media type of the content.
-
-        Keyword Args:
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.uri = uri
-        self.media_type = media_type
-        self.type: Literal["uri"] = "uri"
-
-    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
-        """Returns a boolean indicating if the media type has the specified top-level media type.
-
-        Args:
-            top_level_media_type: The top-level media type to check for, allowed values:
-                "image", "text", "application", "audio".
-
-        """
-        return _has_top_level_media_type(self.media_type, top_level_media_type)
-
-
-def _has_top_level_media_type(
-    media_type: str | None, top_level_media_type: Literal["application", "audio", "image", "text"]
-) -> bool:
-    if media_type is None:
-        return False
-
-    slash_index = media_type.find("/")
-    span = media_type[:slash_index] if slash_index >= 0 else media_type
-    span = span.strip()
-    return span.lower() == top_level_media_type.lower()
-
-
-class ErrorContent(BaseContent):
-    """Represents an error.
-
-    Remarks:
-        Typically used for non-fatal errors, where something went wrong as part of the operation,
-        but the operation was still able to continue.
-
-    Attributes:
-        error_code: The error code associated with the error.
-        details: Additional details about the error.
-        message: The error message.
-        type: The type of content, which is always "error" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import ErrorContent
-
-            # Create an error content
-            error = ErrorContent(
-                message="Failed to process request",
-                error_code="PROCESSING_ERROR",
-                details="The input format was invalid",
-            )
-            print(str(error))  # "Error PROCESSING_ERROR: Failed to process request"
-
-            # Error without code
-            simple_error = ErrorContent(message="Something went wrong")
-            print(str(simple_error))  # "Something went wrong"
-    """
-
-    def __init__(
-        self,
-        *,
+        # Error content fields
         message: str | None = None,
         error_code: str | None = None,
-        details: str | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        error_details: str | None = None,
+        # Usage content fields
+        usage_details: dict[str, Any] | UsageDetails | None = None,
+        # Function call/result fields
+        call_id: str | None = None,
+        name: str | None = None,
+        arguments: str | Mapping[str, Any] | None = None,
+        exception: str | None = None,
+        result: Any = None,
+        # Hosted file/vector store fields
+        file_id: str | None = None,
+        vector_store_id: str | None = None,
+        # Code interpreter tool fields
+        inputs: list["Content"] | None = None,
+        outputs: list["Content"] | Any | None = None,
+        # Image generation tool fields
+        image_id: str | None = None,
+        # MCP server tool fields
+        tool_name: str | None = None,
+        server_name: str | None = None,
+        output: Any = None,
+        # Function approval fields
+        id: str | None = None,
+        function_call: "Content | None" = None,
+        user_input_request: bool | None = None,
+        approved: bool | None = None,
+        # Common fields
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
-        """Initializes an ErrorContent instance.
+        """Create a content instance.
 
-        Keyword Args:
-            message: The error message.
-            error_code: The error code associated with the error.
-            details: Additional details about the error.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
+        Prefer using the classmethod constructors like `Content.from_text()` instead of calling __init__ directly.
         """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
+        self.type = type
+        self.annotations = annotations
+        self.additional_properties: dict[str, Any] = additional_properties or {}  # type: ignore[assignment]
+        self.raw_representation = raw_representation
+
+        # Set all content-specific attributes
+        self.text = text
+        self.protected_data = protected_data
+        self.uri = uri
+        self.media_type = media_type
         self.message = message
         self.error_code = error_code
-        self.details = details
-        self.type: Literal["error"] = "error"
-
-    def __str__(self) -> str:
-        """Returns a string representation of the error."""
-        return f"Error {self.error_code}: {self.message}" if self.error_code else self.message or "Unknown error"
-
-
-class FunctionCallContent(BaseContent):
-    """Represents a function call request.
-
-    Attributes:
-        call_id: The function call identifier.
-        name: The name of the function requested.
-        arguments: The arguments requested to be provided to the function.
-        exception: Any exception that occurred while mapping the original function call data to this representation.
-        type: The type of content, which is always "function_call" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import FunctionCallContent
-
-            # Create a function call
-            func_call = FunctionCallContent(
-                call_id="call_123",
-                name="get_weather",
-                arguments={"location": "Seattle", "unit": "celsius"},
-            )
-
-            # Parse arguments
-            args = func_call.parse_arguments()
-            print(args["location"])  # "Seattle"
-
-            # Create with string arguments (gradual completion)
-            func_call_partial_1 = FunctionCallContent(
-                call_id="call_124",
-                name="search",
-                arguments='{"query": ',
-            )
-            func_call_partial_2 = FunctionCallContent(
-                call_id="call_124",
-                name="search",
-                arguments='"latest news"}',
-            )
-            full_call = func_call_partial_1 + func_call_partial_2
-            args = full_call.parse_arguments()
-            print(args["query"])  # "latest news"
-    """
-
-    def __init__(
-        self,
-        *,
-        call_id: str,
-        name: str,
-        arguments: str | dict[str, Any | None] | None = None,
-        exception: Exception | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a FunctionCallContent instance.
-
-        Keyword Args:
-            call_id: The function call identifier.
-            name: The name of the function requested.
-            arguments: The arguments requested to be provided to the function,
-                can be a string to allow gradual completion of the args.
-            exception: Any exception that occurred while mapping the original function call data to this representation.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
+        self.error_details = error_details
+        self.usage_details = usage_details
         self.call_id = call_id
         self.name = name
         self.arguments = arguments
         self.exception = exception
-        self.type: Literal["function_call"] = "function_call"
+        self.result = result
+        self.file_id = file_id
+        self.vector_store_id = vector_store_id
+        self.inputs = inputs
+        self.outputs = outputs
+        self.image_id = image_id
+        self.tool_name = tool_name
+        self.server_name = server_name
+        self.output = output
+        self.id = id
+        self.function_call = function_call
+        self.user_input_request = user_input_request
+        self.approved = approved
 
-    def parse_arguments(self) -> dict[str, Any | None] | None:
-        """Parse the arguments into a dictionary.
-
-        If they cannot be parsed as json or if the resulting json is not a dict,
-        they are returned as a dictionary with a single key "raw".
-        """
-        if isinstance(self.arguments, str):
-            # If arguments are a string, try to parse it as JSON
-            try:
-                loaded = json.loads(self.arguments)
-                if isinstance(loaded, dict):
-                    return loaded  # type:ignore
-                return {"raw": loaded}
-            except (json.JSONDecodeError, TypeError):
-                return {"raw": self.arguments}
-        return self.arguments
-
-    def __add__(self, other: "FunctionCallContent") -> "FunctionCallContent":
-        if not isinstance(other, FunctionCallContent):
-            raise TypeError("Incompatible type")
-        if other.call_id and self.call_id != other.call_id:
-            raise AdditionItemMismatch("", log_level=None)
-        if not self.arguments:
-            arguments = other.arguments
-        elif not other.arguments:
-            arguments = self.arguments
-        elif isinstance(self.arguments, str) and isinstance(other.arguments, str):
-            arguments = self.arguments + other.arguments
-        elif isinstance(self.arguments, dict) and isinstance(other.arguments, dict):
-            arguments = {**self.arguments, **other.arguments}
-        else:
-            raise TypeError("Incompatible argument types")
-        return FunctionCallContent(
-            call_id=self.call_id,
-            name=self.name,
-            arguments=arguments,
-            exception=self.exception or other.exception,
-            additional_properties={**(self.additional_properties or {}), **(other.additional_properties or {})},
-            raw_representation=self.raw_representation or other.raw_representation,
+    @classmethod
+    def from_text(
+        cls: type[TContent],
+        text: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create text content."""
+        return cls(
+            "text",
+            text=text,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
         )
 
-
-class FunctionResultContent(BaseContent):
-    """Represents the result of a function call.
-
-    Attributes:
-        call_id: The identifier of the function call for which this is the result.
-        result: The result of the function call, or a generic error message if the function call failed.
-        exception: An exception that occurred if the function call failed.
-        type: The type of content, which is always "function_result" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import FunctionResultContent
-
-            # Create a successful function result
-            result = FunctionResultContent(
-                call_id="call_123",
-                result={"temperature": 22, "condition": "sunny"},
-            )
-
-            # Create a failed function result
-            failed_result = FunctionResultContent(
-                call_id="call_124",
-                result="Function execution failed",
-                exception=ValueError("Invalid location"),
-            )
-    """
-
-    def __init__(
-        self,
+    @classmethod
+    def from_text_reasoning(
+        cls: type[TContent],
         *,
-        call_id: str,
-        result: Any | None = None,
-        exception: Exception | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a FunctionResultContent instance.
+        text: str | None = None,
+        protected_data: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create text reasoning content."""
+        return cls(
+            "text_reasoning",
+            text=text,
+            protected_data=protected_data,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_data(
+        cls: type[TContent],
+        data: bytes,
+        media_type: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        r"""Create data content from raw binary data.
+
+        Use this to create content from binary data (images, audio, documents, etc.).
+        The data will be automatically base64-encoded into a data URI.
+
+        Args:
+            data: Raw binary data as bytes. This should be the actual binary data,
+                not a base64-encoded string. If you have a base64 string,
+                decode it first: base64.b64decode(base64_string)
+            media_type: The MIME type of the data (e.g., "image/png", "application/pdf").
+                If you don't know the media type and have base64 data, you can detect it in some cases:
+
+                .. code-block:: python
+
+                    from agent_framework import detect_media_type_from_base64, Content
+
+                    media_type = detect_media_type_from_base64(base64_string)
+                    if media_type is None:
+                        raise ValueError("Could not detect media type")
+                    data_bytes = base64.b64decode(base64_string)
+                    content = Content.from_data(data=data_bytes, media_type=media_type)
 
         Keyword Args:
-            call_id: The identifier of the function call for which this is the result.
-            result: The result of the function call, or a generic error message if the function call failed.
-            exception: An exception that occurred if the function call failed.
             annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from an underlying implementation.
+
+        Returns:
+            A Content instance with type="data".
+
+        Raises:
+            TypeError: If data is not bytes.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework import Content, detect_media_type_from_base64
+                import base64
+
+                # Create from raw binary data with known media type
+                image_bytes = b"\x89PNG\r\n\x1a\n..."
+                content = Content.from_data(data=image_bytes, media_type="image/png")
+
+                # If you have a base64 string and need to detect media type
+                base64_string = "iVBORw0KGgo..."
+                media_type = detect_media_type_from_base64(base64_string)
+                if media_type is None:
+                    raise ValueError("Unknown media type")
+                image_bytes = base64.b64decode(base64_string)
+                content = Content.from_data(data=image_bytes, media_type=media_type)
         """
-        super().__init__(
+        try:
+            encoded_data = base64.b64encode(data).decode("utf-8")
+        except TypeError as e:
+            raise TypeError(
+                "Could not encode data to base64. Ensure 'data' is of type bytes.Or another b64encode compatible type."
+            ) from e
+        return cls(
+            "data",
+            uri=f"data:{media_type};base64,{encoded_data}",
+            media_type=media_type,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.call_id = call_id
-        self.result = result
-        self.exception = exception
-        self.type: Literal["function_result"] = "function_result"
 
-
-class UsageContent(BaseContent):
-    """Represents usage information associated with a chat request and response.
-
-    Attributes:
-        details: The usage information, including input and output token counts, and any additional counts.
-        type: The type of content, which is always "usage" for this class.
-        annotations: Optional annotations associated with the content.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import UsageContent, UsageDetails
-
-            # Create usage content
-            usage = UsageContent(
-                details=UsageDetails(
-                    input_token_count=100,
-                    output_token_count=50,
-                    total_token_count=150,
-                ),
-            )
-            print(usage.details.total_token_count)  # 150
-    """
-
-    def __init__(
-        self,
-        details: UsageDetails | MutableMapping[str, Any],
+    @classmethod
+    def from_uri(
+        cls: type[TContent],
+        uri: str,
         *,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a UsageContent instance."""
-        super().__init__(
+        media_type: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create content from a URI, can be both data URI or external URI.
+
+        Use this when you already have a properly formed data URI
+        (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        Or when you receive a link to a online resource (e.g., "https://example.com/image.png").
+
+        Args:
+            uri: A URI string,
+                that either includes the media type and base64-encoded data,
+                or a valid URL to an external resource.
+
+        Keyword Args:
+            media_type: The MIME type of the data (e.g., "image/png", "application/pdf").
+                This is optional but recommended for external URIs.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from an underlying implementation.
+
+        Raises:
+            ContentError: If the URI is not valid.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework import Content
+
+                # Create from a data URI
+                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo...", media_type="image/png")
+                assert content.type == "data"
+
+                # Create from an external URI
+                content = Content.from_uri(uri="https://example.com/image.png", media_type="image/png")
+                assert content.type == "uri"
+
+                # When receiving a raw already encode data string, you can do this:
+                raw_base64_string = "iVBORw0KGgo..."
+                content = Content.from_uri(
+                    uri=f"data:{(detect_media_type_from_base64(data_str=raw_base64_string) or 'image/png')};base64,{
+                        raw_base64_string
+                    }"
+                )
+
+        Returns:
+            A Content instance with type="data" for data URIs or type="uri" for external URIs.
+        """
+        return cls(
+            **_validate_uri(uri, media_type),
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        # Convert dict to UsageDetails if needed
-        if isinstance(details, MutableMapping):
-            details = UsageDetails.from_dict(details)
-        self.details = details
-        self.type: Literal["usage"] = "usage"
 
+    @classmethod
+    def from_error(
+        cls: type[TContent],
+        *,
+        message: str | None = None,
+        error_code: str | None = None,
+        error_details: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create error content."""
+        return cls(
+            "error",
+            message=message,
+            error_code=error_code,
+            error_details=error_details,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
 
-class HostedFileContent(BaseContent):
-    """Represents a hosted file content.
+    @classmethod
+    def from_function_call(
+        cls: type[TContent],
+        call_id: str,
+        name: str,
+        *,
+        arguments: str | Mapping[str, Any] | None = None,
+        exception: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create function call content."""
+        return cls(
+            "function_call",
+            call_id=call_id,
+            name=name,
+            arguments=arguments,
+            exception=exception,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
 
-    Attributes:
-        file_id: The identifier of the hosted file.
-        type: The type of content, which is always "hosted_file" for this class.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
+    @classmethod
+    def from_function_result(
+        cls: type[TContent],
+        call_id: str,
+        *,
+        result: Any = None,
+        exception: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create function result content."""
+        return cls(
+            "function_result",
+            call_id=call_id,
+            result=result,
+            exception=exception,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
 
-    Examples:
-        .. code-block:: python
+    @classmethod
+    def from_usage(
+        cls: type[TContent],
+        usage_details: UsageDetails,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create usage content."""
+        return cls(
+            "usage",
+            usage_details=usage_details,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
 
-            from agent_framework import HostedFileContent
-
-            # Create hosted file content
-            file_content = HostedFileContent(file_id="file-abc123")
-            print(file_content.file_id)  # "file-abc123"
-    """
-
-    def __init__(
-        self,
+    @classmethod
+    def from_hosted_file(
+        cls: type[TContent],
         file_id: str,
         *,
         media_type: str | None = None,
         name: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a HostedFileContent instance.
-
-        Args:
-            file_id: The identifier of the hosted file.
-            media_type: Optional media type of the hosted file.
-            name: Optional display name of the hosted file.
-
-        Keyword Args:
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create hosted file content."""
+        return cls(
+            "hosted_file",
+            file_id=file_id,
+            media_type=media_type,
+            name=name,
+            annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.file_id = file_id
-        self.media_type = media_type
-        self.name = name
-        self.type: Literal["hosted_file"] = "hosted_file"
 
-    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
-        """Returns a boolean indicating if the media type has the specified top-level media type."""
-        return _has_top_level_media_type(self.media_type, top_level_media_type)
-
-
-class HostedVectorStoreContent(BaseContent):
-    """Represents a hosted vector store content.
-
-    Attributes:
-        vector_store_id: The identifier of the hosted vector store.
-        type: The type of content, which is always "hosted_vector_store" for this class.
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import HostedVectorStoreContent
-
-            # Create hosted vector store content
-            vs_content = HostedVectorStoreContent(vector_store_id="vs-xyz789")
-            print(vs_content.vector_store_id)  # "vs-xyz789"
-    """
-
-    def __init__(
-        self,
+    @classmethod
+    def from_hosted_vector_store(
+        cls: type[TContent],
         vector_store_id: str,
         *,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a HostedVectorStoreContent instance.
-
-        Args:
-            vector_store_id: The identifier of the hosted vector store.
-
-        Keyword Args:
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        super().__init__(
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create hosted vector store content."""
+        return cls(
+            "hosted_vector_store",
+            vector_store_id=vector_store_id,
+            annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.vector_store_id = vector_store_id
-        self.type: Literal["hosted_vector_store"] = "hosted_vector_store"
 
-
-class CodeInterpreterToolCallContent(BaseContent):
-    """Represents a code interpreter tool call invocation by a hosted service."""
-
-    def __init__(
-        self,
+    @classmethod
+    def from_code_interpreter_tool_call(
+        cls: type[TContent],
         *,
         call_id: str | None = None,
-        inputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
+        inputs: Sequence["Content"] | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create code interpreter tool call content."""
+        return cls(
+            "code_interpreter_tool_call",
+            call_id=call_id,
+            inputs=list(inputs) if inputs is not None else None,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.call_id = call_id
-        self.inputs: list["Contents"] | None = None
-        if inputs:
-            normalized_inputs: Sequence["Contents | MutableMapping[str, Any]"] = (
-                inputs
-                if isinstance(inputs, Sequence) and not isinstance(inputs, (str, bytes, MutableMapping))
-                else [inputs]
-            )
-            self.inputs = _parse_content_list(list(normalized_inputs))
-        self.type: Literal["code_interpreter_tool_call"] = "code_interpreter_tool_call"
 
-
-class CodeInterpreterToolResultContent(BaseContent):
-    """Represents the result of a code interpreter tool invocation by a hosted service."""
-
-    def __init__(
-        self,
+    @classmethod
+    def from_code_interpreter_tool_result(
+        cls: type[TContent],
         *,
         call_id: str | None = None,
-        outputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
+        outputs: Sequence["Content"] | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create code interpreter tool result content."""
+        return cls(
+            "code_interpreter_tool_result",
+            call_id=call_id,
+            outputs=list(outputs) if outputs is not None else None,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.call_id = call_id
-        self.outputs: list["Contents"] | None = None
-        if outputs:
-            normalized_outputs: Sequence["Contents | MutableMapping[str, Any]"] = (
-                outputs
-                if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
-                else [outputs]
-            )
-            self.outputs = _parse_content_list(list(normalized_outputs))
-        self.type: Literal["code_interpreter_tool_result"] = "code_interpreter_tool_result"
 
-
-class ImageGenerationToolCallContent(BaseContent):
-    """Represents the invocation of an image generation tool call by a hosted service."""
-
-    def __init__(
-        self,
+    @classmethod
+    def from_image_generation_tool_call(
+        cls: type[TContent],
         *,
         image_id: str | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes an ImageGenerationToolCallContent instance.
-
-        Keyword Args:
-            image_id: The identifier of the image to be generated.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-
-        """
-        super().__init__(
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create image generation tool call content."""
+        return cls(
+            "image_generation_tool_call",
+            image_id=image_id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.image_id = image_id
-        self.type: Literal["image_generation_tool_call"] = "image_generation_tool_call"
 
-
-class ImageGenerationToolResultContent(BaseContent):
-    """Represents the result of an image generation tool call invocation by a hosted service."""
-
-    def __init__(
-        self,
+    @classmethod
+    def from_image_generation_tool_result(
+        cls: type[TContent],
         *,
         image_id: str | None = None,
-        outputs: DataContent | UriContent | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes an ImageGenerationToolResultContent instance.
-
-        Keyword Args:
-            image_id: The identifier of the generated image.
-            outputs: The outputs of the image generation tool call.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-
-        """
-        super().__init__(
+        outputs: Any = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create image generation tool result content."""
+        return cls(
+            "image_generation_tool_result",
+            image_id=image_id,
+            outputs=outputs,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.image_id = image_id
-        self.outputs: DataContent | UriContent | None = outputs
-        self.type: Literal["image_generation_tool_result"] = "image_generation_tool_result"
 
-
-class MCPServerToolCallContent(BaseContent):
-    """Represents a tool call request to a MCP server."""
-
-    def __init__(
-        self,
+    @classmethod
+    def from_mcp_server_tool_call(
+        cls: type[TContent],
         call_id: str,
         tool_name: str,
-        server_name: str | None = None,
         *,
+        server_name: str | None = None,
         arguments: str | Mapping[str, Any] | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a MCPServerToolCallContent instance.
-
-        Args:
-            call_id: The tool call identifier.
-            tool_name: The name of the tool requested.
-            server_name: The name of the MCP server where the tool is hosted.
-
-        Keyword Args:
-            arguments: The arguments requested to be provided to the tool,
-                can be a string to allow gradual completion of the args.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        if not call_id:
-            raise ValueError("call_id must be a non-empty string.")
-        if not tool_name:
-            raise ValueError("tool_name must be a non-empty string.")
-        super().__init__(
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create MCP server tool call content."""
+        return cls(
+            "mcp_server_tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            server_name=server_name,
+            arguments=arguments,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
-            **kwargs,
         )
-        self.call_id = call_id
-        self.tool_name = tool_name
-        self.name = tool_name
-        self.server_name = server_name
-        self.arguments = arguments
-        self.type: Literal["mcp_server_tool_call"] = "mcp_server_tool_call"
 
-    def parse_arguments(self) -> dict[str, Any] | None:
-        """Returns the parsed arguments for the MCP server tool call, if any."""
+    @classmethod
+    def from_mcp_server_tool_result(
+        cls: type[TContent],
+        call_id: str,
+        *,
+        output: Any = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create MCP server tool result content."""
+        return cls(
+            "mcp_server_tool_result",
+            call_id=call_id,
+            output=output,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_function_approval_request(
+        cls: type[TContent],
+        id: str,
+        function_call: "Content",
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create function approval request content."""
+        return cls(
+            "function_approval_request",
+            id=id,
+            function_call=function_call,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_function_approval_response(
+        cls: type[TContent],
+        approved: bool,
+        id: str,
+        function_call: "Content",
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create function approval response content."""
+        return cls(
+            "function_approval_response",
+            approved=approved,
+            id=id,
+            function_call=function_call,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    def to_function_approval_response(
+        self,
+        approved: bool,
+    ) -> "Content":
+        """Convert a function approval request content to a function approval response content."""
+        if self.type != "function_approval_request":
+            raise ContentError(
+                "Can only convert 'function_approval_request' content to 'function_approval_response' content."
+            )
+        return Content.from_function_approval_response(
+            approved=approved,
+            id=self.id,  # type: ignore[attr-defined, arg-type]
+            function_call=self.function_call,  # type: ignore[attr-defined, arg-type]
+            annotations=self.annotations,
+            additional_properties=self.additional_properties,
+            raw_representation=self.raw_representation,
+        )
+
+    def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Serialize the content to a dictionary."""
+        fields_to_capture = (
+            "text",
+            "protected_data",
+            "uri",
+            "media_type",
+            "message",
+            "error_code",
+            "error_details",
+            "usage_details",
+            "call_id",
+            "name",
+            "arguments",
+            "exception",
+            "result",
+            "file_id",
+            "vector_store_id",
+            "inputs",
+            "outputs",
+            "image_id",
+            "tool_name",
+            "server_name",
+            "output",
+            "function_call",
+            "user_input_request",
+            "approved",
+            "id",
+            "additional_properties",
+        )
+
+        exclude = exclude or set()
+        result: dict[str, Any] = {"type": self.type}
+
+        for field in fields_to_capture:
+            value = getattr(self, field, None)
+            if field in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[field] = _serialize_value(value, exclude_none)
+
+        if "annotations" not in exclude and self.annotations is not None:
+            result["annotations"] = [dict(annotation) for annotation in self.annotations]
+
+        return result
+
+    def __eq__(self, other: object) -> bool:
+        """Check if two Content instances are equal by comparing their dict representations."""
+        if not isinstance(other, Content):
+            return False
+        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+
+    def __str__(self) -> str:
+        """Return a string representation of the Content."""
+        if self.type == "error":
+            if self.error_code:
+                return f"Error {self.error_code}: {self.message or ''}"
+            return self.message or "Unknown error"
+        if self.type == "text":
+            return self.text or ""
+        return f"Content(type={self.type})"
+
+    @classmethod
+    def from_dict(cls: type[TContent], data: Mapping[str, Any]) -> TContent:
+        """Create a Content instance from a mapping."""
+        if not (content_type := data.get("type")):
+            raise ValueError("Content mapping requires 'type'")
+        remaining = dict(data)
+        remaining.pop("type", None)
+        annotations = remaining.pop("annotations", None)
+        additional_properties = remaining.pop("additional_properties", None)
+        raw_representation = remaining.pop("raw_representation", None)
+
+        # Special handling for DataContent with data and media_type
+        if content_type == "data" and "data" in remaining and "media_type" in remaining:
+            # Use from_data() to properly create the DataContent with URI
+            return cls.from_data(remaining["data"], remaining["media_type"])
+
+        # Handle nested Content objects (e.g., function_call in function_approval_request)
+        if "function_call" in remaining and isinstance(remaining["function_call"], dict):
+            remaining["function_call"] = cls.from_dict(remaining["function_call"])
+
+        # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
+        if "inputs" in remaining and isinstance(remaining["inputs"], list):
+            remaining["inputs"] = [
+                cls.from_dict(item) if isinstance(item, dict) else item for item in remaining["inputs"]
+            ]
+
+        if "outputs" in remaining and isinstance(remaining["outputs"], list):
+            remaining["outputs"] = [
+                cls.from_dict(item) if isinstance(item, dict) else item for item in remaining["outputs"]
+            ]
+
+        return cls(
+            type=content_type,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **remaining,
+        )
+
+    def __add__(self, other: "Content") -> "Content":
+        """Concatenate or merge two Content instances."""
+        if not isinstance(other, Content):
+            raise TypeError(f"Incompatible type: Cannot add Content with {type(other).__name__}")
+
+        if self.type != other.type:
+            raise TypeError(f"Cannot add Content of type '{self.type}' with type '{other.type}'")
+
+        if self.type == "text":
+            return self._add_text_content(other)
+        if self.type == "text_reasoning":
+            return self._add_text_reasoning_content(other)
+        if self.type == "function_call":
+            return self._add_function_call_content(other)
+        if self.type == "usage":
+            return self._add_usage_content(other)
+        raise ContentError(f"Addition not supported for content type: {self.type}")
+
+    def _add_text_content(self, other: "Content") -> "Content":
+        """Add two TextContent instances."""
+        # Merge raw representations
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Merge annotations
+        if self.annotations is None:
+            annotations = other.annotations
+        elif other.annotations is None:
+            annotations = self.annotations
+        else:
+            annotations = self.annotations + other.annotations  # type: ignore[operator]
+
+        return Content(
+            "text",
+            text=self.text + other.text,  # type: ignore[attr-defined, operator]
+            annotations=annotations,
+            additional_properties={
+                **(other.additional_properties or {}),
+                **(self.additional_properties or {}),
+            },
+            raw_representation=raw_representation,
+        )
+
+    def _add_text_reasoning_content(self, other: "Content") -> "Content":
+        """Add two TextReasoningContent instances."""
+        # Merge raw representations
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Merge annotations
+        if self.annotations is None:
+            annotations = other.annotations
+        elif other.annotations is None:
+            annotations = self.annotations
+        else:
+            annotations = self.annotations + other.annotations  # type: ignore[operator]
+
+        # Concatenate text, handling None values
+        self_text = self.text or ""  # type: ignore[attr-defined]
+        other_text = other.text or ""  # type: ignore[attr-defined]
+        combined_text = self_text + other_text if (self_text or other_text) else None
+
+        # Handle protected_data replacement
+        protected_data = other.protected_data if other.protected_data is not None else self.protected_data  # type: ignore[attr-defined]
+
+        return Content(
+            "text_reasoning",
+            text=combined_text,
+            protected_data=protected_data,
+            annotations=annotations,
+            additional_properties={
+                **(other.additional_properties or {}),
+                **(self.additional_properties or {}),
+            },
+            raw_representation=raw_representation,
+        )
+
+    def _add_function_call_content(self, other: "Content") -> "Content":
+        """Add two FunctionCallContent instances."""
+        other_call_id = getattr(other, "call_id", None)
+        self_call_id = getattr(self, "call_id", None)
+        if other_call_id and self_call_id != other_call_id:
+            raise ContentError("Cannot add function calls with different call_ids")
+
+        self_arguments = getattr(self, "arguments", None)
+        other_arguments = getattr(other, "arguments", None)
+
+        if not self_arguments:
+            arguments: str | Mapping[str, Any] | None = other_arguments
+        elif not other_arguments:
+            arguments = self_arguments
+        elif isinstance(self_arguments, str) and isinstance(other_arguments, str):
+            arguments = self_arguments + other_arguments
+        elif isinstance(self_arguments, dict) and isinstance(other_arguments, dict):
+            arguments = {**self_arguments, **other_arguments}
+        else:
+            raise TypeError("Incompatible argument types")
+
+        # Merge raw representations
+        if self.raw_representation is None:
+            raw_representation: Any = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        return Content(
+            "function_call",
+            call_id=self_call_id,
+            name=getattr(self, "name", getattr(other, "name", None)),
+            arguments=arguments,
+            exception=getattr(self, "exception", None) or getattr(other, "exception", None),
+            additional_properties={
+                **(self.additional_properties or {}),
+                **(other.additional_properties or {}),
+            },
+            raw_representation=raw_representation,
+        )
+
+    def _add_usage_content(self, other: "Content") -> "Content":
+        """Add two UsageContent instances by combining their usage details."""
+        self_details = getattr(self, "usage_details", {})
+        other_details = getattr(other, "usage_details", {})
+
+        # Combine token counts
+        combined_details: dict[str, Any] = {}
+        for key in set(list(self_details.keys()) + list(other_details.keys())):
+            self_val = self_details.get(key)
+            other_val = other_details.get(key)
+            if isinstance(self_val, int) and isinstance(other_val, int):
+                combined_details[key] = self_val + other_val
+            elif self_val is not None:
+                combined_details[key] = self_val
+            elif other_val is not None:
+                combined_details[key] = other_val
+
+        # Merge raw representations
+        if self.raw_representation is None:
+            raw_representation = other.raw_representation
+        elif other.raw_representation is None:
+            raw_representation = self.raw_representation
+        else:
+            raw_representation = (
+                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
+            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        return Content(
+            "usage",
+            usage_details=combined_details,
+            additional_properties={
+                **(self.additional_properties or {}),
+                **(other.additional_properties or {}),
+            },
+            raw_representation=raw_representation,
+        )
+
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
+        """Check if content has a specific top-level media type.
+
+        Works with data, uri, and hosted_file content types.
+
+        Args:
+            top_level_media_type: The top-level media type to check for.
+
+        Returns:
+            True if the content's media type matches the specified top-level type.
+
+        Raises:
+            ContentError: If the content type doesn't support media types.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework import Content
+
+                image = Content.from_uri(uri="data:image/png;base64,abc123", media_type="image/png")
+                print(image.has_top_level_media_type("image"))  # True
+                print(image.has_top_level_media_type("audio"))  # False
+        """
+        if self.media_type is None:
+            raise ContentError("no media_type found")
+
+        slash_index = self.media_type.find("/")
+        span = self.media_type[:slash_index] if slash_index >= 0 else self.media_type
+        span = span.strip()
+        return span.lower() == top_level_media_type.lower()
+
+    def parse_arguments(self) -> dict[str, Any | None] | None:
+        """Parse arguments from function_call or mcp_server_tool_call content.
+
+        If arguments cannot be parsed as JSON or the result is not a dict,
+        they are returned as a dictionary with a single key "raw".
+
+        Returns:
+            Parsed arguments as a dictionary, or None if no arguments.
+
+        Raises:
+            ContentError: If the content type doesn't support arguments.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework import Content
+
+                func_call = Content.from_function_call(
+                    call_id="call_123",
+                    name="send_email",
+                    arguments='{"to": "user@example.com"}',
+                )
+                args = func_call.parse_arguments()
+                print(args)  # {"to": "user@example.com"}
+        """
+        if self.arguments is None:
+            return None
+
+        if not self.arguments:
+            return {}
+
         if isinstance(self.arguments, str):
             # If arguments are a string, try to parse it as JSON
             try:
                 loaded = json.loads(self.arguments)
                 if isinstance(loaded, dict):
-                    return loaded  # type:ignore
+                    return loaded  # type: ignore[return-value]
                 return {"raw": loaded}
             except (json.JSONDecodeError, TypeError):
                 return {"raw": self.arguments}
-        return cast(dict[str, Any] | None, self.arguments)
+        return self.arguments  # type: ignore[return-value]
 
 
-class MCPServerToolResultContent(BaseContent):
-    """Represents the result of a MCP server tool call."""
-
-    def __init__(
-        self,
-        call_id: str,
-        *,
-        output: Any | None = None,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a MCPServerToolResultContent instance.
-
-        Args:
-            call_id: The identifier of the tool call for which this is the result.
-
-        Keyword Args:
-            output: The output of the MCP server tool call.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        if not call_id:
-            raise ValueError("call_id must be a non-empty string.")
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.call_id = call_id
-        self.output: Any | None = output
-        self.type: Literal["mcp_server_tool_result"] = "mcp_server_tool_result"
+# endregion
 
 
-class BaseUserInputRequest(BaseContent):
-    """Base class for all user requests."""
-
-    def __init__(
-        self,
-        *,
-        id: str,
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize BaseUserInputRequest.
-
-        Keyword Args:
-            id: The unique identifier for the request.
-            annotations: Optional annotations associated with the content.
-            additional_properties: Optional additional properties associated with the content.
-            raw_representation: Optional raw representation of the content.
-            **kwargs: Any additional keyword arguments.
-        """
-        if not id or len(id) < 1:
-            raise ValueError("id must be at least 1 character long")
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.id = id
-        self.type: Literal["user_input_request"] = "user_input_request"
-
-
-class FunctionApprovalResponseContent(BaseContent):
-    """Represents a response for user approval of a function call.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
-
-            # Create a function approval response
-            func_call = FunctionCallContent(
-                call_id="call_123",
-                name="send_email",
-                arguments={"to": "user@example.com"},
-            )
-            response = FunctionApprovalResponseContent(
-                approved=False,
-                id="approval_001",
-                function_call=func_call,
-            )
-            print(response.approved)  # False
-    """
-
-    def __init__(
-        self,
-        approved: bool,
-        *,
-        id: str,
-        function_call: FunctionCallContent | MCPServerToolCallContent | MutableMapping[str, Any],
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a FunctionApprovalResponseContent instance.
-
-        Args:
-            approved: Whether the function call was approved.
-
-        Keyword Args:
-            id: The unique identifier for the request.
-            function_call: The function call content to be approved. Can be a FunctionCallContent object or dict.
-            annotations: Optional list of annotations for the request.
-            additional_properties: Optional additional properties for the request.
-            raw_representation: Optional raw representation of the request.
-            **kwargs: Additional keyword arguments.
-        """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.id = id
-        self.approved = approved
-        # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
-        self.function_call: FunctionCallContent | MCPServerToolCallContent
-        if isinstance(function_call, MutableMapping):
-            if function_call.get("type") == "mcp_server_tool_call":
-                self.function_call = MCPServerToolCallContent.from_dict(function_call)
-            else:
-                self.function_call = FunctionCallContent.from_dict(function_call)
-        else:
-            self.function_call = function_call
-        # Override the type for this specific subclass
-        self.type: Literal["function_approval_response"] = "function_approval_response"
-
-
-class FunctionApprovalRequestContent(BaseContent):
-    """Represents a request for user approval of a function call.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import FunctionApprovalRequestContent, FunctionCallContent
-
-            # Create a function approval request
-            func_call = FunctionCallContent(
-                call_id="call_123",
-                name="send_email",
-                arguments={"to": "user@example.com", "subject": "Hello"},
-            )
-            approval_request = FunctionApprovalRequestContent(
-                id="approval_001",
-                function_call=func_call,
-            )
-
-            # Create response
-            approval_response = approval_request.create_response(approved=True)
-            print(approval_response.approved)  # True
-    """
-
-    def __init__(
-        self,
-        *,
-        id: str,
-        function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a FunctionApprovalRequestContent instance.
-
-        Keyword Args:
-            id: The unique identifier for the request.
-            function_call: The function call content to be approved. Can be a FunctionCallContent object or dict.
-            annotations: Optional list of annotations for the request.
-            additional_properties: Optional additional properties for the request.
-            raw_representation: Optional raw representation of the request.
-            **kwargs: Additional keyword arguments.
-        """
-        super().__init__(
-            annotations=annotations,
-            additional_properties=additional_properties,
-            raw_representation=raw_representation,
-            **kwargs,
-        )
-        self.id = id
-        self.function_call: FunctionCallContent
-        # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
-        if isinstance(function_call, MutableMapping):
-            self.function_call = FunctionCallContent.from_dict(function_call)
-        else:
-            self.function_call = function_call
-        # Override the type for this specific subclass
-        self.type: Literal["function_approval_request"] = "function_approval_request"
-
-    def create_response(self, approved: bool) -> "FunctionApprovalResponseContent":
-        """Create a response for the function approval request."""
-        return FunctionApprovalResponseContent(
-            approved,
-            id=self.id,
-            function_call=self.function_call,
-            additional_properties=self.additional_properties,
-        )
-
-
-UserInputRequestContents = FunctionApprovalRequestContent
-
-Contents = (
-    TextContent
-    | DataContent
-    | TextReasoningContent
-    | UriContent
-    | FunctionCallContent
-    | FunctionResultContent
-    | ErrorContent
-    | UsageContent
-    | HostedFileContent
-    | HostedVectorStoreContent
-    | CodeInterpreterToolCallContent
-    | CodeInterpreterToolResultContent
-    | ImageGenerationToolCallContent
-    | ImageGenerationToolResultContent
-    | MCPServerToolCallContent
-    | MCPServerToolResultContent
-    | FunctionApprovalRequestContent
-    | FunctionApprovalResponseContent
-)
-
-
-def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
+def _prepare_function_call_results_as_dumpable(content: "Content | Any | list[Content | Any]") -> Any:
     if isinstance(content, list):
         # Particularly deal with lists of Content
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
@@ -2149,9 +1394,9 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
     return content
 
 
-def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str:
+def prepare_function_call_results(content: "Content | Any | list[Content | Any]") -> str:
     """Prepare the values of the function call results."""
-    if isinstance(content, Contents):
+    if isinstance(content, Content):
         # For BaseContent objects, use to_dict and serialize to JSON
         # Use default=str to handle datetime and other non-JSON-serializable objects
         return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
@@ -2331,7 +1576,7 @@ class ChatMessage(SerializationMixin):
             # Create a message with contents
             assistant_msg = ChatMessage(
                 role="assistant",
-                contents=[TextContent(text="The weather is sunny!")],
+                contents=[Content.from_text(text="The weather is sunny!")],
             )
             print(assistant_msg.text)  # "The weather is sunny!"
 
@@ -2384,7 +1629,7 @@ class ChatMessage(SerializationMixin):
         self,
         role: Role | Literal["system", "user", "assistant", "tool"],
         *,
-        contents: Sequence[Contents | Mapping[str, Any]],
+        contents: "Sequence[Content | Mapping[str, Any]]",
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -2411,7 +1656,7 @@ class ChatMessage(SerializationMixin):
         role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any],
         *,
         text: str | None = None,
-        contents: Sequence[Contents | Mapping[str, Any]] | None = None,
+        contents: "Sequence[Content | Mapping[str, Any]] | None" = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -2443,7 +1688,7 @@ class ChatMessage(SerializationMixin):
         parsed_contents = [] if contents is None else _parse_content_list(contents)
 
         if text is not None:
-            parsed_contents.append(TextContent(text=text))
+            parsed_contents.append(Content.from_text(text=text))
 
         self.role = role
         self.contents = parsed_contents
@@ -2458,9 +1703,9 @@ class ChatMessage(SerializationMixin):
         """Returns the text content of the message.
 
         Remarks:
-            This property concatenates the text of all TextContent objects in Contents.
+            This property concatenates the text of all TextContent objects in Content.
         """
-        return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
+        return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
 def prepare_messages(
@@ -2493,6 +1738,22 @@ def prepare_messages(
             msg = ChatMessage(role="user", text=msg)
         return_messages.append(msg)
     return return_messages
+
+
+def normalize_messages(
+    messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+) -> list[ChatMessage]:
+    """Normalize message inputs to a list of ChatMessage objects."""
+    if messages is None:
+        return []
+
+    if isinstance(messages, str):
+        return [ChatMessage(role=Role.USER, text=messages)]
+
+    if isinstance(messages, ChatMessage):
+        return [messages]
+
+    return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
 
 
 def prepend_instructions_to_messages(
@@ -2575,7 +1836,7 @@ def _process_update(
         # Slow path: only check for dict if type is None
         if content_type is None and isinstance(content, (dict, MutableMapping)):
             try:
-                content = _parse_content(content)
+                content = Content.from_dict(content)
                 content_type = content.type
             except ContentError as exc:
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
@@ -2585,13 +1846,13 @@ def _process_update(
             case "function_call" if message.contents and message.contents[-1].type == "function_call":
                 try:
                     message.contents[-1] += content  # type: ignore[operator]
-                except AdditionItemMismatch:
+                except (AdditionItemMismatch, ContentError):
                     message.contents.append(content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
                 # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                response.usage_details += content.details  # type: ignore[union-attr, arg-type]
+                response.usage_details = add_usage_details(response.usage_details, content.usage_details)  # type: ignore[arg-type]
             case _:
                 message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -2617,16 +1878,14 @@ def _process_update(
             response.model_id = update.model_id
 
 
-def _coalesce_text_content(
-    contents: list["Contents"], type_: type["TextContent"] | type["TextReasoningContent"]
-) -> None:
+def _coalesce_text_content(contents: list["Content"], type_str: Literal["text", "text_reasoning"]) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
-    coalesced_contents: list["Contents"] = []
+    coalesced_contents: list["Content"] = []
     first_new_content: Any | None = None
     for content in contents:
-        if isinstance(content, type_):
+        if content.type == type_str:
             if first_new_content is None:
                 first_new_content = deepcopy(content)
             else:
@@ -2649,8 +1908,8 @@ def _coalesce_text_content(
 def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
-        _coalesce_text_content(msg.contents, TextContent)
-        _coalesce_text_content(msg.contents, TextReasoningContent)
+        _coalesce_text_content(msg.contents, "text")
+        _coalesce_text_content(msg.contents, "text_reasoning")
 
 
 class ChatResponse(SerializationMixin):
@@ -2744,7 +2003,7 @@ class ChatResponse(SerializationMixin):
     def __init__(
         self,
         *,
-        text: TextContent | str,
+        text: Content | str,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -2779,7 +2038,7 @@ class ChatResponse(SerializationMixin):
         self,
         *,
         messages: ChatMessage | MutableSequence[ChatMessage] | list[dict[str, Any]] | None = None,
-        text: TextContent | str | None = None,
+        text: Content | str | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -2826,16 +2085,15 @@ class ChatResponse(SerializationMixin):
 
         if text is not None:
             if isinstance(text, str):
-                text = TextContent(text=text)
+                text = Content.from_text(text=text)
             messages.append(ChatMessage(role=Role.ASSISTANT, contents=[text]))
 
         # Handle finish_reason conversion
         if isinstance(finish_reason, dict):
             finish_reason = FinishReason.from_dict(finish_reason)
 
-        # Handle usage_details conversion
-        if isinstance(usage_details, dict):
-            usage_details = UsageDetails.from_dict(usage_details)
+        # Handle usage_details - UsageDetails is now a TypedDict, so dict is already the right type
+        # No conversion needed
 
         self.messages = list(messages)
         self.response_id = response_id
@@ -2844,13 +2102,12 @@ class ChatResponse(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self.value = value
+        self._value: Any | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
-
-        if response_format:
-            self.try_parse_value(output_format_type=response_format)
 
     @classmethod
     def from_chat_response_updates(
@@ -2916,12 +2173,13 @@ class ChatResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        response_format = output_format_type if isinstance(output_format_type, type) else None
+        msg = cls(messages=[], response_format=response_format)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
-            msg.try_parse_value(output_format_type)
+        if response_format and issubclass(response_format, BaseModel):
+            msg.try_parse_value(response_format)
         return msg
 
     @property
@@ -2929,16 +2187,64 @@ class ChatResponse(SerializationMixin):
         """Returns the concatenated text of all messages in the response."""
         return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
 
+    @property
+    def value(self) -> Any | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = self._response_format.model_validate_json(self.text)
+            self._value_parsed = True
+        return self._value
+
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None and isinstance(output_format_type, type) and issubclass(output_format_type, BaseModel):
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from chat response text: %s", ex)
+    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+        """Try to parse the text into a typed value.
+
+        This is the safe alternative to accessing the value property directly.
+        Returns the parsed value on success, or None on failure.
+
+        Args:
+            output_format_type: The Pydantic model type to parse into.
+                               If None, uses the response_format from initialization.
+
+        Returns:
+            The parsed value as the specified type, or None if parsing fails.
+        """
+        format_type = output_format_type or self._response_format
+        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
+            return None
+
+        # Cache the result unless a different schema than the configured response_format is requested.
+        # This prevents calls with a different schema from polluting the cached value.
+        use_cache = (
+            self._response_format is None or output_format_type is None or output_format_type is self._response_format
+        )
+
+        if use_cache and self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value, no-any-return]
+        try:
+            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            if use_cache:
+                self._value = parsed_value
+                self._value_parsed = True
+            return parsed_value  # type: ignore[return-value]
+        except ValidationError as ex:
+            logger.warning("Failed to parse value from chat response text: %s", ex)
+            return None
 
 
 # region ChatResponseUpdate
@@ -2967,7 +2273,7 @@ class ChatResponseUpdate(SerializationMixin):
 
             # Create a response update
             update = ChatResponseUpdate(
-                contents=[TextContent(text="Hello")],
+                contents=[Content.from_text(text="Hello")],
                 role="assistant",
                 message_id="msg_123",
             )
@@ -2996,8 +2302,8 @@ class ChatResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: Sequence[Contents | dict[str, Any]] | None = None,
-        text: TextContent | str | None = None,
+        contents: Sequence[Content | dict[str, Any]] | None = None,
+        text: Content | str | None = None,
         role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
@@ -3034,7 +2340,7 @@ class ChatResponseUpdate(SerializationMixin):
 
         if text is not None:
             if isinstance(text, str):
-                text = TextContent(text=text)
+                text = Content.from_text(text=text)
             contents.append(text)
 
         # Handle role conversion
@@ -3062,7 +2368,7 @@ class ChatResponseUpdate(SerializationMixin):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all contents in the update."""
-        return "".join(content.text for content in self.contents if isinstance(content, TextContent))
+        return "".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
     def __str__(self) -> str:
         return self.text
@@ -3124,6 +2430,7 @@ class AgentResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
         value: Any | None = None,
+        response_format: type[BaseModel] | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -3136,6 +2443,7 @@ class AgentResponse(SerializationMixin):
             created_at: A timestamp for the chat response.
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
+            response_format: Optional response format for the agent response.
             additional_properties: Any additional properties associated with the chat response.
             raw_representation: The raw representation of the chat response from an underlying implementation.
             **kwargs: Additional properties to set on the response.
@@ -3156,14 +2464,15 @@ class AgentResponse(SerializationMixin):
                 processed_messages.append(ChatMessage.from_dict(messages))
 
         # Convert usage_details from dict if needed (for SerializationMixin support)
-        if isinstance(usage_details, MutableMapping):
-            usage_details = UsageDetails.from_dict(usage_details)
+        # UsageDetails is now a TypedDict, so dict is already the right type
 
         self.messages = processed_messages
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
-        self.value = value
+        self._value: Any | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation = raw_representation
@@ -3174,13 +2483,34 @@ class AgentResponse(SerializationMixin):
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
     @property
-    def user_input_requests(self) -> list[UserInputRequestContents]:
+    def value(self) -> Any | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = self._response_format.model_validate_json(self.text)
+            self._value_parsed = True
+        return self._value
+
+    @property
+    def user_input_requests(self) -> list[Content]:
         """Get all BaseUserInputRequest messages from the response."""
         return [
             content
             for msg in self.messages
             for content in msg.contents
-            if isinstance(content, UserInputRequestContents)
+            if isinstance(content, Content) and content.user_input_request
         ]
 
     @classmethod
@@ -3198,7 +2528,7 @@ class AgentResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3221,7 +2551,7 @@ class AgentResponse(SerializationMixin):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data
         """
-        msg = cls(messages=[])
+        msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3232,13 +2562,40 @@ class AgentResponse(SerializationMixin):
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
-        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
-        if self.value is None:
-            try:
-                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            except ValidationError as ex:
-                logger.debug("Failed to parse value from agent run response text: %s", ex)
+    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+        """Try to parse the text into a typed value.
+
+        This is the safe alternative when you need to parse the response text into a typed value.
+        Returns the parsed value on success, or None on failure.
+
+        Args:
+            output_format_type: The Pydantic model type to parse into.
+                               If None, uses the response_format from initialization.
+
+        Returns:
+            The parsed value as the specified type, or None if parsing fails.
+        """
+        format_type = output_format_type or self._response_format
+        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
+            return None
+
+        # Cache the result unless a different schema than the configured response_format is requested.
+        # This prevents calls with a different schema from polluting the cached value.
+        use_cache = (
+            self._response_format is None or output_format_type is None or output_format_type is self._response_format
+        )
+
+        if use_cache and self._value_parsed and self._value is not None:
+            return self._value  # type: ignore[return-value, no-any-return]
+        try:
+            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            if use_cache:
+                self._value = parsed_value
+                self._value_parsed = True
+            return parsed_value  # type: ignore[return-value]
+        except ValidationError as ex:
+            logger.warning("Failed to parse value from agent run response text: %s", ex)
+            return None
 
 
 # region AgentResponseUpdate
@@ -3250,11 +2607,11 @@ class AgentResponseUpdate(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentResponseUpdate, TextContent
+            from agent_framework import AgentResponseUpdate, Content
 
             # Create an agent run update
             update = AgentResponseUpdate(
-                contents=[TextContent(text="Processing...")],
+                contents=[Content.from_text(text="Processing...")],
                 role="assistant",
                 response_id="run_123",
             )
@@ -3282,8 +2639,8 @@ class AgentResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: Sequence[Contents | MutableMapping[str, Any]] | None = None,
-        text: TextContent | str | None = None,
+        contents: Sequence[Content | MutableMapping[str, Any]] | None = None,
+        text: Content | str | None = None,
         role: Role | MutableMapping[str, Any] | str | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
@@ -3308,11 +2665,11 @@ class AgentResponseUpdate(SerializationMixin):
             kwargs: will be combined with additional_properties if provided.
 
         """
-        parsed_contents: list[Contents] = [] if contents is None else _parse_content_list(contents)
+        parsed_contents: list[Content] = [] if contents is None else _parse_content_list(contents)
 
         if text is not None:
             if isinstance(text, str):
-                text = TextContent(text=text)
+                text = Content.from_text(text=text)
             parsed_contents.append(text)
 
         # Convert role from dict if needed (for SerializationMixin support)
@@ -3333,16 +2690,12 @@ class AgentResponseUpdate(SerializationMixin):
     @property
     def text(self) -> str:
         """Get the concatenated text of all TextContent objects in contents."""
-        return (
-            "".join(content.text for content in self.contents if isinstance(content, TextContent))
-            if self.contents
-            else ""
-        )
+        return "".join(content.text for content in self.contents if content.type == "text") if self.contents else ""  # type: ignore[misc]
 
     @property
-    def user_input_requests(self) -> list[UserInputRequestContents]:
+    def user_input_requests(self) -> list[Content]:
         """Get all BaseUserInputRequest messages from the response."""
-        return [content for content in self.contents if isinstance(content, UserInputRequestContents)]
+        return [content for content in self.contents if isinstance(content, Content) and content.user_input_request]
 
     def __str__(self) -> str:
         return self.text
