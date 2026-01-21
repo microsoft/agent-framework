@@ -30,7 +30,7 @@ class DurableAIAgentWorker:
         ```python
         from durabletask import TaskHubGrpcWorker
         from agent_framework import ChatAgent
-        from agent_framework_durabletask import DurableAIAgentWorker
+        from agent_framework.azure import DurableAIAgentWorker
 
         # Create the underlying worker
         worker = TaskHubGrpcWorker(host_address="localhost:4001")

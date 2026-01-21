@@ -2,6 +2,8 @@
 
 """Durable Task integration for Microsoft Agent Framework."""
 
+import importlib.metadata
+
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._client import DurableAIAgentClient
 from ._constants import (
@@ -48,6 +50,11 @@ from ._orchestration_context import DurableAIAgentOrchestrationContext
 from ._response_utils import ensure_response_format, load_agent_response
 from ._shim import DurableAIAgent
 from ._worker import DurableAIAgentWorker
+
+try:
+    __version__ = importlib.metadata.version(__name__)
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0"  # Fallback for development mode
 
 __all__ = [
     "DEFAULT_MAX_POLL_RETRIES",
@@ -96,6 +103,7 @@ __all__ = [
     "DurableAgentThread",
     "DurableStateFields",
     "RunRequest",
+    "__version__",
     "ensure_response_format",
     "load_agent_response",
 ]

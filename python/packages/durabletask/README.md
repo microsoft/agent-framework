@@ -16,7 +16,7 @@ The durable task integration lets you host Microsoft Agent Framework agents usin
 
 ```python
 from durabletask import TaskHubGrpcWorker
-from agent_framework_durabletask import AgentWorker
+from agent_framework.azure import DurableAIAgentWorker
 
 # Create the worker
 with DurableTaskSchedulerWorker(...) as worker:

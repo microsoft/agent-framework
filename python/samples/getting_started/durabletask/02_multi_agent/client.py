@@ -15,7 +15,7 @@ import asyncio
 import logging
 import os
 
-from agent_framework_durabletask import DurableAIAgentClient
+from agent_framework.azure import DurableAIAgentClient
 from azure.identity import DefaultAzureCredential
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 

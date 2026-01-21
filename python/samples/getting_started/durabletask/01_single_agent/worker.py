@@ -13,8 +13,7 @@ import asyncio
 import logging
 import os
 
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_durabletask import DurableAIAgentWorker
+from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 

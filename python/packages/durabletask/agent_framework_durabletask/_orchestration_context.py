@@ -27,7 +27,7 @@ class DurableAIAgentOrchestrationContext(DurableAgentProvider[DurableAgentTask])
     Example:
         ```python
         from durabletask import Orchestration
-        from agent_framework_durabletask import DurableAIAgentOrchestrationContext
+        from agent_framework.azure import DurableAIAgentOrchestrationContext
 
 
         def my_orchestration(context: OrchestrationContext):

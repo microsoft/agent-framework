@@ -20,7 +20,7 @@ import os
 from datetime import timedelta
 
 import redis.asyncio as aioredis
-from agent_framework_durabletask import DurableAIAgentClient
+from agent_framework.azure import DurableAIAgentClient
 from azure.identity import DefaultAzureCredential
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
