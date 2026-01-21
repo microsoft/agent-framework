@@ -216,8 +216,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
 
     private AIAgent GetAgent(AgentSessionId sessionId)
     {
-        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents =
-            this._services.GetRequiredService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>();
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents = this._options.GetAgentFactories();
         if (!agents.TryGetValue(sessionId.Name, out Func<IServiceProvider, AIAgent>? agentFactory))
         {
             throw new InvalidOperationException($"Agent '{sessionId.Name}' not found");
