@@ -5,13 +5,13 @@
 import asyncio
 import contextlib
 import os
-from typing import Literal
+from typing import Any, Literal
 
 from agent_framework import (
     DEFAULT_SHELL_MAX_OUTPUT_BYTES,
     DEFAULT_SHELL_TIMEOUT_SECONDS,
+    Content,
     ShellExecutor,
-    ShellResult,
 )
 
 
@@ -65,7 +65,7 @@ class LocalShellExecutor(ShellExecutor):
                 continue
         return truncated, True
 
-    async def execute(
+    async def _execute_single(
         self,
         command: str,
         *,
@@ -73,26 +73,16 @@ class LocalShellExecutor(ShellExecutor):
         timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
         max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
-    ) -> ShellResult:
-        """Execute a shell command locally.
-
-        Args:
-            command: The command to execute.
-
-        Keyword Args:
-            working_directory: Working directory for the command.
-            timeout_seconds: Timeout in seconds.
-            max_output_bytes: Maximum output size in bytes.
-            capture_stderr: Whether to capture stderr.
-
-        Returns:
-            ShellResult containing the command output and execution status.
-        """
+    ) -> dict[str, Any]:
+        """Execute a single shell command locally."""
         if working_directory is not None and not await asyncio.to_thread(os.path.isdir, working_directory):
-            return ShellResult(
-                exit_code=-1,
-                stderr=f"Working directory does not exist: {working_directory}",
-            )
+            return {
+                "stdout": "",
+                "stderr": f"Working directory does not exist: {working_directory}",
+                "exit_code": -1,
+                "timed_out": False,
+                "truncated": False,
+            }
 
         stderr_setting = asyncio.subprocess.PIPE if capture_stderr else asyncio.subprocess.DEVNULL
 
@@ -104,7 +94,13 @@ class LocalShellExecutor(ShellExecutor):
                 cwd=working_directory,
             )
         except OSError as e:
-            return ShellResult(exit_code=-1, stderr=f"Failed to start process: {e}")
+            return {
+                "stdout": "",
+                "stderr": f"Failed to start process: {e}",
+                "exit_code": -1,
+                "timed_out": False,
+                "truncated": False,
+            }
 
         timed_out = False
         stdout_bytes = b""
@@ -123,10 +119,46 @@ class LocalShellExecutor(ShellExecutor):
             stderr_bytes, stderr_truncated = self._truncate_output(stderr_bytes, max_output_bytes)
             truncated = truncated or stderr_truncated
 
-        return ShellResult(
-            exit_code=process.returncode if process.returncode is not None else -1,
-            stdout=self._decode_output(stdout_bytes),
-            stderr=self._decode_output(stderr_bytes) if capture_stderr else "",
-            timed_out=timed_out,
-            truncated=truncated,
-        )
+        return {
+            "stdout": self._decode_output(stdout_bytes),
+            "stderr": self._decode_output(stderr_bytes) if capture_stderr else "",
+            "exit_code": None if timed_out else (process.returncode if process.returncode is not None else -1),
+            "timed_out": timed_out,
+            "truncated": truncated,
+        }
+
+    async def execute(
+        self,
+        commands: list[str],
+        *,
+        working_directory: str | None = None,
+        timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
+        max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
+        capture_stderr: bool = True,
+    ) -> Content:
+        """Execute shell commands locally.
+
+        Args:
+            commands: List of commands to execute.
+
+        Keyword Args:
+            working_directory: Working directory for the commands.
+            timeout_seconds: Timeout in seconds per command.
+            max_output_bytes: Maximum output size in bytes per command.
+            capture_stderr: Whether to capture stderr.
+
+        Returns:
+            Content with type 'shell_result' containing the command outputs.
+        """
+        outputs: list[dict[str, Any]] = []
+        for command in commands:
+            result = await self._execute_single(
+                command,
+                working_directory=working_directory,
+                timeout_seconds=timeout_seconds,
+                max_output_bytes=max_output_bytes,
+                capture_stderr=capture_stderr,
+            )
+            outputs.append(result)
+
+        return Content.from_shell_result(outputs=outputs)
