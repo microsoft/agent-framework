@@ -2,12 +2,12 @@
 
 using System.Text.Json.Serialization;
 
-namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
+namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
 /// Represents a request to run a durable workflow.
 /// </summary>
-internal sealed class DuableWorkflowRunRequest
+public sealed class DurableWorkflowRunRequest
 {
     /// <summary>
     /// Gets or sets the name of the workflow to execute.

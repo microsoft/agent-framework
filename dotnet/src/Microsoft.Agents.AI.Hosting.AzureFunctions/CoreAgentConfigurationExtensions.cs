@@ -39,7 +39,7 @@ internal static class CoreAgentConfigurationExtensions
     /// <returns>The functions application builder for method chaining.</returns>
     internal static FunctionsApplicationBuilder RegisterWorkflowServices(this FunctionsApplicationBuilder builder)
     {
-        builder.Services.TryAddSingleton<DurableWorkflowRunner>();
+        builder.Services.TryAddSingleton<FunctionsWorkflowRunner>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>());
 
         return builder;

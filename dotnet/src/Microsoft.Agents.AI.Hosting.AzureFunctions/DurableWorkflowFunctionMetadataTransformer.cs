@@ -64,7 +64,7 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                     string functionName = $"dafx-{executorId.Split("_")[0]}";
 
                     // Check if the executor type is an agent-related type
-                    if (IsAgentExecutorType(executorInfo.ExecutorType))
+                    if (WorkflowHelper.IsAgentExecutorType(executorInfo.ExecutorType))
                     {
                         this._logger.LogAddingAgentEntityFunction(executorId, executorInfo.ExecutorType.TypeName, workflow.Key);
                         //original.Add(CreateAgentTrigger(functionName));
@@ -79,18 +79,6 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         }
 
         this._logger.LogTransformFinished(original.Count);
-
-        static bool IsAgentExecutorType(TypeId executorType)
-        {
-            // hack for now. In the future, the MAF type could expose something which can help with this.
-            // Check if the type name or assembly indicates it's an agent executor
-            // This includes AgentRunStreamingExecutor, AgentExecutor, ChatClientAgent wrappers, etc.
-            string typeName = executorType.TypeName;
-            string assemblyName = executorType.AssemblyName;
-
-            return typeName.Contains("AIAgentHostExecutor", StringComparison.OrdinalIgnoreCase) &&
-                    assemblyName.Contains("Microsoft.Agents.AI", StringComparison.OrdinalIgnoreCase);
-        }
     }
 
     private static DefaultFunctionMetadata CreateHttpTrigger(string name, string route)

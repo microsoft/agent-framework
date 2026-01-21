@@ -2,7 +2,7 @@
 
 using Microsoft.DurableTask.Entities;
 
-namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
+namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
 /// Durable entity that manages workflow state across activities within an orchestration run.
@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 /// ensuring state isolation between workflow runs. The entity is automatically cleaned up
 /// when the orchestration completes.
 /// </summary>
-internal sealed class WorkflowSharedStateEntity : TaskEntity<WorkflowStateData>
+public sealed class WorkflowSharedStateEntity : TaskEntity<WorkflowStateData>
 {
     /// <summary>
     /// The entity name used for registration and lookup.
@@ -125,7 +125,7 @@ internal sealed class WorkflowSharedStateEntity : TaskEntity<WorkflowStateData>
 /// <summary>
 /// Represents the internal state data for a workflow state entity.
 /// </summary>
-internal sealed class WorkflowStateData
+public sealed class WorkflowStateData
 {
     /// <summary>
     /// Gets the state dictionary mapping scope-prefixed keys to serialized values.
@@ -136,7 +136,7 @@ internal sealed class WorkflowStateData
 /// <summary>
 /// Request model for reading workflow state.
 /// </summary>
-internal sealed class WorkflowStateReadRequest
+public sealed class WorkflowStateReadRequest
 {
     /// <summary>
     /// Gets or sets the state key.
@@ -152,7 +152,7 @@ internal sealed class WorkflowStateReadRequest
 /// <summary>
 /// Request model for writing workflow state.
 /// </summary>
-internal sealed class WorkflowStateWriteRequest
+public sealed class WorkflowStateWriteRequest
 {
     /// <summary>
     /// Gets or sets the state key.

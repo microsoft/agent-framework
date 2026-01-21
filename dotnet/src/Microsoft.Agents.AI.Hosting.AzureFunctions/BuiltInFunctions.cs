@@ -42,7 +42,7 @@ internal static class BuiltInFunctions
 
         string activityFunctionName = functionContext.FunctionDefinition.Name;
 
-        DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
+        FunctionsWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<FunctionsWorkflowRunner>();
         return runner.ExecuteActivityAsync(activityFunctionName, input, durableTaskClient, functionContext);
     }
 
@@ -78,7 +78,7 @@ internal static class BuiltInFunctions
         var workflowName = context.FunctionDefinition.Name.Replace("http-", "");
         var orchestrationFunctionName = $"dafx-{workflowName}";
         var inputMessage = await req.ReadAsStringAsync();
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, new DuableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, new DurableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
         await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}. Orchestration instanceId: {instanceId}");
@@ -221,7 +221,7 @@ internal static class BuiltInFunctions
     }
 
 #pragma warning disable DURTASK001 // Durable analyzer complained
-    public static Task<List<string>> WorkflowRunnerOrchestrationAsync(TaskOrchestrationContext context, DuableWorkflowRunRequest input)
+    public static Task<List<string>> WorkflowRunnerOrchestrationAsync(TaskOrchestrationContext context, DurableWorkflowRunRequest input)
     {
         ArgumentNullException.ThrowIfNull(context);
 

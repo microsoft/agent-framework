@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DurableTask.Client.AzureManaged" />
+    <PackageReference Include="Microsoft.DurableTask.Worker.AzureManaged" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting.AzureFunctions\Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
+  </ItemGroup>
+
+</Project>

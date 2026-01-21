@@ -91,7 +91,7 @@ public static class DurableOptionsExtensions
 
             foreach (string workflowName in workflows.Workflows.Select(kp => kp.Key))
             {
-                tasks.AddOrchestratorFunc<DuableWorkflowRunRequest, List<string>>(
+                tasks.AddOrchestratorFunc<DurableWorkflowRunRequest, List<string>>(
                     $"dafx-{workflowName}",
                     async (orchestrationContext, request) =>
                     {
