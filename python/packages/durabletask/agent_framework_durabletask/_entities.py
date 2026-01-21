@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncIterable
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 from agent_framework import (
@@ -20,6 +21,7 @@ from agent_framework import (
 from durabletask.entities import DurableEntity
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
+from ._constants import MINIMUM_TTL_SIGNAL_DELAY_MINUTES
 from ._durable_agent_state import (
     DurableAgentState,
     DurableAgentStateEntry,
@@ -95,12 +97,20 @@ class AgentEntity:
         callback: AgentResponseCallbackProtocol | None = None,
         *,
         state_provider: AgentEntityStateProviderMixin,
+        time_to_live: timedelta | None = None,
+        minimum_ttl_signal_delay: timedelta = timedelta(minutes=MINIMUM_TTL_SIGNAL_DELAY_MINUTES),
     ) -> None:
         self.agent = agent
         self.callback = callback
         self._state_provider = state_provider
+        self._time_to_live = time_to_live
+        self._minimum_ttl_signal_delay = minimum_ttl_signal_delay
 
-        logger.debug("[AgentEntity] Initialized with agent type: %s", type(agent).__name__)
+        logger.debug(
+            "[AgentEntity] Initialized with agent type: %s, TTL: %s",
+            type(agent).__name__,
+            time_to_live,
+        )
 
     @property
     def state(self) -> DurableAgentState:
@@ -170,6 +180,10 @@ class AgentEntity:
 
             state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
             self.state.data.conversation_history.append(state_response)
+
+            # Update TTL expiration time
+            self._update_ttl_expiration()
+
             self.persist_state()
 
             return agent_run_response
@@ -326,6 +340,113 @@ class AgentEntity:
             thread_id=thread_id,
             request_message=request_message,
         )
+
+    # TTL (Time-To-Live) Methods
+    def _update_ttl_expiration(self) -> None:
+        """Update the TTL expiration time after an interaction.
+
+        If TTL is configured:
+        - Sets/updates the expiration time to now + TTL
+        - On first interaction, schedules a deletion check signal
+
+        If TTL is disabled (None):
+        - Clears any previously set expiration time
+        """
+        if self._time_to_live is not None:
+            current_time = datetime.now(timezone.utc)
+            new_expiration_time = current_time + self._time_to_live
+            is_first_interaction = self.state.data.expiration_time_utc is None
+
+            self.state.data.expiration_time_utc = new_expiration_time
+
+            logger.debug(
+                "[AgentEntity] TTL expiration time updated to %s (first_interaction: %s)",
+                new_expiration_time.isoformat(),
+                is_first_interaction,
+            )
+
+            # Only schedule deletion check on the first interaction when entity is created.
+            # On subsequent interactions, we just update the expiration time. The scheduled
+            # check_and_delete_if_expired will reschedule itself if the entity hasn't expired.
+            if is_first_interaction:
+                self._schedule_deletion_check()
+        else:
+            # TTL is disabled. Clear the expiration time if it was previously set.
+            if self.state.data.expiration_time_utc is not None:
+                logger.debug("[AgentEntity] TTL disabled, clearing expiration time")
+                self.state.data.expiration_time_utc = None
+
+    def check_and_delete_if_expired(self) -> None:
+        """Check if the entity has expired and delete it if so, otherwise reschedule.
+
+        This method is called by a scheduled signal to check TTL expiration.
+        If the entity has expired (current time >= expiration time), the state is deleted.
+        If not expired, a new deletion check is scheduled for the updated expiration time.
+        """
+        current_time = datetime.now(timezone.utc)
+        expiration_time = self.state.data.expiration_time_utc
+
+        logger.debug(
+            "[AgentEntity] TTL deletion check: expiration=%s, current=%s",
+            expiration_time.isoformat() if expiration_time else "None",
+            current_time.isoformat(),
+        )
+
+        if expiration_time is not None:
+            if current_time >= expiration_time:
+                # Entity has expired, delete it by resetting state
+                logger.info(
+                    "[AgentEntity] Entity expired at %s, deleting state",
+                    expiration_time.isoformat(),
+                )
+                self._delete_entity_state()
+            else:
+                # Entity hasn't expired yet, reschedule the deletion check
+                if self._time_to_live is not None:
+                    logger.debug("[AgentEntity] Entity not expired, rescheduling deletion check")
+                    self._schedule_deletion_check()
+
+    def _schedule_deletion_check(self) -> None:
+        """Schedule a signal to self to check for expiration.
+
+        Note: The Python durabletask SDK does not currently support scheduled signals.
+        This method logs a warning and skips scheduling. The expiration time is still
+        tracked in state for potential external cleanup or future SDK support.
+
+        See: https://github.com/Azure/azure-functions-durable-extension/issues/1554
+        """
+        if not isinstance(self._state_provider, DurableTaskEntityStateProvider):
+            logger.warning(
+                "[AgentEntity] Cannot schedule deletion check: state provider does not support entity signaling"
+            )
+            return
+
+        current_time = datetime.now(timezone.utc)
+        expiration_time = self.state.data.expiration_time_utc
+
+        if expiration_time is None and self._time_to_live is not None:
+            expiration_time = current_time + self._time_to_live
+
+        if expiration_time is None:
+            return
+
+        # To avoid excessive scheduling, we schedule the deletion check for no less than the minimum delay
+        minimum_scheduled_time = current_time + self._minimum_ttl_signal_delay
+        scheduled_time = max(expiration_time, minimum_scheduled_time)
+
+        logger.warning(
+            "[AgentEntity] TTL scheduled deletion is not yet supported in the Python durabletask SDK. "
+            "Expiration time set to %s but automatic deletion will not occur. "
+            "Consider implementing external cleanup based on expiration_time_utc in entity state.",
+            scheduled_time.isoformat(),
+        )
+
+    def _delete_entity_state(self) -> None:
+        """Delete the entity state to remove the entity."""
+        # Reset the state cache to clear all data
+        self._state_provider._state_cache = None
+        # Set empty state to trigger deletion
+        self._state_provider._set_state_dict({})
 
 
 class DurableTaskEntityStateProvider(DurableEntity, AgentEntityStateProviderMixin):

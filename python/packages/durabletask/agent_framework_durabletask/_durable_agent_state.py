@@ -332,24 +332,29 @@ class DurableAgentStateData:
     Attributes:
         conversation_history: Ordered list of conversation entries (requests and responses)
         extension_data: Optional dictionary for custom metadata (not part of core schema)
+        expiration_time_utc: Optional UTC datetime when the entity should expire (TTL feature)
     """
 
     conversation_history: list[DurableAgentStateEntry]
     extension_data: dict[str, Any] | None
+    expiration_time_utc: datetime | None
 
     def __init__(
         self,
         conversation_history: list[DurableAgentStateEntry] | None = None,
         extension_data: dict[str, Any] | None = None,
+        expiration_time_utc: datetime | None = None,
     ) -> None:
         """Initialize the data container.
 
         Args:
             conversation_history: Initial conversation history (defaults to empty list)
             extension_data: Optional custom metadata
+            expiration_time_utc: Optional UTC datetime when the entity should expire
         """
         self.conversation_history = conversation_history or []
         self.extension_data = extension_data
+        self.expiration_time_utc = expiration_time_utc
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -357,13 +362,19 @@ class DurableAgentStateData:
         }
         if self.extension_data is not None:
             result[DurableStateFields.EXTENSION_DATA] = self.extension_data
+        if self.expiration_time_utc is not None:
+            result[DurableStateFields.EXPIRATION_TIME_UTC] = self.expiration_time_utc.isoformat()
         return result
 
     @classmethod
     def from_dict(cls, data_dict: dict[str, Any]) -> DurableAgentStateData:
+        expiration_time_raw = data_dict.get(DurableStateFields.EXPIRATION_TIME_UTC)
+        expiration_time_utc = _parse_created_at(expiration_time_raw) if expiration_time_raw else None
+
         return cls(
             conversation_history=_parse_history_entries(data_dict),
             extension_data=data_dict.get(DurableStateFields.EXTENSION_DATA),
+            expiration_time_utc=expiration_time_utc,
         )
 
 

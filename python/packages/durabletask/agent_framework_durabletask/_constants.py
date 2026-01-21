@@ -28,6 +28,10 @@ WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
 DEFAULT_MAX_POLL_RETRIES: int = 30
 DEFAULT_POLL_INTERVAL_SECONDS: float = 1.0
 
+# TTL configuration
+DEFAULT_TIME_TO_LIVE_DAYS: int = 14
+MINIMUM_TTL_SIGNAL_DELAY_MINUTES: int = 5
+
 
 # =============================================================================
 # JSON Field Name Constants for Durable Agent State Serialization
@@ -97,6 +101,9 @@ class DurableStateFields:
 
     # History field
     CONVERSATION_HISTORY: Final[str] = "conversationHistory"
+
+    # TTL field
+    EXPIRATION_TIME_UTC: Final[str] = "expirationTimeUtc"
 
 
 class ContentTypes:

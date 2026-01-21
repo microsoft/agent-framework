@@ -3,8 +3,8 @@
 This worker registers agents as durable entities and continuously listens for requests.
 The worker should run as a background service, processing incoming agent requests.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -12,6 +12,7 @@ Prerequisites:
 import asyncio
 import logging
 import os
+from datetime import timedelta
 
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_durabletask import DurableAIAgentWorker
@@ -69,24 +70,26 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with agents registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents registered
     """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
-    
-    # Create and register the Joker agent
+
+    # Create and register the Joker agent with a 1-hour TTL
+    # Agent sessions will be automatically deleted after 1 hour of inactivity
     logger.debug("Creating and registering Joker agent...")
     joker_agent = create_joker_agent()
-    agent_worker.add_agent(joker_agent)
-    
+    agent_worker.add_agent(joker_agent, time_to_live=timedelta(seconds=30))
+
     logger.debug(f"✓ Registered agent: {joker_agent.name}")
     logger.debug(f"  Entity name: dafx-{joker_agent.name}")
-    
+    logger.debug(f"  TTL: 1 hour")
+
     return agent_worker
 
 
