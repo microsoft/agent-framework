@@ -112,6 +112,11 @@ public static class ServiceCollectionExtensions
             services.AddKeyedSingleton(factory.Key, (sp, _) => factory.Value(sp).AsDurableAgentProxy(sp));
         }
 
+        // Register the agent factories dictionary for backward compatibility.
+        // This allows consumers to retrieve agents via services.GetService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>().
+        services.TryAddSingleton(
+            sp => sp.GetRequiredService<DurableAgentsOptions>().GetAgentFactories());
+
         // A custom data converter is needed because the default chat client uses camel case for JSON properties,
         // which is not the default behavior for the Durable Task SDK.
         services.TryAddSingleton<DataConverter, DefaultDataConverter>();
