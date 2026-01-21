@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from agent_framework import ShellExecutor, ShellResult, ShellTool, ShellToolOptions
+from agent_framework import Content, ShellExecutor, ShellTool, ShellToolOptions
 from agent_framework._shell_tool import (
     DEFAULT_SHELL_MAX_OUTPUT_BYTES,
     DEFAULT_SHELL_TIMEOUT_SECONDS,
@@ -17,14 +17,18 @@ class MockShellExecutor(ShellExecutor):
 
     async def execute(
         self,
-        command: str,
+        commands: list[str],
         *,
         working_directory: str | None = None,
         timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
         max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
-    ) -> ShellResult:
-        return ShellResult(exit_code=0, stdout=f"executed: {command}")
+    ) -> Content:
+        outputs = [
+            {"stdout": f"executed: {cmd}", "stderr": "", "exit_code": 0, "timed_out": False, "truncated": False}
+            for cmd in commands
+        ]
+        return Content.from_shell_result(outputs=outputs)
 
 
 # region Pattern matching tests
@@ -47,51 +51,6 @@ def test_pattern_regex_matching():
     assert _matches_pattern(pattern, "git diff HEAD")
     assert not _matches_pattern(pattern, "git push")
     assert not _matches_pattern(pattern, "git commit -m 'test'")
-
-
-# region ShellResult tests
-
-
-def test_shell_result_success():
-    """Test ShellResult for successful execution."""
-    result = ShellResult(exit_code=0, stdout="hello world")
-    assert result.success
-    assert result.exit_code == 0
-    assert result.stdout == "hello world"
-    assert result.stderr == ""
-    assert not result.timed_out
-    assert not result.truncated
-
-
-def test_shell_result_failure():
-    """Test ShellResult for failed execution."""
-    result = ShellResult(exit_code=1, stderr="error message")
-    assert not result.success
-    assert result.exit_code == 1
-    assert result.stderr == "error message"
-
-
-def test_shell_result_timeout():
-    """Test ShellResult for timed out execution."""
-    result = ShellResult(exit_code=0, timed_out=True)
-    assert not result.success
-    assert result.timed_out
-
-
-def test_shell_result_truncated():
-    """Test ShellResult for truncated output."""
-    result = ShellResult(exit_code=0, stdout="truncated...", truncated=True)
-    assert result.success
-    assert result.truncated
-
-
-def test_shell_result_serialization():
-    """Test ShellResult serialization."""
-    result = ShellResult(exit_code=0, stdout="hello", stderr="", timed_out=False, truncated=False)
-    result_dict = result.to_dict()
-    assert result_dict["exit_code"] == 0
-    assert result_dict["stdout"] == "hello"
-    assert "type" in result_dict
 
 
 # region ShellTool validation tests
@@ -298,9 +257,11 @@ async def test_shell_tool_execute_valid():
     executor = MockShellExecutor()
     tool = ShellTool(executor=executor, options={"allowlist_patterns": ["echo"]})
 
-    result = await tool.execute("echo hello")
-    assert result.exit_code == 0
-    assert "echo hello" in result.stdout
+    result = await tool.execute(["echo hello"])
+    assert result.type == "shell_result"
+    assert len(result.outputs) == 1
+    assert result.outputs[0]["exit_code"] == 0
+    assert "echo hello" in result.outputs[0]["stdout"]
 
 
 async def test_shell_tool_execute_invalid():
@@ -309,7 +270,7 @@ async def test_shell_tool_execute_invalid():
     tool = ShellTool(executor=executor, options={"allowlist_patterns": ["echo"]})
 
     with pytest.raises(ValueError) as exc_info:
-        await tool.execute("rm file.txt")
+        await tool.execute(["rm file.txt"])
     assert "allowlist" in str(exc_info.value).lower()
 
 
@@ -425,10 +386,10 @@ def test_shell_tool_as_ai_function_parameters():
     params = ai_func.parameters()
 
     assert "properties" in params
-    assert "command" in params["properties"]
-    assert params["properties"]["command"]["type"] == "string"
+    assert "commands" in params["properties"]
+    assert params["properties"]["commands"]["type"] == "array"
     assert "required" in params
-    assert "command" in params["required"]
+    assert "commands" in params["required"]
 
 
 async def test_shell_tool_ai_function_invoke_success():
@@ -439,11 +400,13 @@ async def test_shell_tool_ai_function_invoke_success():
     tool = ShellTool(executor=executor, options={"allowlist_patterns": ["echo"]})
 
     ai_func = tool.as_ai_function()
-    result = await ai_func.invoke(command="echo hello")
+    result = await ai_func.invoke(commands=["echo hello"])
 
     parsed = json.loads(result)
-    assert parsed["exit_code"] == 0
-    assert "echo hello" in parsed["stdout"]
+    assert parsed["type"] == "shell_result"
+    assert len(parsed["outputs"]) == 1
+    assert parsed["outputs"][0]["exit_code"] == 0
+    assert "echo hello" in parsed["outputs"][0]["stdout"]
 
 
 async def test_shell_tool_ai_function_invoke_validation_error():
@@ -454,7 +417,7 @@ async def test_shell_tool_ai_function_invoke_validation_error():
     tool = ShellTool(executor=executor, options={"allowlist_patterns": ["echo"]})
 
     ai_func = tool.as_ai_function()
-    result = await ai_func.invoke(command="rm file.txt")
+    result = await ai_func.invoke(commands=["rm file.txt"])
 
     parsed = json.loads(result)
     assert parsed["error"] is True

@@ -364,6 +364,8 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "shell_call",
+    "shell_result",
     "function_approval_request",
     "function_approval_response",
 ]
@@ -498,6 +500,11 @@ class Content:
         tool_name: str | None = None,
         server_name: str | None = None,
         output: Any = None,
+        # Shell call/result fields
+        commands: list[str] | None = None,
+        working_directory: str | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
         # Function approval fields
         id: str | None = None,
         function_call: "Content | None" = None,
@@ -539,6 +546,10 @@ class Content:
         self.tool_name = tool_name
         self.server_name = server_name
         self.output = output
+        self.commands = commands
+        self.working_directory = working_directory
+        self.timeout_ms = timeout_ms
+        self.max_output_length = max_output_length
         self.id = id
         self.function_call = function_call
         self.user_input_request = user_input_request
@@ -969,6 +980,54 @@ class Content:
         )
 
     @classmethod
+    def from_shell_call(
+        cls: type[TContent],
+        *,
+        commands: Sequence[str],
+        call_id: str | None = None,
+        working_directory: str | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create shell call content."""
+        return cls(
+            "shell_call",
+            call_id=call_id,
+            commands=list(commands),
+            working_directory=working_directory,
+            timeout_ms=timeout_ms,
+            max_output_length=max_output_length,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_result(
+        cls: type[TContent],
+        *,
+        outputs: Sequence[Mapping[str, Any]],
+        call_id: str | None = None,
+        max_output_length: int | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> TContent:
+        """Create shell result content."""
+        return cls(
+            "shell_result",
+            call_id=call_id,
+            outputs=list(outputs),
+            max_output_length=max_output_length,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_function_approval_request(
         cls: type[TContent],
         id: str,
@@ -1053,6 +1112,10 @@ class Content:
             "tool_name",
             "server_name",
             "output",
+            "commands",
+            "working_directory",
+            "timeout_ms",
+            "max_output_length",
             "function_call",
             "user_input_request",
             "approved",

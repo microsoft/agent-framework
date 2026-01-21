@@ -8,17 +8,16 @@ import shlex
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple, TypedDict
 
-from ._serialization import SerializationMixin
 from ._tools import BaseTool
 
 if TYPE_CHECKING:
     from ._tools import AIFunction
+    from ._types import Content
 
 __all__ = [
     "DEFAULT_SHELL_MAX_OUTPUT_BYTES",
     "DEFAULT_SHELL_TIMEOUT_SECONDS",
     "ShellExecutor",
-    "ShellResult",
     "ShellTool",
     "ShellToolOptions",
 ]
@@ -133,67 +132,32 @@ class ShellToolOptions(TypedDict, total=False):
     capture_stderr: bool
 
 
-class ShellResult(SerializationMixin):
-    """Result of shell command execution."""
-
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
-
-    def __init__(
-        self,
-        *,
-        exit_code: int,
-        stdout: str = "",
-        stderr: str = "",
-        timed_out: bool = False,
-        truncated: bool = False,
-    ) -> None:
-        """Initialize a ShellResult.
-
-        Keyword Args:
-            exit_code: The command's exit code (0 typically indicates success).
-            stdout: Standard output from the command.
-            stderr: Standard error output from the command.
-            timed_out: Whether the command timed out.
-            truncated: Whether output was truncated due to size limits.
-        """
-        self.exit_code = exit_code
-        self.stdout = stdout
-        self.stderr = stderr
-        self.timed_out = timed_out
-        self.truncated = truncated
-
-    @property
-    def success(self) -> bool:
-        """Return True if the command executed successfully (exit code 0)."""
-        return self.exit_code == 0 and not self.timed_out
-
-
 class ShellExecutor(ABC):
     """Abstract base class for shell command executors."""
 
     @abstractmethod
     async def execute(
         self,
-        command: str,
+        commands: list[str],
         *,
         working_directory: str | None = None,
         timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
         max_output_bytes: int = DEFAULT_SHELL_MAX_OUTPUT_BYTES,
         capture_stderr: bool = True,
-    ) -> ShellResult:
-        """Execute a shell command.
+    ) -> "Content":
+        """Execute shell commands.
 
         Args:
-            command: The command to execute.
+            commands: List of commands to execute.
 
         Keyword Args:
-            working_directory: Working directory for the command.
-            timeout_seconds: Timeout in seconds.
-            max_output_bytes: Maximum output size in bytes.
+            working_directory: Working directory for the commands.
+            timeout_seconds: Timeout in seconds per command.
+            max_output_bytes: Maximum output size in bytes per command.
             capture_stderr: Whether to capture stderr.
 
         Returns:
-            ShellResult containing the command output and execution status.
+            Content with type 'shell_result' containing the command outputs.
         """
         ...
 
@@ -470,24 +434,25 @@ class ShellTool(BaseTool):
                 paths.append(path)
         return paths
 
-    async def execute(self, command: str) -> ShellResult:
-        """Execute a shell command after validation.
+    async def execute(self, commands: list[str]) -> "Content":
+        """Execute shell commands after validation.
 
         Args:
-            command: The command to execute.
+            commands: List of commands to execute.
 
         Returns:
-            ShellResult containing the command output.
+            Content with type 'shell_result' containing the command outputs.
 
         Raises:
-            ValueError: If the command fails validation.
+            ValueError: If any command fails validation.
         """
-        validation = self._validate_command(command)
-        if not validation.is_valid:
-            raise ValueError(validation.error_message)
+        for cmd in commands:
+            validation = self._validate_command(cmd)
+            if not validation.is_valid:
+                raise ValueError(validation.error_message)
 
         return await self.executor.execute(
-            command,
+            commands,
             working_directory=self.working_directory,
             timeout_seconds=self.timeout_seconds,
             max_output_bytes=self.max_output_bytes,
@@ -508,9 +473,11 @@ class ShellTool(BaseTool):
 
         shell_tool = self
 
-        async def execute_shell_command(command: Annotated[str, "The shell command to execute"]) -> str:
+        async def execute_shell_commands(
+            commands: Annotated[list[str], "List of shell commands to execute"],
+        ) -> str:
             try:
-                result = await shell_tool.execute(command)
+                result = await shell_tool.execute(commands)
                 return json.dumps(result.to_dict(), indent=2)
             except ValueError as e:
                 return json.dumps({"error": True, "message": str(e), "exit_code": -1})
@@ -520,7 +487,7 @@ class ShellTool(BaseTool):
         ai_function: AIFunction[Any, str] = AIFunction(
             name=self.name,
             description=self.description,
-            func=execute_shell_command,
+            func=execute_shell_commands,
             approval_mode=self.approval_mode,
         )
 
