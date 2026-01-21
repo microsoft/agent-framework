@@ -450,7 +450,7 @@ def to_azure_ai_tools(
                     addl = tool.additional_properties or {}
                     # Azure ImageGenTool requires the constant model "gpt-image-1"
                     ig_tool: ImageGenTool = ImageGenTool(
-                        model="gpt-image-1",
+                        model=opts.get("model_id", "gpt-image-1"),  # type: ignore
                         size=cast(
                             Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None, opts.get("image_size")
                         ),
