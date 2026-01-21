@@ -1,17 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import uuid
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from typing import Any
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
+    AgentExecutorRequest,
     AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
+    BaseContent,
     ChatMessage,
     ChatMessageStore,
     DataContent,
@@ -298,7 +301,7 @@ class TestWorkflowAgent:
         """
 
         @executor
-        async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+        async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext[Never, str]) -> None:
             # Extract text from input for demonstration
             input_text = messages[0].text if messages else "no input"
             await ctx.yield_output(f"processed: {input_text}")
@@ -323,7 +326,7 @@ class TestWorkflowAgent:
         """Test that ctx.yield_output() surfaces as AgentResponseUpdate when streaming."""
 
         @executor
-        async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+        async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext[Never, str]) -> None:
             await ctx.yield_output("first output")
             await ctx.yield_output("second output")
 
@@ -343,7 +346,9 @@ class TestWorkflowAgent:
         """Test that yield_output preserves different content types (TextContent, DataContent, etc.)."""
 
         @executor
-        async def content_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+        async def content_yielding_executor(
+            messages: list[ChatMessage], ctx: WorkflowContext[Never, BaseContent]
+        ) -> None:
             # Yield different content types
             await ctx.yield_output(TextContent(text="text content"))
             await ctx.yield_output(DataContent(data=b"binary data", media_type="application/octet-stream"))
@@ -371,7 +376,7 @@ class TestWorkflowAgent:
         """Test that yield_output with ChatMessage preserves the message structure."""
 
         @executor
-        async def chat_message_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+        async def chat_message_executor(messages: list[ChatMessage], ctx: WorkflowContext[Never, ChatMessage]) -> None:
             msg = ChatMessage(
                 role=Role.ASSISTANT,
                 contents=[TextContent(text="response text")],
@@ -401,7 +406,9 @@ class TestWorkflowAgent:
                 return f"CustomData({self.value})"
 
         @executor
-        async def raw_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+        async def raw_yielding_executor(
+            messages: list[ChatMessage], ctx: WorkflowContext[Never, BaseContent | CustomData | str]
+        ) -> None:
             # Yield different types of data
             await ctx.yield_output("simple string")
             await ctx.yield_output(TextContent(text="text content"))
@@ -433,7 +440,9 @@ class TestWorkflowAgent:
         """
 
         @executor
-        async def list_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+        async def list_yielding_executor(
+            messages: list[ChatMessage], ctx: WorkflowContext[Never, list[ChatMessage]]
+        ) -> None:
             # Yield a list of ChatMessages (as SequentialBuilder does)
             msg_list = [
                 ChatMessage(role=Role.USER, contents=[TextContent(text="first message")]),
@@ -573,41 +582,42 @@ class TestWorkflowAgent:
             """Mock agent for testing."""
 
             def __init__(self, name: str, response_text: str) -> None:
-                self._name = name
+                self.id = str(uuid.uuid4())
+                self.name = name
+                self.description: str | None = None
                 self._response_text = response_text
-                self._description: str | None = None
 
-            @property
-            def name(self) -> str | None:
-                return self._name
-
-            @property
-            def description(self) -> str | None:
-                return self._description
-
-            def get_new_thread(self) -> AgentThread:
+            def get_new_thread(self, **kwargs: Any) -> AgentThread:
                 return AgentThread()
 
-            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
+            async def run(
+                self,
+                messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+                *,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
+            ) -> AgentResponse:
                 return AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
                     text=self._response_text,
                 )
 
             async def run_stream(
-                self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
+                self,
+                messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+                *,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
             ) -> AsyncIterable[AgentResponseUpdate]:
                 for word in self._response_text.split():
                     yield AgentResponseUpdate(
                         contents=[TextContent(text=word + " ")],
                         role=Role.ASSISTANT,
-                        author_name=self._name,
+                        author_name=self.name,
                     )
 
         @executor
-        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
-            from agent_framework import AgentExecutorRequest
-
+        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest, str]) -> None:
             await ctx.yield_output("Start output")
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
@@ -616,12 +626,11 @@ class TestWorkflowAgent:
             WorkflowBuilder()
             .register_executor(lambda: start_executor, "start")
             .register_agent(lambda: MockAgent("agent1", "Agent1 output - should NOT appear"), "agent1")
-            .register_agent(
-                lambda: MockAgent("agent2", "Agent2 output - SHOULD appear"), "agent2", output_response=True
-            )
+            .register_agent(lambda: MockAgent("agent2", "Agent2 output - SHOULD appear"), "agent2")
             .set_start_executor("start")
             .add_edge("start", "agent1")
             .add_edge("agent1", "agent2")
+            .with_output_from(["start", "agent2"])
             .build()
         )
 
@@ -647,40 +656,41 @@ class TestWorkflowAgent:
             """Mock agent for testing."""
 
             def __init__(self, name: str, response_text: str) -> None:
-                self._name = name
+                self.id = str(uuid.uuid4())
+                self.name = name
+                self.description: str | None = None
                 self._response_text = response_text
-                self._description: str | None = None
 
-            @property
-            def name(self) -> str | None:
-                return self._name
-
-            @property
-            def description(self) -> str | None:
-                return self._description
-
-            def get_new_thread(self) -> AgentThread:
+            def get_new_thread(self, **kwargs: Any) -> AgentThread:
                 return AgentThread()
 
-            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
+            async def run(
+                self,
+                messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+                *,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
+            ) -> AgentResponse:
                 return AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
                     text=self._response_text,
                 )
 
             async def run_stream(
-                self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
+                self,
+                messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+                *,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
             ) -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
                     contents=[TextContent(text=self._response_text)],
                     role=Role.ASSISTANT,
-                    author_name=self._name,
+                    author_name=self.name,
                 )
 
         @executor
-        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
-            from agent_framework import AgentExecutorRequest
-
+        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
         # Build workflow with single agent that has output_response=True
@@ -1023,7 +1033,7 @@ class TestWorkflowAgentMergeUpdates:
         assert len(result.messages) == 4
 
         # Extract content types for verification
-        content_sequence = []
+        content_sequence: list[tuple[str, Role]] = []
         for msg in result.messages:
             for content in msg.contents:
                 if isinstance(content, TextContent):
@@ -1134,7 +1144,7 @@ class TestWorkflowAgentMergeUpdates:
         assert len(result.messages) == 6
 
         # Build a sequence of (content_type, call_id_if_applicable)
-        content_sequence = []
+        content_sequence: list[tuple[str, str | None]] = []
         for msg in result.messages:
             for content in msg.contents:
                 if isinstance(content, TextContent):
@@ -1200,7 +1210,7 @@ class TestWorkflowAgentMergeUpdates:
         assert len(result.messages) == 3
 
         # Orphan function result should be at the end since it can't be matched
-        content_types = []
+        content_types: list[str] = []
         for msg in result.messages:
             for content in msg.contents:
                 if isinstance(content, TextContent):

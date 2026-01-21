@@ -230,7 +230,7 @@ class WorkflowBuilder:
             return candidate
         if isinstance(candidate, AgentProtocol):  # type: ignore[arg-type]
             # Reuse existing wrapper for the same agent instance if present
-            agent_instance_id = id(candidate)
+            agent_instance_id = str(id(candidate))
             existing = self._agent_wrappers.get(agent_instance_id)
             if existing is not None:
                 return existing
@@ -325,7 +325,7 @@ class WorkflowBuilder:
         factory_func: Callable[[], AgentProtocol],
         name: str,
         agent_thread: AgentThread | None = None,
-        output_response: bool = False,
+        output_response: bool = True,
     ) -> Self:
         """Register an agent factory function for lazy initialization.
 
@@ -340,6 +340,8 @@ class WorkflowBuilder:
             agent_thread: The thread to use for running the agent. If None, a new thread will be created when
                           the agent is instantiated.
             output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
+                             This is true by default. Outputs can be disabled using this parameter, or filtered
+                             by `with_output_from` when building the workflow.
 
         Example:
             .. code-block:: python

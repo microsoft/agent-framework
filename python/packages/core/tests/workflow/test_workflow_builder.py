@@ -499,7 +499,7 @@ def test_with_output_from_with_executor_instances():
     )
 
     # Verify that the workflow was built with the correct output executors
-    assert workflow._output_executors == ["executor_b"]
+    assert workflow._output_executors == ["executor_b"]  # type: ignore
 
 
 def test_with_output_from_with_agent_instances():
@@ -512,7 +512,7 @@ def test_with_output_from_with_agent_instances():
     )
 
     # Verify that the workflow was built with the agent's name as output executor
-    assert workflow._output_executors == ["reviewer"]
+    assert workflow._output_executors == ["reviewer"]  # type: ignore
 
 
 def test_with_output_from_with_registered_names():
@@ -528,7 +528,7 @@ def test_with_output_from_with_registered_names():
     )
 
     # Verify that the workflow was built with the correct output executors
-    assert workflow._output_executors == ["ExecutorB"]
+    assert workflow._output_executors == ["ExecutorB"]  # type: ignore
 
 
 def test_with_output_from_with_multiple_executors():
@@ -547,7 +547,7 @@ def test_with_output_from_with_multiple_executors():
     )
 
     # Verify that the workflow was built with both output executors
-    assert set(workflow._output_executors) == {"executor_a", "executor_c"}
+    assert set(workflow._output_executors) == {"executor_a", "executor_c"}  # type: ignore
 
 
 def test_with_output_from_can_be_called_multiple_times():
@@ -565,7 +565,7 @@ def test_with_output_from_can_be_called_multiple_times():
     )
 
     # Verify that only the last setting is applied
-    assert workflow._output_executors == ["executor_b"]
+    assert workflow._output_executors == ["executor_b"]  # type: ignore
 
 
 def test_with_output_from_with_registered_agents():
@@ -581,7 +581,7 @@ def test_with_output_from_with_registered_agents():
     )
 
     # Verify that the workflow was built with the agent's resolved name
-    assert workflow._output_executors == ["reviewer"]
+    assert workflow._output_executors == ["reviewer"]  # type: ignore
 
 
 def test_with_output_from_in_fluent_chain():
@@ -601,7 +601,7 @@ def test_with_output_from_in_fluent_chain():
     )
 
     # Verify that the setting persists through the chain
-    assert workflow._output_executors == ["executor_c"]
+    assert workflow._output_executors == ["executor_c"]  # type: ignore
 
 
 def test_with_output_from_with_invalid_executor_raises_validation_error():

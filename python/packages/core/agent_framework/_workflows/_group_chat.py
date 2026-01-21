@@ -921,6 +921,10 @@ class GroupChatBuilder:
             # Orchestrator and participant bi-directional edges
             workflow_builder = workflow_builder.add_edge(orchestrator, participant)
             workflow_builder = workflow_builder.add_edge(participant, orchestrator)
+
+        # Constrain output to full conversation from orchestrator only
+        workflow_builder = workflow_builder.with_output_from([orchestrator])
+
         if self._checkpoint_storage is not None:
             workflow_builder = workflow_builder.with_checkpointing(self._checkpoint_storage)
 

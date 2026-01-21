@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -155,7 +155,7 @@ class StubAgent(BaseAgent):
 
     async def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -165,7 +165,7 @@ class StubAgent(BaseAgent):
 
     def run_stream(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -422,7 +422,7 @@ class StubManagerAgent(BaseAgent):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: Any = None,
         **kwargs: Any,
@@ -431,7 +431,7 @@ class StubManagerAgent(BaseAgent):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: Any = None,
         **kwargs: Any,

@@ -2,11 +2,23 @@
 
 import logging
 from types import UnionType
-from typing import Any, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, TypeGuard, Union, cast, get_args, get_origin
+
+from .._agents import ChatAgent, TOptions_co
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
+
+def is_chat_agent(agent: Any) -> TypeGuard[ChatAgent[TOptions_co]]:
+    """Check if the given agent is a ChatAgent.
+
+    Args:
+        agent (Any): The agent to check.
+
+    Returns:
+        TypeGuard[ChatAgent]: True if the agent is a ChatAgent, False otherwise.
+    """
+    return isinstance(agent, ChatAgent)
 
 
 def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:

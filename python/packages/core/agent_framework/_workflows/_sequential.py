@@ -317,6 +317,9 @@ class SequentialBuilder:
         # Terminate with the final conversation
         builder.add_edge(prior, end)
 
+        # Constrain output to final conversation only
+        builder = builder.with_output_from([end])
+
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 

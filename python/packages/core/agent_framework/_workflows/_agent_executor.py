@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResponseContent
 
-from .._agents import AgentProtocol, ChatAgent
+from .._agents import AgentProtocol
 from .._threads import AgentThread
 from .._types import AgentResponse, AgentResponseUpdate, ChatMessage
 from ._agent_utils import resolve_agent_id
@@ -21,6 +21,7 @@ from ._events import (
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
+from ._typing_utils import is_chat_agent
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
@@ -77,7 +78,7 @@ class AgentExecutor(Executor):
         agent: AgentProtocol,
         *,
         agent_thread: AgentThread | None = None,
-        output_response: bool = False,
+        output_response: bool = True,
         id: str | None = None,
     ):
         """Initialize the executor with a unique identifier.
@@ -86,6 +87,8 @@ class AgentExecutor(Executor):
             agent: The agent to be wrapped by this executor.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
             output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
+                This is True by default. Outputs can be disabled here or filtered by `with_output_from` in the
+                workflow builder.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
@@ -214,7 +217,7 @@ class AgentExecutor(Executor):
             Dict containing serialized cache and thread state
         """
         # Check if using AzureAIAgentClient with server-side thread and warn about checkpointing limitations
-        if isinstance(self._agent, ChatAgent) and self._agent_thread.service_thread_id is not None:
+        if is_chat_agent(self._agent) and self._agent_thread.service_thread_id is not None:
             client_class_name = self._agent.chat_client.__class__.__name__
             client_module = self._agent.chat_client.__class__.__module__
 
@@ -375,7 +378,7 @@ class AgentExecutor(Executor):
                 user_input_requests.extend(update.user_input_requests)
 
         # Build the final AgentResponse from the collected updates
-        if isinstance(self._agent, ChatAgent):
+        if is_chat_agent(self._agent):
             response_format = self._agent.default_options.get("response_format")
             response = AgentResponse.from_agent_run_response_updates(
                 updates,

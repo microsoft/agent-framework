@@ -2,7 +2,7 @@
 
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from typing import Any
 
 from typing_extensions import Never
@@ -42,7 +42,7 @@ class _ToolCallingAgent(BaseAgent):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -52,7 +52,7 @@ class _ToolCallingAgent(BaseAgent):
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -152,7 +152,7 @@ class MockChatClient:
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         **kwargs: Any,
     ) -> ChatResponse:
         if self._iteration == 0:
@@ -189,7 +189,7 @@ class MockChatClient:
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         if self._iteration == 0:
@@ -235,7 +235,13 @@ async def test_agent_executor_tool_call_with_approval() -> None:
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(agent)
+        .add_edge(agent, test_executor)
+        .with_output_from([test_executor])
+        .build()
+    )
 
     # Act
     events = await workflow.run("Invoke tool requiring approval")
@@ -302,7 +308,13 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(agent)
+        .add_edge(agent, test_executor)
+        .with_output_from([test_executor])
+        .build()
+    )
 
     # Act
     events = await workflow.run("Invoke tool requiring approval")

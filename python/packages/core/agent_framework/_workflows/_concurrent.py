@@ -576,6 +576,9 @@ class ConcurrentBuilder:
         # Direct fan-in to aggregator
         builder.add_fan_in_edges(participants, aggregator)
 
+        # Constrain output to aggregator only
+        builder.with_output_from([aggregator])
+
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 

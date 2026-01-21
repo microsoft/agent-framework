@@ -1739,6 +1739,9 @@ class MagenticBuilder:
         if self._checkpoint_storage is not None:
             workflow_builder = workflow_builder.with_checkpointing(self._checkpoint_storage)
 
+        # Constrain output to orchestrator only
+        workflow_builder = workflow_builder.with_output_from([orchestrator])
+
         return workflow_builder.build()
 
 
