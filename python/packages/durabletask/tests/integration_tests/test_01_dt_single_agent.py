@@ -13,7 +13,7 @@ Tests basic agent operations including:
 from typing import Any
 
 import pytest
-from testutils import create_agent_client
+from dt_testutils import create_agent_client
 
 # Module-level markers - applied to all tests in this module
 pytestmark = [

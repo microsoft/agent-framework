@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 import redis.asyncio as aioredis
-from testutils import OrchestrationHelper, create_agent_client
+from dt_testutils import OrchestrationHelper, create_agent_client
 
 # Add sample directory to path to import RedisStreamResponseHandler
 SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / "03_single_agent_streaming"

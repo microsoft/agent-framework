@@ -14,8 +14,8 @@ import logging
 from typing import Any
 
 import pytest
+from dt_testutils import OrchestrationHelper, create_agent_client
 from durabletask.client import OrchestrationStatus
-from testutils import OrchestrationHelper, create_agent_client
 
 # Constants from the 07_single_agent_orchestration_hitl sample
 WRITER_AGENT_NAME: str = "WriterAgent"

@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from agent_framework import FunctionCallContent
-from testutils import create_agent_client
+from dt_testutils import create_agent_client
 
 # Agent names from the 02_multi_agent sample
 WEATHER_AGENT_NAME: str = "WeatherAgent"

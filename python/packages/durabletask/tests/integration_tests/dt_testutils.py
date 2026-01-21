@@ -68,7 +68,6 @@ class OrchestrationHelper:
         self,
         instance_id: str,
         timeout: float = 60.0,
-        poll_interval: float = 0.5,
     ) -> Any:
         """
         Wait for an orchestration to complete.
@@ -76,7 +75,6 @@ class OrchestrationHelper:
         Args:
             instance_id: The orchestration instance ID
             timeout: Maximum time to wait in seconds
-            poll_interval: Time between polling attempts in seconds
 
         Returns:
             The final OrchestrationMetadata
@@ -106,7 +104,6 @@ class OrchestrationHelper:
         self,
         instance_id: str,
         timeout: float = 60.0,
-        poll_interval: float = 0.5,
     ) -> tuple[Any, Any]:
         """
         Wait for an orchestration to complete and return its output.
@@ -114,7 +111,6 @@ class OrchestrationHelper:
         Args:
             instance_id: The orchestration instance ID
             timeout: Maximum time to wait in seconds
-            poll_interval: Time between polling attempts in seconds
 
         Returns:
             A tuple of (OrchestrationMetadata, output)
@@ -123,7 +119,7 @@ class OrchestrationHelper:
             TimeoutError: If the orchestration doesn't complete within timeout
             RuntimeError: If the orchestration fails
         """
-        metadata = self.wait_for_orchestration(instance_id, timeout, poll_interval)
+        metadata = self.wait_for_orchestration(instance_id, timeout)
 
         # The output should be available in the metadata
         return metadata, metadata.serialized_output
@@ -200,6 +196,8 @@ class OrchestrationHelper:
                     if metadata.runtime_status.name == "COMPLETED" or metadata.runtime_status.name == "FAILED":
                         return False
             except Exception:
+                # Silently ignore transient errors during polling (e.g., network issues, service unavailable).
+                # The loop will retry until timeout, allowing the service to recover.
                 pass
 
             time.sleep(1)

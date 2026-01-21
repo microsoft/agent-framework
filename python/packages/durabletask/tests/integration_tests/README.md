@@ -71,7 +71,8 @@ pytestmark = [
     pytest.mark.requires_redis,
 ]
 ```
-roubleshooting
+
+## Troubleshooting
 
 **Tests are skipped:**
 Ensure `RUN_INTEGRATION_TESTS=true` is set in your `.env` file.

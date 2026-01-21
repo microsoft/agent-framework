@@ -14,8 +14,8 @@ import logging
 from typing import Any
 
 import pytest
+from dt_testutils import OrchestrationHelper, create_agent_client
 from durabletask.client import OrchestrationStatus
-from testutils import OrchestrationHelper, create_agent_client
 
 # Agent names from the 06_multi_agent_orchestration_conditionals sample
 SPAM_AGENT_NAME: str = "SpamDetectionAgent"
