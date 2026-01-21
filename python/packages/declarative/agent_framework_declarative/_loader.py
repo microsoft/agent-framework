@@ -9,12 +9,11 @@ from agent_framework import (
     AIFunction,
     ChatAgent,
     ChatClientProtocol,
+    Content,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedFileSearchTool,
     HostedMCPSpecificApproval,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
     ToolProtocol,
 )
@@ -739,14 +738,14 @@ class AgentFactory:
                 if tool_resource.filters:
                     add_props["filters"] = tool_resource.filters
                 return HostedFileSearchTool(
-                    inputs=[HostedVectorStoreContent(id) for id in tool_resource.vectorStoreIds or []],
+                    inputs=[Content.from_hosted_vector_store(id) for id in tool_resource.vectorStoreIds or []],
                     description=tool_resource.description,
                     max_results=tool_resource.maximumResultCount,
                     additional_properties=add_props,
                 )
             case CodeInterpreterTool():
                 return HostedCodeInterpreterTool(
-                    inputs=[HostedFileContent(file_id=file) for file in tool_resource.fileIds or []],
+                    inputs=[Content.from_hosted_file(file_id=file) for file in tool_resource.fileIds or []],
                     description=tool_resource.description,
                 )
             case McpTool():

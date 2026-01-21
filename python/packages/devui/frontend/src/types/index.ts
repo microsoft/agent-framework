@@ -188,7 +188,7 @@ export interface MetaResponse {
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
-  contents: import("./agent-framework").Contents[];
+  contents: import("./agent-framework").Content[];
   timestamp: string;
   streaming?: boolean;
   author_name?: string;

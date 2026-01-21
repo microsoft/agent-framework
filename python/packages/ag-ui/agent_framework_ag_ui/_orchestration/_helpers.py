@@ -9,10 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ag_ui.core import StateSnapshotEvent
 from agent_framework import (
     ChatMessage,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    TextContent,
+    Content,
 )
 
 from .._utils import get_role_value, safe_json_parse
@@ -37,9 +34,9 @@ def pending_tool_call_ids(messages: list[ChatMessage]) -> set[str]:
     resolved_ids: set[str] = set()
     for msg in messages:
         for content in msg.contents:
-            if isinstance(content, FunctionCallContent) and content.call_id:
+            if content.type == "function_call" and content.call_id:
                 pending_ids.add(str(content.call_id))
-            elif isinstance(content, FunctionResultContent) and content.call_id:
+            elif content.type == "function_result" and content.call_id:
                 resolved_ids.add(str(content.call_id))
     return pending_ids - resolved_ids
 
@@ -56,7 +53,7 @@ def is_state_context_message(message: ChatMessage) -> bool:
     if get_role_value(message) != "system":
         return False
     for content in message.contents:
-        if isinstance(content, TextContent) and content.text.startswith("Current state of the application:"):
+        if content.type == "text" and content.text.startswith("Current state of the application:"):  # type: ignore[union-attr]
             return True
     return False
 
@@ -139,7 +136,7 @@ def tool_calls_match_state(
             if get_role_value(msg) != "assistant":
                 continue
             for content in msg.contents:
-                if isinstance(content, FunctionCallContent) and content.name == tool_name:
+                if content.type == "function_call" and content.name == tool_name:
                     tool_args = safe_json_parse(content.arguments)
                     break
             if tool_args is not None:
@@ -287,7 +284,7 @@ def collect_approved_state_snapshots(
         if get_role_value(msg) != "user":
             continue
         for content in msg.contents:
-            if type(content) is FunctionApprovalResponseContent:
+            if content.type == "function_approval_response":
                 if not content.function_call or not content.approved:
                     continue
                 parsed_args = content.function_call.parse_arguments()
@@ -319,7 +316,7 @@ def collect_approved_state_snapshots(
     return events
 
 
-def latest_approval_response(messages: list[ChatMessage]) -> FunctionApprovalResponseContent | None:
+def latest_approval_response(messages: list[ChatMessage]) -> Content | None:
     """Get the latest approval response from messages.
 
     Args:
@@ -332,12 +329,12 @@ def latest_approval_response(messages: list[ChatMessage]) -> FunctionApprovalRes
         return None
     last_message = messages[-1]
     for content in last_message.contents:
-        if type(content) is FunctionApprovalResponseContent:
+        if content.type == "function_approval_response":
             return content
     return None
 
 
-def approval_steps(approval: FunctionApprovalResponseContent) -> list[Any]:
+def approval_steps(approval: Content) -> list[Any]:
     """Extract steps from an approval response.
 
     Args:
@@ -346,9 +343,7 @@ def approval_steps(approval: FunctionApprovalResponseContent) -> list[Any]:
     Returns:
         List of steps, or empty list if none
     """
-    state_args: Any | None = None
-    if approval.additional_properties:
-        state_args = approval.additional_properties.get("ag_ui_state_args")
+    state_args = approval.additional_properties.get("ag_ui_state_args", None)
     if isinstance(state_args, dict):
         steps = state_args.get("steps")
         if isinstance(steps, list):
@@ -365,7 +360,7 @@ def approval_steps(approval: FunctionApprovalResponseContent) -> list[Any]:
 
 
 def is_step_based_approval(
-    approval: FunctionApprovalResponseContent,
+    approval: Content,
     predict_state_config: dict[str, dict[str, str]] | None,
 ) -> bool:
     """Check if an approval is step-based.

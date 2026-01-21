@@ -17,6 +17,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     GroupChatBuilder,
     GroupChatState,
     MagenticContext,
@@ -25,7 +26,6 @@ from agent_framework import (
     MagenticProgressLedgerItem,
     RequestInfoEvent,
     Role,
-    TextContent,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -57,7 +57,7 @@ class StubAgent(BaseAgent):
     ) -> AsyncIterable[AgentResponseUpdate]:
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             yield AgentResponseUpdate(
-                contents=[TextContent(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
+                contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
         return _stream()
@@ -141,7 +141,7 @@ class StubManagerAgent(ChatAgent):
             async def _stream_initial() -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
                     contents=[
-                        TextContent(
+                        Content.from_text(
                             text=(
                                 '{"terminate": false, "reason": "Selecting agent", '
                                 '"next_speaker": "agent", "final_message": null}'
@@ -157,7 +157,7 @@ class StubManagerAgent(ChatAgent):
         async def _stream_final() -> AsyncIterable[AgentResponseUpdate]:
             yield AgentResponseUpdate(
                 contents=[
-                    TextContent(
+                    Content.from_text(
                         text=(
                             '{"terminate": true, "reason": "Task complete", '
                             '"next_speaker": null, "final_message": "agent manager final"}'

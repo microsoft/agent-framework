@@ -8,8 +8,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
-    TextContent,
+    Content,
     ai_function,
 )
 from agent_framework._tools import _handle_function_calls_response, _handle_function_calls_streaming_response
@@ -42,7 +41,9 @@ class TestKwargsPropagationToAIFunction:
                         ChatMessage(
                             role="assistant",
                             contents=[
-                                FunctionCallContent(call_id="call_1", name="capture_kwargs_tool", arguments='{"x": 42}')
+                                Content.from_function_call(
+                                    call_id="call_1", name="capture_kwargs_tool", arguments='{"x": 42}'
+                                )
                             ],
                         )
                     ]
@@ -94,7 +95,9 @@ class TestKwargsPropagationToAIFunction:
                     messages=[
                         ChatMessage(
                             role="assistant",
-                            contents=[FunctionCallContent(call_id="call_1", name="simple_tool", arguments='{"x": 99}')],
+                            contents=[
+                                Content.from_function_call(call_id="call_1", name="simple_tool", arguments='{"x": 99}')
+                            ],
                         )
                     ]
                 )
@@ -136,10 +139,10 @@ class TestKwargsPropagationToAIFunction:
                         ChatMessage(
                             role="assistant",
                             contents=[
-                                FunctionCallContent(
+                                Content.from_function_call(
                                     call_id="call_1", name="tracking_tool", arguments='{"name": "first"}'
                                 ),
-                                FunctionCallContent(
+                                Content.from_function_call(
                                     call_id="call_2", name="tracking_tool", arguments='{"name": "second"}'
                                 ),
                             ],
@@ -187,7 +190,7 @@ class TestKwargsPropagationToAIFunction:
                 yield ChatResponseUpdate(
                     role="assistant",
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="stream_call_1",
                             name="streaming_capture_tool",
                             arguments='{"value": "streaming-test"}',
@@ -197,7 +200,9 @@ class TestKwargsPropagationToAIFunction:
                 )
             else:
                 # Second call: return final response
-                yield ChatResponseUpdate(text=TextContent(text="Stream complete!"), role="assistant", is_finished=True)
+                yield ChatResponseUpdate(
+                    text=Content.from_text(text="Stream complete!"), role="assistant", is_finished=True
+                )
 
         wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
 

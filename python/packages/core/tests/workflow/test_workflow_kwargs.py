@@ -12,12 +12,12 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     ConcurrentBuilder,
+    Content,
     GroupChatBuilder,
     GroupChatState,
     HandoffBuilder,
     Role,
     SequentialBuilder,
-    TextContent,
     WorkflowRunState,
     WorkflowStatusEvent,
     ai_function,
@@ -67,7 +67,7 @@ class _KwargsCapturingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         self.captured_kwargs.append(dict(kwargs))
-        yield AgentResponseUpdate(contents=[TextContent(text=f"{self.name} response")])
+        yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} response")])
 
 
 # region Sequential Builder Tests
