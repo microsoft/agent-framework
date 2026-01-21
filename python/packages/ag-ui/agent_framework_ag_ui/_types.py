@@ -3,15 +3,19 @@
 """Type definitions for AG-UI integration."""
 
 import sys
-from typing import Any, Generic, TypedDict
+from typing import Any, Generic
 
 from agent_framework import ChatOptions
 from pydantic import BaseModel, Field
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]

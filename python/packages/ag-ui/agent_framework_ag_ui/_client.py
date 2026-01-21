@@ -28,25 +28,21 @@ from ._http_service import AGUIHttpService
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
 
-if TYPE_CHECKING:
-    from ._types import AGUIChatOptions
-
-from typing import TypedDict
-
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # pragma: no cover
+
+if TYPE_CHECKING:
+    from ._types import AGUIChatOptions
 
 logger: logging.Logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic
 
 from agent_framework import ChatOptions, use_chat_middleware, use_function_invocation
 from agent_framework._pydantic import AFBaseSettings
@@ -17,7 +17,10 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
-
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = [
     "FoundryLocalChatOptions",

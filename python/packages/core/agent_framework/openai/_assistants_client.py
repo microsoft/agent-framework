@@ -10,10 +10,7 @@ from collections.abc import (
     MutableMapping,
     MutableSequence,
 )
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, Generic, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -53,19 +50,19 @@ from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 __all__ = [

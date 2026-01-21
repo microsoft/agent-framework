@@ -5,7 +5,7 @@ import json
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Generic, Literal
 from uuid import uuid4
 
 from agent_framework import (
@@ -36,14 +36,17 @@ from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, SecretStr, ValidationError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = get_logger("agent_framework.bedrock")
 

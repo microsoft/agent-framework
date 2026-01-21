@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, cast
 
 import yaml
 from agent_framework import (
@@ -41,6 +42,11 @@ from ._models import (
     _safe_mode_context,
     agent_schema_dispatch,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 class ProviderTypeMapping(TypedDict, total=True):

@@ -2,11 +2,12 @@
 
 import json
 import logging
+import sys
 import uuid
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from agent_framework import (
     AgentResponse,
@@ -31,6 +32,11 @@ from ._events import (
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_type_compatible
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
     from ._workflow import Workflow

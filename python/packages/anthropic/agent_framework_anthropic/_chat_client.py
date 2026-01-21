@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Final, Generic, Literal
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -47,15 +47,18 @@ from anthropic.types.beta.beta_code_execution_tool_result_error import (
 )
 from pydantic import BaseModel, SecretStr, ValidationError
 
-if sys.version_info >= (3, 13):
-    from typing import TypeVar
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 __all__ = [
     "AnthropicChatOptions",

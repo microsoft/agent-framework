@@ -13,7 +13,6 @@ from typing import (
     ClassVar,
     Generic,
     Protocol,
-    TypedDict,
     cast,
     overload,
     runtime_checkable,
@@ -44,27 +43,25 @@ from ._types import (
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
 
-if TYPE_CHECKING:
-    from ._types import ChatOptions
-
-
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
-TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # pragma: no cover
+
+if TYPE_CHECKING:
+    from ._types import ChatOptions
+
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
 logger = get_logger("agent_framework")

@@ -50,9 +50,9 @@ from ._types import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 
 if TYPE_CHECKING:

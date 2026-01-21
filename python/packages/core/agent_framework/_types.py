@@ -12,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -25,6 +25,10 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = [
     "AgentResponse",
