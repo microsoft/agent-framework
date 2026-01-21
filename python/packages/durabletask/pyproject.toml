@@ -4,7 +4,7 @@ description = "Durable Task integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.0.1"
+version = "0.0.1b260113"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -53,6 +53,11 @@ filterwarnings = [
 timeout = 120
 markers = [
     "integration: marks tests as integration tests",
+    "integration_test: marks tests as integration tests (alternative marker)",
+    "sample: marks tests as sample tests",
+    "requires_azure_openai: marks tests that require Azure OpenAI",
+    "requires_dts: marks tests that require Durable Task Scheduler",
+    "requires_redis: marks tests that require Redis"
 ]
 
 [tool.ruff]

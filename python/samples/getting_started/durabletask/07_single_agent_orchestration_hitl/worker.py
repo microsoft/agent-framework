@@ -71,7 +71,7 @@ def create_writer_agent():
     )
 
 
-def notify_user_for_approval(context: ActivityContext, content: dict[str, str]) -> None:
+def notify_user_for_approval(context: ActivityContext, content: dict[str, str]) -> str:
     """Activity function to notify user for approval.
     
     Args:
@@ -83,8 +83,9 @@ def notify_user_for_approval(context: ActivityContext, content: dict[str, str]) 
     logger.info(f"Title: {model.title or '(untitled)'}")
     logger.info(f"Content: {model.content}")
     logger.info("Use the client to send approval or rejection.")
+    return "Notification sent to user for approval."
 
-def publish_content(context: ActivityContext, content: dict[str, str]) -> None:
+def publish_content(context: ActivityContext, content: dict[str, str]) -> str:
     """Activity function to publish approved content.
     
     Args:
@@ -95,6 +96,7 @@ def publish_content(context: ActivityContext, content: dict[str, str]) -> None:
     logger.info("PUBLISHING: Content has been published successfully:")
     logger.info(f"Title: {model.title or '(untitled)'}")
     logger.info(f"Content: {model.content}")
+    return "Published content successfully."
 
 
 def content_generation_hitl_orchestration(
@@ -229,6 +231,14 @@ def content_generation_hitl_orchestration(
             
             # Content rejected - incorporate feedback and regenerate
             logger.debug(f"[Orchestration] Content rejected. Feedback: {approval.feedback}")
+            
+            # Check if we've exhausted attempts
+            if attempt >= payload.max_review_attempts:
+                context.set_custom_status("Max review attempts exhausted.")
+                # Max attempts exhausted
+                logger.error(f"[Orchestration] Max attempts ({payload.max_review_attempts}) exhausted")
+                break
+            
             context.set_custom_status(f"Content rejected by human reviewer. Regenerating...")
             
             rewrite_prompt = (
@@ -261,7 +271,8 @@ def content_generation_hitl_orchestration(
                 f"Human approval timed out after {payload.approval_timeout_seconds} second(s)."
             )
     
-    # Max attempts exhausted
+    # If we exit the loop without returning, max attempts were exhausted
+    context.set_custom_status("Max review attempts exhausted.")
     raise RuntimeError(
         f"Content could not be approved after {payload.max_review_attempts} iteration(s)."
     )
