@@ -177,7 +177,7 @@ For more information on the schema used for single agents go [here](https://gith
     - API Documentation:
       - Create detailed API documentation as components are developed, using tools that support the target language.
     - User Guides:
-      - Extend existing docuiemntation to cover the new language by adding a language pivot.
+      - Extend existing documentation to cover the new language by adding a language pivot.
 6. Public Release
     - Public preview:
       - Once the SDK is stable and documented, consider making the repository public.
