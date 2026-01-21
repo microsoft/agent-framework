@@ -141,12 +141,17 @@ public static class DurableAgentsOptionsExtensions
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(factory);
 
-        FunctionsAgentOptions agentOptions = new();
-        agentOptions.HttpTrigger.IsEnabled = enableHttpTrigger;
-        agentOptions.McpToolTrigger.IsEnabled = enableMcpToolTrigger;
+        // Check if agent options already exist (e.g., from a previous ConfigureDurableAgents call)
+        // If so, preserve the existing options instead of overwriting them
+        if (!s_agentOptions.ContainsKey(name))
+        {
+            FunctionsAgentOptions agentOptions = new();
+            agentOptions.HttpTrigger.IsEnabled = enableHttpTrigger;
+            agentOptions.McpToolTrigger.IsEnabled = enableMcpToolTrigger;
+            s_agentOptions[name] = agentOptions;
+        }
 
         options.AddAIAgentFactory(name, factory, timeToLive);
-        s_agentOptions[name] = agentOptions;
         return options;
     }
 

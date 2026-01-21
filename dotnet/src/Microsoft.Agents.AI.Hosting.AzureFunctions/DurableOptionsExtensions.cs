@@ -53,16 +53,23 @@ public static class DurableOptionsExtensions
     private static void RegisterServices(FunctionsApplicationBuilder builder, DurableOptions options)
     {
         builder.Services.TryAddSingleton(options);
-        builder.Services.TryAddSingleton(options.Agents); // backward compatibility. can be removed in future.
+        builder.Services.TryAddSingleton(options.Agents);
 
         builder.RegisterCoreAgentServices();
     }
 
     private static void ConfigureAgents(FunctionsApplicationBuilder builder, DurableOptions options)
     {
+        // Only configure agents if there are any agent factories registered in DurableOptions
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agentFactories = options.Agents.GetAgentFactories();
+        if (agentFactories.Count == 0)
+        {
+            return;
+        }
+
         builder.Services.ConfigureDurableAgents(agentOpts =>
         {
-            foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> agentFactory in options.Agents.GetAgentFactories())
+            foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> agentFactory in agentFactories)
             {
                 bool isWorkflowOnly = options.Agents.IsWorkflowOnly(agentFactory.Key);
 

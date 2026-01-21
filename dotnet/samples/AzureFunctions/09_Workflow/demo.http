@@ -8,7 +8,7 @@ Content-Type: text/plain
 QWERTY80853
 
 ### Look up a short order id
-POST {{authority}}/api/workflows/FulfillOrder/run
+POST {{authority}}/api/workflows/CancelOrder/run
 Content-Type: text/plain
 
 12345

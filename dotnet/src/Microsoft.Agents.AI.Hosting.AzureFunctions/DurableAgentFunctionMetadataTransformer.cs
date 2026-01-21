@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadataTransformer
 {
     private readonly ILogger<DurableAgentFunctionMetadataTransformer> _logger;
-    private readonly IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> _agents;
+    private readonly DurableAgentsOptions _agentOptions;
     private readonly IServiceProvider _serviceProvider;
     private readonly IFunctionsAgentOptionsProvider _functionsAgentOptionsProvider;
 
@@ -22,12 +22,12 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
 #pragma warning restore IL3000
 
     public DurableAgentFunctionMetadataTransformer(
-        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents,
+        DurableAgentsOptions agentOptions,
         ILogger<DurableAgentFunctionMetadataTransformer> logger,
         IServiceProvider serviceProvider,
         IFunctionsAgentOptionsProvider functionsAgentOptionsProvider)
     {
-        this._agents = agents ?? throw new ArgumentNullException(nameof(agents));
+        this._agentOptions = agentOptions ?? throw new ArgumentNullException(nameof(agentOptions));
         this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this._serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         this._functionsAgentOptionsProvider = functionsAgentOptionsProvider ?? throw new ArgumentNullException(nameof(functionsAgentOptionsProvider));
@@ -39,7 +39,7 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
     {
         this._logger.LogTransformingFunctionMetadata(original.Count);
 
-        foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> kvp in this._agents)
+        foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> kvp in this._agentOptions.GetAgentFactories())
         {
             string agentName = kvp.Key;
 

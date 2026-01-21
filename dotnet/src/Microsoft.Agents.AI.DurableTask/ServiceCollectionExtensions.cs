@@ -8,6 +8,7 @@ using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
@@ -80,23 +81,40 @@ public static class ServiceCollectionExtensions
         DurableAgentsOptions options = new();
         configure(options);
 
-        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents = options.GetAgentFactories();
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> newAgents = options.GetAgentFactories();
 
-        // The agent dictionary contains the real agent factories, which is used by the agent entities.
-        services.AddSingleton(agents);
+        // Check if we already have DurableAgentsOptions registered and merge with it
+        ServiceDescriptor? existingOptionsDescriptor = services.FirstOrDefault(
+            d => d.ServiceType == typeof(DurableAgentsOptions));
 
-        // Register the options so AgentEntity can access TTL configuration
-        services.AddSingleton(options);
+        if (existingOptionsDescriptor?.ImplementationInstance is DurableAgentsOptions existingOptions)
+        {
+            // Merge new agents into the existing options
+            foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> agent in newAgents)
+            {
+                if (!existingOptions.ContainsAgent(agent.Key))
+                {
+                    existingOptions.AddAIAgentFactory(agent.Key, agent.Value, options.GetTimeToLive(agent.Key));
+                }
+            }
+
+            options = existingOptions;
+        }
+        else
+        {
+            // Register the options so AgentEntity can access configuration
+            services.AddSingleton(options);
+        }
 
         // The keyed services are used to resolve durable agent *proxy* instances for external clients.
-        foreach (var factory in agents)
+        foreach (var factory in newAgents)
         {
             services.AddKeyedSingleton(factory.Key, (sp, _) => factory.Value(sp).AsDurableAgentProxy(sp));
         }
 
         // A custom data converter is needed because the default chat client uses camel case for JSON properties,
         // which is not the default behavior for the Durable Task SDK.
-        services.AddSingleton<DataConverter, DefaultDataConverter>();
+        services.TryAddSingleton<DataConverter, DefaultDataConverter>();
 
         return options;
     }

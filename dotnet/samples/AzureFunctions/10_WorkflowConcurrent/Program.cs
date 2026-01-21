@@ -43,7 +43,8 @@ var workflow = new WorkflowBuilder(startExecutor)
 FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableOptions(options =>
-{
-    // Configure workflows
-    options.Workflows.AddWorkflow(workflow);
-}).Build().Run();
+    {
+        // Configure workflows
+        options.Workflows.AddWorkflow(workflow, enableMcpToolTrigger: true);
+    })
+    .Build().Run();

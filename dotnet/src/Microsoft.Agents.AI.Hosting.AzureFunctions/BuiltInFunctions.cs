@@ -19,12 +19,14 @@ internal static class BuiltInFunctions
 {
     internal const string HttpPrefix = "http-";
     internal const string McpToolPrefix = "mcptool-";
+    internal const string WorkflowMcpToolPrefix = "mcptool-workflow-";
 
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
     internal static readonly string RunWorkflowOrechstrtationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrechstrtationHttpTriggerAsync)}";
     internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
+    internal static readonly string RunWorkflowMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowMcpToolAsync)}";
 
 #pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
     internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
@@ -218,6 +220,41 @@ internal static class BuiltInFunctions
             options: null);
 
         return agentResponse.Text;
+    }
+
+    /// <summary>
+    /// Runs a workflow via MCP tool trigger.
+    /// </summary>
+    public static async Task<string?> RunWorkflowMcpToolAsync(
+        [McpToolTrigger("BuiltInWorkflowMcpTool")] ToolInvocationContext context,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext functionContext)
+    {
+        if (context.Arguments is null)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required arguments.");
+        }
+
+        if (!context.Arguments.TryGetValue("input", out object? inputObj) || inputObj is not string input)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required 'input' argument of type string.");
+        }
+
+        // Extract workflow name from the MCP tool name (format: mcptool-workflow-{workflowName})
+        string workflowName = context.Name;
+        string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
+            orchestrationFunctionName,
+            new DurableWorkflowRunRequest { WorkflowName = workflowName, Input = input });
+
+        // Wait for the orchestration to complete and return the result
+        OrchestrationMetadata? metadata = await client.WaitForInstanceCompletionAsync(
+            instanceId,
+            getInputsAndOutputs: true,
+            cancellation: functionContext.CancellationToken);
+
+        return metadata?.ReadOutputAs<string>();
     }
 
 #pragma warning disable DURTASK001 // Durable analyzer complained

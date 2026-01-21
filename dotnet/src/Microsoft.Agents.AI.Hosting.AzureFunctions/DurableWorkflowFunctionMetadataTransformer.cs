@@ -25,6 +25,9 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
     {
         this._logger.LogTransformStart(original.Count);
 
+        // Track registered function names to avoid duplicates when the same executor is used in multiple workflows
+        HashSet<string> registeredFunctionNames = new();
+
         foreach (var workflow in this._options.Workflows)
         {
             this._logger.LogAddingWorkflowFunction(workflow.Key);
@@ -38,9 +41,17 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
             this._logger.LogAddingHttpTrigger(workflow.Key);
             original.Add(CreateHttpTrigger(workflow.Key, $"workflows/{workflow.Key}/run"));
 
+            // Check if MCP tool trigger is enabled for this workflow
+            if (DurableWorkflowOptionsExtensions.TryGetWorkflowOptions(workflow.Key, out FunctionsWorkflowOptions? workflowOptions) &&
+                workflowOptions?.McpToolTrigger.IsEnabled == true)
+            {
+                this._logger.LogAddingMcpToolTrigger(workflow.Key);
+                original.Add(CreateMcpToolTrigger(workflow.Key, workflow.Value.Description));
+            }
+
             // Create activity/entity functions for each executor in the workflow based on their type
             // Extract executor IDs from edges and start executor
-            var executorIds = new HashSet<string> { workflow.Value.StartExecutorId };
+            HashSet<string> executorIds = new() { workflow.Value.StartExecutorId };
 
             var reflectedEdges = workflow.Value.ReflectEdges();
             foreach (var (sourceId, edgeSet) in reflectedEdges)
@@ -63,6 +74,13 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                 {
                     string executorName = WorkflowNamingHelper.GetExecutorName(executorId);
                     string functionName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
+
+                    // Skip if this function has already been registered by another workflow
+                    if (!registeredFunctionNames.Add(functionName))
+                    {
+                        this._logger.LogSkippingDuplicateFunction(functionName, workflow.Key);
+                        continue;
+                    }
 
                     // Check if the executor type is an agent-related type
                     if (WorkflowHelper.IsAgentExecutorType(executorInfo.ExecutorType))
@@ -132,19 +150,20 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
         };
     }
 
-    //private static DefaultFunctionMetadata CreateAgentTrigger(string functionName)
-    //{
-    //    return new DefaultFunctionMetadata()
-    //    {
-    //        Name = functionName,
-    //        Language = "dotnet-isolated",
-    //        RawBindings =
-    //        [
-    //            """{"name":"encodedEntityRequest","type":"entityTrigger","direction":"In"}""",
-    //            """{"name":"client","type":"durableClient","direction":"In"}"""
-    //        ],
-    //        EntryPoint = BuiltInFunctions.RunAgentEntityFunctionEntryPoint,
-    //        ScriptFile = BuiltInFunctions.ScriptFile,
-    //    };
-    //}
+    private static DefaultFunctionMetadata CreateMcpToolTrigger(string workflowName, string? description)
+    {
+        return new DefaultFunctionMetadata
+        {
+            Name = $"{BuiltInFunctions.WorkflowMcpToolPrefix}{workflowName}",
+            Language = "dotnet-isolated",
+            RawBindings =
+            [
+                $$"""{"name":"context","type":"mcpToolTrigger","direction":"In","toolName":"{{workflowName}}","description":"{{description ?? $"Run the {workflowName} workflow"}}","toolProperties":"[{\"propertyName\":\"input\",\"propertyType\":\"string\",\"description\":\"The input to the workflow.\",\"isRequired\":true,\"isArray\":false}]"}""",
+                """{"name":"input","type":"mcpToolProperty","direction":"In","propertyName":"input","description":"The input to the workflow","isRequired":true,"dataType":"String","propertyType":"string"}""",
+                """{"name":"client","type":"durableClient","direction":"In"}"""
+            ],
+            EntryPoint = BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint,
+            ScriptFile = BuiltInFunctions.ScriptFile,
+        };
+    }
 }
