@@ -36,7 +36,7 @@
     <Project Path="samples/AzureFunctions/08_ReliableStreaming/08_ReliableStreaming.csproj" />
     <Project Path="samples/AzureFunctions/09_Workflow/09_Workflow.csproj" />
     <Project Path="samples/AzureFunctions/10_WorkflowConcurrent/10_WorkflowConcurrent.csproj" />
-    <Project Path="samples/AzureFunctions/11_WorkflowWithDifferentTypes/11_WorkflowWithDifferentTypes.csproj" />
+    <Project Path="samples/AzureFunctions/11_WorkflowSharedState/11_WorkflowSharedState.csproj" />
   </Folder>
   <Folder Name="/Samples/DurableWorkflows/">
     <Project Path="samples/DurableWorkflows/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />

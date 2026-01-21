@@ -81,25 +81,24 @@ public static class DurableOptionsExtensions
 
     private static void ConfigureWorkflowOrchestrations(FunctionsApplicationBuilder builder, DurableWorkflowOptions workflows)
     {
-        // Registering orchestration functions and the workflow state entity.
-
         builder.ConfigureDurableWorker().AddTasks(tasks =>
         {
-            // Register the workflow state entity for durable state management
-            // Each orchestration instance gets its own entity keyed by instance ID
+            // Register the workflow state entity for shared state management within workflows.
             tasks.AddEntity<WorkflowSharedStateEntity>(WorkflowSharedStateEntity.EntityName);
 
             foreach (string workflowName in workflows.Workflows.Select(kp => kp.Key))
             {
-                tasks.AddOrchestratorFunc<DurableWorkflowRunRequest, List<string>>(
-                    $"dafx-{workflowName}",
+                string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+
+                tasks.AddOrchestratorFunc<string, string>(
+                    orchestrationFunctionName,
                     async (orchestrationContext, request) =>
                     {
                         FunctionContext functionContext = orchestrationContext.GetFunctionContext()
                             ?? throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
 
                         DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
-                        ILogger logger = orchestrationContext.CreateReplaySafeLogger($"dafx-orchestration-{workflowName}");
+                        ILogger logger = orchestrationContext.CreateReplaySafeLogger(orchestrationFunctionName);
 
                         return await runner.RunWorkflowOrchestrationAsync(orchestrationContext, request, logger).ConfigureAwait(true);
                     });

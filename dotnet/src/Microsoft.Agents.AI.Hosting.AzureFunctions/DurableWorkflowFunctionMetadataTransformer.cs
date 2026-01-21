@@ -61,7 +61,8 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
             {
                 if (executorInfos.TryGetValue(executorId, out ExecutorInfo? executorInfo))
                 {
-                    string functionName = $"dafx-{executorId.Split("_")[0]}";
+                    string executorName = WorkflowNamingHelper.GetExecutorName(executorId);
+                    string functionName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
 
                     // Check if the executor type is an agent-related type
                     if (WorkflowHelper.IsAgentExecutorType(executorInfo.ExecutorType))
