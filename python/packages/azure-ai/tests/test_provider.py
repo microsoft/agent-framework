@@ -4,7 +4,8 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatAgent
+from agent_framework import AIFunction, ChatAgent
+from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -439,6 +440,170 @@ def test_create_text_format_config_sets_strict_for_pydantic_models() -> None:
     assert result["strict"] is True
     assert result["name"] == "TestSchema"
     assert "schema" in result
+
+
+class MockMCPTool(MCPTool):  # pyright: ignore[reportGeneralTypeIssues]
+    """A mock MCPTool subclass for testing that passes isinstance checks.
+
+    Note: This intentionally does NOT call super().__init__() because MCPTool's
+    constructor requires MCP server connection parameters that aren't needed for
+    unit testing. We only need isinstance(obj, MCPTool) to return True.
+    """
+
+    def __init__(self, functions: list[AIFunction] | None = None) -> None:
+        self.name = "MockMCPTool"
+        self.description = "A mock MCP tool for testing"
+        self.is_connected = False
+        self._mock_functions = functions or []
+        self._connect_called = False
+
+    @property
+    def functions(self) -> list[AIFunction]:
+        return self._mock_functions
+
+    async def connect(self, *, reset: bool = False) -> None:
+        self._connect_called = True
+        self.is_connected = True
+
+
+@pytest.fixture
+def mock_mcp_tool() -> MockMCPTool:
+    """Fixture that provides a mock MCPTool."""
+    mock_functions = [
+        create_mock_ai_function("mcp_function_1", "First MCP function"),
+        create_mock_ai_function("mcp_function_2", "Second MCP function"),
+    ]
+    return MockMCPTool(functions=mock_functions)
+
+
+def create_mock_ai_function(name: str, description: str = "A mock function") -> AIFunction:
+    """Create a real AIFunction for testing."""
+
+    def mock_func(arg: str) -> str:
+        return f"Result from {name}: {arg}"
+
+    return AIFunction(func=mock_func, name=name, description=description)
+
+
+async def test_provider_create_agent_with_mcp_tool(
+    mock_project_client: MagicMock,
+    azure_ai_unit_test_env: dict[str, str],
+    mock_mcp_tool: "MockMCPTool",
+) -> None:
+    """Test that create_agent connects MCP tools and passes discovered functions to Azure AI."""
+
+    # Patch normalize_tools to return tools as-is in a list (avoids callable check)
+    def mock_normalize_tools(tools):
+        if tools is None:
+            return []
+        if isinstance(tools, list):
+            return tools
+        return [tools]
+
+    with (
+        patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings,
+        patch("agent_framework_azure_ai._project_provider.to_azure_ai_tools") as mock_to_azure_tools,
+        patch("agent_framework_azure_ai._project_provider.normalize_tools", side_effect=mock_normalize_tools),
+    ):
+        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
+        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+        mock_to_azure_tools.return_value = [{"type": "function", "name": "mcp_function_1"}]
+
+        provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
+
+        # Mock agent creation response
+        mock_agent_version = MagicMock(spec=AgentVersionDetails)
+        mock_agent_version.id = "agent-id"
+        mock_agent_version.name = "test-agent"
+        mock_agent_version.version = "1.0"
+        mock_agent_version.description = "Test Agent"
+        mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
+        mock_agent_version.definition.model = "gpt-4"
+        mock_agent_version.definition.instructions = "Test instructions"
+        mock_agent_version.definition.tools = []
+
+        mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent_version)
+
+        # Call create_agent with MCP tool
+        await provider.create_agent(
+            name="test-agent",
+            model="gpt-4",
+            instructions="Test instructions",
+            tools=mock_mcp_tool,
+        )
+
+        # Verify MCP tool was connected
+        assert mock_mcp_tool._connect_called is True
+        assert mock_mcp_tool.is_connected is True
+
+        # Verify to_azure_ai_tools was called with the discovered MCP functions
+        mock_to_azure_tools.assert_called_once()
+        tools_passed = mock_to_azure_tools.call_args[0][0]
+        assert len(tools_passed) == 2
+        assert tools_passed[0].name == "mcp_function_1"
+        assert tools_passed[1].name == "mcp_function_2"
+
+
+async def test_provider_create_agent_with_mcp_and_regular_tools(
+    mock_project_client: MagicMock,
+    azure_ai_unit_test_env: dict[str, str],
+    mock_mcp_tool: "MockMCPTool",
+) -> None:
+    """Test that create_agent handles both MCP tools and regular AIFunctions."""
+    # Create a regular AIFunction
+    regular_function = create_mock_ai_function("regular_function", "A regular function")
+
+    # Patch normalize_tools to return tools as-is in a list (avoids callable check)
+    def mock_normalize_tools(tools):
+        if tools is None:
+            return []
+        if isinstance(tools, list):
+            return tools
+        return [tools]
+
+    with (
+        patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings,
+        patch("agent_framework_azure_ai._project_provider.to_azure_ai_tools") as mock_to_azure_tools,
+        patch("agent_framework_azure_ai._project_provider.normalize_tools", side_effect=mock_normalize_tools),
+    ):
+        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
+        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+        mock_to_azure_tools.return_value = []
+
+        provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
+
+        # Mock agent creation response
+        mock_agent_version = MagicMock(spec=AgentVersionDetails)
+        mock_agent_version.id = "agent-id"
+        mock_agent_version.name = "test-agent"
+        mock_agent_version.version = "1.0"
+        mock_agent_version.description = None
+        mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
+        mock_agent_version.definition.model = "gpt-4"
+        mock_agent_version.definition.instructions = None
+        mock_agent_version.definition.tools = []
+
+        mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent_version)
+
+        # Pass both MCP tool and regular function
+        await provider.create_agent(
+            name="test-agent",
+            model="gpt-4",
+            tools=[mock_mcp_tool, regular_function],
+        )
+
+        # Verify to_azure_ai_tools was called with:
+        # - The regular AIFunction (1)
+        # - The 2 discovered MCP functions
+        mock_to_azure_tools.assert_called_once()
+        tools_passed = mock_to_azure_tools.call_args[0][0]
+        assert len(tools_passed) == 3  # 1 regular + 2 MCP functions
+
+        # Verify the regular function is in the list
+        tool_names = [t.name for t in tools_passed]
+        assert "regular_function" in tool_names
+        assert "mcp_function_1" in tool_names
+        assert "mcp_function_2" in tool_names
 
 
 @pytest.mark.flaky

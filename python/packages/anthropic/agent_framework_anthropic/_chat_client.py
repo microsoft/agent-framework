@@ -45,7 +45,7 @@ from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -67,6 +67,7 @@ logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 
 # region Anthropic Chat Options TypedDict
@@ -341,7 +342,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # execute
         message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
         # process
-        return self._process_message(message)
+        return self._process_message(message, options)
 
     @override
     async def _inner_get_streaming_response(
@@ -384,8 +385,10 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
-        # Start with a copy of options
-        run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None and k not in {"instructions"}}
+        # Start with a copy of options, excluding keys we handle separately
+        run_options: dict[str, Any] = {
+            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
+        }
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -426,6 +429,13 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
+        # response_format - use native output_format for structured outputs
+        response_format = options.get("response_format")
+        if response_format is not None:
+            run_options["output_format"] = self._prepare_response_format(response_format)
+            # Add the structured outputs beta flag
+            run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
+
         run_options.update(kwargs)
         return run_options
 
@@ -442,6 +452,41 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             *BETA_FLAGS,
             *self.additional_beta_flags,
             *options.get("additional_beta_flags", []),
+        }
+
+    def _prepare_response_format(self, response_format: type[BaseModel] | dict[str, Any]) -> dict[str, Any]:
+        """Prepare the output_format parameter for structured output.
+
+        Args:
+            response_format: Either a Pydantic model class or a dict with the schema specification.
+                If a dict, it can be in OpenAI-style format with "json_schema" key,
+                or direct format with "schema" key, or the raw schema dict itself.
+
+        Returns:
+            A dictionary representing the output_format for Anthropic's structured outputs.
+        """
+        if isinstance(response_format, dict):
+            if "json_schema" in response_format:
+                schema = response_format["json_schema"].get("schema", {})
+            elif "schema" in response_format:
+                schema = response_format["schema"]
+            else:
+                schema = response_format
+
+            if isinstance(schema, dict):
+                schema["additionalProperties"] = False
+
+            return {
+                "type": "json_schema",
+                "schema": schema,
+            }
+
+        schema = response_format.model_json_schema()
+        schema["additionalProperties"] = False
+
+        return {
+            "type": "json_schema",
+            "schema": schema,
         }
 
     def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -606,11 +651,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
     # region Response Processing Methods
 
-    def _process_message(self, message: BetaMessage) -> ChatResponse:
+    def _process_message(self, message: BetaMessage, options: dict[str, Any]) -> ChatResponse:
         """Process the response from the Anthropic client.
 
         Args:
             message: The message returned by the Anthropic client.
+            options: The options dict used for the request.
 
         Returns:
             A ChatResponse object containing the processed response.
@@ -627,6 +673,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model_id=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
+            response_format=options.get("response_format"),
             raw_representation=message,
         )
 
@@ -970,7 +1017,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     # since it triggers on `if content.name:`. The initial tool_use event already
                     # provides the name, so deltas should only carry incremental arguments.
                     # This matches OpenAI's behavior where streaming chunks have name="".
-                    call_id, _ = self._last_call_id_name if self._last_call_id_name else ("", "")
+                    call_id, _name = self._last_call_id_name if self._last_call_id_name else ("", "")
                     contents.append(
                         Content.from_function_call(
                             call_id=call_id,

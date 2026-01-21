@@ -19,19 +19,23 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 // Define the agent you want to create. (Prompt Agent in this case)
 AgentVersionCreationOptions options = new(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions });
 
-// Create a server side agent version with the Azure.AI.Agents SDK client.
-AgentVersion agentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName: JokerName, options);
-
-// Use an AIAgent with an already created server side agent version.
-AIAgent jokerAgent = aiProjectClient.AsAIAgent(agentVersion);
+// Retrieve an AIAgent for the created server side agent version.
+ChatClientAgent jokerAgent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, options);
 
 // Invoke the agent with a multi-turn conversation, where the context is preserved in the thread object.
-AgentThread thread = await jokerAgent.GetNewThreadAsync();
+// Create a conversation in the server
+ProjectConversationsClient conversationsClient = aiProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient();
+ProjectConversation conversation = await conversationsClient.CreateProjectConversationAsync();
+
+// Providing the conversation Id is not strictly necessary, but by not providing it no information will show up in the Foundry Project UI as conversations.
+// Threads that doesn't have a conversation Id will work based on the `PreviousResponseId`.
+AgentThread thread = await jokerAgent.GetNewThreadAsync(conversation.Id);
+
 Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", thread));
 Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread));
 
 // Invoke the agent with a multi-turn conversation and streaming, where the context is preserved in the thread object.
-thread = await jokerAgent.GetNewThreadAsync();
+thread = await jokerAgent.GetNewThreadAsync(conversation.Id);
 await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
     Console.WriteLine(update);
@@ -43,3 +47,6 @@ await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now a
 
 // Cleanup by agent name removes the agent version created.
 await aiProjectClient.Agents.DeleteAgentAsync(jokerAgent.Name);
+
+// Cleanup the conversation created.
+await conversationsClient.DeleteConversationAsync(conversation.Id);
