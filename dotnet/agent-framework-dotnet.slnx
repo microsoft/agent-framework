@@ -38,6 +38,9 @@
     <Project Path="samples/AzureFunctions/10_WorkflowConcurrent/10_WorkflowConcurrent.csproj" />
     <Project Path="samples/AzureFunctions/11_WorkflowWithDifferentTypes/11_WorkflowWithDifferentTypes.csproj" />
   </Folder>
+  <Folder Name="/Samples/DurableWorkflows/">
+    <Project Path="samples/DurableWorkflows/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>

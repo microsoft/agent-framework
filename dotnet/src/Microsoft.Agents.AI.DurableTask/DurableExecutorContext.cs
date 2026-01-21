@@ -7,10 +7,10 @@ using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
 
-namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
+namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
-/// An implementation of <see cref="IWorkflowContext"/> for workflow executors running as Azure Functions activities.
+/// An implementation of <see cref="IWorkflowContext"/> for workflow executors running as durable activities.
 /// Provides durable state management using Durable Entities. State is scoped to the orchestration instance
 /// and shared between executors running on potentially different compute instances.
 /// </summary>
@@ -21,7 +21,7 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 /// </remarks>
 [RequiresUnreferencedCode("State serialization uses reflection-based JSON serialization.")]
 [RequiresDynamicCode("State serialization uses reflection-based JSON serialization.")]
-internal sealed class DurableExecutorContext : IWorkflowContext
+public sealed class DurableExecutorContext : IWorkflowContext
 {
     private readonly string _instanceId;
     private readonly DurableTaskClient _client;

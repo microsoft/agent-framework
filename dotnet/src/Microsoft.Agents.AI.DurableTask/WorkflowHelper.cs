@@ -3,14 +3,14 @@
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
-namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
+namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
 /// Represents an executor in the workflow with its metadata.
 /// </summary>
 /// <param name="ExecutorId">The unique identifier of the executor.</param>
 /// <param name="IsAgenticExecutor">Indicates whether this executor is an agentic executor.</param>
-internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor);
+public sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor);
 
 /// <summary>
 /// Represents a level of executors that can be executed in parallel (Fan-Out).
@@ -19,12 +19,12 @@ internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExe
 /// <param name="Level">The level number (0-based, starting from the root executor).</param>
 /// <param name="Executors">The executors that can run in parallel at this level.</param>
 /// <param name="IsFanIn">Indicates if this level is a Fan-In point (has executors with multiple predecessors).</param>
-internal sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
+public sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
 
 /// <summary>
 /// Represents the complete execution plan for a workflow, including parallel execution levels.
 /// </summary>
-internal sealed class WorkflowExecutionPlan
+public sealed class WorkflowExecutionPlan
 {
     /// <summary>
     /// The execution levels in order. Each level contains executors that can run in parallel.
@@ -52,7 +52,10 @@ internal sealed class WorkflowExecutionPlan
     public bool HasFanIn => this.Levels.Any(l => l.IsFanIn);
 }
 
-internal static class WorkflowHelper
+/// <summary>
+/// Provides helper methods for analyzing and executing workflows.
+/// </summary>
+public static class WorkflowHelper
 {
     /// <summary>
     /// Accepts a workflow instance and returns a list of executors with metadata in the order they should be executed.
@@ -199,7 +202,7 @@ internal static class WorkflowHelper
     /// </summary>
     /// <param name="executorType">The executor type to check.</param>
     /// <returns><c>true</c> if the executor is an agentic executor; otherwise, <c>false</c>.</returns>
-    private static bool IsAgentExecutorType(TypeId executorType)
+    internal static bool IsAgentExecutorType(TypeId executorType)
     {
         // hack for now. In the future, the MAF type could expose something which can help with this.
         // Check if the type name or assembly indicates it's an agent executor

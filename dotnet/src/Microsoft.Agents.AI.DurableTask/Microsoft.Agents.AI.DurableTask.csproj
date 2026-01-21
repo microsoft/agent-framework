@@ -21,6 +21,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.DurableTask.Client" />
     <PackageReference Include="Microsoft.DurableTask.Worker" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>
