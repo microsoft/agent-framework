@@ -92,16 +92,6 @@ def encode_checkpoint_value(value: Any) -> Any:
                 return _CYCLE_SENTINEL
             stack.add(oid)
             try:
-                # Check for reserved marker keys that could cause deserialization issues
-                has_model_marker = MODEL_MARKER in v_dict
-                has_dataclass_marker = DATACLASS_MARKER in v_dict
-                has_value_key = "value" in v_dict
-                if (has_model_marker or has_dataclass_marker) and has_value_key:
-                    marker = MODEL_MARKER if has_model_marker else DATACLASS_MARKER
-                    raise ValueError(
-                        f"Cannot encode dict containing reserved checkpoint marker key '{marker}' "
-                        f"with 'value' key. These keys are reserved for polymorphic serialization."
-                    )
                 json_dict: dict[str, Any] = {}
                 for k_any, val_any in v_dict.items():  # type: ignore[assignment]
                     k_str: str = str(k_any)

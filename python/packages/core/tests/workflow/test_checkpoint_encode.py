@@ -3,8 +3,6 @@
 from dataclasses import dataclass
 from typing import Any
 
-import pytest
-
 from agent_framework._workflows._checkpoint_encoding import (
     _CYCLE_SENTINEL,
     DATACLASS_MARKER,
@@ -297,42 +295,53 @@ def test_encode_list_with_self_reference() -> None:
     assert result[2] == _CYCLE_SENTINEL
 
 
-# --- Tests for reserved keyword validation ---
+# --- Tests for reserved keyword handling ---
+# Note: Security is enforced at deserialization time by validating class types,
+# not at serialization time. This allows legitimate encoded data to be re-encoded.
 
 
-def test_encode_dict_with_model_marker_and_value_raises() -> None:
-    """Test that encoding a dict with MODEL_MARKER and 'value' raises ValueError."""
-    malicious_dict = {
-        MODEL_MARKER: "some.module:FakeClass",
+def test_encode_allows_dict_with_model_marker_and_value() -> None:
+    """Test that encoding a dict with MODEL_MARKER and 'value' is allowed.
+
+    Security is enforced at deserialization time, not serialization time.
+    """
+    data = {
+        MODEL_MARKER: "some.module:SomeClass",
         "value": {"data": "test"},
     }
+    result = encode_checkpoint_value(data)
+    assert MODEL_MARKER in result
+    assert "value" in result
 
-    with pytest.raises(ValueError, match="Cannot encode dict containing reserved checkpoint marker key"):
-        encode_checkpoint_value(malicious_dict)
 
+def test_encode_allows_dict_with_dataclass_marker_and_value() -> None:
+    """Test that encoding a dict with DATACLASS_MARKER and 'value' is allowed.
 
-def test_encode_dict_with_dataclass_marker_and_value_raises() -> None:
-    """Test that encoding a dict with DATACLASS_MARKER and 'value' raises ValueError."""
-    malicious_dict = {
-        DATACLASS_MARKER: "some.module:FakeClass",
+    Security is enforced at deserialization time, not serialization time.
+    """
+    data = {
+        DATACLASS_MARKER: "some.module:SomeClass",
         "value": {"field": "test"},
     }
+    result = encode_checkpoint_value(data)
+    assert DATACLASS_MARKER in result
+    assert "value" in result
 
-    with pytest.raises(ValueError, match="Cannot encode dict containing reserved checkpoint marker key"):
-        encode_checkpoint_value(malicious_dict)
 
+def test_encode_allows_nested_dict_with_marker_keys() -> None:
+    """Test that encoding nested dict with marker keys is allowed.
 
-def test_encode_nested_dict_with_reserved_keys_raises() -> None:
-    """Test that encoding nested dict with reserved keys raises ValueError."""
+    Security is enforced at deserialization time, not serialization time.
+    """
     nested_data = {
         "outer": {
-            MODEL_MARKER: "some.module:FakeClass",
+            MODEL_MARKER: "some.module:SomeClass",
             "value": {"data": "test"},
         }
     }
-
-    with pytest.raises(ValueError, match="Cannot encode dict containing reserved checkpoint marker key"):
-        encode_checkpoint_value(nested_data)
+    result = encode_checkpoint_value(nested_data)
+    assert "outer" in result
+    assert MODEL_MARKER in result["outer"]
 
 
 def test_encode_allows_marker_without_value() -> None:

@@ -3,7 +3,6 @@
 from dataclasses import dataclass  # noqa: I001
 from typing import Any, cast
 
-import pytest
 
 from agent_framework._workflows._checkpoint_encoding import (
     DATACLASS_MARKER,
@@ -132,32 +131,8 @@ def test_encode_decode_nested_structures() -> None:
     assert response.original_request.request_id == "req-1"
 
 
-def test_encode_raises_error_for_reserved_model_marker_with_value() -> None:
-    """Test that encoding a dict with MODEL_MARKER and 'value' keys raises an error."""
-    malicious_dict = {
-        MODEL_MARKER: "some.module:FakeClass",
-        "value": {"data": "test"},
-        "strategy": "to_dict",
-    }
-
-    with pytest.raises(ValueError, match="Cannot encode dict containing reserved checkpoint marker key"):
-        encode_checkpoint_value(malicious_dict)
-
-
-def test_encode_raises_error_for_reserved_dataclass_marker_with_value() -> None:
-    """Test that encoding a dict with DATACLASS_MARKER and 'value' keys raises an error."""
-    malicious_dict = {
-        DATACLASS_MARKER: "some.module:FakeClass",
-        "value": {"field1": "test"},
-    }
-
-    with pytest.raises(ValueError, match="Cannot encode dict containing reserved checkpoint marker key"):
-        encode_checkpoint_value(malicious_dict)
-
-
 def test_encode_allows_marker_key_without_value_key() -> None:
     """Test that encoding a dict with only the marker key (no 'value') is allowed."""
-    # This should not raise, as it doesn't match the marker pattern
     dict_with_marker_only = {
         MODEL_MARKER: "some.module:FakeClass",
         "other_key": "test",
@@ -176,6 +151,22 @@ def test_encode_allows_value_key_without_marker_key() -> None:
     encoded = encode_checkpoint_value(dict_with_value_only)
     assert "value" in encoded
     assert "other_key" in encoded
+
+
+def test_encode_allows_marker_with_value_key() -> None:
+    """Test that encoding a dict with marker and 'value' keys is allowed.
+
+    This is allowed because legitimate encoded data may contain these keys,
+    and security is enforced at deserialization time by validating class types.
+    """
+    dict_with_both = {
+        MODEL_MARKER: "some.module:SomeClass",
+        "value": {"data": "test"},
+        "strategy": "to_dict",
+    }
+    encoded = encode_checkpoint_value(dict_with_both)
+    assert MODEL_MARKER in encoded
+    assert "value" in encoded
 
 
 class NotADataclass:
@@ -229,14 +220,19 @@ def test_decode_rejects_non_model_with_model_marker() -> None:
     assert decoded["value"] == "test_value"
 
 
-def test_encode_raises_for_nested_dict_with_reserved_keys() -> None:
-    """Test that encoding fails for nested dicts containing reserved marker patterns."""
+def test_encode_allows_nested_dict_with_marker_keys() -> None:
+    """Test that encoding allows nested dicts containing marker patterns.
+
+    Security is enforced at deserialization time, not serialization time,
+    so legitimate encoded data can contain markers at any nesting level.
+    """
     nested_data = {
         "outer": {
-            MODEL_MARKER: "some.module:FakeClass",
+            MODEL_MARKER: "some.module:SomeClass",
             "value": {"data": "test"},
         }
     }
 
-    with pytest.raises(ValueError, match="Cannot encode dict containing reserved checkpoint marker key"):
-        encode_checkpoint_value(nested_data)
+    encoded = encode_checkpoint_value(nested_data)
+    assert "outer" in encoded
+    assert MODEL_MARKER in encoded["outer"]
