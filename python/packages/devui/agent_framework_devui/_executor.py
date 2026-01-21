@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from agent_framework import AgentProtocol
+from agent_framework import AgentProtocol, Content
 from agent_framework._workflows._events import RequestInfoEvent
 
 from ._conversations import ConversationStore, InMemoryConversationStore
@@ -602,7 +602,7 @@ class AgentFrameworkExecutor:
         """
         # Import Agent Framework types
         try:
-            from agent_framework import ChatMessage, DataContent, Role, TextContent
+            from agent_framework import ChatMessage, Role
         except ImportError:
             # Fallback to string extraction if Agent Framework not available
             return self._extract_user_message_fallback(input_data)
@@ -613,14 +613,12 @@ class AgentFrameworkExecutor:
 
         # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
         if isinstance(input_data, list):
-            return self._convert_openai_input_to_chat_message(input_data, ChatMessage, TextContent, DataContent, Role)
+            return self._convert_openai_input_to_chat_message(input_data, ChatMessage, Role)
 
         # Fallback for other formats
         return self._extract_user_message_fallback(input_data)
 
-    def _convert_openai_input_to_chat_message(
-        self, input_items: list[Any], ChatMessage: Any, TextContent: Any, DataContent: Any, Role: Any
-    ) -> Any:
+    def _convert_openai_input_to_chat_message(self, input_items: list[Any], ChatMessage: Any, Role: Any) -> Any:
         """Convert OpenAI ResponseInputParam to Agent Framework ChatMessage.
 
         Processes text, images, files, and other content types from OpenAI format
@@ -629,14 +627,12 @@ class AgentFrameworkExecutor:
         Args:
             input_items: List of OpenAI ResponseInputItemParam objects (dicts or objects)
             ChatMessage: ChatMessage class for creating chat messages
-            TextContent: TextContent class for text content
-            DataContent: DataContent class for data/media content
             Role: Role enum for message roles
 
         Returns:
             ChatMessage with converted content
         """
-        contents = []
+        contents: list[Content] = []
 
         # Process each input item
         for item in input_items:
@@ -649,7 +645,7 @@ class AgentFrameworkExecutor:
 
                     # Handle both string content and list content
                     if isinstance(message_content, str):
-                        contents.append(TextContent(text=message_content))
+                        contents.append(Content.from_text(text=message_content))
                     elif isinstance(message_content, list):
                         for content_item in message_content:
                             # Handle dict content items
@@ -658,7 +654,7 @@ class AgentFrameworkExecutor:
 
                                 if content_type == "input_text":
                                     text = content_item.get("text", "")
-                                    contents.append(TextContent(text=text))
+                                    contents.append(Content.from_text(text=text))
 
                                 elif content_type == "input_image":
                                     image_url = content_item.get("image_url", "")
@@ -676,7 +672,7 @@ class AgentFrameworkExecutor:
                                                 media_type = "image/png"
                                         else:
                                             media_type = "image/png"
-                                        contents.append(DataContent(uri=image_url, media_type=media_type))
+                                        contents.append(Content.from_uri(uri=image_url, media_type=media_type))
 
                                 elif content_type == "input_file":
                                     # Handle file input
@@ -710,7 +706,7 @@ class AgentFrameworkExecutor:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
                                         contents.append(
-                                            DataContent(
+                                            Content.from_uri(
                                                 uri=data_uri,
                                                 media_type=media_type,
                                                 additional_properties=additional_props,
@@ -718,7 +714,7 @@ class AgentFrameworkExecutor:
                                         )
                                     elif file_url:
                                         contents.append(
-                                            DataContent(
+                                            Content.from_uri(
                                                 uri=file_url,
                                                 media_type=media_type,
                                                 additional_properties=additional_props,
@@ -728,21 +724,19 @@ class AgentFrameworkExecutor:
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)
                                     try:
-                                        from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
-
                                         request_id = content_item.get("request_id", "")
                                         approved = content_item.get("approved", False)
                                         function_call_data = content_item.get("function_call", {})
 
                                         # Create FunctionCallContent from the function_call data
-                                        function_call = FunctionCallContent(
+                                        function_call = Content.from_function_call(
                                             call_id=function_call_data.get("id", ""),
                                             name=function_call_data.get("name", ""),
                                             arguments=function_call_data.get("arguments", {}),
                                         )
 
                                         # Create FunctionApprovalResponseContent with correct signature
-                                        approval_response = FunctionApprovalResponseContent(
+                                        approval_response = Content.from_function_approval_response(
                                             approved,  # positional argument
                                             id=request_id,  # keyword argument 'id', NOT 'request_id'
                                             function_call=function_call,  # FunctionCallContent object
@@ -764,7 +758,7 @@ class AgentFrameworkExecutor:
 
         # If no contents found, create a simple text message
         if not contents:
-            contents.append(TextContent(text=""))
+            contents.append(Content.from_text(text=""))
 
         chat_message = ChatMessage(role=Role.USER, contents=contents)
 

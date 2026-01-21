@@ -25,13 +25,11 @@ from agent_framework import (
     AgentProtocol,
     AgentThread,
     ChatAgent,
-    FunctionCallContent,
-    FunctionResultContent,
-    TextContent,
+    Content,
+    FunctionInvocationConfiguration,
 )
 from agent_framework._middleware import extract_and_merge_function_middleware
 from agent_framework._tools import (
-    FunctionInvocationConfiguration,
     _collect_approval_responses,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _try_execute_function_calls,  # type: ignore
@@ -285,12 +283,12 @@ class HumanInTheLoopOrchestrator(Orchestrator):
         last_message = context.last_message
         if last_message:
             for content in last_message.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text":
                     tool_content_text = content.text
                     break
 
         try:
-            tool_result = json.loads(tool_content_text)
+            tool_result = json.loads(tool_content_text)  # type: ignore[arg-type]
             accepted = tool_result.get("accepted", False)
             steps = tool_result.get("steps", [])
 
@@ -328,7 +326,7 @@ class HumanInTheLoopOrchestrator(Orchestrator):
 
         except json.JSONDecodeError:
             logger.error(f"Failed to parse tool result: {tool_content_text}")
-            yield RunErrorEvent(message=f"Invalid tool result format: {tool_content_text[:100]}")
+            yield RunErrorEvent(message=f"Invalid tool result format: {tool_content_text[:100]}")  # type: ignore[index]
             yield event_bridge.create_run_finished_event()
 
 
@@ -441,25 +439,24 @@ class DefaultOrchestrator(Orchestrator):
             logger.info(f"  Message {i}: role={role}, id={msg_id}")
             if hasattr(msg, "contents") and msg.contents:
                 for j, content in enumerate(msg.contents):
-                    content_type = type(content).__name__
-                    if isinstance(content, TextContent):
-                        logger.debug("    Content %s: %s - text_length=%s", j, content_type, len(content.text))
-                    elif isinstance(content, FunctionCallContent):
+                    if content.type == "text":
+                        logger.debug("    Content %s: %s - text_length=%s", j, content.type, len(content.text))  # type: ignore[arg-type]
+                    elif content.type == "function_call":
                         arg_length = len(str(content.arguments)) if content.arguments else 0
                         logger.debug(
-                            "    Content %s: %s - %s args_length=%s", j, content_type, content.name, arg_length
+                            "    Content %s: %s - %s args_length=%s", j, content.type, content.name, arg_length
                         )
-                    elif isinstance(content, FunctionResultContent):
+                    elif content.type == "function_result":
                         result_preview = type(content.result).__name__ if content.result is not None else "None"
                         logger.debug(
                             "    Content %s: %s - call_id=%s, result_type=%s",
                             j,
-                            content_type,
+                            content.type,
                             content.call_id,
                             result_preview,
                         )
                     else:
-                        logger.debug(f"    Content {j}: {content_type}")
+                        logger.debug(f"    Content {j}: {content.type}")
 
         pending_tool_calls: list[dict[str, Any]] = []
         tool_calls_by_id: dict[str, dict[str, Any]] = {}
@@ -536,16 +533,14 @@ class DefaultOrchestrator(Orchestrator):
                     logger.error("Failed to execute approved tool calls; injecting error results.")
                     approved_function_results = []
 
-            normalized_results: list[FunctionResultContent] = []
+            normalized_results: list[Content] = []
             for idx, approval in enumerate(approved_responses):
-                if idx < len(approved_function_results) and isinstance(
-                    approved_function_results[idx], FunctionResultContent
-                ):
+                if idx < len(approved_function_results) and approved_function_results[idx].type == "function_result":
                     normalized_results.append(approved_function_results[idx])
                     continue
-                call_id = approval.function_call.call_id or approval.id
+                call_id = approval.function_call.call_id or approval.id  # type: ignore[union-attr]
                 normalized_results.append(
-                    FunctionResultContent(call_id=call_id, result="Error: Tool call invocation failed.")
+                    Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")  # type: ignore[arg-type]
                 )
 
             _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore
@@ -661,8 +656,8 @@ class DefaultOrchestrator(Orchestrator):
             if all_updates is not None:
                 all_updates.append(update)
             if event_bridge.current_message_id is None and update.contents:
-                has_tool_call = any(isinstance(content, FunctionCallContent) for content in update.contents)
-                has_text = any(isinstance(content, TextContent) for content in update.contents)
+                has_tool_call = any(content.type == "function_call" for content in update.contents)
+                has_text = any(content.type == "text" for content in update.contents)
                 if has_tool_call and not has_text:
                     tool_message_id = generate_event_id()
                     event_bridge.current_message_id = tool_message_id

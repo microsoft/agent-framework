@@ -5,7 +5,7 @@
 import json
 
 import pytest
-from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
+from agent_framework import ChatMessage, Content, Role
 
 from agent_framework_ag_ui._message_adapters import (
     agent_framework_messages_to_agui,
@@ -24,7 +24,7 @@ def sample_agui_message():
 @pytest.fixture
 def sample_agent_framework_message():
     """Create a sample Agent Framework message."""
-    return ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")], message_id="msg-123")
+    return ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")], message_id="msg-123")
 
 
 def test_agui_to_agent_framework_basic(sample_agui_message):
@@ -89,7 +89,7 @@ def test_agui_tool_result_to_agent_framework():
     assert message.role == Role.USER
 
     assert len(message.contents) == 1
-    assert isinstance(message.contents[0], TextContent)
+    assert message.contents[0].type == "text"
     assert message.contents[0].text == '{"accepted": true, "steps": []}'
 
     assert message.additional_properties is not None
@@ -141,7 +141,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
 
     assert len(messages) == 2
     assistant_msg = messages[0]
-    func_call = next(content for content in assistant_msg.contents if isinstance(content, FunctionCallContent))
+    func_call = next(content for content in assistant_msg.contents if content.type == "function_call")
     assert func_call.arguments == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
@@ -157,11 +157,9 @@ def test_agui_tool_approval_updates_tool_call_arguments():
         ]
     }
 
-    from agent_framework import FunctionApprovalResponseContent
-
     approval_msg = messages[1]
     approval_content = next(
-        content for content in approval_msg.contents if isinstance(content, FunctionApprovalResponseContent)
+        content for content in approval_msg.contents if content.type == "function_approval_response"
     )
     assert approval_content.function_call.parse_arguments() == {
         "steps": [
@@ -211,12 +209,9 @@ def test_agui_tool_approval_from_confirm_changes_maps_to_function_call():
     ]
 
     messages = agui_messages_to_agent_framework(messages_input)
-
-    from agent_framework import FunctionApprovalResponseContent
-
     approval_msg = messages[1]
     approval_content = next(
-        content for content in approval_msg.contents if isinstance(content, FunctionApprovalResponseContent)
+        content for content in approval_msg.contents if content.type == "function_approval_response"
     )
 
     assert approval_content.function_call.call_id == "call_tool"
@@ -259,12 +254,9 @@ def test_agui_tool_approval_from_confirm_changes_falls_back_to_sibling_call():
     ]
 
     messages = agui_messages_to_agent_framework(messages_input)
-
-    from agent_framework import FunctionApprovalResponseContent
-
     approval_msg = messages[1]
     approval_content = next(
-        content for content in approval_msg.contents if isinstance(content, FunctionApprovalResponseContent)
+        content for content in approval_msg.contents if content.type == "function_approval_response"
     )
 
     assert approval_content.function_call.call_id == "call_tool"
@@ -315,12 +307,9 @@ def test_agui_tool_approval_from_generate_task_steps_maps_to_function_call():
     ]
 
     messages = agui_messages_to_agent_framework(messages_input)
-
-    from agent_framework import FunctionApprovalResponseContent
-
     approval_msg = messages[1]
     approval_content = next(
-        content for content in approval_msg.contents if isinstance(content, FunctionApprovalResponseContent)
+        content for content in approval_msg.contents if content.type == "function_approval_response"
     )
 
     assert approval_content.function_call.call_id == "call_tool"
@@ -380,15 +369,14 @@ def test_agui_function_approvals():
     assert msg.role == Role.USER
     assert len(msg.contents) == 2
 
-    from agent_framework import FunctionApprovalResponseContent
-
-    assert isinstance(msg.contents[0], FunctionApprovalResponseContent)
+    assert msg.contents[0].type == "function_approval_response"
     assert msg.contents[0].approved is True
     assert msg.contents[0].id == "approval-1"
     assert msg.contents[0].function_call.name == "search"
     assert msg.contents[0].function_call.call_id == "call-1"
 
-    assert isinstance(msg.contents[1], FunctionApprovalResponseContent)
+    assert msg.contents[1].type == "function_approval_response"
+    assert msg.contents[1].id == "approval-2"
     assert msg.contents[1].approved is False
 
 
@@ -406,7 +394,7 @@ def test_agui_non_string_content():
 
     assert len(messages) == 1
     assert len(messages[0].contents) == 1
-    assert isinstance(messages[0].contents[0], TextContent)
+    assert messages[0].contents[0].type == "text"
     assert "nested" in messages[0].contents[0].text
 
 
@@ -440,9 +428,9 @@ def test_agui_with_tool_calls_to_agent_framework():
     assert msg.role == Role.ASSISTANT
     assert msg.message_id == "msg-789"
     # First content is text, second is the function call
-    assert isinstance(msg.contents[0], TextContent)
+    assert msg.contents[0].type == "text"
     assert msg.contents[0].text == "Calling tool"
-    assert isinstance(msg.contents[1], FunctionCallContent)
+    assert msg.contents[1].type == "function_call"
     assert msg.contents[1].call_id == "call-123"
     assert msg.contents[1].name == "get_weather"
     assert msg.contents[1].arguments == {"location": "Seattle"}
@@ -453,8 +441,8 @@ def test_agent_framework_to_agui_with_tool_calls():
     msg = ChatMessage(
         role=Role.ASSISTANT,
         contents=[
-            TextContent(text="Calling tool"),
-            FunctionCallContent(call_id="call-123", name="search", arguments={"query": "test"}),
+            Content.from_text(text="Calling tool"),
+            Content.from_function_call(call_id="call-123", name="search", arguments={"query": "test"}),
         ],
         message_id="msg-456",
     )
@@ -477,7 +465,7 @@ def test_agent_framework_to_agui_multiple_text_contents():
     """Test concatenating multiple text contents."""
     msg = ChatMessage(
         role=Role.ASSISTANT,
-        contents=[TextContent(text="Part 1 "), TextContent(text="Part 2")],
+        contents=[Content.from_text(text="Part 1 "), Content.from_text(text="Part 2")],
     )
 
     messages = agent_framework_messages_to_agui([msg])
@@ -488,7 +476,7 @@ def test_agent_framework_to_agui_multiple_text_contents():
 
 def test_agent_framework_to_agui_no_message_id():
     """Test message without message_id - should auto-generate ID."""
-    msg = ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])
+    msg = ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])
 
     messages = agent_framework_messages_to_agui([msg])
 
@@ -500,7 +488,7 @@ def test_agent_framework_to_agui_no_message_id():
 
 def test_agent_framework_to_agui_system_role():
     """Test system role conversion."""
-    msg = ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System")])
+    msg = ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="System")])
 
     messages = agent_framework_messages_to_agui([msg])
 
@@ -510,7 +498,7 @@ def test_agent_framework_to_agui_system_role():
 
 def test_extract_text_from_contents():
     """Test extracting text from contents list."""
-    contents = [TextContent(text="Hello "), TextContent(text="World")]
+    contents = [Content.from_text(text="Hello "), Content.from_text(text="World")]
 
     result = extract_text_from_contents(contents)
 
@@ -533,7 +521,7 @@ class CustomTextContent:
 
 def test_extract_text_from_custom_contents():
     """Test extracting text from custom content objects."""
-    contents = [CustomTextContent(text="Custom "), TextContent(text="Mixed")]
+    contents = [CustomTextContent(text="Custom "), Content.from_text(text="Mixed")]
 
     result = extract_text_from_contents(contents)
 
@@ -547,7 +535,7 @@ def test_agent_framework_to_agui_function_result_dict():
     """Test converting FunctionResultContent with dict result to AG-UI."""
     msg = ChatMessage(
         role=Role.TOOL,
-        contents=[FunctionResultContent(call_id="call-123", result={"key": "value", "count": 42})],
+        contents=[Content.from_function_result(call_id="call-123", result={"key": "value", "count": 42})],
         message_id="msg-789",
     )
 
@@ -564,7 +552,7 @@ def test_agent_framework_to_agui_function_result_none():
     """Test converting FunctionResultContent with None result to AG-UI."""
     msg = ChatMessage(
         role=Role.TOOL,
-        contents=[FunctionResultContent(call_id="call-123", result=None)],
+        contents=[Content.from_function_result(call_id="call-123", result=None)],
         message_id="msg-789",
     )
 
@@ -580,7 +568,7 @@ def test_agent_framework_to_agui_function_result_string():
     """Test converting FunctionResultContent with string result to AG-UI."""
     msg = ChatMessage(
         role=Role.TOOL,
-        contents=[FunctionResultContent(call_id="call-123", result="plain text result")],
+        contents=[Content.from_function_result(call_id="call-123", result="plain text result")],
         message_id="msg-789",
     )
 
@@ -595,7 +583,7 @@ def test_agent_framework_to_agui_function_result_empty_list():
     """Test converting FunctionResultContent with empty list result to AG-UI."""
     msg = ChatMessage(
         role=Role.TOOL,
-        contents=[FunctionResultContent(call_id="call-123", result=[])],
+        contents=[Content.from_function_result(call_id="call-123", result=[])],
         message_id="msg-789",
     )
 
@@ -617,7 +605,7 @@ def test_agent_framework_to_agui_function_result_single_text_content():
 
     msg = ChatMessage(
         role=Role.TOOL,
-        contents=[FunctionResultContent(call_id="call-123", result=[MockTextContent("Hello from MCP!")])],
+        contents=[Content.from_function_result(call_id="call-123", result=[MockTextContent("Hello from MCP!")])],
         message_id="msg-789",
     )
 
@@ -640,7 +628,7 @@ def test_agent_framework_to_agui_function_result_multiple_text_contents():
     msg = ChatMessage(
         role=Role.TOOL,
         contents=[
-            FunctionResultContent(
+            Content.from_function_result(
                 call_id="call-123",
                 result=[MockTextContent("First result"), MockTextContent("Second result")],
             )

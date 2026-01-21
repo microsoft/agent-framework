@@ -37,8 +37,6 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
     Returns:
         Cleaned conversation safe for handoff routing
     """
-    from agent_framework import FunctionApprovalRequestContent, FunctionCallContent
-
     cleaned: list[ChatMessage] = []
     for msg in conversation:
         # Skip tool response messages entirely
@@ -49,7 +47,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
         has_tool_content = False
         if msg.contents:
             has_tool_content = any(
-                isinstance(content, (FunctionApprovalRequestContent, FunctionCallContent)) for content in msg.contents
+                content.type in ("function_approval_request", "function_call") for content in msg.contents
             )
 
         # If no tool content, keep original

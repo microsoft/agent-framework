@@ -48,33 +48,16 @@ from .._tools import (
     use_function_invocation,
 )
 from .._types import (
+    Annotation,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
-    Contents,
-    DataContent,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    HostedFileContent,
-    HostedVectorStoreContent,
-    ImageGenerationToolCallContent,
-    ImageGenerationToolResultContent,
-    MCPServerToolCallContent,
-    MCPServerToolResultContent,
+    Content,
     Role,
-    TextContent,
-    TextReasoningContent,
     TextSpanRegion,
-    UriContent,
-    UsageContent,
     UsageDetails,
-    _parse_content,
+    detect_media_type_from_base64,
     prepare_function_call_results,
     prepend_instructions_to_messages,
     validate_tool_mode,
@@ -231,7 +214,6 @@ class OpenAIBaseResponsesClient(
                 response = await client.responses.parse(stream=False, **run_options)
             else:
                 response = await client.responses.create(stream=False, **run_options)
-            return self._parse_response_from_openai(response, options=options)
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -247,6 +229,7 @@ class OpenAIBaseResponsesClient(
                 f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
+        return self._parse_response_from_openai(response, options=options)
 
     @override
     async def _inner_get_streaming_response(
@@ -391,7 +374,7 @@ class OpenAIBaseResponsesClient(
                         if tool.inputs:
                             tool_args["file_ids"] = []
                             for tool_input in tool.inputs:
-                                if isinstance(tool_input, HostedFileContent):
+                                if tool_input.type == "hosted_file":
                                     tool_args["file_ids"].append(tool_input.file_id)  # type: ignore[attr-defined]
                             if not tool_args["file_ids"]:
                                 tool_args.pop("file_ids")
@@ -417,7 +400,9 @@ class OpenAIBaseResponsesClient(
                         if not tool.inputs:
                             raise ValueError("HostedFileSearchTool requires inputs to be specified.")
                         inputs: list[str] = [
-                            inp.vector_store_id for inp in tool.inputs if isinstance(inp, HostedVectorStoreContent)
+                            inp.vector_store_id  # type: ignore[misc]
+                            for inp in tool.inputs
+                            if inp.type == "hosted_vector_store"  # type: ignore[attr-defined]
                         ]
                         if not inputs:
                             raise ValueError(
@@ -629,11 +614,11 @@ class OpenAIBaseResponsesClient(
         for message in chat_messages:
             for content in message.contents:
                 if (
-                    isinstance(content, FunctionCallContent)
+                    content.type == "function_call"
                     and content.additional_properties
                     and "fc_id" in content.additional_properties
                 ):
-                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]
+                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
@@ -649,18 +634,18 @@ class OpenAIBaseResponsesClient(
             "role": message.role.value if isinstance(message.role, Role) else message.role,
         }
         for content in message.contents:
-            match content:
-                case TextReasoningContent():
+            match content.type:
+                case "text_reasoning":
                     # Don't send reasoning content back to model
                     continue
-                case FunctionResultContent():
+                case "function_result":
                     new_args: dict[str, Any] = {}
                     new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))
                     all_messages.append(new_args)
-                case FunctionCallContent():
+                case "function_call":
                     function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)
                     all_messages.append(function_call)  # type: ignore
-                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
+                case "function_approval_response" | "function_approval_request":
                     all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
                 case _:
                     if "content" not in args:
@@ -673,17 +658,17 @@ class OpenAIBaseResponsesClient(
     def _prepare_content_for_openai(
         self,
         role: Role,
-        content: Contents,
+        content: Content,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:
         """Prepare content for the OpenAI Responses API format."""
-        match content:
-            case TextContent():
+        match content.type:
+            case "text":
                 return {
                     "type": "output_text" if role == Role.ASSISTANT else "input_text",
                     "text": content.text,
                 }
-            case TextReasoningContent():
+            case "text_reasoning":
                 ret: dict[str, Any] = {
                     "type": "reasoning",
                     "summary": {
@@ -703,7 +688,7 @@ class OpenAIBaseResponsesClient(
                     if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
                 return ret
-            case DataContent() | UriContent():
+            case "data" | "uri":
                 if content.has_top_level_media_type("image"):
                     return {
                         "type": "input_image",
@@ -744,7 +729,7 @@ class OpenAIBaseResponsesClient(
                         file_obj["filename"] = filename
                     return file_obj
                 return {}
-            case FunctionCallContent():
+            case "function_call":
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
@@ -761,7 +746,7 @@ class OpenAIBaseResponsesClient(
                     "arguments": content.arguments,
                     "status": None,
                 }
-            case FunctionResultContent():
+            case "function_result":
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
@@ -769,29 +754,29 @@ class OpenAIBaseResponsesClient(
                     "output": prepare_function_call_results(content.result),
                 }
                 return args
-            case FunctionApprovalRequestContent():
+            case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",
-                    "id": content.id,
-                    "arguments": content.function_call.arguments,
-                    "name": content.function_call.name,
-                    "server_label": content.function_call.additional_properties.get("server_label")
-                    if content.function_call.additional_properties
+                    "id": content.id,  # type: ignore[union-attr]
+                    "arguments": content.function_call.arguments,  # type: ignore[union-attr]
+                    "name": content.function_call.name,  # type: ignore[union-attr]
+                    "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
+                    if content.function_call.additional_properties  # type: ignore[union-attr]
                     else None,
                 }
-            case FunctionApprovalResponseContent():
+            case "function_approval_response":
                 return {
                     "type": "mcp_approval_response",
                     "approval_request_id": content.id,
                     "approve": content.approved,
                 }
-            case HostedFileContent():
+            case "hosted_file":
                 return {
                     "type": "input_file",
                     "file_id": content.file_id,
                 }
             case _:  # should catch UsageDetails and ErrorContent and HostedVectorStoreContent
-                logger.debug("Unsupported content type passed (type: %s)", type(content))
+                logger.debug("Unsupported content type passed (type: %s)", content.type)
                 return {}
 
     # region Parse methods
@@ -804,7 +789,7 @@ class OpenAIBaseResponsesClient(
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
-        contents: list[Contents] = []
+        contents: list[Content] = []
         for item in response.output:  # type: ignore[reportUnknownMemberType]
             match item.type:
                 # types:
@@ -829,7 +814,7 @@ class OpenAIBaseResponsesClient(
                     for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
                         match message_content.type:
                             case "output_text":
-                                text_content = TextContent(
+                                text_content = Content.from_text(
                                     text=message_content.text,
                                     raw_representation=message_content,  # type: ignore[reportUnknownArgumentType]
                                 )
@@ -840,7 +825,8 @@ class OpenAIBaseResponsesClient(
                                         match annotation.type:
                                             case "file_path":
                                                 text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                    Annotation(
+                                                        type="citation",
                                                         file_id=annotation.file_id,
                                                         additional_properties={
                                                             "index": annotation.index,
@@ -850,7 +836,8 @@ class OpenAIBaseResponsesClient(
                                                 )
                                             case "file_citation":
                                                 text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                    Annotation(
+                                                        type="citation",
                                                         url=annotation.filename,
                                                         file_id=annotation.file_id,
                                                         raw_representation=annotation,
@@ -861,11 +848,13 @@ class OpenAIBaseResponsesClient(
                                                 )
                                             case "url_citation":
                                                 text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                    Annotation(
+                                                        type="citation",
                                                         title=annotation.title,
                                                         url=annotation.url,
                                                         annotated_regions=[
                                                             TextSpanRegion(
+                                                                type="text_span",
                                                                 start_index=annotation.start_index,
                                                                 end_index=annotation.end_index,
                                                             )
@@ -875,7 +864,8 @@ class OpenAIBaseResponsesClient(
                                                 )
                                             case "container_file_citation":
                                                 text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                    Annotation(
+                                                        type="citation",
                                                         file_id=annotation.file_id,
                                                         url=annotation.filename,
                                                         additional_properties={
@@ -883,6 +873,7 @@ class OpenAIBaseResponsesClient(
                                                         },
                                                         annotated_regions=[
                                                             TextSpanRegion(
+                                                                type="text_span",
                                                                 start_index=annotation.start_index,
                                                                 end_index=annotation.end_index,
                                                             )
@@ -898,7 +889,7 @@ class OpenAIBaseResponsesClient(
                                 contents.append(text_content)
                             case "refusal":
                                 contents.append(
-                                    TextContent(
+                                    Content.from_text(
                                         text=message_content.refusal,
                                         raw_representation=message_content,
                                     )
@@ -910,7 +901,7 @@ class OpenAIBaseResponsesClient(
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties = {"summary": item.summary[index]}
                             contents.append(
-                                TextReasoningContent(
+                                Content.from_text_reasoning(
                                     text=reasoning_content.text,
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties,
@@ -919,23 +910,23 @@ class OpenAIBaseResponsesClient(
                     if hasattr(item, "summary") and item.summary:
                         for summary in item.summary:
                             contents.append(
-                                TextReasoningContent(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
+                                Content.from_text_reasoning(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
-                    outputs: list["Contents"] = []
+                    outputs: list["Content"] = []
                     if item_outputs := getattr(item, "outputs", None):
                         for code_output in item_outputs:
                             if getattr(code_output, "type", None) == "logs":
                                 outputs.append(
-                                    TextContent(
+                                    Content.from_text(
                                         text=code_output.logs,
                                         raw_representation=code_output,
                                     )
                                 )
                             elif getattr(code_output, "type", None) == "image":
                                 outputs.append(
-                                    UriContent(
+                                    Content.from_uri(
                                         uri=code_output.url,
                                         raw_representation=code_output,
                                         media_type="image",
@@ -943,14 +934,14 @@ class OpenAIBaseResponsesClient(
                                 )
                     if code := getattr(item, "code", None):
                         contents.append(
-                            CodeInterpreterToolCallContent(
+                            Content.from_code_interpreter_tool_call(
                                 call_id=call_id,
-                                inputs=[TextContent(text=code, raw_representation=item)],
+                                inputs=[Content.from_text(text=code, raw_representation=item)],
                                 raw_representation=item,
                             )
                         )
                     contents.append(
-                        CodeInterpreterToolResultContent(
+                        Content.from_code_interpreter_tool_result(
                             call_id=call_id,
                             outputs=outputs,
                             raw_representation=item,
@@ -958,7 +949,7 @@ class OpenAIBaseResponsesClient(
                     )
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=item.call_id if hasattr(item, "call_id") and item.call_id else "",
                             name=item.name if hasattr(item, "name") else "",
                             arguments=item.arguments if hasattr(item, "arguments") else "",
@@ -968,9 +959,9 @@ class OpenAIBaseResponsesClient(
                     )
                 case "mcp_approval_request":  # ResponseOutputMcpApprovalRequest
                     contents.append(
-                        FunctionApprovalRequestContent(
+                        Content.from_function_approval_request(
                             id=item.id,
-                            function_call=FunctionCallContent(
+                            function_call=Content.from_function_call(
                                 call_id=item.id,
                                 name=item.name,
                                 arguments=item.arguments,
@@ -982,7 +973,7 @@ class OpenAIBaseResponsesClient(
                 case "mcp_call":
                     call_id = item.id
                     contents.append(
-                        MCPServerToolCallContent(
+                        Content.from_mcp_server_tool_call(
                             call_id=call_id,
                             tool_name=item.name,
                             server_name=item.server_label,
@@ -992,31 +983,31 @@ class OpenAIBaseResponsesClient(
                     )
                     if item.output is not None:
                         contents.append(
-                            MCPServerToolResultContent(
+                            Content.from_mcp_server_tool_result(
                                 call_id=call_id,
-                                output=[TextContent(text=item.output)],
+                                output=[Content.from_text(text=item.output)],
                                 raw_representation=item,
                             )
                         )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    image_output: DataContent | None = None
-                    if item.result:
-                        base64_data = item.result
-                        image_format = DataContent.detect_image_format_from_base64(base64_data)
-                        image_output = DataContent(
-                            data=base64_data,
-                            media_type=f"image/{image_format}" if image_format else "image/png",
+                    image_output: Content | None = None
+                    if item.result is not None:
+                        # item.result contains raw base64 string
+                        # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
+                        image_output = Content.from_uri(
+                            uri=f"data:{detect_media_type_from_base64(data_str=item.result) or 'image/png'}"
+                            f";base64,{item.result}",
                             raw_representation=item.result,
                         )
                     image_id = item.id
                     contents.append(
-                        ImageGenerationToolCallContent(
+                        Content.from_image_generation_tool_call(
                             image_id=image_id,
                             raw_representation=item,
                         )
                     )
                     contents.append(
-                        ImageGenerationToolResultContent(
+                        Content.from_image_generation_tool_result(
                             image_id=image_id,
                             outputs=image_output,
                             raw_representation=item,
@@ -1056,11 +1047,10 @@ class OpenAIBaseResponsesClient(
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
-        contents: list[Contents] = []
+        contents: list[Content] = []
         conversation_id: str | None = None
         response_id: str | None = None
         model = self.model_id
-        # TODO(peterychang): Add support for other content types
         match event.type:
             # types:
             # ResponseAudioDeltaEvent,
@@ -1120,26 +1110,26 @@ class OpenAIBaseResponsesClient(
                 event_part = event.part
                 match event_part.type:
                     case "output_text":
-                        contents.append(TextContent(text=event_part.text, raw_representation=event))
+                        contents.append(Content.from_text(text=event_part.text, raw_representation=event))
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(TextContent(text=event_part.refusal, raw_representation=event))
+                        contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
                     case _:
                         pass
             case "response.output_text.delta":
-                contents.append(TextContent(text=event.delta, raw_representation=event))
+                contents.append(Content.from_text(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
-                contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
-                contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.created":
                 response_id = event.response.id
@@ -1154,7 +1144,7 @@ class OpenAIBaseResponsesClient(
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
-                        contents.append(UsageContent(details=usage, raw_representation=event))
+                        contents.append(Content.from_usage(usage_details=usage, raw_representation=event))
             case "response.output_item.added":
                 event_item = event.item
                 match event_item.type:
@@ -1179,9 +1169,9 @@ class OpenAIBaseResponsesClient(
                         )
                     case "mcp_approval_request":
                         contents.append(
-                            FunctionApprovalRequestContent(
+                            Content.from_function_approval_request(
                                 id=event_item.id,
-                                function_call=FunctionCallContent(
+                                function_call=Content.from_function_call(
                                     call_id=event_item.id,
                                     name=event_item.name,
                                     arguments=event_item.arguments,
@@ -1193,7 +1183,7 @@ class OpenAIBaseResponsesClient(
                     case "mcp_call":
                         call_id = getattr(event_item, "id", None) or getattr(event_item, "call_id", None) or ""
                         contents.append(
-                            MCPServerToolCallContent(
+                            Content.from_mcp_server_tool_call(
                                 call_id=call_id,
                                 tool_name=getattr(event_item, "name", "") or "",
                                 server_name=getattr(event_item, "server_label", None),
@@ -1206,7 +1196,7 @@ class OpenAIBaseResponsesClient(
                             or getattr(event_item, "output", None)
                             or getattr(event_item, "outputs", None)
                         )
-                        parsed_output: list[Contents] | None = None
+                        parsed_output: list[Content] | None = None
                         if result_output:
                             normalized = (
                                 result_output
@@ -1214,9 +1204,9 @@ class OpenAIBaseResponsesClient(
                                 and not isinstance(result_output, (str, bytes, MutableMapping))
                                 else [result_output]
                             )
-                            parsed_output = [_parse_content(output_item) for output_item in normalized]
+                            parsed_output = [Content.from_dict(output_item) for output_item in normalized]
                         contents.append(
-                            MCPServerToolResultContent(
+                            Content.from_mcp_server_tool_result(
                                 call_id=call_id,
                                 output=parsed_output,
                                 raw_representation=event_item,
@@ -1224,19 +1214,19 @@ class OpenAIBaseResponsesClient(
                         )
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                         call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
-                        outputs: list[Contents] = []
+                        outputs: list[Content] = []
                         if hasattr(event_item, "outputs") and event_item.outputs:
                             for code_output in event_item.outputs:
                                 if getattr(code_output, "type", None) == "logs":
                                     outputs.append(
-                                        TextContent(
+                                        Content.from_text(
                                             text=cast(Any, code_output).logs,
                                             raw_representation=code_output,
                                         )
                                     )
                                 elif getattr(code_output, "type", None) == "image":
                                     outputs.append(
-                                        UriContent(
+                                        Content.from_uri(
                                             uri=cast(Any, code_output).url,
                                             raw_representation=code_output,
                                             media_type="image",
@@ -1244,10 +1234,10 @@ class OpenAIBaseResponsesClient(
                                     )
                         if hasattr(event_item, "code") and event_item.code:
                             contents.append(
-                                CodeInterpreterToolCallContent(
+                                Content.from_code_interpreter_tool_call(
                                     call_id=call_id,
                                     inputs=[
-                                        TextContent(
+                                        Content.from_text(
                                             text=event_item.code,
                                             raw_representation=event_item,
                                         )
@@ -1256,7 +1246,7 @@ class OpenAIBaseResponsesClient(
                                 )
                             )
                         contents.append(
-                            CodeInterpreterToolResultContent(
+                            Content.from_code_interpreter_tool_result(
                                 call_id=call_id,
                                 outputs=outputs,
                                 raw_representation=event_item,
@@ -1273,7 +1263,7 @@ class OpenAIBaseResponsesClient(
                                 ):
                                     additional_properties = {"summary": event_item.summary[index]}
                                 contents.append(
-                                    TextReasoningContent(
+                                    Content.from_text_reasoning(
                                         text=reasoning_content.text,
                                         raw_representation=reasoning_content,
                                         additional_properties=additional_properties,
@@ -1285,7 +1275,7 @@ class OpenAIBaseResponsesClient(
                 call_id, name = function_call_ids.get(event.output_index, (None, None))
                 if call_id and name:
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=call_id,
                             name=name,
                             arguments=event.delta,
@@ -1300,13 +1290,9 @@ class OpenAIBaseResponsesClient(
                 # Handle streaming partial image generation
                 image_base64 = event.partial_image_b64
                 partial_index = event.partial_image_index
-
-                # Use helper function to create data URI from base64
-                uri, media_type = DataContent.create_data_uri_from_base64(image_base64)
-
-                image_output = DataContent(
-                    uri=uri,
-                    media_type=media_type,
+                image_output = Content.from_uri(
+                    uri=f"data:{detect_media_type_from_base64(data_str=image_base64) or 'image/png'}"
+                    f";base64,{image_base64}",
                     additional_properties={
                         "partial_image_index": partial_index,
                         "is_partial_image": True,
@@ -1316,13 +1302,13 @@ class OpenAIBaseResponsesClient(
 
                 image_id = getattr(event, "item_id", None)
                 contents.append(
-                    ImageGenerationToolCallContent(
+                    Content.from_image_generation_tool_call(
                         image_id=image_id,
                         raw_representation=event,
                     )
                 )
                 contents.append(
-                    ImageGenerationToolResultContent(
+                    Content.from_image_generation_tool_result(
                         image_id=image_id,
                         outputs=image_output,
                         raw_representation=event,
@@ -1343,7 +1329,7 @@ class OpenAIBaseResponsesClient(
                 if ann_type == "file_path":
                     if ann_file_id:
                         contents.append(
-                            HostedFileContent(
+                            Content.from_hosted_file(
                                 file_id=str(ann_file_id),
                                 additional_properties={
                                     "annotation_index": event.annotation_index,
@@ -1355,7 +1341,7 @@ class OpenAIBaseResponsesClient(
                 elif ann_type == "file_citation":
                     if ann_file_id:
                         contents.append(
-                            HostedFileContent(
+                            Content.from_hosted_file(
                                 file_id=str(ann_file_id),
                                 additional_properties={
                                     "annotation_index": event.annotation_index,
@@ -1368,7 +1354,7 @@ class OpenAIBaseResponsesClient(
                 elif ann_type == "container_file_citation":
                     if ann_file_id:
                         contents.append(
-                            HostedFileContent(
+                            Content.from_hosted_file(
                                 file_id=str(ann_file_id),
                                 additional_properties={
                                     "annotation_index": event.annotation_index,
@@ -1402,9 +1388,9 @@ class OpenAIBaseResponsesClient(
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details and usage.input_tokens_details.cached_tokens:
-            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens
+            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens  # type: ignore[typeddict-unknown-key]
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
-            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
+            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens  # type: ignore[typeddict-unknown-key]
         return details
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:

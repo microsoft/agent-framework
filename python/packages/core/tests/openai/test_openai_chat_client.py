@@ -17,16 +17,9 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
-    DataContent,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     HostedWebSearchTool,
-    TextReasoningContent,
     ToolProtocol,
-    UsageContent,
-    UsageDetails,
     ai_function,
     prepare_function_call_results,
 )
@@ -291,7 +284,9 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     client = OpenAIChatClient()
 
     # Test with empty list (falsy but not None)
-    message_with_empty_list = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-123", result=[])])
+    message_with_empty_list = ChatMessage(
+        role="tool", contents=[Content.from_function_result(call_id="call-123", result=[])]
+    )
 
     openai_messages = client._prepare_message_for_openai(message_with_empty_list)
     assert len(openai_messages) == 1
@@ -299,7 +294,7 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
 
     # Test with empty string (falsy but not None)
     message_with_empty_string = ChatMessage(
-        role="tool", contents=[FunctionResultContent(call_id="call-456", result="")]
+        role="tool", contents=[Content.from_function_result(call_id="call-456", result="")]
     )
 
     openai_messages = client._prepare_message_for_openai(message_with_empty_string)
@@ -307,7 +302,9 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     assert openai_messages[0]["content"] == ""  # Empty string should be preserved
 
     # Test with False (falsy but not None)
-    message_with_false = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-789", result=False)])
+    message_with_false = ChatMessage(
+        role="tool", contents=[Content.from_function_result(call_id="call-789", result=False)]
+    )
 
     openai_messages = client._prepare_message_for_openai(message_with_false)
     assert len(openai_messages) == 1
@@ -326,7 +323,7 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     message_with_exception = ChatMessage(
         role="tool",
         contents=[
-            FunctionResultContent(call_id="call-123", result="Error: Function failed.", exception=test_exception)
+            Content.from_function_result(call_id="call-123", result="Error: Function failed.", exception=test_exception)
         ],
     )
 
@@ -348,7 +345,7 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     client = OpenAIChatClient()
 
     # Test DataContent with image media type
-    image_data_content = DataContent(
+    image_data_content = Content.from_uri(
         uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
         media_type="image/png",
     )
@@ -360,7 +357,7 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     assert result["image_url"]["url"] == image_data_content.uri
 
     # Test DataContent with non-image media type should use default model_dump
-    text_data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
+    text_data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
 
     result = client._prepare_content_for_openai(text_data_content)  # type: ignore
 
@@ -370,7 +367,7 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     assert result["media_type"] == "text/plain"
 
     # Test DataContent with audio media type
-    audio_data_content = DataContent(
+    audio_data_content = Content.from_uri(
         uri="data:audio/wav;base64,UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA",
         media_type="audio/wav",
     )
@@ -384,7 +381,9 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     assert result["input_audio"]["format"] == "wav"
 
     # Test DataContent with MP3 audio
-    mp3_data_content = DataContent(uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3")
+    mp3_data_content = Content.from_uri(
+        uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3"
+    )
 
     result = client._prepare_content_for_openai(mp3_data_content)  # type: ignore
 
@@ -400,7 +399,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
     client = OpenAIChatClient()
 
     # Test PDF without filename - should omit filename in OpenAI payload
-    pdf_data_content = DataContent(
+    pdf_data_content = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXS9QYXJlbnQgMiAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDQgMCBSPj4+Pi9Db250ZW50cyA1IDAgUj4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+CmVuZG9iago1IDAgb2JqCjw8L0xlbmd0aCA0ND4+CnN0cmVhbQpCVApxCjcwIDUwIFRECi9GMSA4IFRmCihIZWxsbyBXb3JsZCEpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQ1IDAwMDAwIG4gCjAwMDAwMDAzMDcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgo0MDUKJSVFT0Y=",
         media_type="application/pdf",
     )
@@ -416,7 +415,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
     assert result["file"]["file_data"] == pdf_data_content.uri
 
     # Test PDF with custom filename via additional_properties
-    pdf_with_filename = DataContent(
+    pdf_with_filename = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
         additional_properties={"filename": "report.pdf"},
@@ -450,7 +449,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
 
     for case in test_cases:
         # Test without filename
-        doc_content = DataContent(
+        doc_content = Content.from_uri(
             uri=f"data:{case['media_type']};base64,{case['base64']}",
             media_type=case["media_type"],
         )
@@ -463,7 +462,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
         assert result["file"]["file_data"] == doc_content.uri
 
         # Test with filename - should now use file format with filename
-        doc_with_filename = DataContent(
+        doc_with_filename = Content.from_uri(
             uri=f"data:{case['media_type']};base64,{case['base64']}",
             media_type=case["media_type"],
             additional_properties={"filename": case["filename"]},
@@ -477,7 +476,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
         assert result["file"]["file_data"] == doc_with_filename.uri
 
     # Test edge case: empty additional_properties dict
-    pdf_empty_props = DataContent(
+    pdf_empty_props = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
         additional_properties={},
@@ -489,7 +488,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
     assert "filename" not in result["file"]
 
     # Test edge case: None filename in additional_properties
-    pdf_none_filename = DataContent(
+    pdf_none_filename = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
         additional_properties={"filename": None},
@@ -543,7 +542,7 @@ def test_parse_text_reasoning_content_from_response(openai_unit_test_env: dict[s
     assert message.contents[0].text == "The answer is 42."
 
     # Second should be reasoning content with protected_data
-    assert isinstance(message.contents[1], TextReasoningContent)
+    assert message.contents[1].type == "text_reasoning"
     assert message.contents[1].protected_data is not None
     parsed_details = json.loads(message.contents[1].protected_data)
     assert parsed_details == mock_reasoning_details
@@ -591,7 +590,7 @@ def test_parse_text_reasoning_content_from_streaming_chunk(openai_unit_test_env:
     assert update.contents[0].text == "Partial answer"
 
     # Second should be reasoning content
-    assert isinstance(update.contents[1], TextReasoningContent)
+    assert update.contents[1].type == "text_reasoning"
     assert update.contents[1].protected_data is not None
     parsed_details = json.loads(update.contents[1].protected_data)
     assert parsed_details == mock_reasoning_details
@@ -599,24 +598,22 @@ def test_parse_text_reasoning_content_from_streaming_chunk(openai_unit_test_env:
 
 def test_prepare_message_with_text_reasoning_content(openai_unit_test_env: dict[str, str]) -> None:
     """Test that TextReasoningContent with protected_data is correctly prepared for OpenAI."""
-    from agent_framework import TextContent
-
     client = OpenAIChatClient()
 
-    # Create message with TextReasoningContent that has protected_data
-    # TextReasoningContent is meant to be added to an existing message, so include text content first
+    # Create message with text_reasoning content that has protected_data
+    # text_reasoning is meant to be added to an existing message, so include text content first
     mock_reasoning_data = {
         "effort": "medium",
         "summary": "Quick analysis",
     }
 
-    reasoning_content = TextReasoningContent(text=None, protected_data=json.dumps(mock_reasoning_data))
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
 
     # Message must have other content first for reasoning to attach to
     message = ChatMessage(
         role="assistant",
         contents=[
-            TextContent(text="The answer is 42."),
+            Content.from_text(text="The answer is 42."),
             reasoning_content,
         ],
     )
@@ -633,23 +630,23 @@ def test_prepare_message_with_text_reasoning_content(openai_unit_test_env: dict[
 
 
 def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that FunctionApprovalRequestContent and FunctionApprovalResponseContent are skipped."""
+    """Test that function approval request and response content are skipped."""
     client = OpenAIChatClient()
 
     # Create approval request
-    function_call = FunctionCallContent(
+    function_call = Content.from_function_call(
         call_id="call_123",
         name="dangerous_action",
         arguments='{"confirm": true}',
     )
 
-    approval_request = FunctionApprovalRequestContent(
+    approval_request = Content.from_function_approval_request(
         id="approval_001",
         function_call=function_call,
     )
 
     # Create approval response
-    approval_response = FunctionApprovalResponseContent(
+    approval_response = Content.from_function_approval_response(
         approved=False,
         id="approval_001",
         function_call=function_call,
@@ -666,12 +663,10 @@ def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_en
     assert len(prepared_response) == 0  # Should be empty - approval content is skipped
 
     # Test with mixed content - approval should be skipped, text should remain
-    from agent_framework import TextContent
-
     mixed_message = ChatMessage(
         role="assistant",
         contents=[
-            TextContent(text="I need approval for this action."),
+            Content.from_text(text="I need approval for this action."),
             approval_request,
         ],
     )
@@ -706,15 +701,15 @@ def test_usage_content_in_streaming_response(openai_unit_test_env: dict[str, str
 
     update = client._parse_response_update_from_openai(mock_chunk)
 
-    # Should have UsageContent
+    # Should have usage content
     assert len(update.contents) == 1
-    assert isinstance(update.contents[0], UsageContent)
+    assert update.contents[0].type == "usage"
 
     usage_content = update.contents[0]
-    assert isinstance(usage_content.details, UsageDetails)
-    assert usage_content.details.input_token_count == 100
-    assert usage_content.details.output_token_count == 50
-    assert usage_content.details.total_token_count == 150
+    assert isinstance(usage_content.usage_details, dict)
+    assert usage_content.usage_details["input_token_count"] == 100
+    assert usage_content.usage_details["output_token_count"] == 50
+    assert usage_content.usage_details["total_token_count"] == 150
 
 
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
@@ -806,14 +801,12 @@ def test_prepare_options_with_instructions(openai_unit_test_env: dict[str, str])
 
 def test_prepare_message_with_author_name(openai_unit_test_env: dict[str, str]) -> None:
     """Test that author_name is included in prepared message."""
-    from agent_framework import TextContent
-
     client = OpenAIChatClient()
 
     message = ChatMessage(
         role="user",
         author_name="TestUser",
-        contents=[TextContent(text="Hello")],
+        contents=[Content.from_text(text="Hello")],
     )
 
     prepared = client._prepare_message_for_openai(message)
@@ -830,7 +823,7 @@ def test_prepare_message_with_tool_result_author_name(openai_unit_test_env: dict
     message = ChatMessage(
         role="tool",
         author_name="ShouldNotAppear",
-        contents=[FunctionResultContent(call_id="call_123", result="result")],
+        contents=[Content.from_function_result(call_id="call_123", result="result")],
     )
 
     prepared = client._prepare_message_for_openai(message)
@@ -883,8 +876,8 @@ def test_multiple_function_calls_in_single_message(openai_unit_test_env: dict[st
     message = ChatMessage(
         role="assistant",
         contents=[
-            FunctionCallContent(call_id="call_1", name="func_1", arguments='{"a": 1}'),
-            FunctionCallContent(call_id="call_2", name="func_2", arguments='{"b": 2}'),
+            Content.from_function_call(call_id="call_1", name="func_1", arguments='{"a": 1}'),
+            Content.from_function_call(call_id="call_2", name="func_2", arguments='{"b": 2}'),
         ],
     )
 

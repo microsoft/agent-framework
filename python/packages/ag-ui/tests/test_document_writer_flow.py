@@ -3,7 +3,7 @@
 """Tests for document writer predictive state flow with confirm_changes."""
 
 from ag_ui.core import EventType, StateDeltaEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
-from agent_framework import AgentResponseUpdate, FunctionCallContent, FunctionResultContent, TextContent
+from agent_framework import AgentResponseUpdate, Content
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
@@ -21,7 +21,7 @@ async def test_streaming_document_with_state_deltas():
     )
 
     # Simulate streaming tool call - first chunk with name
-    tool_call_start = FunctionCallContent(
+    tool_call_start = Content.from_function_call(
         call_id="call_123",
         name="write_document_local",
         arguments='{"document":"Once',
@@ -34,7 +34,9 @@ async def test_streaming_document_with_state_deltas():
     assert any(e.type == EventType.TOOL_CALL_ARGS for e in events1)
 
     # Second chunk - incomplete JSON, should try partial extraction
-    tool_call_chunk2 = FunctionCallContent(call_id="call_123", name="write_document_local", arguments=" upon a time")
+    tool_call_chunk2 = Content.from_function_call(
+        call_id="call_123", name="write_document_local", arguments=" upon a time"
+    )
     update2 = AgentResponseUpdate(contents=[tool_call_chunk2])
     events2 = await bridge.from_agent_run_update(update2)
 
@@ -71,7 +73,7 @@ async def test_confirm_changes_emission():
     bridge.pending_state_updates = {"document": "A short story"}
 
     # Tool result
-    tool_result = FunctionResultContent(
+    tool_result = Content.from_function_result(
         call_id="call_123",
         result="Document written.",
     )
@@ -115,7 +117,7 @@ async def test_text_suppression_before_confirm():
     bridge.should_stop_after_confirm = True
 
     # Text content that should be suppressed
-    text = TextContent(text="I have written a story about pirates.")
+    text = Content.from_text(text="I have written a story about pirates.")
     update = AgentResponseUpdate(contents=[text])
 
     events = await bridge.from_agent_run_update(update)
@@ -146,7 +148,7 @@ async def test_no_confirm_for_non_predictive_tools():
     # Different tool (not in predict_state_config)
     bridge.current_tool_call_name = "get_weather"
 
-    tool_result = FunctionResultContent(
+    tool_result = Content.from_function_result(
         call_id="call_456",
         result="Sunny, 72°F",
     )
@@ -175,7 +177,7 @@ async def test_state_delta_deduplication():
     )
 
     # First tool call with document
-    tool_call1 = FunctionCallContent(
+    tool_call1 = Content.from_function_call(
         call_id="call_1",
         name="write_document_local",
         arguments='{"document":"Same text"}',
@@ -189,7 +191,7 @@ async def test_state_delta_deduplication():
 
     # Second tool call with SAME document (shouldn't emit new delta)
     bridge.current_tool_call_name = "write_document_local"
-    tool_call2 = FunctionCallContent(
+    tool_call2 = Content.from_function_call(
         call_id="call_2",
         name="write_document_local",
         arguments='{"document":"Same text"}',  # Identical content
@@ -216,7 +218,7 @@ async def test_predict_state_config_multiple_fields():
     )
 
     # Tool call with both fields
-    tool_call = FunctionCallContent(
+    tool_call = Content.from_function_call(
         call_id="call_999",
         name="create_post",
         arguments='{"title":"My Post","body":"Post content"}',

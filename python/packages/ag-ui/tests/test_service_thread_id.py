@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ag_ui.core import RunFinishedEvent, RunStartedEvent
-from agent_framework import TextContent
+from agent_framework import Content
 from agent_framework._types import AgentResponseUpdate, ChatResponseUpdate
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -20,10 +20,10 @@ async def test_service_thread_id_when_there_are_updates():
 
     updates: list[AgentResponseUpdate] = [
         AgentResponseUpdate(
-            contents=[TextContent(text="Hello, user!")],
+            contents=[Content.from_text(text="Hello, user!")],
             response_id="resp_67890",
             raw_representation=ChatResponseUpdate(
-                contents=[TextContent(text="Hello, user!")],
+                contents=[Content.from_text(text="Hello, user!")],
                 conversation_id="conv_12345",
                 response_id="resp_67890",
             ),
