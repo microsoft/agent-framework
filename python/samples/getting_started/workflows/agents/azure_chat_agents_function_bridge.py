@@ -6,7 +6,7 @@ from typing import Final
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     AgentRunUpdateEvent,
     ChatMessage,
     Role,
@@ -70,7 +70,7 @@ async def enrich_with_references(
     ctx: WorkflowContext[AgentExecutorRequest],
 ) -> None:
     """Inject a follow-up user instruction that adds an external note for the next agent."""
-    conversation = list(draft.full_conversation or draft.agent_run_response.messages)
+    conversation = list(draft.full_conversation or draft.agent_response.messages)
     original_prompt = next((message.text for message in conversation if message.role == Role.USER), "")
     external_note = _lookup_external_note(original_prompt) or (
         "No additional references were found. Please refine the previous assistant response for clarity."
@@ -87,7 +87,7 @@ async def enrich_with_references(
 
 
 def create_research_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="research_agent",
         instructions=(
             "Produce a short, bullet-style briefing with two actionable ideas. Label the section as 'Initial Draft'."
@@ -96,7 +96,7 @@ def create_research_agent():
 
 
 def create_final_editor_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "Use all conversation context (including external notes) to produce the final answer. "
@@ -134,7 +134,7 @@ async def main() -> None:
         elif isinstance(event, WorkflowOutputEvent):
             print("\n\n===== Final Output =====")
             response = event.data
-            if isinstance(response, AgentRunResponse):
+            if isinstance(response, AgentResponse):
                 print(response.text or "(empty response)")
             else:
                 print(response if response is not None else "No response generated.")

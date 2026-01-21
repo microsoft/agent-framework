@@ -8,7 +8,7 @@ from typing import Annotated
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     AgentRunUpdateEvent,
     ChatAgent,
     ChatMessage,
@@ -17,7 +17,6 @@ from agent_framework import (
     FunctionResultContent,
     RequestInfoEvent,
     Role,
-    ToolMode,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -103,12 +102,12 @@ class Coordinator(Executor):
     async def on_writer_response(
         self,
         draft: AgentExecutorResponse,
-        ctx: WorkflowContext[Never, AgentRunResponse],
+        ctx: WorkflowContext[Never, AgentResponse],
     ) -> None:
         """Handle responses from the other two agents in the workflow."""
         if draft.executor_id == self.final_editor_id:
             # Final editor response; yield output directly.
-            await ctx.yield_output(draft.agent_run_response)
+            await ctx.yield_output(draft.agent_response)
             return
 
         # Writer agent response; request human feedback.
@@ -118,8 +117,8 @@ class Coordinator(Executor):
         if draft.full_conversation is not None:
             conversation = list(draft.full_conversation)
         else:
-            conversation = list(draft.agent_run_response.messages)
-        draft_text = draft.agent_run_response.text.strip()
+            conversation = list(draft.agent_response.messages)
+        draft_text = draft.agent_response.text.strip()
         if not draft_text:
             draft_text = "No draft text was produced."
 
@@ -169,7 +168,7 @@ class Coordinator(Executor):
 
 def create_writer_agent() -> ChatAgent:
     """Creates a writer agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="writer_agent",
         instructions=(
             "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
@@ -177,13 +176,13 @@ def create_writer_agent() -> ChatAgent:
             "produce a 3-sentence draft."
         ),
         tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice=ToolMode.REQUIRED_ANY,
+        tool_choice="required",
     )
 
 
 def create_final_editor_agent() -> ChatAgent:
     """Creates a final editor agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

@@ -3,6 +3,7 @@
 """Recipe agent example demonstrating shared state management (Feature 3)."""
 
 from enum import Enum
+from typing import Any
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework.ag_ui import AgentFrameworkAgent, RecipeConfirmationStrategy
@@ -101,7 +102,7 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
     """
 
 
-def recipe_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def recipe_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
     """Create a recipe agent with streaming state updates.
 
     Args:

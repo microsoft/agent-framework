@@ -46,7 +46,7 @@ Prerequisites:
 
 def create_researcher() -> ChatAgent:
     """Factory function to create a researcher agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
@@ -57,7 +57,7 @@ def create_researcher() -> ChatAgent:
 
 def create_marketer() -> ChatAgent:
     """Factory function to create a marketer agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
@@ -68,7 +68,7 @@ def create_marketer() -> ChatAgent:
 
 def create_legal() -> ChatAgent:
     """Factory function to create a legal/compliance agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -89,7 +89,7 @@ class SummarizationExecutor(Executor):
         expert_sections: list[str] = []
         for r in results:
             try:
-                messages = getattr(r.agent_run_response, "messages", [])
+                messages = getattr(r.agent_response, "messages", [])
                 final_text = messages[-1].text if messages and hasattr(messages[-1], "text") else "(no content)"
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}:\n{final_text}")
             except Exception as e:

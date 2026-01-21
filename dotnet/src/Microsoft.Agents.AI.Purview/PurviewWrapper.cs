@@ -18,7 +18,7 @@ internal sealed class PurviewWrapper : IDisposable
     private readonly ILogger _logger;
     private readonly IScopedContentProcessor _scopedProcessor;
     private readonly PurviewSettings _purviewSettings;
-    private readonly IChannelHandler _channelHandler;
+    private readonly IBackgroundJobRunner _backgroundJobRunner;
 
     /// <summary>
     /// Creates a new <see cref="PurviewWrapper"/> instance.
@@ -26,13 +26,13 @@ internal sealed class PurviewWrapper : IDisposable
     /// <param name="scopedProcessor">The scoped processor used to orchestrate the calls to Purview.</param>
     /// <param name="purviewSettings">The settings for Purview integration.</param>
     /// <param name="logger">The logger used for logging.</param>
-    /// <param name="channelHandler">The channel handler used to queue background jobs and add job runners.</param>
-    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IChannelHandler channelHandler)
+    /// <param name="backgroundJobRunner">The runner used to manage background jobs.</param>
+    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IBackgroundJobRunner backgroundJobRunner)
     {
         this._scopedProcessor = scopedProcessor;
         this._purviewSettings = purviewSettings;
         this._logger = logger;
-        this._channelHandler = channelHandler;
+        this._backgroundJobRunner = backgroundJobRunner;
     }
 
     private static string GetThreadIdFromAgentThread(AgentThread? thread, IEnumerable<ChatMessage> messages)
@@ -134,7 +134,7 @@ internal sealed class PurviewWrapper : IDisposable
     /// <param name="innerAgent">The wrapped agent.</param>
     /// <param name="cancellationToken">The cancellation token used to interrupt async operations.</param>
     /// <returns>The agent's response. This could be the response from the agent or a message indicating that Purview has blocked the prompt or response.</returns>
-    public async Task<AgentRunResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+    public async Task<AgentResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
     {
         string threadId = GetThreadIdFromAgentThread(thread, messages);
 
@@ -151,7 +151,7 @@ internal sealed class PurviewWrapper : IDisposable
                     this._logger.LogInformation("Prompt blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedPromptMessage);
                 }
 
-                return new AgentRunResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedPromptMessage));
+                return new AgentResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedPromptMessage));
             }
         }
         catch (Exception ex)
@@ -167,7 +167,7 @@ internal sealed class PurviewWrapper : IDisposable
             }
         }
 
-        AgentRunResponse response = await innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -180,7 +180,7 @@ internal sealed class PurviewWrapper : IDisposable
                     this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
                 }
 
-                return new AgentRunResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedResponseMessage));
+                return new AgentResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedResponseMessage));
             }
         }
         catch (Exception ex)
@@ -203,7 +203,7 @@ internal sealed class PurviewWrapper : IDisposable
     public void Dispose()
     {
 #pragma warning disable VSTHRD002 // Need to wait for pending jobs to complete.
-        this._channelHandler.StopAndWaitForCompletionAsync().GetAwaiter().GetResult();
+        this._backgroundJobRunner.ShutdownAsync().GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002 // Need to wait for pending jobs to complete.
     }
 }

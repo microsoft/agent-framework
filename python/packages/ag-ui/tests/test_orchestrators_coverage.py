@@ -8,19 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from agent_framework import (
-    AgentRunResponseUpdate,
-    ChatMessage,
-    TextContent,
-    ai_function,
-)
+from agent_framework import AgentResponseUpdate, ChatMessage, Content, ai_function
 from pydantic import BaseModel
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, HumanInTheLoopOrchestrator
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_helpers_ag_ui import StubAgent, TestExecutionContext
+from utils_test_ag_ui import StubAgent, TestExecutionContext
 
 
 @ai_function(approval_mode="always_require")
@@ -29,7 +24,7 @@ def approval_tool(param: str) -> str:
     return f"executed: {param}"
 
 
-DEFAULT_CHAT_OPTIONS = SimpleNamespace(tools=[approval_tool], response_format=None)
+DEFAULT_OPTIONS: dict[str, Any] = {"tools": [approval_tool], "response_format": None}
 
 
 async def test_human_in_the_loop_json_decode_error() -> None:
@@ -48,21 +43,21 @@ async def test_human_in_the_loop_json_decode_error() -> None:
     messages = [
         ChatMessage(
             role="tool",
-            contents=[TextContent(text="not valid json {")],
+            contents=[Content.from_text(text="not valid json {")],
             additional_properties={"is_tool_result": True},
         )
     ]
 
     agent = StubAgent(
-        chat_options=SimpleNamespace(tools=[approval_tool], response_format=None),
-        updates=[AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")],
+        default_options={"tools": [approval_tool], "response_format": None},
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="response")], role="assistant")],
     )
     context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context.set_messages(messages)
+    context.set_messages(messages, normalize=False)
 
     assert orchestrator.can_handle(context)
 
@@ -78,14 +73,14 @@ async def test_human_in_the_loop_json_decode_error() -> None:
 
 async def test_sanitize_tool_history_confirm_changes() -> None:
     """Test sanitize_tool_history logic for confirm_changes synthetic result."""
-    from agent_framework import ChatMessage, FunctionCallContent, TextContent
+    from agent_framework import ChatMessage
 
     # Create messages that will trigger confirm_changes synthetic result injection
     messages = [
         ChatMessage(
             role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     name="confirm_changes",
                     call_id="call_confirm_123",
                     arguments='{"changes": "test"}',
@@ -94,7 +89,7 @@ async def test_sanitize_tool_history_confirm_changes() -> None:
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text='{"accepted": true}')],
+            contents=[Content.from_text(text='{"accepted": true}')],
         ),
     ]
 
@@ -106,7 +101,7 @@ async def test_sanitize_tool_history_confirm_changes() -> None:
     input_data: dict[str, Any] = {"messages": []}
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -134,24 +129,24 @@ async def test_sanitize_tool_history_confirm_changes() -> None:
 
 async def test_sanitize_tool_history_orphaned_tool_result() -> None:
     """Test sanitize_tool_history removes orphaned tool results."""
-    from agent_framework import ChatMessage, FunctionResultContent, TextContent
+    from agent_framework import ChatMessage
 
     # Tool result without preceding assistant tool call
     messages = [
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="orphan_123", result="orphaned data")],
+            contents=[Content.from_function_result(call_id="orphan_123", result="orphaned data")],
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="Hello")],
+            contents=[Content.from_text(text="Hello")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -191,7 +186,7 @@ async def test_orphaned_tool_result_sanitization() -> None:
     }
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -214,27 +209,27 @@ async def test_orphaned_tool_result_sanitization() -> None:
 
 async def test_deduplicate_messages_empty_tool_results() -> None:
     """Test deduplicate_messages prefers non-empty tool results."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="test_tool", call_id="call_789", arguments="{}")],
+            contents=[Content.from_function_call(name="test_tool", call_id="call_789", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_789", result="")],
+            contents=[Content.from_function_result(call_id="call_789", result="")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_789", result="real data")],
+            contents=[Content.from_function_result(call_id="call_789", result="real data")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -259,27 +254,27 @@ async def test_deduplicate_messages_empty_tool_results() -> None:
 
 async def test_deduplicate_messages_duplicate_assistant_tool_calls() -> None:
     """Test deduplicate_messages removes duplicate assistant tool call messages."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="test_tool", call_id="call_abc", arguments="{}")],
+            contents=[Content.from_function_call(name="test_tool", call_id="call_abc", arguments="{}")],
         ),
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="test_tool", call_id="call_abc", arguments="{}")],
+            contents=[Content.from_function_call(name="test_tool", call_id="call_abc", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_abc", result="result")],
+            contents=[Content.from_function_result(call_id="call_abc", result="result")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -303,27 +298,27 @@ async def test_deduplicate_messages_duplicate_assistant_tool_calls() -> None:
 
 async def test_deduplicate_messages_duplicate_system_messages() -> None:
     """Test that deduplication logic is invoked for system messages."""
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="system",
-            contents=[TextContent(text="You are a helpful assistant.")],
+            contents=[Content.from_text(text="You are a helpful assistant.")],
         ),
         ChatMessage(
             role="system",
-            contents=[TextContent(text="You are a helpful assistant.")],
+            contents=[Content.from_text(text="You are a helpful assistant.")],
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="Hello")],
+            contents=[Content.from_text(text="Hello")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -362,7 +357,7 @@ async def test_state_context_injection() -> None:
     }
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -385,29 +380,29 @@ async def test_state_context_injection() -> None:
     assert "banana" in system_messages[0].contents[0].text
 
 
-async def test_no_state_context_injection_with_tool_calls() -> None:
-    """Test state context is NOT injected if conversation has tool calls."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent, TextContent
+async def test_state_context_injection_with_tool_calls_and_input_state() -> None:
+    """Test state context is injected when state is provided, even with tool calls."""
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="get_weather", call_id="call_xyz", arguments="{}")],
+            contents=[Content.from_function_call(name="get_weather", call_id="call_xyz", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_xyz", result="sunny")],
+            contents=[Content.from_function_result(call_id="call_xyz", result="sunny")],
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="Thanks")],
+            contents=[Content.from_text(text="Thanks")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": [], "state": {"weather": "sunny"}}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -420,13 +415,13 @@ async def test_no_state_context_injection_with_tool_calls() -> None:
     async for event in orchestrator.run(context):
         events.append(event)
 
-    # Should NOT inject state context system message since conversation has tool calls
+    # Should inject state context system message because input state is provided
     system_messages = [
         msg
         for msg in agent.messages_received
         if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "system"
     ]
-    assert len(system_messages) == 0
+    assert len(system_messages) == 1
 
 
 async def test_structured_output_processing() -> None:
@@ -449,15 +444,15 @@ async def test_structured_output_processing() -> None:
 
     # Agent with structured output
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
         updates=[
-            AgentRunResponseUpdate(
-                contents=[TextContent(text='{"ingredients": ["tomato"], "message": "Added tomato"}')],
+            AgentResponseUpdate(
+                contents=[Content.from_text(text='{"ingredients": ["tomato"], "message": "Added tomato"}')],
                 role="assistant",
             )
         ],
     )
-    agent.chat_options.response_format = RecipeState
+    agent.default_options["response_format"] = RecipeState
 
     context = TestExecutionContext(
         input_data=input_data,
@@ -510,9 +505,9 @@ async def test_duplicate_client_tools_filtered() -> None:
     }
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
-    agent.chat_options.tools = [get_weather]
+    agent.default_options["tools"] = [get_weather]
 
     context = TestExecutionContext(
         input_data=input_data,
@@ -559,9 +554,9 @@ async def test_unique_client_tools_merged() -> None:
     }
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
-    agent.chat_options.tools = [server_tool]
+    agent.default_options["tools"] = [server_tool]
 
     context = TestExecutionContext(
         input_data=input_data,
@@ -587,7 +582,7 @@ async def test_empty_messages_handling() -> None:
     input_data: dict[str, Any] = {"messages": []}
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -621,7 +616,7 @@ async def test_all_messages_filtered_handling() -> None:
     }
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -641,13 +636,13 @@ async def test_all_messages_filtered_handling() -> None:
 
 async def test_confirm_changes_with_invalid_json_fallback() -> None:
     """Test confirm_changes with invalid JSON falls back to normal processing."""
-    from agent_framework import ChatMessage, FunctionCallContent, TextContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     name="confirm_changes",
                     call_id="call_confirm_invalid",
                     arguments='{"changes": "test"}',
@@ -656,14 +651,14 @@ async def test_confirm_changes_with_invalid_json_fallback() -> None:
         ),
         ChatMessage(
             role="user",
-            contents=[TextContent(text="invalid json {")],
+            contents=[Content.from_text(text="invalid json {")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -685,25 +680,72 @@ async def test_confirm_changes_with_invalid_json_fallback() -> None:
     assert len(user_messages) == 1
 
 
+async def test_confirm_changes_closes_active_message_before_finish() -> None:
+    """Confirm-changes flow closes any active text message before run finishes."""
+    from ag_ui.core import TextMessageEndEvent, TextMessageStartEvent
+
+    updates = [
+        AgentResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="write_document_local",
+                    call_id="call_1",
+                    arguments='{"document": "Draft"}',
+                )
+            ]
+        ),
+        AgentResponseUpdate(contents=[Content.from_function_result(call_id="call_1", result="Done")]),
+    ]
+
+    orchestrator = DefaultOrchestrator()
+    input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Start"}]}
+    agent = StubAgent(
+        default_options=DEFAULT_OPTIONS,
+        updates=updates,
+    )
+    context = TestExecutionContext(
+        input_data=input_data,
+        agent=agent,
+        config=AgentConfig(
+            predict_state_config={"document": {"tool": "write_document_local", "tool_argument": "document"}},
+            require_confirmation=True,
+        ),
+    )
+
+    events: list[Any] = []
+    async for event in orchestrator.run(context):
+        events.append(event)
+
+    start_events = [e for e in events if isinstance(e, TextMessageStartEvent)]
+    end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+    assert len(start_events) == 1
+    assert len(end_events) == 1
+    assert end_events[0].message_id == start_events[0].message_id
+
+    end_index = events.index(end_events[0])
+    finished_index = events.index([e for e in events if e.type == "RUN_FINISHED"][0])
+    assert end_index < finished_index
+
+
 async def test_tool_result_kept_when_call_id_matches() -> None:
     """Test tool result is kept when call_id matches pending tool calls."""
-    from agent_framework import ChatMessage, FunctionCallContent, FunctionResultContent
+    from agent_framework import ChatMessage
 
     messages = [
         ChatMessage(
             role="assistant",
-            contents=[FunctionCallContent(name="get_data", call_id="call_match", arguments="{}")],
+            contents=[Content.from_function_call(name="get_data", call_id="call_match", arguments="{}")],
         ),
         ChatMessage(
             role="tool",
-            contents=[FunctionResultContent(call_id="call_match", result="data")],
+            contents=[Content.from_function_result(call_id="call_match", result="data")],
         ),
     ]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -733,7 +775,7 @@ async def test_agent_protocol_fallback_paths() -> None:
         """Custom agent without ChatAgent type."""
 
         def __init__(self) -> None:
-            self.chat_options = SimpleNamespace(tools=[], response_format=None)
+            self.default_options: dict[str, Any] = {"tools": [], "response_format": None}
             self.chat_client = SimpleNamespace(function_invocation_configuration=SimpleNamespace())
             self.messages_received: list[Any] = []
 
@@ -744,13 +786,13 @@ async def test_agent_protocol_fallback_paths() -> None:
             thread: Any = None,
             tools: list[Any] | None = None,
             **kwargs: Any,
-        ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
+        ) -> AsyncGenerator[AgentResponseUpdate, None]:
             self.messages_received = messages
-            yield AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="response")], role="assistant")
 
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
-    messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
@@ -772,14 +814,14 @@ async def test_agent_protocol_fallback_paths() -> None:
 
 async def test_initial_state_snapshot_with_array_schema() -> None:
     """Test state initialization with array type schema."""
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
-    messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": [], "state": {}}
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
     context = TestExecutionContext(
         input_data=input_data,
@@ -803,17 +845,17 @@ async def test_response_format_skip_text_content() -> None:
     class OutputModel(BaseModel):
         result: str
 
-    from agent_framework import ChatMessage, TextContent
+    from agent_framework import ChatMessage
 
-    messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
     input_data: dict[str, Any] = {"messages": []}
 
     agent = StubAgent(
-        chat_options=DEFAULT_CHAT_OPTIONS,
+        default_options=DEFAULT_OPTIONS,
     )
-    agent.chat_options.response_format = OutputModel
+    agent.default_options["response_format"] = OutputModel
 
     context = TestExecutionContext(
         input_data=input_data,
@@ -828,3 +870,60 @@ async def test_response_format_skip_text_content() -> None:
 
     # Test passes if no errors occur - verifies response_format code path
     assert len(events) > 0
+
+
+async def test_human_in_the_loop_handles_none_additional_properties() -> None:
+    """Test that HumanInTheLoopOrchestrator handles None additional_properties gracefully.
+
+    This test ensures the null safety fix for msg.additional_properties.get() works.
+    """
+    orchestrator = HumanInTheLoopOrchestrator()
+
+    # Create a message with None additional_properties
+    msg = ChatMessage(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+    )
+    # Explicitly set additional_properties to None
+    msg.additional_properties = None  # type: ignore[assignment]
+
+    agent = StubAgent()  # Use default StubAgent
+    config = AgentConfig()
+    context = TestExecutionContext(
+        input_data={"messages": [{"role": "user", "content": "Hello"}]},
+        agent=agent,
+        config=config,
+    )
+    context.set_messages([msg])
+
+    # can_handle should return False (not crash) when additional_properties is None
+    result = orchestrator.can_handle(context)
+    assert result is False
+
+
+async def test_default_orchestrator_handles_none_default_options() -> None:
+    """Test that DefaultOrchestrator handles None default_options gracefully.
+
+    This test ensures the null safety fix for context.agent.default_options.get() works.
+    """
+    orchestrator = DefaultOrchestrator()
+
+    # Use StubAgent with default_options set to None
+    agent = StubAgent(default_options=None)
+    config = AgentConfig()
+    context = TestExecutionContext(
+        input_data={"messages": [{"role": "user", "content": "Hello"}]},
+        agent=agent,
+        config=config,
+    )
+
+    # This should NOT crash when accessing default_options.get()
+    events: list[Any] = []
+    async for event in orchestrator.run(context):
+        events.append(event)
+        # Just check a few events to verify it's working
+        if len(events) > 3:
+            break
+
+    # Test passes if no AttributeError occurred
+    assert True

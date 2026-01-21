@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI.A2A;
 /// Support for tasks will be added later as part of the long-running
 /// executions work.
 /// </remarks>
-internal sealed class A2AAgent : AIAgent
+public sealed class A2AAgent : AIAgent
 {
     private readonly A2AClient _a2aClient;
     private readonly string? _id;
@@ -52,27 +52,27 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new A2AAgentThread();
+    public sealed override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        => new(new A2AAgentThread());
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing context id, to continue that conversation.
     /// </summary>
     /// <param name="contextId">The context id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public AgentThread GetNewThread(string contextId)
-        => new A2AAgentThread() { ContextId = contextId };
+    /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentThread"/> instance.</returns>
+    public ValueTask<AgentThread> GetNewThreadAsync(string contextId)
+        => new(new A2AAgentThread() { ContextId = contextId });
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new A2AAgentThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new A2AAgentThread(serializedThread, jsonSerializerOptions));
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        A2AAgentThread typedThread = this.GetA2AThread(thread, options);
+        A2AAgentThread typedThread = await this.GetA2AThreadAsync(thread, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
@@ -84,9 +84,13 @@ internal sealed class A2AAgent : AIAgent
         }
         else
         {
-            var a2aMessage = CreateA2AMessage(typedThread, messages);
+            MessageSendParams sendParams = new()
+            {
+                Message = CreateA2AMessage(typedThread, messages),
+                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+            };
 
-            a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+            a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
         }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
@@ -95,7 +99,7 @@ internal sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, message.ContextId);
 
-            return new AgentRunResponse
+            return new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = message.MessageId,
@@ -109,7 +113,7 @@ internal sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, agentTask.ContextId, agentTask.Id);
 
-            var response = new AgentRunResponse
+            var response = new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
@@ -131,11 +135,11 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        A2AAgentThread typedThread = this.GetA2AThread(thread, options);
+        A2AAgentThread typedThread = await this.GetA2AThreadAsync(thread, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -154,9 +158,13 @@ internal sealed class A2AAgent : AIAgent
             // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
         }
 
-        var a2aMessage = CreateA2AMessage(typedThread, messages);
+        MessageSendParams sendParams = new()
+        {
+            Message = CreateA2AMessage(typedThread, messages),
+            Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+        };
 
-        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -198,12 +206,12 @@ internal sealed class A2AAgent : AIAgent
     protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name ?? base.Name;
+    public override string? Name => this._name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description ?? base.Description;
+    public override string? Description => this._description;
 
-    private A2AAgentThread GetA2AThread(AgentThread? thread, AgentRunOptions? options)
+    private async ValueTask<A2AAgentThread> GetA2AThreadAsync(AgentThread? thread, AgentRunOptions? options, CancellationToken cancellationToken)
     {
         // Aligning with other agent implementations that support background responses, where
         // a thread is required for background responses to prevent inconsistent experience
@@ -213,7 +221,7 @@ internal sealed class A2AAgent : AIAgent
             throw new InvalidOperationException("A thread must be provided when AllowBackgroundResponses is enabled.");
         }
 
-        thread ??= this.GetNewThread();
+        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
 
         if (thread is not A2AAgentThread typedThread)
         {
@@ -283,9 +291,9 @@ internal sealed class A2AAgent : AIAgent
         return null;
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
     {
-        return new AgentRunResponseUpdate
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
@@ -297,9 +305,9 @@ internal sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
     {
-        return new AgentRunResponseUpdate
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = task.Id,
@@ -310,9 +318,9 @@ internal sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
     {
-        AgentRunResponseUpdate responseUpdate = new()
+        AgentResponseUpdate responseUpdate = new()
         {
             AgentId = this.Id,
             ResponseId = taskUpdateEvent.TaskId,

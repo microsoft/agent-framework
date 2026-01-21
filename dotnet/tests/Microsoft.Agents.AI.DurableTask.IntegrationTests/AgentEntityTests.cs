@@ -41,7 +41,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     public async Task EntityNamePrefixAsync()
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -51,7 +51,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // A proxy agent is needed to call the hosted test agent
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
-        AgentThread thread = simpleAgentProxy.GetNewThread();
+        AgentThread thread = await simpleAgentProxy.GetNewThreadAsync(this.TestTimeoutToken);
 
         DurableTaskClient client = testHelper.GetClient();
 
@@ -88,7 +88,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     public async Task RunAgentMethodNamesAllWorkAsync(string runAgentMethodName)
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -98,7 +98,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // A proxy agent is needed to call the hosted test agent
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
-        AgentThread thread = simpleAgentProxy.GetNewThread();
+        AgentThread thread = await simpleAgentProxy.GetNewThreadAsync(this.TestTimeoutToken);
 
         DurableTaskClient client = testHelper.GetClient();
 
@@ -143,7 +143,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     public async Task OrchestrationIdSetDuringOrchestrationAsync()
     {
         // Arrange
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -184,7 +184,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         public override async Task<string> RunAsync(TaskOrchestrationContext context, string input)
         {
             DurableAIAgent writer = context.GetAgent("TestAgent");
-            AgentThread writerThread = writer.GetNewThread();
+            AgentThread writerThread = await writer.GetNewThreadAsync();
 
             await writer.RunAsync(
                 message: context.GetInput<string>()!,

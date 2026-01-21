@@ -4,6 +4,7 @@
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 import uvicorn
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
@@ -18,6 +19,10 @@ from ..agents.simple_agent import simple_agent
 from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
+
+if TYPE_CHECKING:
+    from agent_framework import ChatOptions
+    from agent_framework._clients import BaseChatClient
 
 # Configure logging to file and console (disabled by default - set ENABLE_DEBUG_LOGGING=1 to enable)
 if os.getenv("ENABLE_DEBUG_LOGGING"):
@@ -60,7 +65,7 @@ app.add_middleware(
 
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
-chat_client = AzureOpenAIChatClient()
+chat_client: BaseChatClient[ChatOptions] = AzureOpenAIChatClient()
 
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(

@@ -27,10 +27,10 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
+    .AsAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
 // Call the agent and check if there are any user input requests to handle.
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = await agent.GetNewThreadAsync();
 var response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
 var userInputRequests = response.UserInputRequests.ToList();
 
@@ -64,4 +64,4 @@ while (userInputRequests.Count > 0)
 Console.WriteLine($"\nAgent: {response}");
 
 // For streaming use:
-// Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
+// Console.WriteLine($"\nAgent: {updates.ToAgentResponse()}");

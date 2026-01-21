@@ -4,11 +4,10 @@
 
 import json
 import logging
-import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from agent_framework import AgentProtocol
+from agent_framework import AgentProtocol, Content
 from agent_framework._workflows._events import RequestInfoEvent
 
 from ._conversations import ConversationStore, InMemoryConversationStore
@@ -45,8 +44,8 @@ class AgentFrameworkExecutor:
         """
         self.entity_discovery = entity_discovery
         self.message_mapper = message_mapper
-        self._setup_tracing_provider()
-        self._setup_agent_framework_tracing()
+        self._setup_instrumentation_provider()
+        self._setup_agent_framework_instrumentation()
 
         # Use provided conversation store or default to in-memory
         self.conversation_store = conversation_store or InMemoryConversationStore()
@@ -56,7 +55,7 @@ class AgentFrameworkExecutor:
 
         self.checkpoint_manager = CheckpointConversationManager(self.conversation_store)
 
-    def _setup_tracing_provider(self) -> None:
+    def _setup_instrumentation_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
         try:
             from opentelemetry import trace
@@ -71,7 +70,7 @@ class AgentFrameworkExecutor:
                 })
                 provider = TracerProvider(resource=resource)
                 trace.set_tracer_provider(provider)
-                logger.info("Set up TracerProvider for server tracing")
+                logger.info("Set up TracerProvider for instrumentation")
             else:
                 logger.debug("TracerProvider already exists")
 
@@ -80,25 +79,86 @@ class AgentFrameworkExecutor:
         except Exception as e:
             logger.warning(f"Failed to setup TracerProvider: {e}")
 
-    def _setup_agent_framework_tracing(self) -> None:
-        """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if ENABLE_INSTRUMENTATION is set
-        if os.environ.get("ENABLE_INSTRUMENTATION"):
-            try:
-                from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
+    def _setup_agent_framework_instrumentation(self) -> None:
+        """Set up Agent Framework's built-in instrumentation."""
+        try:
+            from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
-                # Only configure if not already executed
+            # Configure if instrumentation is enabled (via enable_instrumentation() or env var)
+            if OBSERVABILITY_SETTINGS.ENABLED:
+                # Only configure providers if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Run the configure_otel_providers
-                    # This ensures OTLP exporters are created even if env vars were set late
-                    configure_otel_providers(enable_sensitive_data=True)
+                    # Call configure_otel_providers to set up exporters.
+                    # If OTEL_EXPORTER_OTLP_ENDPOINT is set, exporters will be created automatically.
+                    # If not set, no exporters are created (no console spam), but DevUI's
+                    # TracerProvider from _setup_instrumentation_provider() remains active for local capture.
+                    configure_otel_providers(enable_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED)
                     logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")
+            else:
+                logger.debug("Instrumentation not enabled, skipping observability setup")
+        except Exception as e:
+            logger.warning(f"Failed to enable Agent Framework observability: {e}")
+
+    async def _ensure_mcp_connections(self, agent: Any) -> None:
+        """Ensure MCP tool connections are healthy before agent execution.
+
+        This is a workaround for an Agent Framework bug where MCP tool connections
+        can become stale (underlying streams closed) but is_connected remains True.
+        This happens when HTTP streaming responses end and GeneratorExit propagates.
+
+        This method detects stale connections and reconnects them. It's designed to
+        be a no-op once the Agent Framework fixes this issue upstream.
+
+        Args:
+            agent: Agent object that may have MCP tools
+        """
+        if not hasattr(agent, "mcp_tools"):
+            return
+
+        for mcp_tool in agent.mcp_tools:
+            if not getattr(mcp_tool, "is_connected", False):
+                continue
+
+            tool_name = getattr(mcp_tool, "name", "unknown")
+
+            try:
+                # Check if underlying write stream is closed
+                session = getattr(mcp_tool, "session", None)
+                if session is None:
+                    continue
+
+                write_stream = getattr(session, "_write_stream", None)
+                if write_stream is None:
+                    continue
+
+                # Detect stale connection: is_connected=True but stream is closed
+                is_closed = getattr(write_stream, "_closed", False)
+                if not is_closed:
+                    continue  # Connection is healthy
+
+                # Stale connection detected - reconnect
+                logger.warning(f"MCP tool '{tool_name}' has stale connection (stream closed), reconnecting...")
+
+                # Clean up old connection
+                try:
+                    if hasattr(mcp_tool, "close"):
+                        await mcp_tool.close()
+                except Exception as close_err:
+                    logger.debug(f"Error closing stale MCP tool '{tool_name}': {close_err}")
+                    # Force reset state
+                    mcp_tool.is_connected = False
+                    mcp_tool.session = None
+
+                # Reconnect
+                if hasattr(mcp_tool, "connect"):
+                    await mcp_tool.connect()
+                    logger.info(f"MCP tool '{tool_name}' reconnected successfully")
+
             except Exception as e:
-                logger.warning(f"Failed to enable Agent Framework observability: {e}")
-        else:
-            logger.debug("ENABLE_INSTRUMENTATION not set, skipping observability setup")
+                # If detection fails, log and continue - let it fail naturally during execution
+                logger.debug(f"Error checking MCP tool '{tool_name}' connection: {e}")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
@@ -192,11 +252,11 @@ class AgentFrameworkExecutor:
 
             logger.info(f"Executing {entity_info.type}: {entity_id}")
 
-            # Extract session_id from request for trace context
-            session_id = getattr(request.extra_body, "session_id", None) if request.extra_body else None
+            # Extract response_id from request for trace context (added by _server.py)
+            response_id = request.extra_body.get("response_id") if request.extra_body else None
 
             # Use simplified trace capture
-            with capture_traces(session_id=session_id, entity_id=entity_id) as trace_collector:
+            with capture_traces(response_id=response_id, entity_id=entity_id) as trace_collector:
                 if entity_info.type == "agent":
                     async for event in self._execute_agent(entity_obj, request, trace_collector):
                         yield event
@@ -260,6 +320,12 @@ class AgentFrameworkExecutor:
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
                 logger.debug(f"Executing agent with multimodal ChatMessage: {type(user_message)}")
+
+            # Workaround for MCP tool stale connection bug (GitHub issue pending)
+            # When HTTP streaming ends, GeneratorExit can close MCP stdio streams
+            # but is_connected stays True. Detect and reconnect before execution.
+            await self._ensure_mcp_connections(agent)
+
             # Check if agent supports streaming
             if hasattr(agent, "run_stream") and callable(agent.run_stream):
                 # Use Agent Framework's native streaming with optional thread
@@ -536,7 +602,7 @@ class AgentFrameworkExecutor:
         """
         # Import Agent Framework types
         try:
-            from agent_framework import ChatMessage, DataContent, Role, TextContent
+            from agent_framework import ChatMessage, Role
         except ImportError:
             # Fallback to string extraction if Agent Framework not available
             return self._extract_user_message_fallback(input_data)
@@ -547,14 +613,12 @@ class AgentFrameworkExecutor:
 
         # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
         if isinstance(input_data, list):
-            return self._convert_openai_input_to_chat_message(input_data, ChatMessage, TextContent, DataContent, Role)
+            return self._convert_openai_input_to_chat_message(input_data, ChatMessage, Role)
 
         # Fallback for other formats
         return self._extract_user_message_fallback(input_data)
 
-    def _convert_openai_input_to_chat_message(
-        self, input_items: list[Any], ChatMessage: Any, TextContent: Any, DataContent: Any, Role: Any
-    ) -> Any:
+    def _convert_openai_input_to_chat_message(self, input_items: list[Any], ChatMessage: Any, Role: Any) -> Any:
         """Convert OpenAI ResponseInputParam to Agent Framework ChatMessage.
 
         Processes text, images, files, and other content types from OpenAI format
@@ -563,14 +627,12 @@ class AgentFrameworkExecutor:
         Args:
             input_items: List of OpenAI ResponseInputItemParam objects (dicts or objects)
             ChatMessage: ChatMessage class for creating chat messages
-            TextContent: TextContent class for text content
-            DataContent: DataContent class for data/media content
             Role: Role enum for message roles
 
         Returns:
             ChatMessage with converted content
         """
-        contents = []
+        contents: list[Content] = []
 
         # Process each input item
         for item in input_items:
@@ -583,7 +645,7 @@ class AgentFrameworkExecutor:
 
                     # Handle both string content and list content
                     if isinstance(message_content, str):
-                        contents.append(TextContent(text=message_content))
+                        contents.append(Content.from_text(text=message_content))
                     elif isinstance(message_content, list):
                         for content_item in message_content:
                             # Handle dict content items
@@ -592,7 +654,7 @@ class AgentFrameworkExecutor:
 
                                 if content_type == "input_text":
                                     text = content_item.get("text", "")
-                                    contents.append(TextContent(text=text))
+                                    contents.append(Content.from_text(text=text))
 
                                 elif content_type == "input_image":
                                     image_url = content_item.get("image_url", "")
@@ -610,7 +672,7 @@ class AgentFrameworkExecutor:
                                                 media_type = "image/png"
                                         else:
                                             media_type = "image/png"
-                                        contents.append(DataContent(uri=image_url, media_type=media_type))
+                                        contents.append(Content.from_uri(uri=image_url, media_type=media_type))
 
                                 elif content_type == "input_file":
                                     # Handle file input
@@ -644,7 +706,7 @@ class AgentFrameworkExecutor:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
                                         contents.append(
-                                            DataContent(
+                                            Content.from_uri(
                                                 uri=data_uri,
                                                 media_type=media_type,
                                                 additional_properties=additional_props,
@@ -652,7 +714,7 @@ class AgentFrameworkExecutor:
                                         )
                                     elif file_url:
                                         contents.append(
-                                            DataContent(
+                                            Content.from_uri(
                                                 uri=file_url,
                                                 media_type=media_type,
                                                 additional_properties=additional_props,
@@ -662,21 +724,19 @@ class AgentFrameworkExecutor:
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)
                                     try:
-                                        from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
-
                                         request_id = content_item.get("request_id", "")
                                         approved = content_item.get("approved", False)
                                         function_call_data = content_item.get("function_call", {})
 
                                         # Create FunctionCallContent from the function_call data
-                                        function_call = FunctionCallContent(
+                                        function_call = Content.from_function_call(
                                             call_id=function_call_data.get("id", ""),
                                             name=function_call_data.get("name", ""),
                                             arguments=function_call_data.get("arguments", {}),
                                         )
 
                                         # Create FunctionApprovalResponseContent with correct signature
-                                        approval_response = FunctionApprovalResponseContent(
+                                        approval_response = Content.from_function_approval_response(
                                             approved,  # positional argument
                                             id=request_id,  # keyword argument 'id', NOT 'request_id'
                                             function_call=function_call,  # FunctionCallContent object
@@ -698,7 +758,7 @@ class AgentFrameworkExecutor:
 
         # If no contents found, create a simple text message
         if not contents:
-            contents.append(TextContent(text=""))
+            contents.append(Content.from_text(text=""))
 
         chat_message = ChatMessage(role=Role.USER, contents=contents)
 

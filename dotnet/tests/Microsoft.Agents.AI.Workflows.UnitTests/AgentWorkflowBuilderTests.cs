@@ -135,26 +135,26 @@ public class AgentWorkflowBuilderTests
     {
         public override string Name => name;
 
-        public override AgentThread GetNewThread()
-            => new DoubleEchoAgentThread();
+        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentThread());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => new DoubleEchoAgentThread();
+        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentThread());
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
             var contents = messages.SelectMany(m => m.Contents).ToList();
             string id = Guid.NewGuid().ToString("N");
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
         }
     }
 
@@ -393,7 +393,7 @@ public class AgentWorkflowBuilderTests
         WorkflowOutputEvent? output = null;
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is AgentRunUpdateEvent executorComplete)
+            if (evt is AgentResponseUpdateEvent executorComplete)
             {
                 sb.Append(executorComplete.Data);
             }
@@ -409,7 +409,7 @@ public class AgentWorkflowBuilderTests
 
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
     {
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             if (Interlocked.Decrement(ref remaining.Value) == 0)
@@ -419,7 +419,7 @@ public class AgentWorkflowBuilderTests
 
             await barrier.Value!.Task.ConfigureAwait(false);
 
-            await foreach (var update in base.RunStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in base.RunCoreStreamingAsync(messages, thread, options, cancellationToken))
             {
                 await Task.Yield();
                 yield return update;

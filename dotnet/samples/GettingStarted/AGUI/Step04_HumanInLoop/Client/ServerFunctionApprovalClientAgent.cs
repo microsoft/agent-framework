@@ -22,17 +22,17 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
+            .ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -166,8 +166,8 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         return result ?? messages;
     }
 
-    private static AgentRunResponseUpdate ProcessIncomingServerApprovalRequests(
-        AgentRunResponseUpdate update,
+    private static AgentResponseUpdate ProcessIncomingServerApprovalRequests(
+        AgentResponseUpdate update,
         JsonSerializerOptions jsonSerializerOptions)
     {
         IList<AIContent>? updatedContents = null;
@@ -215,7 +215,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         if (updatedContents is not null)
         {
             var chatUpdate = update.AsChatResponseUpdate();
-            return new AgentRunResponseUpdate(new ChatResponseUpdate()
+            return new AgentResponseUpdate(new ChatResponseUpdate()
             {
                 Role = chatUpdate.Role,
                 Contents = updatedContents,

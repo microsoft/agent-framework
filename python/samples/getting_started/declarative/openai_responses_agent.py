@@ -19,7 +19,11 @@ async def main():
     agent = AgentFactory().create_agent_from_yaml(yaml_str)
     # use the agent
     response = await agent.run("Why is the sky blue, answer in Dutch?")
-    print("Agent response:", response.value)
+    # Use try_parse_value() for safe parsing - returns None if no response_format or parsing fails
+    if parsed := response.try_parse_value():
+        print("Agent response:", parsed)
+    else:
+        print("Agent response:", response.text)
 
 
 if __name__ == "__main__":

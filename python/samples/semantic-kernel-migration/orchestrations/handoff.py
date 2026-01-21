@@ -180,7 +180,7 @@ async def run_semantic_kernel_example(initial_task: str, scripted_responses: Seq
 
 
 def _create_af_agents(client: AzureOpenAIChatClient):
-    triage = client.create_agent(
+    triage = client.as_agent(
         name="triage_agent",
         instructions=(
             "You are a customer support triage agent. Route requests:\n"
@@ -189,19 +189,19 @@ def _create_af_agents(client: AzureOpenAIChatClient):
             "- handoff_to_order_return_agent for returns"
         ),
     )
-    refund = client.create_agent(
+    refund = client.as_agent(
         name="refund_agent",
         instructions=(
             "Handle refunds. Ask for order id and reason. If shipping info is needed, hand off to order_status_agent."
         ),
     )
-    status = client.create_agent(
+    status = client.as_agent(
         name="order_status_agent",
         instructions=(
             "Provide order status, tracking, and timelines. If billing questions appear, hand off to refund_agent."
         ),
     )
-    returns = client.create_agent(
+    returns = client.as_agent(
         name="order_return_agent",
         instructions=(
             "Coordinate returns, confirm addresses, and summarize next steps. Hand off to triage_agent if unsure."

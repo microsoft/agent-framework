@@ -83,12 +83,12 @@ public static class Program
             serverUrl,
             jsonSerializerOptions: AGUIClientSerializerContext.Default.Options);
 
-        AIAgent agent = chatClient.CreateAIAgent(
+        AIAgent agent = chatClient.AsAIAgent(
             name: "agui-client",
             description: "AG-UI Client Agent",
             tools: [changeBackground, readClientClimateSensors]);
 
-        AgentThread thread = agent.GetNewThread();
+        AgentThread thread = await agent.GetNewThreadAsync(cancellationToken);
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
         try
         {
@@ -114,7 +114,7 @@ public static class Program
                 bool isFirstUpdate = true;
                 string? threadId = null;
                 var updates = new List<ChatResponseUpdate>();
-                await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
+                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();

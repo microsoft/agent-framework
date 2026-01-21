@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import MutableSequence, Sequence
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, ChatOptions, Context, ContextProvider
+from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Context, ContextProvider
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
@@ -46,19 +46,17 @@ class UserInfoMemory(ContextProvider):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
-                    chat_options=ChatOptions(
-                        instructions="Extract the user's name and age from the message if present. "
-                        "If not present return nulls.",
-                        response_format=UserInfo,
-                    ),
+                    instructions="Extract the user's name and age from the message if present. "
+                    "If not present return nulls.",
+                    options={"response_format": UserInfo},
                 )
 
                 # Update user info with extracted data
-                if result.value and isinstance(result.value, UserInfo):
-                    if self.user_info.name is None and result.value.name:
-                        self.user_info.name = result.value.name
-                    if self.user_info.age is None and result.value.age:
-                        self.user_info.age = result.value.age
+                if extracted := result.try_parse_value(UserInfo):
+                    if self.user_info.name is None and extracted.name:
+                        self.user_info.name = extracted.name
+                    if self.user_info.age is None and extracted.age:
+                        self.user_info.age = extracted.age
 
             except Exception:
                 pass  # Failed to extract, continue without updating
@@ -100,7 +98,7 @@ async def main():
         async with ChatAgent(
             chat_client=chat_client,
             instructions="You are a friendly assistant. Always address the user by their name.",
-            context_providers=memory_provider,
+            context_provider=memory_provider,
         ) as agent:
             # Create a new thread for the conversation
             thread = agent.get_new_thread()

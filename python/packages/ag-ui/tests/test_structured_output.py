@@ -8,12 +8,11 @@ from collections.abc import AsyncIterator, MutableSequence
 from pathlib import Path
 from typing import Any
 
-from agent_framework import ChatAgent, ChatMessage, ChatOptions, TextContent
-from agent_framework._types import ChatResponseUpdate
+from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_helpers_ag_ui import StreamingChatClientStub, stream_from_updates
+from utils_test_ag_ui import StreamingChatClientStub, stream_from_updates
 
 
 class RecipeOutput(BaseModel):
@@ -41,14 +40,14 @@ async def test_structured_output_with_recipe():
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         yield ChatResponseUpdate(
-            contents=[TextContent(text='{"recipe": {"name": "Pasta"}, "message": "Here is your recipe"}')]
+            contents=[Content.from_text(text='{"recipe": {"name": "Pasta"}, "message": "Here is your recipe"}')]
         )
 
     agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
-    agent.chat_options = ChatOptions(response_format=RecipeOutput)
+    agent.default_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(
         agent=agent,
@@ -79,7 +78,7 @@ async def test_structured_output_with_steps():
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         steps_data = {
             "steps": [
@@ -87,10 +86,10 @@ async def test_structured_output_with_steps():
                 {"id": "2", "description": "Step 2", "status": "pending"},
             ]
         }
-        yield ChatResponseUpdate(contents=[TextContent(text=json.dumps(steps_data))])
+        yield ChatResponseUpdate(contents=[Content.from_text(text=json.dumps(steps_data))])
 
     agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
-    agent.chat_options = ChatOptions(response_format=StepsOutput)
+    agent.default_options = ChatOptions(response_format=StepsOutput)
 
     wrapper = AgentFrameworkAgent(
         agent=agent,
@@ -119,13 +118,13 @@ async def test_structured_output_with_no_schema_match():
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     updates = [
-        ChatResponseUpdate(contents=[TextContent(text='{"data": {"key": "value"}}')]),
+        ChatResponseUpdate(contents=[Content.from_text(text='{"data": {"key": "value"}}')]),
     ]
 
     agent = ChatAgent(
         name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_from_updates(updates))
     )
-    agent.chat_options = ChatOptions(response_format=GenericOutput)
+    agent.default_options = ChatOptions(response_format=GenericOutput)
 
     wrapper = AgentFrameworkAgent(
         agent=agent,
@@ -155,12 +154,12 @@ async def test_structured_output_without_schema():
         info: str
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[TextContent(text='{"data": {"key": "value"}, "info": "processed"}')])
+        yield ChatResponseUpdate(contents=[Content.from_text(text='{"data": {"key": "value"}, "info": "processed"}')])
 
     agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
-    agent.chat_options = ChatOptions(response_format=DataOutput)
+    agent.default_options = ChatOptions(response_format=DataOutput)
 
     wrapper = AgentFrameworkAgent(
         agent=agent,
@@ -186,7 +185,7 @@ async def test_no_structured_output_when_no_response_format():
     """Test that structured output path is skipped when no response_format."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    updates = [ChatResponseUpdate(contents=[TextContent(text="Regular text")])]
+    updates = [ChatResponseUpdate(contents=[Content.from_text(text="Regular text")])]
 
     agent = ChatAgent(
         name="test",
@@ -214,13 +213,13 @@ async def test_structured_output_with_message_field():
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         output_data = {"recipe": {"name": "Salad"}, "message": "Fresh salad recipe ready"}
-        yield ChatResponseUpdate(contents=[TextContent(text=json.dumps(output_data))])
+        yield ChatResponseUpdate(contents=[Content.from_text(text=json.dumps(output_data))])
 
     agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
-    agent.chat_options = ChatOptions(response_format=RecipeOutput)
+    agent.default_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(
         agent=agent,
@@ -249,13 +248,13 @@ async def test_empty_updates_no_structured_processing():
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     async def stream_fn(
-        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        messages: MutableSequence[ChatMessage], options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         if False:
             yield ChatResponseUpdate(contents=[])
 
     agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
-    agent.chat_options = ChatOptions(response_format=RecipeOutput)
+    agent.default_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(agent=agent)
 

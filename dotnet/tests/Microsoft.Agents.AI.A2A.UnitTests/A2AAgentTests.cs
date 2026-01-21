@@ -148,7 +148,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await this._agent.RunAsync(inputMessages, thread);
@@ -168,7 +168,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -201,7 +201,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "different-context"
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -210,7 +210,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentRunResponseUpdatesAsync()
+    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentResponseUpdatesAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -227,7 +227,7 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync(inputMessages))
         {
             updates.Add(update);
@@ -272,7 +272,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "new-stream-context"
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
@@ -296,7 +296,7 @@ public sealed class A2AAgentTests : IDisposable
 
         this._handler.StreamingResponseToReturn = new AgentMessage();
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -316,7 +316,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunStreamingAsync_WithThreadHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
         var a2aThread = (A2AAgentThread)thread;
         a2aThread.ContextId = "existing-context-id";
 
@@ -440,7 +440,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var thread = (A2AAgentThread)this._agent.GetNewThread();
+        var thread = (A2AAgentThread)await this._agent.GetNewThreadAsync();
         thread.TaskId = "task-123";
 
         var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
@@ -466,7 +466,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await this._agent.RunAsync("Start a task", thread);
@@ -492,7 +492,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         var result = await this._agent.RunAsync("Start a long-running task", thread);
@@ -586,7 +586,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var thread = (A2AAgentThread)this._agent.GetNewThread();
+        var thread = (A2AAgentThread)await this._agent.GetNewThreadAsync();
         thread.TaskId = "task-123";
 
         // Act
@@ -613,7 +613,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Start a task", thread))
@@ -646,7 +646,7 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Test message"))
         {
             updates.Add(update);
@@ -686,10 +686,10 @@ public sealed class A2AAgentTests : IDisposable
             ]
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Start long-running task", thread))
         {
             updates.Add(update);
@@ -725,10 +725,10 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Working }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Check task status", thread))
         {
             updates.Add(update);
@@ -768,10 +768,10 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var thread = this._agent.GetNewThread();
+        var thread = await this._agent.GetNewThreadAsync();
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync("Process artifact", thread))
         {
             updates.Add(update);
@@ -830,6 +830,174 @@ public sealed class A2AAgentTests : IDisposable
                 // Just iterate through to trigger the exception
             }
         });
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAgentMessageResponseMetadata_ReturnsMetadataAsAdditionalPropertiesAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response with metadata" }],
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                { "responseKey1", JsonSerializer.SerializeToElement("responseValue1") },
+                { "responseCount", JsonSerializer.SerializeToElement(99) }
+            }
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        var result = await this._agent.RunAsync(inputMessages);
+
+        // Assert
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.NotNull(result.AdditionalProperties["responseKey1"]);
+        Assert.Equal("responseValue1", ((JsonElement)result.AdditionalProperties["responseKey1"]!).GetString());
+        Assert.NotNull(result.AdditionalProperties["responseCount"]);
+        Assert.Equal(99, ((JsonElement)result.AdditionalProperties["responseCount"]!).GetInt32());
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAdditionalProperties_PropagatesThemAsMetadataToMessageSendParamsAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = new()
+            {
+                { "key1", "value1" },
+                { "key2", 42 },
+                { "key3", true }
+            }
+        };
+
+        // Act
+        await this._agent.RunAsync(inputMessages, null, options);
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.NotNull(this._handler.CapturedMessageSendParams.Metadata);
+        Assert.Equal("value1", this._handler.CapturedMessageSendParams.Metadata["key1"].GetString());
+        Assert.Equal(42, this._handler.CapturedMessageSendParams.Metadata["key2"].GetInt32());
+        Assert.True(this._handler.CapturedMessageSendParams.Metadata["key3"].GetBoolean());
+    }
+
+    [Fact]
+    public async Task RunAsync_WithNullAdditionalProperties_DoesNotSetMetadataAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = null
+        };
+
+        // Act
+        await this._agent.RunAsync(inputMessages, null, options);
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.Null(this._handler.CapturedMessageSendParams.Metadata);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAdditionalProperties_PropagatesThemAsMetadataToMessageSendParamsAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = "stream-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Streaming response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test streaming message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = new()
+            {
+                { "streamKey1", "streamValue1" },
+                { "streamKey2", 100 },
+                { "streamKey3", false }
+            }
+        };
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+        {
+        }
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.NotNull(this._handler.CapturedMessageSendParams.Metadata);
+        Assert.Equal("streamValue1", this._handler.CapturedMessageSendParams.Metadata["streamKey1"].GetString());
+        Assert.Equal(100, this._handler.CapturedMessageSendParams.Metadata["streamKey2"].GetInt32());
+        Assert.False(this._handler.CapturedMessageSendParams.Metadata["streamKey3"].GetBoolean());
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithNullAdditionalProperties_DoesNotSetMetadataAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = "stream-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Streaming response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test streaming message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = null
+        };
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+        {
+        }
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.Null(this._handler.CapturedMessageSendParams.Metadata);
     }
 
     [Fact]

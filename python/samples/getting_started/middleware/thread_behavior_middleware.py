@@ -70,11 +70,11 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=get_weather,
-        middleware=thread_tracking_middleware,
+        middleware=[thread_tracking_middleware],
         # Configure agent with message store factory to persist conversation history
         chat_message_store_factory=ChatMessageStore,
     )
