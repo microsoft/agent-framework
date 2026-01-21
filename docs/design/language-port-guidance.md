@@ -33,7 +33,7 @@ The following aspects of the Microsoft Agent Framework are out of scope for this
 3. Testing
     - Implement a comprehensive suite of unit tests for all functionalities, the target for GA is to have 80% unit test coverage.
     - Provide integration tests to ensure the SDK works correctly with external dependencies or services.
-    - Unit tests **must** run on all PR's when they are created our updated.
+    - Unit tests **must** run on all PR's when they are created or updated.
     - Integration tests **must** run before PR's are merged to main.
 4. Documentation
     - Create clear and thorough API documentation for the new SDK, including examples and use cases.
