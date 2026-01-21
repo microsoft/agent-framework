@@ -8,7 +8,7 @@ Some expectations for language ports:
 
     - Provide an idiomatic API i.e., they should avoid being just a port from .NET or Python.
     - Keep in sync with the main implementations, in particular a developer should be able to run a declarative agent or workflow in any language version and have cosnsistent behavior.
-    - Provide all of the production read features e.g. observability using the OTel semantic AI conventions. 
+    - Provide all of the production ready features e.g. observability using the OTel semantic AI conventions. 
 
 ### Out of Scope
 
