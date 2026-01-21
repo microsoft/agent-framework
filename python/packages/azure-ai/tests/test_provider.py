@@ -443,10 +443,14 @@ def test_create_text_format_config_sets_strict_for_pydantic_models() -> None:
 
 
 class MockMCPTool(MCPTool):  # pyright: ignore[reportGeneralTypeIssues]
-    """A mock MCPTool subclass for testing that passes isinstance checks."""
+    """A mock MCPTool subclass for testing that passes isinstance checks.
+
+    Note: This intentionally does NOT call super().__init__() because MCPTool's
+    constructor requires MCP server connection parameters that aren't needed for
+    unit testing. We only need isinstance(obj, MCPTool) to return True.
+    """
 
     def __init__(self, functions: list[AIFunction] | None = None) -> None:
-        # Don't call super().__init__ to avoid complex MCP initialization
         self.name = "MockMCPTool"
         self.description = "A mock MCP tool for testing"
         self.is_connected = False

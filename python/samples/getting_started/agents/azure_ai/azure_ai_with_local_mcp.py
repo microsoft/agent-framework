@@ -50,7 +50,6 @@ async def main() -> None:
             print(f"User: {second_query}")
             second_result = await agent.run(second_query)
             print(f"Agent: {second_result}")
-            print(f"Agent: {second_result}")
 
 
 if __name__ == "__main__":
