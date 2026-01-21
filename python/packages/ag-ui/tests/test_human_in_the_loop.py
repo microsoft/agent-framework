@@ -2,7 +2,7 @@
 
 """Tests for human in the loop (function approval requests)."""
 
-from agent_framework import AgentRunResponseUpdate, FunctionApprovalRequestContent, FunctionCallContent
+from agent_framework import AgentResponseUpdate, Content
 
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
@@ -17,17 +17,17 @@ async def test_function_approval_request_emission():
     )
 
     # Create approval request
-    func_call = FunctionCallContent(
+    func_call = Content.from_function_call(
         call_id="call_123",
         name="send_email",
         arguments={"to": "user@example.com", "subject": "Test"},
     )
-    approval_request = FunctionApprovalRequestContent(
+    approval_request = Content.from_function_approval_request(
         id="approval_001",
         function_call=func_call,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_request])
+    update = AgentResponseUpdate(contents=[approval_request])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit ToolCallEndEvent + CustomEvent for approval request
@@ -56,17 +56,17 @@ async def test_function_approval_request_with_confirm_changes():
         require_confirmation=True,
     )
 
-    func_call = FunctionCallContent(
+    func_call = Content.from_function_call(
         call_id="call_456",
         name="delete_file",
         arguments={"path": "/tmp/test.txt"},
     )
-    approval_request = FunctionApprovalRequestContent(
+    approval_request = Content.from_function_approval_request(
         id="approval_002",
         function_call=func_call,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_request])
+    update = AgentResponseUpdate(contents=[approval_request])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit: ToolCallEndEvent, CustomEvent, and confirm_changes (Start, Args, End) = 5 events
@@ -109,27 +109,27 @@ async def test_multiple_approval_requests():
         require_confirmation=False,
     )
 
-    func_call_1 = FunctionCallContent(
+    func_call_1 = Content.from_function_call(
         call_id="call_1",
         name="create_event",
         arguments={"title": "Meeting"},
     )
-    approval_1 = FunctionApprovalRequestContent(
+    approval_1 = Content.from_function_approval_request(
         id="approval_1",
         function_call=func_call_1,
     )
 
-    func_call_2 = FunctionCallContent(
+    func_call_2 = Content.from_function_call(
         call_id="call_2",
         name="book_room",
         arguments={"room": "Conference A"},
     )
-    approval_2 = FunctionApprovalRequestContent(
+    approval_2 = Content.from_function_approval_request(
         id="approval_2",
         function_call=func_call_2,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_1, approval_2])
+    update = AgentResponseUpdate(contents=[approval_1, approval_2])
     events = await bridge.from_agent_run_update(update)
 
     # Should emit ToolCallEndEvent + CustomEvent for each approval (4 events total)
@@ -164,17 +164,17 @@ async def test_function_approval_request_sets_stop_flag():
 
     assert bridge.should_stop_after_confirm is False
 
-    func_call = FunctionCallContent(
+    func_call = Content.from_function_call(
         call_id="call_stop_test",
         name="get_datetime",
         arguments={},
     )
-    approval_request = FunctionApprovalRequestContent(
+    approval_request = Content.from_function_approval_request(
         id="approval_stop_test",
         function_call=func_call,
     )
 
-    update = AgentRunResponseUpdate(contents=[approval_request])
+    update = AgentResponseUpdate(contents=[approval_request])
     await bridge.from_agent_run_update(update)
 
     assert bridge.should_stop_after_confirm is True

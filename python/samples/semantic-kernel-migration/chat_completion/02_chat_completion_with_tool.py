@@ -42,7 +42,7 @@ async def run_agent_framework() -> None:
         return "Clam chowder, Cobb salad, Chai tea"
 
     # AF tools are provided as callables on each agent instance.
-    chat_agent = OpenAIChatClient().create_agent(
+    chat_agent = OpenAIChatClient().as_agent(
         name="Host",
         instructions="Answer menu questions accurately.",
         tools=[specials],

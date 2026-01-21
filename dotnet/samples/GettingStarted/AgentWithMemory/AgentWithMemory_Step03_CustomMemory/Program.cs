@@ -30,7 +30,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 // and preferably shared between multiple threads used by the same user, ensure that the
 // factory reads the user id from the current context and scopes the memory component
 // and its storage to that user id.
-AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
+AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 {
     ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
     AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions))

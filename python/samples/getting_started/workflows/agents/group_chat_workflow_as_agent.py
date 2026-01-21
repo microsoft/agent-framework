@@ -1,20 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import logging
 
 from agent_framework import ChatAgent, GroupChatBuilder
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
-logging.basicConfig(level=logging.INFO)
-
 """
-Sample: Group Chat Orchestration (manager-directed)
+Sample: Group Chat Orchestration
 
 What it does:
-- Demonstrates the generic GroupChatBuilder with a language-model manager directing two agents.
-- The manager coordinates a researcher (chat completions) and a writer (responses API) to solve a task.
-- Uses the default group chat orchestration pipeline shared with Magentic.
+- Demonstrates the generic GroupChatBuilder with a agent orchestrator directing two agents.
+- The orchestrator coordinates a researcher (chat completions) and a writer (responses API) to solve a task.
 
 Prerequisites:
 - OpenAI environment variables configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
@@ -38,8 +34,13 @@ async def main() -> None:
 
     workflow = (
         GroupChatBuilder()
-        .set_manager(manager=OpenAIChatClient().create_agent(), display_name="Coordinator")
-        .participants(researcher=researcher, writer=writer)
+        .with_agent_orchestrator(
+            OpenAIChatClient().as_agent(
+                name="Orchestrator",
+                instructions="You coordinate a team conversation to solve the user's task.",
+            )
+        )
+        .participants([researcher, writer])
         .build()
     )
 

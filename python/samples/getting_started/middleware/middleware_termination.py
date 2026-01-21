@@ -7,8 +7,8 @@ from typing import Annotated
 
 from agent_framework import (
     AgentMiddleware,
+    AgentResponse,
     AgentRunContext,
-    AgentRunResponse,
     ChatMessage,
     Role,
 )
@@ -57,7 +57,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     print(f"[PreTerminationMiddleware] Blocked word '{blocked_word}' detected. Terminating request.")
 
                     # Set a custom response
-                    context.result = AgentRunResponse(
+                    context.result = AgentResponse(
                         messages=[
                             ChatMessage(
                                 role=Role.ASSISTANT,
@@ -110,7 +110,7 @@ async def pre_termination_middleware() -> None:
     print("\n--- Example 1: Pre-termination Middleware ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
@@ -137,7 +137,7 @@ async def post_termination_middleware() -> None:
     print("\n--- Example 2: Post-termination Middleware ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

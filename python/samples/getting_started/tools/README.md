@@ -80,7 +80,7 @@ class MyTools:
 
 # Create instance and use methods as tools
 tools = MyTools(mode="safe")
-agent = client.create_agent(tools=tools.process)
+agent = client.as_agent(tools=tools.process)
 
 # Change behavior dynamically
 tools.mode = "normal"

@@ -10,20 +10,19 @@ from pytest import raises
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatMessageStore,
     ChatResponse,
+    Content,
     Context,
     ContextProvider,
-    FunctionCallContent,
     HostedCodeInterpreterTool,
     Role,
-    TextContent,
     ai_function,
 )
 from agent_framework._mcp import MCPTool
@@ -45,7 +44,7 @@ async def test_agent_run(agent: AgentProtocol) -> None:
 
 
 async def test_agent_run_streaming(agent: AgentProtocol) -> None:
-    async def collect_updates(updates: AsyncIterable[AgentRunResponseUpdate]) -> list[AgentRunResponseUpdate]:
+    async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]
 
     updates = await collect_updates(agent.run_stream(messages="test"))
@@ -87,7 +86,7 @@ async def test_chat_client_agent_run(chat_client: ChatClientProtocol) -> None:
 async def test_chat_client_agent_run_streaming(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
 
-    result = await AgentRunResponse.from_agent_response_generator(agent.run_stream("Hello"))
+    result = await AgentResponse.from_agent_response_generator(agent.run_stream("Hello"))
 
     assert result.text == "test streaming response another update"
 
@@ -118,8 +117,8 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
     tool = HostedCodeInterpreterTool()
     agent = ChatAgent(chat_client=chat_client, tools=[tool])
 
-    assert agent.chat_options.tools is not None
-    base_tools = agent.chat_options.tools
+    assert agent.default_options.get("tools") is not None
+    base_tools = agent.default_options["tools"]
     thread = agent.get_new_thread()
 
     _, prepared_chat_options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
@@ -127,16 +126,16 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
         input_messages=[ChatMessage(role=Role.USER, text="Test")],
     )
 
-    assert prepared_chat_options.tools is not None
-    assert base_tools is not prepared_chat_options.tools
+    assert prepared_chat_options.get("tools") is not None
+    assert base_tools is not prepared_chat_options["tools"]
 
-    prepared_chat_options.tools.append(HostedCodeInterpreterTool())  # type: ignore[arg-type]
-    assert len(agent.chat_options.tools) == 1
+    prepared_chat_options["tools"].append(HostedCodeInterpreterTool())  # type: ignore[arg-type]
+    assert len(agent.default_options["tools"]) == 1
 
 
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
     mock_response = ChatResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+        messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
         conversation_id="123",
     )
     chat_client_base.run_responses = [mock_response]
@@ -200,7 +199,9 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
     chat_client_base.run_responses = [
         ChatResponse(
             messages=[
-                ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")], author_name="TestAuthor")
+                ChatMessage(
+                    role=Role.ASSISTANT, contents=[Content.from_text("test response")], author_name="TestAuthor"
+                )
             ]
         )
     ]
@@ -264,7 +265,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
             conversation_id="test-thread-id",
         )
     ]
@@ -329,7 +330,7 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
     # Collect all stream updates
-    updates: list[AgentRunResponseUpdate] = []
+    updates: list[AgentResponseUpdate] = []
     async for update in agent.run_stream("Hello"):
         updates.append(update)
 
@@ -345,7 +346,7 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
             conversation_id="service-thread-123",
         )
     ]
@@ -440,9 +441,9 @@ async def test_chat_agent_as_tool_with_stream_callback(chat_client: ChatClientPr
     agent = ChatAgent(chat_client=chat_client, name="StreamingAgent")
 
     # Collect streaming updates
-    collected_updates: list[AgentRunResponseUpdate] = []
+    collected_updates: list[AgentResponseUpdate] = []
 
-    def stream_callback(update: AgentRunResponseUpdate) -> None:
+    def stream_callback(update: AgentResponseUpdate) -> None:
         collected_updates.append(update)
 
     tool = agent.as_tool(stream_callback=stream_callback)
@@ -474,9 +475,9 @@ async def test_chat_agent_as_tool_with_async_stream_callback(chat_client: ChatCl
     agent = ChatAgent(chat_client=chat_client, name="AsyncStreamingAgent")
 
     # Collect streaming updates using an async callback
-    collected_updates: list[AgentRunResponseUpdate] = []
+    collected_updates: list[AgentResponseUpdate] = []
 
-    async def async_stream_callback(update: AgentRunResponseUpdate) -> None:
+    async def async_stream_callback(update: AgentResponseUpdate) -> None:
         collected_updates.append(update)
 
     tool = agent.as_tool(stream_callback=async_stream_callback)
@@ -575,7 +576,9 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
         ChatResponse(
             messages=ChatMessage(
                 role="assistant",
-                contents=[FunctionCallContent(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')],
+                contents=[
+                    Content.from_function_call(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')
+                ],
             )
         ),
         ChatResponse(messages=ChatMessage(role="assistant", text="done")),
@@ -597,61 +600,68 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
-    from agent_framework import ChatOptions, ToolMode
 
-    captured_options: list[ChatOptions] = []
+    captured_options: list[dict[str, Any]] = []
 
     # Store the original inner method
     original_inner = chat_client_base._inner_get_response
 
     async def capturing_inner(
-        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(chat_options)
-        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+        captured_options.append(options)
+        return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
 
     # Create agent with agent-level tool_choice="auto" and a tool (tools required for tool_choice to be meaningful)
-    agent = ChatAgent(chat_client=chat_client_base, tool_choice="auto", tools=[ai_function_tool])
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=[ai_function_tool],
+        options={"tool_choice": "auto"},
+    )
 
     # Run with run-level tool_choice="required"
-    await agent.run("Hello", tool_choice="required")
+    await agent.run("Hello", options={"tool_choice": "required"})
 
     # Verify the client received tool_choice="required", not "auto"
     assert len(captured_options) >= 1
-    assert captured_options[0].tool_choice == "required"
-    assert captured_options[0].tool_choice == ToolMode.REQUIRED_ANY
+    assert captured_options[0]["tool_choice"] == "required"
 
 
 async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that agent-level tool_choice is used when run() doesn't specify one."""
-    from agent_framework import ChatOptions, ToolMode
+    from agent_framework import ChatOptions
 
     captured_options: list[ChatOptions] = []
 
     original_inner = chat_client_base._inner_get_response
 
     async def capturing_inner(
-        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(chat_options)
-        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+        captured_options.append(options)
+        return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
 
     # Create agent with agent-level tool_choice="required" and a tool
-    agent = ChatAgent(chat_client=chat_client_base, tool_choice="required", tools=[ai_function_tool])
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=[ai_function_tool],
+        default_options={"tool_choice": "required"},
+    )
 
     # Run without specifying tool_choice
     await agent.run("Hello")
 
     # Verify the client received tool_choice="required" from agent-level
     assert len(captured_options) >= 1
-    assert captured_options[0].tool_choice == "required"
-    assert captured_options[0].tool_choice == ToolMode.REQUIRED_ANY
+    assert captured_options[0]["tool_choice"] == "required"
+    # older code compared to ToolMode constants; ensure value is 'required'
+    assert captured_options[0]["tool_choice"] == "required"
 
 
 async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
@@ -665,19 +675,23 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     original_inner = chat_client_base._inner_get_response
 
     async def capturing_inner(
-        *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+        *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(chat_options)
-        return await original_inner(messages=messages, chat_options=chat_options, **kwargs)
+        captured_options.append(options)
+        return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
 
     # Create agent with agent-level tool_choice="auto" and a tool
-    agent = ChatAgent(chat_client=chat_client_base, tool_choice="auto", tools=[ai_function_tool])
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        tools=[ai_function_tool],
+        default_options={"tool_choice": "auto"},
+    )
 
     # Run with explicitly passing None (same as not specifying)
-    await agent.run("Hello", tool_choice=None)
+    await agent.run("Hello", options={"tool_choice": None})
 
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
-    assert captured_options[0].tool_choice == "auto"
+    assert captured_options[0]["tool_choice"] == "auto"

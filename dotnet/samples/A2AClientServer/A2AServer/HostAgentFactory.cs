@@ -35,7 +35,7 @@ internal static class HostAgentFactory
     {
         AIAgent agent = new OpenAIClient(apiKey)
              .GetChatClient(model)
-             .CreateAIAgent(instructions, name, tools: tools);
+             .AsAIAgent(instructions, name, tools: tools);
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {

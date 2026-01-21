@@ -9,7 +9,7 @@ from agent_framework import (
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
-    FunctionCallContent,
+    Content,
     FunctionInvocationContext,
     Role,
     chat_middleware,
@@ -349,7 +349,7 @@ class TestChatMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_1",
                             name="sample_tool",
                             arguments={"location": "San Francisco"},
@@ -366,7 +366,7 @@ class TestChatMiddleware:
 
         # Execute the chat client directly with tools - this should trigger function invocation and middleware
         messages = [ChatMessage(role=Role.USER, text="What's the weather in San Francisco?")]
-        response = await chat_client.get_response(messages, tools=[sample_tool])
+        response = await chat_client.get_response(messages, options={"tools": [sample_tool]})
 
         # Verify response
         assert response is not None
@@ -405,7 +405,7 @@ class TestChatMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_2",
                             name="sample_tool",
                             arguments={"location": "New York"},
@@ -423,7 +423,7 @@ class TestChatMiddleware:
         # Execute the chat client directly with run-level middleware and tools
         messages = [ChatMessage(role=Role.USER, text="What's the weather in New York?")]
         response = await chat_client.get_response(
-            messages, tools=[sample_tool], middleware=[run_level_function_middleware]
+            messages, options={"tools": [sample_tool]}, middleware=[run_level_function_middleware]
         )
 
         # Verify response

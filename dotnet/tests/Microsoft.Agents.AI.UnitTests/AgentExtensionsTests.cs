@@ -121,7 +121,7 @@ public class AgentExtensionsTests
     public async Task CreateFromAgent_WhenFunctionInvokedAsync_CallsAgentRunAsync()
     {
         // Arrange
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
 
         var aiFunction = testAgent.AsAIFunction();
@@ -139,7 +139,7 @@ public class AgentExtensionsTests
     public async Task CreateFromAgent_WhenFunctionInvokedWithCancellationTokenAsync_PassesCancellationTokenAsync()
     {
         // Arrange
-        var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
+        var expectedResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
         using var cancellationTokenSource = new CancellationTokenSource();
         var cancellationToken = cancellationTokenSource.Token;
@@ -257,7 +257,7 @@ public class AgentExtensionsTests
     public async Task CreateFromAgent_InvokeWithComplexResponseFromAgentAsync_ReturnsCorrectResponseAsync()
     {
         // Arrange
-        var expectedResponse = new AgentRunResponse
+        var expectedResponse = new AgentResponse
         {
             AgentId = "agent-123",
             ResponseId = "response-456",
@@ -275,6 +275,48 @@ public class AgentExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal("Complex response", result.ToString());
+    }
+
+    [Fact]
+    public async Task CreateFromAgent_InvokeWithAdditionalProperties_PropagatesAdditionalPropertiesToChildAgentAsync()
+    {
+        // Arrange
+        var expectedResponse = new AgentResponse
+        {
+            AgentId = "agent-123",
+            ResponseId = "response-456",
+            CreatedAt = DateTimeOffset.UtcNow,
+            Messages = { new ChatMessage(ChatRole.Assistant, "Complex response") }
+        };
+
+        var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
+        var aiFunction = testAgent.AsAIFunction();
+
+        // Use reflection to set the protected CurrentContext property
+        var context = new FunctionInvocationContext()
+        {
+            Options = new()
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    { "customProperty1", "value1" },
+                    { "customProperty2", 42 }
+                }
+            }
+        };
+        SetFunctionInvokingChatClientCurrentContext(context);
+
+        // Act
+        var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
+        var result = await aiFunction.InvokeAsync(arguments);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Complex response", result.ToString());
+        Assert.NotNull(testAgent.ReceivedAgentRunOptions);
+        Assert.NotNull(testAgent.ReceivedAgentRunOptions!.AdditionalProperties);
+        Assert.Equal("value1", testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty1"]);
+        Assert.Equal(42, testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty2"]);
     }
 
     [Theory]
@@ -303,14 +345,30 @@ public class AgentExtensionsTests
     }
 
     /// <summary>
+    /// Uses reflection to set the protected static CurrentContext property on FunctionInvokingChatClient.
+    /// </summary>
+    private static void SetFunctionInvokingChatClientCurrentContext(FunctionInvocationContext? context)
+    {
+        // Access the private static field _currentContext which is an AsyncLocal<FunctionInvocationContext?>
+        var currentContextField = typeof(FunctionInvokingChatClient).GetField(
+            "_currentContext",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        if (currentContextField?.GetValue(null) is AsyncLocal<FunctionInvocationContext?> asyncLocal)
+        {
+            asyncLocal.Value = context;
+        }
+    }
+
+    /// <summary>
     /// Test implementation of AIAgent for testing purposes.
     /// </summary>
     private sealed class TestAgent : AIAgent
     {
-        private readonly AgentRunResponse? _responseToReturn;
+        private readonly AgentResponse? _responseToReturn;
         private readonly Exception? _exceptionToThrow;
 
-        public TestAgent(string? name, string? description, AgentRunResponse responseToReturn)
+        public TestAgent(string? name, string? description, AgentResponse responseToReturn)
         {
             this.Name = name;
             this.Description = description;
@@ -334,10 +392,11 @@ public class AgentExtensionsTests
         public override string? Description { get; }
 
         public List<ChatMessage> ReceivedMessages { get; } = [];
+        public AgentRunOptions? ReceivedAgentRunOptions { get; private set; }
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
 
-        protected override Task<AgentRunResponse> RunCoreAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -346,6 +405,7 @@ public class AgentExtensionsTests
             this.RunAsyncCallCount++;
             this.LastCancellationToken = cancellationToken;
             this.ReceivedMessages.AddRange(messages);
+            this.ReceivedAgentRunOptions = options;
 
             if (this._exceptionToThrow is not null)
             {
@@ -355,14 +415,14 @@ public class AgentExtensionsTests
             return Task.FromResult(this._responseToReturn!);
         }
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await this.RunAsync(messages, thread, options, cancellationToken);
-            foreach (var update in response.ToAgentRunResponseUpdates())
+            foreach (var update in response.ToAgentResponseUpdates())
             {
                 yield return update;
             }

@@ -28,7 +28,7 @@ async def main() -> None:
     # 1) Create three domain agents using AzureOpenAIChatClient
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = chat_client.create_agent(
+    researcher = chat_client.as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
@@ -36,7 +36,7 @@ async def main() -> None:
         name="researcher",
     )
 
-    marketer = chat_client.create_agent(
+    marketer = chat_client.as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
@@ -44,7 +44,7 @@ async def main() -> None:
         name="marketer",
     )
 
-    legal = chat_client.create_agent(
+    legal = chat_client.as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."

@@ -23,7 +23,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetResponsesClient(deploymentName)
-     .CreateAIAgent(
+     .AsAIAgent(
         name: "SpaceNovelWriter",
         instructions: "You are a space novel writer. Always research relevant facts and generate character profiles for the main characters before writing novels." +
                       "Write complete chapters without asking for approval or feedback. Do not ask the user about tone, style, pace, or format preferences - just write the novel based on the request.",
@@ -35,7 +35,7 @@ AgentRunOptions options = new() { AllowBackgroundResponses = true };
 AgentThread thread = await agent.GetNewThreadAsync();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
 
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)

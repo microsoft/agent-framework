@@ -21,7 +21,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         ? cancellationToken
         : services.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? CancellationToken.None;
 
-    public Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    public Task<AgentResponse> RunAgentAsync(RunRequest request)
     {
         return this.Run(request);
     }
@@ -29,7 +29,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
     // IDE1006 and VSTHRD200 disabled to allow method name to match the common cross-platform entity operation name.
 #pragma warning disable IDE1006
 #pragma warning disable VSTHRD200
-    public async Task<AgentRunResponse> Run(RunRequest request)
+    public async Task<AgentResponse> Run(RunRequest request)
 #pragma warning restore VSTHRD200
 #pragma warning restore IDE1006
     {
@@ -43,7 +43,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         if (request.Messages.Count == 0)
         {
             logger.LogInformation("Ignoring empty request");
-            return new AgentRunResponse();
+            return new AgentResponse();
         }
 
         this.State.Data.ConversationHistory.Add(DurableAgentStateRequest.FromRunRequest(request));
@@ -65,29 +65,29 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         try
         {
             // Start the agent response stream
-            IAsyncEnumerable<AgentRunResponseUpdate> responseStream = agentWrapper.RunStreamingAsync(
+            IAsyncEnumerable<AgentResponseUpdate> responseStream = agentWrapper.RunStreamingAsync(
                 this.State.Data.ConversationHistory.SelectMany(e => e.Messages).Select(m => m.ToChatMessage()),
                 await agentWrapper.GetNewThreadAsync(cancellationToken).ConfigureAwait(false),
                 options: null,
                 this._cancellationToken);
 
-            AgentRunResponse response;
+            AgentResponse response;
             if (this._messageHandler is null)
             {
                 // If no message handler is provided, we can just get the full response at once.
                 // This is expected to be the common case for non-interactive agents.
-                response = await responseStream.ToAgentRunResponseAsync(this._cancellationToken);
+                response = await responseStream.ToAgentResponseAsync(this._cancellationToken);
             }
             else
             {
-                List<AgentRunResponseUpdate> responseUpdates = [];
+                List<AgentResponseUpdate> responseUpdates = [];
 
                 // To support interactive chat agents, we need to stream the responses to an IAgentMessageHandler.
                 // The user-provided message handler can be implemented to send the responses to the user.
                 // We assume that only non-empty text updates are useful for the user.
-                async IAsyncEnumerable<AgentRunResponseUpdate> StreamResultsAsync()
+                async IAsyncEnumerable<AgentResponseUpdate> StreamResultsAsync()
                 {
-                    await foreach (AgentRunResponseUpdate update in responseStream)
+                    await foreach (AgentResponseUpdate update in responseStream)
                     {
                         // We need the full response further down, so we piece it together as we go.
                         responseUpdates.Add(update);
@@ -98,12 +98,12 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
                 }
 
                 await this._messageHandler.OnStreamingResponseUpdateAsync(StreamResultsAsync(), this._cancellationToken);
-                response = responseUpdates.ToAgentRunResponse();
+                response = responseUpdates.ToAgentResponse();
             }
 
             // Persist the agent response to the entity state for client polling
             this.State.Data.ConversationHistory.Add(
-                DurableAgentStateResponse.FromRunResponse(request.CorrelationId, response));
+                DurableAgentStateResponse.FromResponse(request.CorrelationId, response));
 
             string responseText = response.Text;
 

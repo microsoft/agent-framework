@@ -27,7 +27,7 @@ async def main():
         client.function_invocation_configuration.max_iterations = 40
         print(f"Function invocation configured as: \n{client.function_invocation_configuration.to_json(indent=2)}")
 
-    agent = client.create_agent(name="ToolAgent", instructions="Use the provided tools.", tools=add)
+    agent = client.as_agent(name="ToolAgent", instructions="Use the provided tools.", tools=add)
 
     print("=" * 60)
     print("Call add(239847293, 29834)")

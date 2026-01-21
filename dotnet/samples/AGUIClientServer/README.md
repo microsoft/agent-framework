@@ -119,7 +119,7 @@ The `AGUIServer` uses the `MapAGUI` extension method to expose an agent through 
 ```csharp
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a helpful assistant.",
         name: "AGUIAssistant");
 
@@ -144,16 +144,16 @@ var chatClient = new AGUIChatClient(
     modelId: "agui-client",
     jsonSerializerOptions: null);
 
-AIAgent agent = chatClient.CreateAIAgent(
+AIAgent agent = chatClient.AsAIAgent(
     instructions: null,
     name: "agui-client",
     description: "AG-UI Client Agent",
     tools: []);
 
 bool isFirstUpdate = true;
-AgentRunResponseUpdate? currentUpdate = null;
+AgentResponseUpdate? currentUpdate = null;
 
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
 {
     // First update indicates run started
     if (isFirstUpdate)
@@ -190,19 +190,19 @@ if (currentUpdate != null)
 The `RunStreamingAsync` method:
 1. Sends messages to the server via HTTP POST
 2. Receives server-sent events (SSE) stream
-3. Parses events into `AgentRunResponseUpdate` objects
+3. Parses events into `AgentResponseUpdate` objects
 4. Yields updates as they arrive for real-time display
 
 ## Key Concepts
 
 - **Thread**: Represents a conversation context that persists across multiple runs (accessed via `ConversationId` property)
 - **Run**: A single execution of the agent for a given set of messages (identified by `ResponseId` property)
-- **AgentRunResponseUpdate**: Contains the response data with:
+- **AgentResponseUpdate**: Contains the response data with:
   - `ResponseId`: The unique run identifier
   - `ConversationId`: The thread/conversation identifier
   - `Contents`: Collection of content items (TextContent, ErrorContent, etc.)
 - **Run Lifecycle**: 
-  - The **first** `AgentRunResponseUpdate` in a run indicates the run has started
+  - The **first** `AgentResponseUpdate` in a run indicates the run has started
   - Subsequent updates contain streaming content as the agent processes
-  - The **last** `AgentRunResponseUpdate` in a run indicates the run has finished
+  - The **last** `AgentResponseUpdate` in a run indicates the run has finished
   - If an error occurs, the update will contain `ErrorContent`

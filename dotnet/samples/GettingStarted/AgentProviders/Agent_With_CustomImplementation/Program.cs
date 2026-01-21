@@ -34,7 +34,7 @@ namespace SampleApp
         public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => new(new CustomAgentThread(serializedThread, jsonSerializerOptions));
 
-        protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= await this.GetNewThreadAsync(cancellationToken);
@@ -58,7 +58,7 @@ namespace SampleApp
             };
             await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
 
-            return new AgentRunResponse
+            return new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N"),
@@ -66,7 +66,7 @@ namespace SampleApp
             };
         }
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= await this.GetNewThreadAsync(cancellationToken);
@@ -92,7 +92,7 @@ namespace SampleApp
 
             foreach (var message in responseMessages)
             {
-                yield return new AgentRunResponseUpdate
+                yield return new AgentResponseUpdate
                 {
                     AgentId = this.Id,
                     AuthorName = message.AuthorName,

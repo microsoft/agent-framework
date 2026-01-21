@@ -30,7 +30,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 Console.WriteLine($"Creating the agent '{agentName}' ...");
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = aiProjectClient.CreateAIAgent(
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     name: agentName,
     model: deploymentName,
     instructions: "You answer questions related to GitHub repositories only.",

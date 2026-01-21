@@ -1,230 +1,224 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Mapping
-from typing import Any
+from typing import Annotated
 
 from agent_framework import (
+    AgentResponse,
     ChatAgent,
     ChatMessage,
     FunctionCallContent,
     FunctionResultContent,
+    HandoffAgentUserRequest,
     HandoffBuilder,
-    HandoffUserInputRequest,
     Role,
     WorkflowAgent,
+    ai_function,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-"""
-Sample: Handoff Workflow as Agent with Human-in-the-Loop
+"""Sample: Handoff Workflow as Agent with Human-in-the-Loop.
 
-Purpose:
-This sample demonstrates how to use a HandoffBuilder workflow as an agent via
-`.as_agent()`, enabling human-in-the-loop interactions through the standard
-agent interface. The handoff pattern routes user requests through a triage agent
-to specialist agents, with the workflow requesting user input as needed.
+This sample demonstrates how to use a handoff workflow as an agent, enabling
+human-in-the-loop interactions through the agent interface.
 
-When using a handoff workflow as an agent:
-1. The workflow emits `HandoffUserInputRequest` when it needs user input
-2. `WorkflowAgent` converts this to a `FunctionCallContent` named "request_info"
-3. The caller extracts `HandoffUserInputRequest` from the function call arguments
-4. The caller provides a response via `FunctionResultContent`
-
-This differs from running the workflow directly:
-- Direct workflow: Use `workflow.run_stream()` and `workflow.send_responses_streaming()`
-- As agent: Use `agent.run()` with `FunctionCallContent`/`FunctionResultContent` messages
-
-Key Concepts:
-- HandoffBuilder: Creates triage-to-specialist routing workflows
-- WorkflowAgent: Wraps workflows to expose them as standard agents
-- HandoffUserInputRequest: Contains conversation context and the awaiting agent
-- FunctionCallContent/FunctionResultContent: Standard agent interface for HITL
+A handoff workflow defines a pattern that assembles agents in a mesh topology, allowing
+them to transfer control to each other based on the conversation context.
 
 Prerequisites:
-- `az login` (Azure CLI authentication)
-- Environment variables configured for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - `az login` (Azure CLI authentication)
+    - Environment variables configured for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+
+Key Concepts:
+    - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
+      for each participant, allowing the coordinator to transfer control to specialists
+    - Termination condition: Controls when the workflow stops requesting user input
+    - Request/response cycle: Workflow requests input, user responds, cycle continues
 """
+
+
+@ai_function
+def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
+    """Simulated function to process a refund for a given order number."""
+    return f"Refund processed successfully for order {order_number}."
+
+
+@ai_function
+def check_order_status(order_number: Annotated[str, "Order number to check status for"]) -> str:
+    """Simulated function to check the status of a given order number."""
+    return f"Order {order_number} is currently being processed and will ship in 2 business days."
+
+
+@ai_function
+def process_return(order_number: Annotated[str, "Order number to process return for"]) -> str:
+    """Simulated function to process a return for a given order number."""
+    return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
 def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
     """Create and configure the triage and specialist agents.
 
-    The triage agent dispatches requests to the appropriate specialist.
-    Specialists handle their domain-specific queries.
+    Args:
+        chat_client: The AzureOpenAIChatClient to use for creating agents.
 
     Returns:
-        Tuple of (triage_agent, refund_agent, order_agent, support_agent)
+        Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
-    triage = chat_client.create_agent(
+    # Triage agent: Acts as the frontline dispatcher
+    triage_agent = chat_client.as_agent(
         instructions=(
-            "You are frontline support triage. Read the latest user message and decide whether "
-            "to hand off to refund_agent, order_agent, or support_agent. Provide a brief natural-language "
-            "response for the user. When delegation is required, call the matching handoff tool "
-            "(`handoff_to_refund_agent`, `handoff_to_order_agent`, or `handoff_to_support_agent`)."
+            "You are frontline support triage. Route customer issues to the appropriate specialist agents "
+            "based on the problem described."
         ),
         name="triage_agent",
     )
 
-    refund = chat_client.create_agent(
-        instructions=(
-            "You handle refund workflows. Ask for any order identifiers you require and outline the refund steps."
-        ),
+    # Refund specialist: Handles refund requests
+    refund_agent = chat_client.as_agent(
+        instructions="You process refund requests.",
         name="refund_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[process_refund],
     )
 
-    order = chat_client.create_agent(
-        instructions=(
-            "You resolve shipping and fulfillment issues. Clarify the delivery problem and describe the actions "
-            "you will take to remedy it."
-        ),
+    # Order/shipping specialist: Resolves delivery issues
+    order_agent = chat_client.as_agent(
+        instructions="You handle order and shipping inquiries.",
         name="order_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[check_order_status],
     )
 
-    support = chat_client.create_agent(
-        instructions=(
-            "You are a general support agent. Offer empathetic troubleshooting and gather missing details if the "
-            "issue does not match other specialists."
-        ),
-        name="support_agent",
+    # Return specialist: Handles return requests
+    return_agent = chat_client.as_agent(
+        instructions="You manage product return requests.",
+        name="return_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[process_return],
     )
 
-    return triage, refund, order, support
+    return triage_agent, refund_agent, order_agent, return_agent
 
 
-def extract_handoff_request(
-    response_messages: list[ChatMessage],
-) -> tuple[FunctionCallContent, HandoffUserInputRequest]:
-    """Extract the HandoffUserInputRequest from agent response messages.
+def handle_response_and_requests(response: AgentResponse) -> dict[str, HandoffAgentUserRequest]:
+    """Process agent response messages and extract any user requests.
 
-    When a handoff workflow running as an agent needs user input, it emits a
-    FunctionCallContent with name="request_info" containing the HandoffUserInputRequest.
+    This function inspects the agent response and:
+    - Displays agent messages to the console
+    - Collects HandoffAgentUserRequest instances for response handling
 
     Args:
-        response_messages: Messages from the agent response
+        response: The AgentResponse from the agent run call.
 
     Returns:
-        Tuple of (function_call, handoff_request)
-
-    Raises:
-        ValueError: If no request_info function call is found or payload is invalid
+        A dictionary mapping request IDs to HandoffAgentUserRequest instances.
     """
-    for message in response_messages:
+    pending_requests: dict[str, HandoffAgentUserRequest] = {}
+    for message in response.messages:
+        if message.text:
+            print(f"- {message.author_name or message.role.value}: {message.text}")
         for content in message.contents:
-            if isinstance(content, FunctionCallContent) and content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
-                # Parse the function arguments to extract the HandoffUserInputRequest
-                args = content.arguments
-                if isinstance(args, str):
-                    request_args = WorkflowAgent.RequestInfoFunctionArgs.from_json(args)
-                elif isinstance(args, Mapping):
-                    request_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(dict(args))
+            if isinstance(content, FunctionCallContent):
+                if isinstance(content.arguments, dict):
+                    request = WorkflowAgent.RequestInfoFunctionArgs.from_dict(content.arguments)
+                elif isinstance(content.arguments, str):
+                    request = WorkflowAgent.RequestInfoFunctionArgs.from_json(content.arguments)
                 else:
-                    raise ValueError("Unexpected argument type for request_info function call.")
-
-                payload: Any = request_args.data
-                if not isinstance(payload, HandoffUserInputRequest):
-                    raise ValueError(
-                        f"Expected HandoffUserInputRequest in request_info payload, got {type(payload).__name__}"
-                    )
-
-                return content, payload
-
-    raise ValueError("No request_info function call found in response messages.")
-
-
-def print_conversation(request: HandoffUserInputRequest) -> None:
-    """Display the conversation history from a HandoffUserInputRequest."""
-    print("\n=== Conversation History ===")
-    for message in request.conversation:
-        speaker = message.author_name or message.role.value
-        print(f"  [{speaker}]: {message.text}")
-    print(f"  [Awaiting]: {request.awaiting_agent_id}")
-    print("============================")
+                    raise ValueError("Invalid arguments type. Expecting a request info structure for this sample.")
+                if isinstance(request.data, HandoffAgentUserRequest):
+                    pending_requests[request.request_id] = request.data
+    return pending_requests
 
 
 async def main() -> None:
-    """Main entry point demonstrating handoff workflow as agent.
+    """Main entry point for the handoff workflow demo.
 
-    This demo:
-    1. Builds a handoff workflow with triage and specialist agents
-    2. Converts it to an agent using .as_agent()
-    3. Runs a multi-turn conversation with scripted user responses
-    4. Demonstrates the FunctionCallContent/FunctionResultContent pattern for HITL
+    This function demonstrates:
+    1. Creating triage and specialist agents
+    2. Building a handoff workflow with custom termination condition
+    3. Running the workflow with scripted user responses
+    4. Processing events and handling user input requests
+
+    The workflow uses scripted responses instead of interactive input to make
+    the demo reproducible and testable. In a production application, you would
+    replace the scripted_responses with actual user input collection.
     """
-    print("Starting Handoff Workflow as Agent Demo")
-    print("=" * 55)
-
     # Initialize the Azure OpenAI chat client
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    # Create agents
+    # Create all agents: triage + specialists
     triage, refund, order, support = create_agents(chat_client)
 
-    # Build the handoff workflow and convert to agent
-    # Termination condition: stop after 4 user messages
+    # Build the handoff workflow
+    # - participants: All agents that can participate in the workflow
+    # - with_start_agent: The triage agent is designated as the start agent, which means
+    #   it receives all user input first and orchestrates handoffs to specialists
+    # - with_termination_condition: Custom logic to stop the request/response loop.
+    #   Without this, the default behavior continues requesting user input until max_turns
+    #   is reached. Here we use a custom condition that checks if the conversation has ended
+    #   naturally (when one of the agents says something like "you're welcome").
     agent = (
         HandoffBuilder(
             name="customer_support_handoff",
             participants=[triage, refund, order, support],
         )
-        .set_coordinator("triage_agent")
-        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 4)
+        .with_start_agent(triage)
+        .with_termination_condition(
+            # Custom termination: Check if one of the agents has provided a closing message.
+            # This looks for the last message containing "welcome", which indicates the
+            # conversation has concluded naturally.
+            lambda conversation: len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
+        )
         .build()
         .as_agent()  # Convert workflow to agent interface
     )
 
     # Scripted user responses for reproducible demo
+    # In a console application, replace this with:
+    #   user_input = input("Your response: ")
+    # or integrate with a UI/chat interface
     scripted_responses = [
-        "My order 1234 arrived damaged and the packaging was destroyed.",
-        "Yes, I'd like a refund if that's possible.",
-        "Thanks for your help!",
+        "My order 1234 arrived damaged and the packaging was destroyed. I'd like to return it.",
+        "Please also process a refund for order 1234.",
+        "Thanks for resolving this.",
     ]
 
-    # Start the conversation
-    print("\n[User]: Hello, I need assistance with my recent purchase.")
-    response = await agent.run("Hello, I need assistance with my recent purchase.")
+    # Start the workflow with the initial user message
+    print("[Starting workflow with initial user message...]\n")
+    initial_message = "Hello, I need assistance with my recent purchase."
+    print(f"- User: {initial_message}")
+    response = await agent.run(initial_message)
+    pending_requests = handle_response_and_requests(response)
 
-    # Process conversation turns until workflow completes or responses exhausted
-    while True:
-        # Check if the agent is requesting user input
-        try:
-            function_call, handoff_request = extract_handoff_request(response.messages)
-        except ValueError:
-            # No request_info call found - workflow has completed
-            print("\n[Workflow completed - no pending requests]")
-            if response.messages:
-                final_text = response.messages[-1].text
-                if final_text:
-                    print(f"[Final response]: {final_text}")
-            break
+    # Process the request/response cycle
+    # The workflow will continue requesting input until:
+    # 1. The termination condition is met, OR
+    # 2. We run out of scripted responses
+    while pending_requests:
+        for request in pending_requests.values():
+            for message in request.agent_response.messages:
+                if message.text:
+                    print(f"- {message.author_name or message.role.value}: {message.text}")
 
-        # Display the conversation context
-        print_conversation(handoff_request)
-
-        # Get the next scripted response
         if not scripted_responses:
-            print("\n[No more scripted responses - ending conversation]")
-            break
+            # No more scripted responses; terminate the workflow
+            responses = {req_id: HandoffAgentUserRequest.terminate() for req_id in pending_requests}
+        else:
+            # Get the next scripted response
+            user_response = scripted_responses.pop(0)
+            print(f"\n- User: {user_response}")
 
-        user_input = scripted_responses.pop(0)
+            # Send response(s) to all pending requests
+            # In this demo, there's typically one request per cycle, but the API supports multiple
+            responses = {req_id: HandoffAgentUserRequest.create_response(user_response) for req_id in pending_requests}
 
-        print(f"\n[User responding]: {user_input}")
-
-        # Create the function result to send back to the agent
-        # The result is the user's text response which gets converted to ChatMessage
-        function_result = FunctionResultContent(
-            call_id=function_call.call_id,
-            result=user_input,
-        )
-
-        # Send the response back to the agent
-        response = await agent.run(ChatMessage(role=Role.TOOL, contents=[function_result]))
-
-    print("\n" + "=" * 55)
-    print("Demo completed!")
+        function_results = [
+            FunctionResultContent(call_id=req_id, result=response) for req_id, response in responses.items()
+        ]
+        response = await agent.run(ChatMessage(role=Role.TOOL, contents=function_results))
+        pending_requests = handle_response_and_requests(response)
 
 
 if __name__ == "__main__":
-    print("Initializing Handoff Workflow as Agent Sample...")
     asyncio.run(main())

@@ -264,7 +264,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         ChatClientAgentThread thread = new();
 
         // Act
-        var actualUpdates = new List<AgentRunResponseUpdate>();
+        var actualUpdates = new List<AgentResponseUpdate>();
         await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], thread, options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
         {
             actualUpdates.Add(u);
@@ -543,7 +543,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(thread, options: runOptions))
         {
             updates.Add(update);
@@ -591,7 +591,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(thread, options: runOptions))
         {
             updates.Add(update);

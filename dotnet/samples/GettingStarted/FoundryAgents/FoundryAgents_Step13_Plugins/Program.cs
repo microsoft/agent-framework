@@ -34,7 +34,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 
 // Define the agent with plugin tools
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = aiProjectClient.CreateAIAgent(
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     name: AssistantName,
     model: deploymentName,
     instructions: AssistantInstructions,

@@ -431,21 +431,21 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions));
 
-        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
         }
     }
 
@@ -521,19 +521,19 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions));
 
-        protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
         }
     }
 }

@@ -29,7 +29,7 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # AF constructs a lightweight ChatAgent backed by OpenAIChatClient.
-    chat_agent = OpenAIChatClient().create_agent(
+    chat_agent = OpenAIChatClient().as_agent(
         name="Support",
         instructions="Answer in one sentence.",
     )

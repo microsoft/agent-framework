@@ -223,7 +223,7 @@ class WorkflowBuilder:
         Args:
             candidate: The executor or agent to wrap.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
             executor_id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         try:  # Local import to avoid hard dependency at import time
@@ -352,7 +352,7 @@ class WorkflowBuilder:
                   the agent's internal name. But it must be unique within the workflow.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created when
                           the agent is instantiated.
-            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
 
         Example:
             .. code-block:: python
@@ -411,7 +411,7 @@ class WorkflowBuilder:
         Args:
             agent: The agent to add to the workflow.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
 
         Returns:

@@ -126,38 +126,38 @@ async def main() -> None:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents
-    research_agent = chat_client.create_agent(
+    research_agent = chat_client.as_agent(
         name="ResearchAgent",
         instructions=RESEARCH_INSTRUCTIONS,
     )
 
-    planner_agent = chat_client.create_agent(
+    planner_agent = chat_client.as_agent(
         name="PlannerAgent",
         instructions=PLANNER_INSTRUCTIONS,
     )
 
-    manager_agent = chat_client.create_agent(
+    manager_agent = chat_client.as_agent(
         name="ManagerAgent",
         instructions=MANAGER_INSTRUCTIONS,
-        response_format=ManagerResponse,
+        default_options={"response_format": ManagerResponse},
     )
 
-    summary_agent = chat_client.create_agent(
+    summary_agent = chat_client.as_agent(
         name="SummaryAgent",
         instructions=SUMMARY_INSTRUCTIONS,
     )
 
-    knowledge_agent = chat_client.create_agent(
+    knowledge_agent = chat_client.as_agent(
         name="KnowledgeAgent",
         instructions=KNOWLEDGE_INSTRUCTIONS,
     )
 
-    coder_agent = chat_client.create_agent(
+    coder_agent = chat_client.as_agent(
         name="CoderAgent",
         instructions=CODER_INSTRUCTIONS,
     )
 
-    weather_agent = chat_client.create_agent(
+    weather_agent = chat_client.as_agent(
         name="WeatherAgent",
         instructions=WEATHER_INSTRUCTIONS,
     )

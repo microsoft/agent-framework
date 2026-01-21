@@ -24,15 +24,12 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import (
-    AgentRunResponseUpdate,
-    FunctionApprovalRequestContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    TextContent,
+    AgentResponseUpdate,
+    Content,
     prepare_function_call_results,
 )
 
-from ._utils import extract_state_from_tool_args, generate_event_id, safe_json_parse
+from ._utils import extract_state_from_tool_args, generate_event_id, make_json_safe, safe_json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +78,9 @@ class AgentFrameworkEventBridge:
         self.should_stop_after_confirm: bool = False  # Flag to stop run after confirm_changes
         self.suppressed_summary: str = ""  # Store LLM summary to show after confirmation
 
-    async def from_agent_run_update(self, update: AgentRunResponseUpdate) -> list[BaseEvent]:
+    async def from_agent_run_update(self, update: AgentResponseUpdate) -> list[BaseEvent]:
         """
-        Convert an AgentRunResponseUpdate to AG-UI events.
+        Convert an AgentResponseUpdate to AG-UI events.
 
         Args:
             update: The agent run update to convert.
@@ -96,20 +93,22 @@ class AgentFrameworkEventBridge:
         logger.info(f"Processing AgentRunUpdate with {len(update.contents)} content items")
         for idx, content in enumerate(update.contents):
             logger.info(f"  Content {idx}: type={type(content).__name__}")
-            if isinstance(content, TextContent):
-                events.extend(self._handle_text_content(content))
-            elif isinstance(content, FunctionCallContent):
-                events.extend(self._handle_function_call_content(content))
-            elif isinstance(content, FunctionResultContent):
-                events.extend(self._handle_function_result_content(content))
-            elif isinstance(content, FunctionApprovalRequestContent):
-                events.extend(self._handle_function_approval_request_content(content))
-
+            match content.type:
+                case "text":
+                    events.extend(self._handle_text_content(content))
+                case "function_call":
+                    events.extend(self._handle_function_call_content(content))
+                case "function_result":
+                    events.extend(self._handle_function_result_content(content))
+                case "function_approval_request":
+                    events.extend(self._handle_function_approval_request_content(content))
+                case _:
+                    logger.warning(f"  Unsupported content type: {content.type}, skipping.")
         return events
 
-    def _handle_text_content(self, content: TextContent) -> list[BaseEvent]:
+    def _handle_text_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
-        logger.info(f"  TextContent found: length={len(content.text)}")
+        logger.info(f"  TextContent found: length={len(content.text)}")  # type: ignore[arg-type]
         logger.info(
             "  Flags: skip_text_content=%s, should_stop_after_confirm=%s",
             self.skip_text_content,
@@ -122,7 +121,7 @@ class AgentFrameworkEventBridge:
 
         if self.should_stop_after_confirm:
             logger.info("  SKIPPING TextContent: waiting for confirm_changes response")
-            self.suppressed_summary += content.text
+            self.suppressed_summary += content.text  # type: ignore[operator]
             logger.info(f"  Suppressed summary length={len(self.suppressed_summary)}")
             return events
 
@@ -150,14 +149,14 @@ class AgentFrameworkEventBridge:
         events.append(event)
         return events
 
-    def _handle_function_call_content(self, content: FunctionCallContent) -> list[BaseEvent]:
+    def _handle_function_call_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         if content.name:
             logger.debug(f"Tool call: {content.name} (call_id: {content.call_id})")
 
         if not content.name and not content.call_id and not self.current_tool_call_name:
             args_length = len(str(content.arguments)) if content.arguments else 0
-            logger.warning(f"FunctionCallContent missing name and call_id. args_length={args_length}")
+            logger.warning(f"Content missing name and call_id. args_length={args_length}")
 
         tool_call_id = self._coalesce_tool_call_id(content)
         # Only emit ToolCallStartEvent once per tool call (when it's a new tool call)
@@ -178,7 +177,11 @@ class AgentFrameworkEventBridge:
             self.current_tool_call_id = tool_call_id
 
         if content.arguments:
-            delta_str = content.arguments if isinstance(content.arguments, str) else json.dumps(content.arguments)
+            delta_str = (
+                content.arguments
+                if isinstance(content.arguments, str)
+                else json.dumps(make_json_safe(content.arguments))
+            )
             logger.info(f"Emitting ToolCallArgsEvent with delta_length={len(delta_str)}, id='{tool_call_id}'")
             args_event = ToolCallArgsEvent(
                 tool_call_id=tool_call_id,
@@ -190,7 +193,7 @@ class AgentFrameworkEventBridge:
 
         return events
 
-    def _coalesce_tool_call_id(self, content: FunctionCallContent) -> str:
+    def _coalesce_tool_call_id(self, content: Content) -> str:
         if content.call_id:
             return content.call_id
         if self.current_tool_call_id:
@@ -286,7 +289,7 @@ class AgentFrameworkEventBridge:
                     self.pending_state_updates[state_key] = state_value
         return events
 
-    def _handle_function_result_content(self, content: FunctionResultContent) -> list[BaseEvent]:
+    def _handle_function_result_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         if content.call_id:
             end_event = ToolCallEndEvent(
@@ -310,7 +313,7 @@ class AgentFrameworkEventBridge:
 
         result_event = ToolCallResultEvent(
             message_id=result_message_id,
-            tool_call_id=content.call_id,
+            tool_call_id=content.call_id,  # type: ignore[arg-type]
             content=result_content,
             role="tool",
         )
@@ -367,7 +370,7 @@ class AgentFrameworkEventBridge:
             self.current_tool_call_name = None
         return events
 
-    def _emit_confirm_changes_tool_call(self, function_call: FunctionCallContent | None = None) -> list[BaseEvent]:
+    def _emit_confirm_changes_tool_call(self, function_call: Content | None = None) -> list[BaseEvent]:
         """Emit a confirm_changes tool call for Dojo UI compatibility.
 
         Args:
@@ -392,7 +395,7 @@ class AgentFrameworkEventBridge:
             args_dict = {
                 "function_name": function_call.name,
                 "function_call_id": function_call.call_id,
-                "function_arguments": function_call.parse_arguments() or {},
+                "function_arguments": make_json_safe(function_call.parse_arguments() or {}),
                 "steps": [
                     {
                         "description": f"Execute {function_call.name}",
@@ -419,7 +422,7 @@ class AgentFrameworkEventBridge:
         logger.info("Set flag to stop run after confirm_changes")
         return events
 
-    def _emit_function_approval_tool_call(self, function_call: FunctionCallContent) -> list[BaseEvent]:
+    def _emit_function_approval_tool_call(self, function_call: Content) -> list[BaseEvent]:
         """Emit a tool call that can drive UI approval for function requests."""
         tool_call_name = "confirm_changes"
         if self.approval_tool_name and self.approval_tool_name != function_call.name:
@@ -436,7 +439,7 @@ class AgentFrameworkEventBridge:
         args_dict = {
             "function_name": function_call.name,
             "function_call_id": function_call.call_id,
-            "function_arguments": function_call.parse_arguments() or {},
+            "function_arguments": make_json_safe(function_call.parse_arguments() or {}),
             "steps": [
                 {
                     "description": f"Execute {function_call.name}",
@@ -462,13 +465,13 @@ class AgentFrameworkEventBridge:
         logger.info("Set flag to stop run after confirm_changes")
         return events
 
-    def _handle_function_approval_request_content(self, content: FunctionApprovalRequestContent) -> list[BaseEvent]:
+    def _handle_function_approval_request_content(self, content: Content) -> list[BaseEvent]:
         events: list[BaseEvent] = []
         logger.info("=== FUNCTION APPROVAL REQUEST ===")
-        logger.info(f"  Function: {content.function_call.name}")
-        logger.info(f"  Call ID: {content.function_call.call_id}")
+        logger.info(f"  Function: {content.function_call.name}")  # type: ignore[union-attr]
+        logger.info(f"  Call ID: {content.function_call.call_id}")  # type: ignore[union-attr]
 
-        parsed_args = content.function_call.parse_arguments()
+        parsed_args = content.function_call.parse_arguments()  # type: ignore[union-attr]
         parsed_arg_keys = list(parsed_args.keys()) if parsed_args else "None"
         logger.info(f"  Parsed args keys: {parsed_arg_keys}")
 
@@ -478,12 +481,12 @@ class AgentFrameworkEventBridge:
                 list(self.predict_state_config.keys()) if self.predict_state_config else "None",
             )
             for state_key, config in self.predict_state_config.items():
-                if config["tool"] != content.function_call.name:
+                if config["tool"] != content.function_call.name:  # type: ignore[union-attr]
                     continue
                 tool_arg_name = config["tool_argument"]
                 logger.info(
                     "  MATCHED tool '%s' for state key '%s', arg='%s'",
-                    content.function_call.name,
+                    content.function_call.name,  # type: ignore[union-attr]
                     state_key,
                     tool_arg_name,
                 )
@@ -500,11 +503,11 @@ class AgentFrameworkEventBridge:
                 )
                 events.append(state_snapshot)
 
-        if content.function_call.call_id:
+        if content.function_call.call_id:  # type: ignore[union-attr]
             end_event = ToolCallEndEvent(
-                tool_call_id=content.function_call.call_id,
+                tool_call_id=content.function_call.call_id,  # type: ignore[union-attr]
             )
-            logger.info(f"Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'")
+            logger.info(f"Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'")  # type: ignore[union-attr]
             events.append(end_event)
 
         # Emit the function_approval_request custom event for UI implementations that support it
@@ -513,18 +516,18 @@ class AgentFrameworkEventBridge:
             value={
                 "id": content.id,
                 "function_call": {
-                    "call_id": content.function_call.call_id,
-                    "name": content.function_call.name,
-                    "arguments": content.function_call.parse_arguments(),
+                    "call_id": content.function_call.call_id,  # type: ignore[union-attr]
+                    "name": content.function_call.name,  # type: ignore[union-attr]
+                    "arguments": content.function_call.parse_arguments(),  # type: ignore[union-attr]
                 },
             },
         )
-        logger.info(f"Emitting function_approval_request custom event for '{content.function_call.name}'")
+        logger.info(f"Emitting function_approval_request custom event for '{content.function_call.name}'")  # type: ignore[union-attr]
         events.append(approval_event)
 
         # Emit a UI-friendly approval tool call for function approvals.
         if self.require_confirmation:
-            events.extend(self._emit_function_approval_tool_call(content.function_call))
+            events.extend(self._emit_function_approval_tool_call(content.function_call))  # type: ignore[arg-type]
 
         # Signal orchestrator to stop the run and wait for user approval response
         self.should_stop_after_confirm = True

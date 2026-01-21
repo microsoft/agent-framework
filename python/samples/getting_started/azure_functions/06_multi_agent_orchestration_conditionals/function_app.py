@@ -12,7 +12,7 @@ Functions host."""
 import json
 import logging
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
@@ -45,12 +45,12 @@ class EmailPayload(BaseModel):
 def _create_agents() -> list[Any]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    spam_agent = chat_client.create_agent(
+    spam_agent = chat_client.as_agent(
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = chat_client.create_agent(
+    email_agent = chat_client.as_agent(
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )
@@ -99,10 +99,12 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     spam_result_raw = yield spam_agent.run(
         messages=spam_prompt,
         thread=spam_thread,
-        response_format=SpamDetectionResult,
+        options={"response_format": SpamDetectionResult},
     )
 
-    spam_result = cast(SpamDetectionResult, spam_result_raw.value)
+    spam_result = spam_result_raw.try_parse_value(SpamDetectionResult)
+    if spam_result is None:
+        raise ValueError("Failed to parse spam detection result")
 
     if spam_result.is_spam:
         result = yield context.call_activity("handle_spam_email", spam_result.reason)
@@ -120,10 +122,12 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     email_result_raw = yield email_agent.run(
         messages=email_prompt,
         thread=email_thread,
-        response_format=EmailResponse,
+        options={"response_format": EmailResponse},
     )
 
-    email_result = cast(EmailResponse, email_result_raw.value)
+    email_result = email_result_raw.try_parse_value(EmailResponse)
+    if email_result is None:
+        raise ValueError("Failed to parse email response")
 
     result = yield context.call_activity("send_email", email_result.response)
     return result
