@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import json
 import os
 from typing import Any
@@ -904,7 +903,7 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(openai_unit_t
     assert "parallel_tool_calls" not in prepared_options
 
 
-def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
+async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
     """Test that streaming errors are properly handled."""
     client = OpenAIChatClient()
     messages = [ChatMessage(role="user", text="test")]
@@ -921,7 +920,7 @@ def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> N
             async for _ in client._inner_get_streaming_response(messages=messages, options={}):  # type: ignore
                 pass
 
-        asyncio.run(consume_stream())
+        await consume_stream()
 
 
 # region Integration Tests
