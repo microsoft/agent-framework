@@ -429,4 +429,21 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     ValueTask ISuperStepJoinContext.SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellationToken)
         => this.SendMessageAsync(senderId, Throw.IfNull(message), cancellationToken: cancellationToken);
+
+    async ValueTask ISuperStepJoinContext.YieldOutputAsync(string sourceId, object output, CancellationToken cancellationToken)
+    {
+        this.CheckEnded();
+        Throw.IfNull(output);
+
+        Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
+        if (!sourceExecutor.CanOutput(output.GetType()))
+        {
+            throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
+        }
+
+        if (this._outputFilter.CanOutput(sourceId, output))
+        {
+            await this.AddEventAsync(new WorkflowOutputEvent(output, sourceId), cancellationToken).ConfigureAwait(false);
+        }
+    }
 }

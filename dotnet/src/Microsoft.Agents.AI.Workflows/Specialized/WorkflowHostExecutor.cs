@@ -192,11 +192,16 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                     resultTask = this._joinContext?.ForwardWorkflowEventAsync(new SubworkflowErrorEvent(this.Id, errorEvent.Data as Exception)).AsTask() ?? Task.CompletedTask;
                     break;
                 case WorkflowOutputEvent outputEvent:
-                    if (this._joinContext != null &&
-                        this._options.AutoSendMessageHandlerResultObject
-                        && outputEvent.Data != null)
+                    if (this._joinContext != null && outputEvent.Data != null)
                     {
-                        resultTask = this._joinContext.SendMessageAsync(this.Id, outputEvent.Data).AsTask();
+                        if (this._options.AutoSendMessageHandlerResultObject)
+                        {
+                            resultTask = this._joinContext.SendMessageAsync(this.Id, outputEvent.Data).AsTask();
+                        }
+                        else if (this._options.AutoYieldOutputHandlerResultObject)
+                        {
+                            resultTask = this._joinContext.YieldOutputAsync(this.Id, outputEvent.Data).AsTask();
+                        }
                     }
                     break;
                 case RequestHaltEvent requestHaltEvent:
