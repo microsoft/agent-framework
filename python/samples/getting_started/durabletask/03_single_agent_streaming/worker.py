@@ -18,9 +18,13 @@ import os
 from datetime import timedelta
 
 import redis.asyncio as aioredis
-from agent_framework import AgentRunResponseUpdate
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_durabletask import AgentCallbackContext, AgentResponseCallbackProtocol, DurableAIAgentWorker
+from agent_framework import AgentResponseUpdate
+from agent_framework.azure import (
+    AgentCallbackContext,
+    AgentResponseCallbackProtocol,
+    AzureOpenAIChatClient,
+    DurableAIAgentWorker,
+)
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
@@ -66,7 +70,7 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
 
     async def on_streaming_response_update(
         self,
-        update: AgentRunResponseUpdate,
+        update: AgentResponseUpdate,
         context: AgentCallbackContext,
     ) -> None:
         """Write streaming update to Redis Stream.

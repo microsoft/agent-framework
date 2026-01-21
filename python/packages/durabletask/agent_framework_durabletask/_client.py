@@ -27,7 +27,7 @@ class DurableAIAgentClient(DurableAgentProvider[AgentResponse]):
     Example:
         ```python
         from durabletask import TaskHubGrpcClient
-        from agent_framework_durabletask import DurableAIAgentClient
+        from agent_framework.azure import DurableAIAgentClient
 
         # Create the underlying client
         client = TaskHubGrpcClient(host_address="localhost:4001")

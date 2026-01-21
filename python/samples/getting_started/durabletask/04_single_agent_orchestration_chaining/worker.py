@@ -15,9 +15,8 @@ from collections.abc import Generator
 import logging
 import os
 
-from agent_framework import AgentRunResponse
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_durabletask import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework import AgentResponse
+from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.task import OrchestrationContext, Task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -61,7 +60,7 @@ def get_orchestration():
 
 def single_agent_chaining_orchestration(
     context: OrchestrationContext, _: str
-) -> Generator[Task[AgentRunResponse], AgentRunResponse, str]:
+) -> Generator[Task[AgentResponse], AgentResponse, str]:
     """Orchestration that runs the writer agent twice on the same thread.
     
     This demonstrates chaining behavior where the output of the first agent run

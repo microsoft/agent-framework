@@ -15,8 +15,7 @@ import logging
 import os
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_durabletask import DurableAIAgentWorker
+from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
