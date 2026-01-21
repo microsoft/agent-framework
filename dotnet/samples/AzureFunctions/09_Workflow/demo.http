@@ -1,14 +1,14 @@
 # Default endpoint address for local testing
 @authority=http://localhost:7071
 
-### Start the workflow
-POST {{authority}}/api/workflows/HandleSurveyResponse/run
+### Look up a long order reference id
+POST {{authority}}/api/workflows/FulfillOrder/run
 Content-Type: text/plain
 
-Rating: 10. Why was I charged $99 when my plan should be $49? I need a refund for the overcharge
+QWERTY80853
 
-### Start the workflow with another bug report input.
-POST {{authority}}/api/workflows/HandleSurveyResponse/run
+### Look up a short order id
+POST {{authority}}/api/workflows/FulfillOrder/run
 Content-Type: text/plain
 
-Rating: 3. The app throws an InvalidOperationException when starting up.
+12345

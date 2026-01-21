@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,7 +40,12 @@ internal static class CoreAgentConfigurationExtensions
     /// <returns>The functions application builder for method chaining.</returns>
     internal static FunctionsApplicationBuilder RegisterWorkflowServices(this FunctionsApplicationBuilder builder)
     {
+        // Register FunctionsWorkflowRunner as a singleton
         builder.Services.TryAddSingleton<FunctionsWorkflowRunner>();
+
+        // Also register it as DurableWorkflowRunner so orchestrations can resolve it by base type
+        builder.Services.TryAddSingleton<DurableWorkflowRunner>(sp => sp.GetRequiredService<FunctionsWorkflowRunner>());
+
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>());
 
         return builder;

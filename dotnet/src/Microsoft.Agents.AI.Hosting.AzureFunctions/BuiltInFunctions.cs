@@ -75,10 +75,10 @@ internal static class BuiltInFunctions
         [DurableClient] DurableTaskClient client,
         FunctionContext context)
     {
-        var workflowName = context.FunctionDefinition.Name.Replace("http-", "");
-        var orchestrationFunctionName = $"dafx-{workflowName}";
+        var workflowName = context.FunctionDefinition.Name.Replace(HttpPrefix, string.Empty);
+        var orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
         var inputMessage = await req.ReadAsStringAsync();
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, new DurableWorkflowRunRequest { WorkflowName = workflowName, Input = inputMessage! }); //OrchFunction"); // dafx-MyTestWorkflow");
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, inputMessage);
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
         await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}. Orchestration instanceId: {instanceId}");
@@ -221,7 +221,7 @@ internal static class BuiltInFunctions
     }
 
 #pragma warning disable DURTASK001 // Durable analyzer complained
-    public static Task<List<string>> WorkflowRunnerOrchestrationAsync(TaskOrchestrationContext context, DurableWorkflowRunRequest input)
+    public static Task<DurableWorkflowRunResult> WorkflowRunnerOrchestrationAsync(TaskOrchestrationContext context, DurableWorkflowRunRequest input)
     {
         ArgumentNullException.ThrowIfNull(context);
 
@@ -236,7 +236,7 @@ internal static class BuiltInFunctions
 
         var workFlowName = input.WorkflowName;
 
-        return Task.FromResult(new List<string>() { workFlowName });
+        return Task.FromResult(new DurableWorkflowRunResult(workFlowName, workFlowName));
     }
 #pragma warning restore DURTASK001
 

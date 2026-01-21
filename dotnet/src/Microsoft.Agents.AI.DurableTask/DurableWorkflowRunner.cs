@@ -43,29 +43,32 @@ public class DurableWorkflowRunner
     /// Runs a workflow orchestration.
     /// </summary>
     /// <param name="context">The task orchestration context.</param>
-    /// <param name="request">The workflow run request containing workflow name and input.</param>
+    /// <param name="input">The workflow run input containing workflow name and input.</param>
     /// <param name="logger">The replay-safe logger for orchestration logging.</param>
-    /// <returns>A list containing the workflow execution result.</returns>
-    public async Task<List<string>> RunWorkflowOrchestrationAsync(
+    /// <returns>The result of the workflow execution.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the specified workflow is not found.</exception>
+    public async Task<string> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
-        DurableWorkflowRunRequest request,
+        string input,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(input);
 
-        if (!this.Options.Workflows.TryGetValue(request.WorkflowName, out Workflow? workflow))
+        string orchestrationName = context.Name;
+        string workflowName = WorkflowNamingHelper.ToWorkflowName(orchestrationName);
+        if (!this.Options.Workflows.TryGetValue(workflowName, out Workflow? workflow))
         {
-            throw new InvalidOperationException($"Workflow '{request.WorkflowName}' not found.");
+            throw new InvalidOperationException($"Workflow '{workflowName}' not found.");
         }
 
         logger.LogRunningWorkflow(workflow.Name);
 
-        string result = await this.ExecuteWorkflowLevelsAsync(context, workflow, request.Input, logger).ConfigureAwait(true);
+        string result = await this.ExecuteWorkflowLevelsAsync(context, workflow, input, logger).ConfigureAwait(true);
 
         await CleanupWorkflowStateAsync(context).ConfigureAwait(true);
 
-        return [result];
+        return result;
     }
 
     /// <summary>
@@ -87,34 +90,21 @@ public class DurableWorkflowRunner
     /// <returns>The extracted executor name.</returns>
     protected static string ParseExecutorName(string activityFunctionName)
     {
-        const string Prefix = "dafx-";
-
-        if (!activityFunctionName.StartsWith(Prefix, StringComparison.Ordinal))
+        if (!activityFunctionName.StartsWith(WorkflowNamingHelper.OrchestrationFunctionPrefix, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"Activity function name '{activityFunctionName}' does not start with '{Prefix}' prefix.");
+                $"Activity function name '{activityFunctionName}' does not start with '{WorkflowNamingHelper.OrchestrationFunctionPrefix}' prefix.");
         }
 
-        string executorName = activityFunctionName[Prefix.Length..];
+        string executorName = activityFunctionName[WorkflowNamingHelper.OrchestrationFunctionPrefix.Length..];
 
         if (string.IsNullOrEmpty(executorName))
         {
             throw new InvalidOperationException(
-                $"Activity function name '{activityFunctionName}' is not in the expected format '{Prefix}{{executorName}}'.");
+                $"Activity function name '{activityFunctionName}' is not in the expected format '{WorkflowNamingHelper.OrchestrationFunctionPrefix}{{executorName}}'.");
         }
 
         return executorName;
-    }
-
-    /// <summary>
-    /// Gets the base name from an executor ID by removing any GUID suffix.
-    /// </summary>
-    /// <param name="executorId">The executor ID.</param>
-    /// <returns>The base name without the GUID suffix.</returns>
-    protected static string GetBaseName(string executorId)
-    {
-        int underscoreIndex = executorId.IndexOf('_');
-        return underscoreIndex > 0 ? executorId[..underscoreIndex] : executorId;
     }
 
     /// <summary>
@@ -240,7 +230,8 @@ public class DurableWorkflowRunner
     {
         if (!executorInfo.IsAgenticExecutor)
         {
-            string triggerName = $"dafx-{GetBaseName(executorInfo.ExecutorId)}";
+            string executorName = WorkflowNamingHelper.GetExecutorName(executorInfo.ExecutorId);
+            string triggerName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
             return await context.CallActivityAsync<string>(triggerName, input).ConfigureAwait(true);
         }
 
@@ -253,7 +244,7 @@ public class DurableWorkflowRunner
         string input,
         ILogger logger)
     {
-        string agentName = GetBaseName(executorInfo.ExecutorId);
+        string agentName = WorkflowNamingHelper.GetExecutorName(executorInfo.ExecutorId);
         DurableAIAgent agent = context.GetAgent(agentName);
 
         if (agent is null)
