@@ -642,3 +642,51 @@ def test_agent_framework_to_agui_function_result_multiple_text_contents():
     agui_msg = messages[0]
     # Multiple items should return JSON array
     assert agui_msg["content"] == '["First result", "Second result"]'
+
+
+def test_agui_tool_approval_with_dataclass_modified_args():
+    """Test that agui_messages_to_agent_framework handles dataclass in modified args.
+
+    This tests the fix for json.dumps() serialization errors at line 274
+    when modified_args contains non-serializable objects via make_json_safe.
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class ModifiedData:
+        field1: str
+        field2: int
+
+    # Create AG-UI format messages that simulate tool approval flow
+    # where modified args could contain a dataclass after parsing
+
+    # First, an assistant message with a tool call (string arguments)
+    assistant_msg = {
+        "id": "msg-1",
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-test",
+                "type": "function",
+                "function": {
+                    "name": "update_state",
+                    "arguments": '{"data": "original"}',  # String args
+                },
+            }
+        ],
+    }
+
+    # Then a user approval message (the approval path will merge modified args)
+    approval_msg = {
+        "id": "msg-2",
+        "role": "user",
+        "content": '{"approved": true}',
+        "toolCallId": "call-test",
+    }
+
+    # This should NOT raise TypeError
+    result = agui_messages_to_agent_framework([assistant_msg, approval_msg])
+
+    # Should have processed both messages without error
+    assert len(result) == 2

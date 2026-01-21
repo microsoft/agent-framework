@@ -17,6 +17,7 @@ from ._utils import (
     AGUI_TO_FRAMEWORK_ROLE,
     FRAMEWORK_TO_AGUI_ROLE,
     get_role_value,
+    make_json_safe,
     normalize_agui_role,
     safe_json_parse,
 )
@@ -265,7 +266,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 function_payload_dict = cast(dict[str, Any], function_payload)
                 existing_args = function_payload_dict.get("arguments")
                 if isinstance(existing_args, str):
-                    function_payload_dict["arguments"] = json.dumps(modified_args)
+                    function_payload_dict["arguments"] = json.dumps(make_json_safe(modified_args))
                 else:
                     function_payload_dict["arguments"] = modified_args
                 return
@@ -377,7 +378,9 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 # a proper FunctionApprovalResponseContent. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
                 accepted = parsed.get("accepted", False) if parsed is not None else False
-                approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
+                approval_payload_text = (
+                    result_content if isinstance(result_content, str) else json.dumps(make_json_safe(parsed))
+                )
 
                 # Log the full approval payload to debug modified arguments
                 import logging
@@ -454,7 +457,9 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
                         # Keep the original tool call and AG-UI snapshot in sync with approved args.
                         updated_args = (
-                            json.dumps(merged_args) if isinstance(matching_func_call.arguments, str) else merged_args
+                            json.dumps(make_json_safe(merged_args))
+                            if isinstance(matching_func_call.arguments, str)
+                            else merged_args
                         )
                         matching_func_call.arguments = updated_args
                         _update_tool_call_arguments(messages, str(approval_call_id), merged_args)
@@ -462,7 +467,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         func_call_for_approval = Content.from_function_call(
                             call_id=matching_func_call.call_id,  # type: ignore[arg-type]
                             name=matching_func_call.name,  # type: ignore[arg-type]
-                            arguments=json.dumps(filtered_args),
+                            arguments=json.dumps(make_json_safe(filtered_args)),
                         )
                         logger.info(f"Using modified arguments from approval: {filtered_args}")
                     else:
@@ -767,7 +772,7 @@ def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dic
                 if arguments is None:
                     function_payload_dict["arguments"] = ""
                 elif not isinstance(arguments, str):
-                    function_payload_dict["arguments"] = json.dumps(arguments)
+                    function_payload_dict["arguments"] = json.dumps(make_json_safe(arguments))
 
         # Normalize tool_call_id to toolCallId for tool messages
         normalized_msg["role"] = normalize_agui_role(normalized_msg.get("role"))

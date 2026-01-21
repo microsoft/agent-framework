@@ -870,3 +870,60 @@ async def test_response_format_skip_text_content() -> None:
 
     # Test passes if no errors occur - verifies response_format code path
     assert len(events) > 0
+
+
+async def test_human_in_the_loop_handles_none_additional_properties() -> None:
+    """Test that HumanInTheLoopOrchestrator handles None additional_properties gracefully.
+
+    This test ensures the null safety fix for msg.additional_properties.get() works.
+    """
+    orchestrator = HumanInTheLoopOrchestrator()
+
+    # Create a message with None additional_properties
+    msg = ChatMessage(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+    )
+    # Explicitly set additional_properties to None
+    msg.additional_properties = None  # type: ignore[assignment]
+
+    agent = StubAgent()  # Use default StubAgent
+    config = AgentConfig()
+    context = TestExecutionContext(
+        input_data={"messages": [{"role": "user", "content": "Hello"}]},
+        agent=agent,
+        config=config,
+    )
+    context.set_messages([msg])
+
+    # can_handle should return False (not crash) when additional_properties is None
+    result = orchestrator.can_handle(context)
+    assert result is False
+
+
+async def test_default_orchestrator_handles_none_default_options() -> None:
+    """Test that DefaultOrchestrator handles None default_options gracefully.
+
+    This test ensures the null safety fix for context.agent.default_options.get() works.
+    """
+    orchestrator = DefaultOrchestrator()
+
+    # Use StubAgent with default_options set to None
+    agent = StubAgent(default_options=None)
+    config = AgentConfig()
+    context = TestExecutionContext(
+        input_data={"messages": [{"role": "user", "content": "Hello"}]},
+        agent=agent,
+        config=config,
+    )
+
+    # This should NOT crash when accessing default_options.get()
+    events: list[Any] = []
+    async for event in orchestrator.run(context):
+        events.append(event)
+        # Just check a few events to verify it's working
+        if len(events) > 3:
+            break
+
+    # Test passes if no AttributeError occurred
+    assert True

@@ -12,7 +12,7 @@ from agent_framework import (
     Content,
 )
 
-from .._utils import get_role_value, safe_json_parse
+from .._utils import get_role_value, make_json_safe, safe_json_parse
 
 if TYPE_CHECKING:
     from .._events import AgentFrameworkEventBridge
@@ -252,7 +252,7 @@ def build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any
         return {}
     safe_metadata: dict[str, Any] = {}
     for key, value in thread_metadata.items():
-        value_str = value if isinstance(value, str) else json.dumps(value)
+        value_str = value if isinstance(value, str) else json.dumps(make_json_safe(value))
         if len(value_str) > 512:
             value_str = value_str[:512]
         safe_metadata[key] = value_str

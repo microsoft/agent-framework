@@ -49,3 +49,57 @@ def test_state_context_only_when_new_user_turn() -> None:
     assert isinstance(message, ChatMessage)
     assert message.contents[0].type == "text"
     assert "Current state of the application" in message.contents[0].text
+
+
+def test_state_manager_with_dataclass_in_state() -> None:
+    """Test that state containing dataclasses can be serialized without crashing.
+
+    This test ensures the fix for JSON serialization errors when state
+    contains dataclass or other non-JSON-serializable objects.
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class UserData:
+        name: str
+        age: int
+
+    state_manager = StateManager(
+        state_schema={"user": {"type": "object"}},
+        predict_state_config=None,
+        require_confirmation=True,
+    )
+    # Initialize with a dataclass object in the state
+    state_manager.initialize({"user": UserData(name="Alice", age=30)})
+
+    # This should NOT raise TypeError when generating the context message
+    message = state_manager.state_context_message(is_new_user_turn=True, conversation_has_tool_calls=False)
+
+    assert message is not None
+    assert isinstance(message, ChatMessage)
+    # The dataclass should be serialized to JSON in the message
+    assert "Alice" in message.contents[0].text
+    assert "30" in message.contents[0].text
+
+
+def test_state_manager_with_pydantic_in_state() -> None:
+    """Test that state containing Pydantic models can be serialized without crashing."""
+    from pydantic import BaseModel
+
+    class UserModel(BaseModel):
+        email: str
+        active: bool
+
+    state_manager = StateManager(
+        state_schema={"user": {"type": "object"}},
+        predict_state_config=None,
+        require_confirmation=True,
+    )
+    # Initialize with a Pydantic model in the state
+    state_manager.initialize({"user": UserModel(email="test@example.com", active=True)})
+
+    # This should NOT raise TypeError
+    message = state_manager.state_context_message(is_new_user_turn=True, conversation_has_tool_calls=False)
+
+    assert message is not None
+    assert "test@example.com" in message.contents[0].text

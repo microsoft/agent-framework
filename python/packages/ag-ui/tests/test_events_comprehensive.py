@@ -825,3 +825,93 @@ async def test_tool_result_with_model_dump_objects():
     assert events[1].type == "TOOL_CALL_RESULT"
     # Should be properly serialized JSON array without double escaping
     assert events[1].content == '[{"value": 1}, {"value": 2}]'
+
+
+async def test_function_call_with_dataclass_arguments():
+    """Test FunctionCallContent with dataclass arguments is serialized correctly.
+
+    This test verifies the fix for the AG-UI JSON serialization error when
+    HandoffAgentUserRequest (a dataclass) is passed as FunctionCallContent.arguments.
+    """
+    from dataclasses import dataclass
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    @dataclass
+    class TestRequest:
+        field1: str
+        field2: int
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # FunctionCallContent with a dataclass as arguments (not a string)
+    update = AgentResponseUpdate(
+        contents=[
+            Content.from_function_call(
+                name="request_info",
+                call_id="call_dataclass",
+                arguments=TestRequest(field1="value", field2=42),
+            )
+        ]
+    )
+
+    events = await bridge.from_agent_run_update(update)
+
+    # Should have ToolCallStartEvent and ToolCallArgsEvent
+    tool_args_events = [e for e in events if e.type == "TOOL_CALL_ARGS"]
+    assert len(tool_args_events) == 1
+
+    # Verify the delta is valid JSON
+    delta = tool_args_events[0].delta
+    parsed = json.loads(delta)
+    assert parsed == {"field1": "value", "field2": 42}
+
+
+async def test_function_call_with_nested_dataclass_arguments():
+    """Test FunctionCallContent with nested dataclass arguments is serialized correctly.
+
+    This test covers the scenario where HandoffAgentUserRequest contains an AgentResponse
+    with nested content objects.
+    """
+    from dataclasses import dataclass
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    @dataclass
+    class InnerContent:
+        text: str
+
+    @dataclass
+    class AgentResponseMock:
+        contents: list[InnerContent]
+
+    @dataclass
+    class HandoffRequest:
+        agent_response: AgentResponseMock
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # Simulate a HandoffAgentUserRequest-like structure
+    update = AgentResponseUpdate(
+        contents=[
+            Content.from_function_call(
+                name="request_info",
+                call_id="call_nested",
+                arguments=HandoffRequest(
+                    agent_response=AgentResponseMock(contents=[InnerContent(text="Hello from agent")])
+                ),
+            )
+        ]
+    )
+
+    events = await bridge.from_agent_run_update(update)
+
+    # Should have ToolCallStartEvent and ToolCallArgsEvent
+    tool_args_events = [e for e in events if e.type == "TOOL_CALL_ARGS"]
+    assert len(tool_args_events) == 1
+
+    # Verify the delta is valid JSON and contains nested structure
+    delta = tool_args_events[0].delta
+    parsed = json.loads(delta)
+    assert "agent_response" in parsed
+    assert parsed["agent_response"]["contents"] == [{"text": "Hello from agent"}]
