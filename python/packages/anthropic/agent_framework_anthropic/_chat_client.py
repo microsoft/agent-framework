@@ -454,17 +454,34 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             *options.get("additional_beta_flags", []),
         }
 
-    def _prepare_response_format(self, response_format: type[BaseModel]) -> dict[str, Any]:
-        """Prepare the output_format parameter from a Pydantic model for structured output.
+    def _prepare_response_format(self, response_format: type[BaseModel] | dict[str, Any]) -> dict[str, Any]:
+        """Prepare the output_format parameter for structured output.
 
         Args:
-            response_format: The Pydantic model class to use as the response format.
+            response_format: Either a Pydantic model class or a dict with the schema specification.
+                If a dict, it can be in OpenAI-style format with "json_schema" key,
+                or direct format with "schema" key, or the raw schema dict itself.
 
         Returns:
             A dictionary representing the output_format for Anthropic's structured outputs.
         """
+        if isinstance(response_format, dict):
+            if "json_schema" in response_format:
+                schema = response_format["json_schema"].get("schema", {})
+            elif "schema" in response_format:
+                schema = response_format["schema"]
+            else:
+                schema = response_format
+
+            if isinstance(schema, dict):
+                schema["additionalProperties"] = False
+
+            return {
+                "type": "json_schema",
+                "schema": schema,
+            }
+
         schema = response_format.model_json_schema()
-        # Ensure additionalProperties is false as required by Anthropic
         schema["additionalProperties"] = False
 
         return {
