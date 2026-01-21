@@ -148,9 +148,7 @@ def decode_checkpoint_value(value: Any) -> Any:
                 if cls is not None:
                     # Verify the class actually supports the model protocol
                     if not _class_supports_model_protocol(cls):
-                        logger.debug(
-                            f"Class {type_key} does not support model protocol; returning raw value"
-                        )
+                        logger.debug(f"Class {type_key} does not support model protocol; returning raw value")
                         return decoded_payload
                     if strategy == "to_dict" and hasattr(cls, "from_dict"):
                         with contextlib.suppress(Exception):
@@ -177,9 +175,7 @@ def decode_checkpoint_value(value: Any) -> Any:
                     cls_dc: Any = getattr(module, class_name)
                     # Verify the class is actually a dataclass type (not an instance)
                     if not isinstance(cls_dc, type) or not is_dataclass(cls_dc):
-                        logger.debug(
-                            f"Class {type_key_dc} is not a dataclass type; returning raw value"
-                        )
+                        logger.debug(f"Class {type_key_dc} is not a dataclass type; returning raw value")
                         return decoded_raw
                     constructed = _instantiate_checkpoint_dataclass(cls_dc, decoded_raw)
                     if constructed is not None:
