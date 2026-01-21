@@ -608,14 +608,12 @@ class AgentFunctionApp(DFAppBase):
 
         # Create or parse session ID
         if thread_id and isinstance(thread_id, str) and thread_id.strip():
-            try:
-                session_id = AgentSessionId.parse(thread_id)
-            except ValueError as e:
-                logger.warning(
-                    "Failed to parse AgentSessionId from thread_id '%s': %s. Falling back to new session ID.",
-                    thread_id,
-                    e,
-                )
+            # If thread_id is in @name@key format, extract only the key portion
+            if thread_id.startswith("@") and "@" in thread_id[1:]:
+                key = thread_id[1:].split("@", 1)[1]
+                session_id = AgentSessionId(name=agent_name, key=key)
+            else:
+                # Use thread_id as-is for the key
                 session_id = AgentSessionId(name=agent_name, key=thread_id)
         else:
             # Generate new session ID
