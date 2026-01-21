@@ -1000,7 +1000,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     # since it triggers on `if content.name:`. The initial tool_use event already
                     # provides the name, so deltas should only carry incremental arguments.
                     # This matches OpenAI's behavior where streaming chunks have name="".
-                    call_id, name = self._last_call_id_name if self._last_call_id_name else ("", "")
+                    call_id, _name = self._last_call_id_name if self._last_call_id_name else ("", "")
                     contents.append(
                         Content.from_function_call(
                             call_id=call_id,
