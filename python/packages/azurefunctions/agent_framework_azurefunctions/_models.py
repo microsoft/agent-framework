@@ -109,26 +109,34 @@ class AgentSessionId:
         return f"AgentSessionId(name='{self.name}', key='{self.key}')"
 
     @staticmethod
-    def parse(session_id_string: str) -> AgentSessionId:
+    def parse(session_id_string: str, agent_name: str | None = None) -> AgentSessionId:
         """Parses a string representation of an agent session ID.
 
         Args:
-            session_id_string: A string in the form @name@key
+            session_id_string: A string in the form @name@key, or a plain key string
+                when agent_name is provided.
+            agent_name: Optional agent name to use instead of parsing from the string.
+                If provided, only the key portion is extracted from session_id_string
+                (for @name@key format) or the entire string is used as the key
+                (for plain strings).
 
         Returns:
             AgentSessionId instance
 
         Raises:
-            ValueError: If the string format is invalid
+            ValueError: If the string format is invalid and agent_name is not provided
         """
-        if not session_id_string.startswith("@"):
-            raise ValueError(f"Invalid agent session ID format: {session_id_string}")
+        # Check if string is in @name@key format
+        if session_id_string.startswith("@") and "@" in session_id_string[1:]:
+            parts = session_id_string[1:].split("@", 1)
+            name = agent_name if agent_name is not None else parts[0]
+            return AgentSessionId(name=name, key=parts[1])
 
-        parts = session_id_string[1:].split("@", 1)
-        if len(parts) != 2:
-            raise ValueError(f"Invalid agent session ID format: {session_id_string}")
+        # Plain string format - only valid when agent_name is provided
+        if agent_name is not None:
+            return AgentSessionId(name=agent_name, key=session_id_string)
 
-        return AgentSessionId(name=parts[0], key=parts[1])
+        raise ValueError(f"Invalid agent session ID format: {session_id_string}")
 
 
 class DurableAgentThread(AgentThread):
