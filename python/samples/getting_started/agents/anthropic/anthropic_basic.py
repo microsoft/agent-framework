@@ -27,8 +27,7 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = AnthropicClient(
-    ).as_agent(
+    agent = AnthropicClient().as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -44,8 +43,7 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = AnthropicClient(
-    ).as_agent(
+    agent = AnthropicClient().as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -63,8 +61,8 @@ async def streaming_example() -> None:
 async def main() -> None:
     print("=== Anthropic Example ===")
 
-    await streaming_example()
     await non_streaming_example()
+    await streaming_example()
 
 
 if __name__ == "__main__":

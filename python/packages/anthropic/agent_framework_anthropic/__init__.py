@@ -3,6 +3,7 @@
 import importlib.metadata
 
 from ._chat_client import AnthropicChatOptions, AnthropicClient
+from ._shared import AnthropicBackend, AnthropicSettings
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,6 +12,8 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "AnthropicChatOptions",
+    "AnthropicBackend",
     "AnthropicClient",
+    "AnthropicSettings",
     "__version__",
 ]

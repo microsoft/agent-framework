@@ -287,6 +287,44 @@ The following mapping will be done, between clients, parameters and environment 
 
 The Precedence column indicates the order of precedence when multiple environment variables are set, for example if both `OPENAI_API_KEY` and `AZURE_OPENAI_API_KEY` are set, the `OPENAI_API_KEY` will be used and we assume a OpenAI Backend is wanted. If a `api_key` is passed as a parameter in that case, then we will look at the rest of the environment variables to determine the backend, so if `chat_deployment_name` is set and `chat_model_id` is not, we assume Azure OpenAI is wanted, otherwise OpenAI. As part of this change we will also remove the Pydantic Settings usage, in favor of self-built environment variable resolution, as that gives us more control over the precedence and mapping of environment variables to parameters. Including the notion of precedence between environment variables for different backends.
 
+### Explicit Backend Selection
+
+To handle scenarios where multiple sets of credentials are present and the user wants to override the default precedence, an optional `backend` parameter is added. This parameter has no default value and maps to an environment variable per client:
+
+| AF Client | Env Var |
+|---|---|
+| OpenAIChatClient | OPENAI_CHAT_CLIENT_BACKEND |
+| OpenAIResponsesClient | OPENAI_RESPONSES_CLIENT_BACKEND |
+| OpenAIAssistantsClient | OPENAI_ASSISTANTS_CLIENT_BACKEND |
+| AnthropicChatClient | ANTHROPIC_CHAT_CLIENT_BACKEND |
+
+The `backend` parameter accepts the following values:
+
+| AF Client | Backend Values |
+|---|---|
+| OpenAI* | `Literal["openai", "azure"]` |
+| AnthropicChatClient | `Literal["anthropic", "foundry", "vertex", "bedrock"]` |
+
+**Resolution logic:**
+1. If `backend` parameter is explicitly passed, use that backend and only resolve environment variables for that backend.
+2. If `backend` parameter is not passed, check the corresponding `*_BACKEND` environment variable.
+3. If neither is set, fall back to the precedence rules.
+
+**Example usage:**
+```python
+# User has both OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT set
+# Without backend param, precedence would select OpenAI
+
+# Explicitly select Azure backend - only AZURE_* env vars are used
+client = OpenAIResponsesClient(backend="azure")
+
+# Or set via environment variable
+# export OPENAI_RESPONSES_CLIENT_BACKEND=azure
+client = OpenAIResponsesClient()  # Will use Azure backend
+```
+
+This approach ensures that when users have credentials for multiple backends configured (e.g., in a shared development environment), they can explicitly control which backend is used without needing to modify or unset environment variables.
+
 Example init code:
 ```python
 
@@ -295,6 +333,7 @@ class OpenAIChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["openai"],
         api_key: str | Callable[[], Awaitable[str]],
         organization: str | None = None,
         project: str | None = None,
@@ -304,7 +343,6 @@ class OpenAIChatClient(BaseChatClient):
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        base_url: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -316,6 +354,7 @@ class OpenAIChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["azure"],
         api_key: str | Callable[[], Awaitable[str]] | None = None,
         deployment_name: str | None = None,
         endpoint: str | None = None,
@@ -327,7 +366,6 @@ class OpenAIChatClient(BaseChatClient):
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        base_url: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -338,6 +376,7 @@ class OpenAIChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["openai", "azure"] | None = None,
         api_key: str | Callable[[], Awaitable[str]] | None = None,
         organization: str | None = None,
         project: str | None = None,
@@ -353,7 +392,6 @@ class OpenAIChatClient(BaseChatClient):
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        base_url: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -369,6 +407,7 @@ class AnthropicChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["anthropic"],
         model_id: str | None = None,
         api_key: str,
         base_url: str | Url | None = None,
@@ -386,6 +425,7 @@ class AnthropicChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["foundry"],
         model_id: str | None = None,
         api_key: str | None = None,
         ad_token_provider: AzureADTokenProvider | None = None,
@@ -405,6 +445,7 @@ class AnthropicChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["vertex"],
         model_id: str | None = None,
         access_token: str | None = None,
         google_credentials: google.auth.credentials.Credentials | None = None,
@@ -425,6 +466,7 @@ class AnthropicChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["bedrock"],
         model_id: str | None = None,
         aws_access_key: str | None = None,
         aws_secret_key: str | None = None,
@@ -445,6 +487,7 @@ class AnthropicChatClient(BaseChatClient):
     def __init__(
         self,
         *,
+        backend: Literal["anthropic", "foundry", "vertex", "bedrock"] | None = None,
         model_id: str | None = None,
         # Anthropic backend parameters
         api_key: str | None = None,
