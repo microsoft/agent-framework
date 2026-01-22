@@ -31,7 +31,8 @@ public sealed class GithubCopilotAgentThread : AgentThread
     internal GithubCopilotAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         // Try both SessionId (PascalCase) and sessionId (camelCase) for compatibility
-#pragma warning disable CA1507 // Use nameof to express symbol names - Need to check both casings for compatibility
+        // The JSON serialization uses camelCase by default, but we check both for robustness
+#pragma warning disable CA1507 // Use nameof to express symbol names - Need literal strings to check both PascalCase and camelCase variants
         if (serializedThread.TryGetProperty("SessionId", out JsonElement sessionIdElement) ||
             serializedThread.TryGetProperty("sessionId", out sessionIdElement))
 #pragma warning restore CA1507
