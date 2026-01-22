@@ -172,7 +172,7 @@ public class LocalShellExecutor : ShellExecutor
         }
     }
 
-    private static (string shell, string args) GetShellAndArgs(
+    private static (string Shell, string Args) GetShellAndArgs(
         string command, string? shellOverride)
     {
         if (!string.IsNullOrEmpty(shellOverride))

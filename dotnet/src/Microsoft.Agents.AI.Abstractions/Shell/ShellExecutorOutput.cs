@@ -1,14 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Raw output from shell executor (simple data class).
+/// Raw output from shell executor.
 /// </summary>
-/// <remarks>
-/// This class is used internally by <see cref="ShellExecutor"/> implementations
-/// to return raw data. <see cref="ShellTool"/> converts these to <see cref="ShellCommandOutput"/>.
-/// </remarks>
 public sealed class ShellExecutorOutput
 {
     /// <summary>
