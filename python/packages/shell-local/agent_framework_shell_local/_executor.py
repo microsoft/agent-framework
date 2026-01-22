@@ -15,7 +15,19 @@ from agent_framework import (
 
 
 class LocalShellExecutor(ShellExecutor):
-    """Local shell command executor using asyncio subprocess."""
+    r"""Local shell command executor using asyncio subprocess.
+
+    Example:
+        .. code-block:: python
+
+            from agent_framework import ShellTool
+            from agent_framework.shell_local import LocalShellExecutor
+
+            executor = LocalShellExecutor()
+            shell = ShellTool(executor=executor)
+            result = await shell.execute(["echo hello"])
+            print(result.outputs[0]["stdout"])  # "hello\\n"
+    """
 
     def __init__(
         self,
