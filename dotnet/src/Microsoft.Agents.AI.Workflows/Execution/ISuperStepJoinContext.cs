@@ -13,6 +13,7 @@ internal interface ISuperStepJoinContext
 
     ValueTask ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default);
     ValueTask SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellationToken = default);
+    ValueTask YieldOutputAsync<TOutput>(string senderId, [DisallowNull] TOutput output, CancellationToken cancellationToken = default);
 
     ValueTask<string> AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken = default);
     ValueTask<bool> DetachSuperstepAsync(string id);

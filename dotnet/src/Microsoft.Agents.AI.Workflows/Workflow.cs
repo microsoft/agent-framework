@@ -166,9 +166,9 @@ public class Workflow
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
             Justification = "Does not exist in NetFx 4.7.2")]
-    internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
+    internal async ValueTask ReleaseOwnershipAsync(object ownerToken, object? targetOwnerToken)
     {
-        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken) ??
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, targetOwnerToken, ownerToken) ??
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
 
         if (!ReferenceEquals(originalToken, ownerToken))

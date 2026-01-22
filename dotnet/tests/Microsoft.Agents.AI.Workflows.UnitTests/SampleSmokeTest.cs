@@ -371,6 +371,72 @@ public class SampleSmokeTest
 
         Action<string> CreateValidator(string expected) => actual => actual.Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step13Async(ExecutionEnvironment environment)
+    {
+        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        CheckpointInfo? resumeFrom = null;
+
+        await RunAndValidateAsync(1);
+
+        // this should crash before fix
+        await RunAndValidateAsync(2);
+
+        async ValueTask RunAndValidateAsync(int step)
+        {
+            using StringWriter writer = new();
+            string input = $"[{step}] Hello, World!";
+
+            resumeFrom = await Step13EntryPoint.RunAsync(writer, input, executionEnvironment, checkpointManager, resumeFrom);
+
+            string result = writer.ToString();
+            string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+            const string ExpectedSource = "EchoSubworkflow";
+            Assert.Collection(lines,
+                line => Assert.Contains($"{ExpectedSource}: {input}", line)
+            );
+        }
+    }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step13aAsync(ExecutionEnvironment environment)
+    {
+        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
+        AgentThread? thread = null;
+
+        await RunAndValidateAsync(1);
+
+        // this should crash before fix
+        await RunAndValidateAsync(2);
+
+        async ValueTask RunAndValidateAsync(int step)
+        {
+            using StringWriter writer = new();
+            string input = $"[{step}] Hello, World!";
+
+            thread = await Step13EntryPoint.RunAsAgentAsync(writer, input, executionEnvironment, thread);
+
+            string result = writer.ToString();
+            string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+            // We expect to get the message that was passed in directly; since we are passing it in as a string, there is no associated
+            // author information. The ExpectedSource is empty string.
+            const string ExpectedSource = "";
+            Assert.Collection(lines,
+                line => Assert.Contains($"{ExpectedSource}: {input}", line)
+            );
+        }
+    }
 }
 
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>
