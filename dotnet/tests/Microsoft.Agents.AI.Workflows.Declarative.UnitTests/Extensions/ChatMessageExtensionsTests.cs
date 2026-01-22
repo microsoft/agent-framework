@@ -686,11 +686,11 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Theory]
-    [InlineData("https://example.com/image.png")]
-    [InlineData("https://example.com/photo.jpg")]
-    [InlineData("https://example.com/animation.gif")]
-    [InlineData("http://test.com/picture.webp")]
-    public void ToContentWithImageHttpUri_UsesGenericMimeType(string uri)
+    [InlineData("https://example.com/image.png", "image/png")]
+    [InlineData("https://example.com/photo.jpg", "image/jpeg")]
+    [InlineData("https://example.com/animation.gif", "image/gif")]
+    [InlineData("http://test.com/picture.webp", "image/webp")]
+    public void ToContentWithImageHttpUri_InfersMimeTypeFromExtension(string uri, string expectedMediaType)
     {
         // Arrange & Act
         AIContent? result = AgentMessageContentType.ImageUrl.ToContent(uri);
@@ -698,8 +698,7 @@ public sealed class ChatMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         UriContent uriContent = Assert.IsType<UriContent>(result);
-        // ChatMessageExtensions.GetImageContent uses "image/*" for all non-data URIs
-        Assert.Equal("image/*", uriContent.MediaType);
+        Assert.Equal(expectedMediaType, uriContent.MediaType);
         Assert.Equal(uri, uriContent.Uri?.ToString());
     }
 
@@ -722,7 +721,7 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
-    public void ToChatMessageFromRecordWithImageHttpUri_UsesGenericMimeType()
+    public void ToChatMessageFromRecordWithImageHttpUri_InfersMimeTypeFromExtension()
     {
         // Arrange
         const string uri = "https://example.com/test.png";
@@ -736,6 +735,6 @@ public sealed class ChatMessageExtensionsTests
         Assert.NotNull(result);
         AIContent content = Assert.Single(result.Contents);
         UriContent uriContent = Assert.IsType<UriContent>(content);
-        Assert.Equal("image/*", uriContent.MediaType);
+        Assert.Equal("image/png", uriContent.MediaType);
     }
 }

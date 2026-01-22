@@ -174,10 +174,22 @@ internal static class ChatMessageExtensions
         }
     }
 
+    private static string ImageUriToMediaType(string uri)
+    {
+        return
+            uri.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" :
+            uri.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" :
+            uri.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" :
+            uri.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) ? "image/gif" :
+            uri.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase) ? "image/bmp" :
+            uri.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp" :
+            "image/*";
+    }
+
     private static AIContent GetImageContent(string uriText) =>
         uriText.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?
             new DataContent(uriText) :
-            new UriContent(uriText, "image/*");
+            new UriContent(uriText, ImageUriToMediaType(uriText));
 
     private static TValue? GetProperty<TValue>(this RecordDataValue record, string name)
         where TValue : DataValue
