@@ -187,6 +187,15 @@ _UNIX_PRIVILEGE_PATTERNS: list[CommandPattern] = [
     re.compile(r"\b(sh|bash|dash|zsh|ksh|csh|tcsh)\s+(-\w+\s+)*-c\s+['\"].*\b(sudo|su|doas|pkexec)\b"),
     re.compile(r"\beval\s+['\"].*\b(sudo|su|doas|pkexec)\b"),
     re.compile(r"\bexec\s+(sudo|su|doas|pkexec)\b"),
+    # Command substitution patterns
+    re.compile(r"\$\(.*\b(sudo|su|doas|pkexec)\b"),
+    re.compile(r"`.*\b(sudo|su|doas|pkexec)\b"),
+    # Environment variable prefix
+    re.compile(r"^\w+=\S*\s+sudo\s"),
+    # Utility wrappers
+    re.compile(r"\b(env|nohup|time)\s+sudo\b"),
+    re.compile(r"\bxargs\s+.*\bsudo\b"),
+    re.compile(r"\bfind\b.*-exec\s+sudo\b"),
 ]
 
 # Windows privilege escalation commands
@@ -217,6 +226,12 @@ _DANGEROUS_PATTERNS: list[CommandPattern] = [
     # Permission abuse
     re.compile(r"chmod\s+777\s+/\s*$"),
     re.compile(r"icacls\s+.*\s+/grant\s+Everyone:F"),
+    # System control commands
+    re.compile(r"^(shutdown|poweroff|reboot|halt)\b"),
+    re.compile(r"^init\s+0"),
+    # Remote script execution (pipe to shell)
+    re.compile(r"\bcurl\b.*\|\s*(ba)?sh"),
+    re.compile(r"\bwget\b.*-O\s*-.*\|\s*(ba)?sh"),
 ]
 
 # Path extraction pattern for detecting paths in commands
@@ -402,7 +417,10 @@ class ShellTool(BaseTool):
         )
 
     def _validate_paths(self, command: str) -> _ValidationResult:
-        """Check if command accesses allowed paths."""
+        """Check if command accesses allowed paths.
+
+        Note: Path validation is advisory. Sandboxed execution is recommended for untrusted input.
+        """
         paths = self._extract_paths(command)
         if not paths:
             return _ValidationResult(is_valid=True)
