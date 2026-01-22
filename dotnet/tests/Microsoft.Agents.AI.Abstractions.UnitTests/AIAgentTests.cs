@@ -364,6 +364,74 @@ public class AIAgentTests
 
     #endregion
 
+    #region Name and Description Property Tests
+
+    /// <summary>
+    /// Verify that Name property returns the value from the derived class.
+    /// </summary>
+    [Fact]
+    public void Name_ReturnsValueFromDerivedClass()
+    {
+        // Arrange
+        var agent = new MockAgentWithName("TestAgentName", "TestAgentDescription");
+
+        // Act
+        string? name = agent.Name;
+
+        // Assert
+        Assert.Equal("TestAgentName", name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns the value from the derived class.
+    /// </summary>
+    [Fact]
+    public void Description_ReturnsValueFromDerivedClass()
+    {
+        // Arrange
+        var agent = new MockAgentWithName("TestAgentName", "TestAgentDescription");
+
+        // Act
+        string? description = agent.Description;
+
+        // Assert
+        Assert.Equal("TestAgentDescription", description);
+    }
+
+    /// <summary>
+    /// Verify that Name property returns null when not overridden.
+    /// </summary>
+    [Fact]
+    public void Name_ReturnsNullByDefault()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        string? name = agent.Name;
+
+        // Assert
+        Assert.Null(name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns null when not overridden.
+    /// </summary>
+    [Fact]
+    public void Description_ReturnsNullByDefault()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        string? description = agent.Description;
+
+        // Assert
+        Assert.Null(description);
+    }
+
+    #endregion
+
     /// <summary>
     /// Typed mock thread.
     /// </summary>
@@ -377,6 +445,41 @@ public class AIAgentTests
         }
 
         protected override string? IdCore { get; }
+
+        public override async ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+    }
+
+    private sealed class MockAgentWithName : AIAgent
+    {
+        private readonly string? _name;
+        private readonly string? _description;
+
+        public MockAgentWithName(string? name, string? description)
+        {
+            this._name = name;
+            this._description = description;
+        }
+
+        public override string? Name => this._name;
+        public override string? Description => this._description;
 
         public override async ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();

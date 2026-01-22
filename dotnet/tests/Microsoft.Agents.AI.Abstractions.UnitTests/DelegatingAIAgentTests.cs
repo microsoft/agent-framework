@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -143,6 +144,26 @@ public class DelegatingAIAgentTests
         // Assert
         Assert.Same(this._testThread, thread);
         this._innerAgentMock.Verify(x => x.GetNewThreadAsync(), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that DeserializeThreadAsync delegates to inner agent.
+    /// </summary>
+    [Fact]
+    public async Task DeserializeThreadAsync_DelegatesToInnerAgentAsync()
+    {
+        // Arrange
+        var serializedThread = JsonSerializer.SerializeToElement("test-thread-id", TestJsonSerializerContext.Default.String);
+        this._innerAgentMock
+            .Setup(x => x.DeserializeThreadAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(this._testThread);
+
+        // Act
+        var thread = await this._delegatingAgent.DeserializeThreadAsync(serializedThread);
+
+        // Assert
+        Assert.Same(this._testThread, thread);
+        this._innerAgentMock.Verify(x => x.DeserializeThreadAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>

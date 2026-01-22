@@ -614,6 +614,42 @@ public class InMemoryChatMessageStoreTests
         reducerMock.Verify(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task InvokedAsync_WithException_DoesNotAddMessagesAsync()
+    {
+        // Arrange
+        var store = new InMemoryChatMessageStore();
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Hello")
+        };
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, "Hi there!")
+        };
+        var context = new ChatMessageStore.InvokedContext(requestMessages, [])
+        {
+            ResponseMessages = responseMessages,
+            InvokeException = new InvalidOperationException("Test exception")
+        };
+
+        // Act
+        await store.InvokedAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Empty(store);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_WithNullContext_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var store = new InMemoryChatMessageStore();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(() => store.InvokingAsync(null!, CancellationToken.None).AsTask());
+    }
+
     public class TestAIContent(string testData) : AIContent
     {
         public string TestData => testData;
