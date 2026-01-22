@@ -1,0 +1,65 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Source generators MUST target netstandard2.0 only -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+
+    <!-- Enable C# 9 records support on netstandard2.0 -->
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+
+    <!-- Source generator specific settings -->
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+
+    <!-- Don't include build output in lib folder -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+
+    <!-- Suppress nullable warnings for netstandard2.0 -->
+    <NoWarn>$(NoWarn);nullable</NoWarn>
+    <!-- Suppress analyzer release tracking requirement for source generators -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- Suppress NU5128 warning about dependencies not matching target framework -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <VersionSuffix>preview</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Workflows Source Generators</Title>
+    <Description>Provides Roslyn source generators for Microsoft Agent Framework Workflows, enabling compile-time route configuration for executors.</Description>
+    <DevelopmentDependency>true</DevelopmentDependency>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Use Roslyn 4.4.0 - minimum version for ForAttributeWithMetadataName API.
+         Corresponds to .NET 7 SDK / VS 2022 17.4+.
+         Higher versions would require newer SDKs, breaking users on older versions.
+         See: https://andrewlock.net/creating-a-source-generator-part-9-avoiding-performance-pitfalls-in-incremental-generators/ -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="4.4.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="3.3.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Include the analyzer DLL using the correct target framework path -->
+    <None Include="$(OutputPath)$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)$(AssemblyName).pdb" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+  <!-- Ensure the files exist before packing -->
+  <Target Name="EnsureAnalyzerAssembliesExist" BeforeTargets="GenerateNuspec">
+    <Error Condition="!Exists('$(OutputPath)$(AssemblyName).dll')" 
+           Text="Analyzer assembly not found at: $(OutputPath)$(AssemblyName).dll" />
+  </Target>
+
+</Project>

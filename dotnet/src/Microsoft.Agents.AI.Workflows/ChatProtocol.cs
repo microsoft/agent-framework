@@ -20,12 +20,19 @@ public static class ChatProtocolExtensions
     /// Determines whether the specified protocol descriptor represents the Agent Workflow Chat Protocol.
     /// </summary>
     /// <param name="descriptor">The protocol descriptor to evaluate.</param>
+    /// <param name="allowCatchAll">If <see langword="true"/>, will allow protocols handling all inputs to be treated
+    /// as a Chat Protocol</param>
     /// <returns><see langword="true"/> if the protocol descriptor represents a supported chat protocol; otherwise, <see
     /// langword="false"/>.</returns>
-    public static bool IsChatProtocol(this ProtocolDescriptor descriptor)
+    public static bool IsChatProtocol(this ProtocolDescriptor descriptor, bool allowCatchAll = false)
     {
         bool foundListChatMessageInput = false;
         bool foundTurnTokenInput = false;
+
+        if (allowCatchAll && descriptor.AcceptsAll)
+        {
+            return true;
+        }
 
         // We require that the workflow be a ChatProtocol; right now that is defined as accepting at
         // least List<ChatMessage> as input (pending polymorphism/interface-input support), as well as
@@ -50,9 +57,11 @@ public static class ChatProtocolExtensions
     /// Throws an exception if the specified protocol descriptor does not represent a valid chat protocol.
     /// </summary>
     /// <param name="descriptor">The protocol descriptor to validate as a chat protocol. Cannot be null.</param>
-    public static void ThrowIfNotChatProtocol(this ProtocolDescriptor descriptor)
+    /// <param name="allowCatchAll">If <see langword="true"/>, will allow protocols handling all inputs to be treated
+    /// as a Chat Protocol</param>
+    public static void ThrowIfNotChatProtocol(this ProtocolDescriptor descriptor, bool allowCatchAll = false)
     {
-        if (!descriptor.IsChatProtocol())
+        if (!descriptor.IsChatProtocol(allowCatchAll))
         {
             throw new InvalidOperationException("Workflow does not support ChatProtocol: At least List<ChatMessage>" +
                 " and TurnToken must be supported as input.");
