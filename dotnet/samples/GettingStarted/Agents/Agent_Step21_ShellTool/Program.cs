@@ -74,8 +74,6 @@ AIAgent agent = new OpenAIClient(apiKey)
         instructions: $"""
             You are a helpful assistant with access to a shell tool.
             You can execute shell commands to help the user with file system tasks.
-            Always explain what commands you're about to run before executing them.
-            The working directory is a temporary folder, so feel free to create files and folders there.
             The operating system is {operatingSystem}.
             """,
         tools: [shellFunction]);
