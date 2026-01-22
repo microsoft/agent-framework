@@ -299,6 +299,11 @@
     <File Path="../docs/decisions/0007-agent-filtering-middleware.md" />
     <File Path="../docs/decisions/0008-python-subpackages.md" />
     <File Path="../docs/decisions/0009-support-long-running-operations.md" />
+    <File Path="../docs/decisions/0010-ag-ui-support.md" />
+    <File Path="../docs/decisions/0011-create-get-agent-api.md" />
+    <File Path="../docs/decisions/0012-python-typeddict-options.md" />
+    <File Path="../docs/decisions/0013-python-get-response-simplification.md" />
+    <File Path="../docs/decisions/0014-feature-collections.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
