@@ -286,11 +286,14 @@ public class ShellTool : AITool
 
         var firstToken = tokens[0];
 
+        // Normalize path separators for cross-platform compatibility
+        var normalizedToken = firstToken.Replace('\\', '/');
+
         // Normalize: extract filename from path (e.g., "/usr/bin/sudo" -> "sudo")
-        var executable = Path.GetFileName(firstToken);
+        var executable = Path.GetFileName(normalizedToken);
 
         // Also handle Windows .exe extension (e.g., "runas.exe" -> "runas")
-        var executableWithoutExt = Path.GetFileNameWithoutExtension(firstToken);
+        var executableWithoutExt = Path.GetFileNameWithoutExtension(normalizedToken);
 
         // Check if the first token is a privilege escalation command
         if (s_privilegeEscalationCommands.Any(d =>

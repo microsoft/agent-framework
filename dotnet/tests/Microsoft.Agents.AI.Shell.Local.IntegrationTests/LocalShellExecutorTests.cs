@@ -33,16 +33,14 @@ public class LocalShellExecutorTests
     public async Task ExecuteAsync_WithSimpleEchoCommand_ReturnsExpectedOutputAsync()
     {
         // Arrange
-        string command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "echo hello"
-            : "echo hello";
+        const string Command = "echo hello";
 
         // Act
-        var results = await this._executor.ExecuteAsync([command], this._options);
+        var results = await this._executor.ExecuteAsync([Command], this._options);
 
         // Assert
         Assert.Single(results);
-        Assert.Equal(command, results[0].Command);
+        Assert.Equal(Command, results[0].Command);
         Assert.Equal(0, results[0].ExitCode);
         Assert.Contains("hello", results[0].StandardOutput);
         Assert.False(results[0].IsTimedOut);
@@ -84,9 +82,7 @@ public class LocalShellExecutorTests
     public async Task ExecuteAsync_WithMultipleCommands_ExecutesAllInSequenceAsync()
     {
         // Arrange
-        string[] commands = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? ["echo first", "echo second", "echo third"]
-            : ["echo first", "echo second", "echo third"];
+        string[] commands = ["echo first", "echo second", "echo third"];
 
         // Act
         var results = await this._executor.ExecuteAsync(commands, this._options);

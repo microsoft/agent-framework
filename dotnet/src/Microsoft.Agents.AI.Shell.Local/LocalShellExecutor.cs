@@ -21,7 +21,7 @@ namespace Microsoft.Agents.AI;
 /// The shell can be overridden using <see cref="ShellToolOptions.Shell"/>.
 /// </para>
 /// </remarks>
-public class LocalShellExecutor : ShellExecutor
+public sealed class LocalShellExecutor : ShellExecutor
 {
     /// <inheritdoc/>
     public override async Task<IReadOnlyList<ShellExecutorOutput>> ExecuteAsync(
