@@ -12,16 +12,8 @@ from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel, ValidationError
 
-from agent_framework import (
-    Annotation,
-    ChatResponse,
-    ChatResponseUpdate,
-    Content,
-    use_chat_middleware,
-    use_function_invocation,
-)
+from agent_framework import Annotation, ChatResponse, ChatResponseUpdate, Content
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
 from agent_framework.openai._chat_client import OpenAIBaseChatClient, OpenAIChatOptions
 
 from ._shared import (
@@ -143,11 +135,10 @@ TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
 TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAIChatClient")
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
 class AzureOpenAIChatClient(
-    AzureOpenAIConfigMixin, OpenAIBaseChatClient[TAzureOpenAIChatOptions], Generic[TAzureOpenAIChatOptions]
+    AzureOpenAIConfigMixin,
+    OpenAIBaseChatClient[TAzureOpenAIChatOptions],
+    Generic[TAzureOpenAIChatOptions],
 ):
     """Azure OpenAI Chat completion class."""
 

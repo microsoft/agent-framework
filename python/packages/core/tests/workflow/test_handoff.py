@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvokingMixin,
     HandoffAgentUserRequest,
     HandoffBuilder,
     RequestInfoEvent,
@@ -19,12 +20,10 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowOutputEvent,
     resolve_agent_id,
-    use_function_invocation,
 )
 
 
-@use_function_invocation
-class MockChatClient:
+class _MockChatClientCore:
     """Mock chat client for testing handoff workflows."""
 
     additional_properties: dict[str, Any]
@@ -70,6 +69,10 @@ class MockChatClient:
         call_id = f"{self._name}-handoff-{self._call_index}"
         self._call_index += 1
         return call_id
+
+
+class MockChatClient(FunctionInvokingMixin, _MockChatClientCore):
+    pass
 
 
 def _build_reply_contents(

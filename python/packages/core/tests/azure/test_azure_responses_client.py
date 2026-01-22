@@ -215,7 +215,7 @@ async def test_integration_options(
     """
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     # to ensure toolmode required does not endlessly loop
-    client.function_invocation_configuration.max_iterations = 1
+    client.function_invocation_configuration["max_iterations"] = 1
 
     for streaming in [False, True]:
         # Prepare test message

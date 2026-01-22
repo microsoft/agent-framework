@@ -20,6 +20,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvokingMixin,
     RequestInfoEvent,
     Role,
     WorkflowBuilder,
@@ -27,7 +28,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     executor,
     tool,
-    use_function_invocation,
 )
 
 
@@ -95,7 +95,7 @@ class _ToolCallingAgent(BaseAgent):
 
 
 async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
-    """Test that AgentExecutor emits updates containing FunctionCallContent and FunctionResultContent."""
+    """Test that AgentExecutor emits updates containing function call and result content."""
     # Arrange
     agent = _ToolCallingAgent(id="tool_agent", name="ToolAgent")
     agent_exec = AgentExecutor(agent, id="tool_exec")
@@ -141,8 +141,7 @@ def mock_tool_requiring_approval(query: str) -> str:
     return f"Executed tool with query: {query}"
 
 
-@use_function_invocation
-class MockChatClient:
+class _MockChatClientCore:
     """Simple implementation of a chat client."""
 
     def __init__(self, parallel_request: bool = False) -> None:
@@ -163,10 +162,10 @@ class MockChatClient:
                     if self._parallel_request:
                         yield ChatResponseUpdate(
                             contents=[
-                                FunctionCallContent(
+                                Content.from_function_call(
                                     call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                                 ),
-                                FunctionCallContent(
+                                Content.from_function_call(
                                     call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                                 ),
                             ],
@@ -175,15 +174,15 @@ class MockChatClient:
                     else:
                         yield ChatResponseUpdate(
                             contents=[
-                                FunctionCallContent(
+                                Content.from_function_call(
                                     call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                                 )
                             ],
                             role="assistant",
                         )
                 else:
-                    yield ChatResponseUpdate(text=TextContent(text="Tool executed "), role="assistant")
-                    yield ChatResponseUpdate(contents=[TextContent(text="successfully.")], role="assistant")
+                    yield ChatResponseUpdate(text=Content.from_text("Tool executed "), role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text("successfully.")], role="assistant")
                 self._iteration += 1
 
             return _stream()
@@ -220,6 +219,10 @@ class MockChatClient:
 
         self._iteration += 1
         return response
+
+
+class MockChatClient(FunctionInvokingMixin, _MockChatClientCore):
+    pass
 
 
 @executor(id="test_executor")
