@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import base64
 import tempfile
 from pathlib import Path
+from urllib import request as urllib_request
 
 import aiofiles
-from agent_framework import HostedImageGenerationTool, ImageGenerationToolResultContent
+from agent_framework import HostedImageGenerationTool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -61,14 +63,34 @@ async def main() -> None:
         image_data = [
             content.outputs
             for content in result.messages[0].contents
-            if isinstance(content, ImageGenerationToolResultContent) and content.outputs is not None
+            if content.type == "image_generation_tool_result" and content.outputs is not None
         ]
         if image_data and image_data[0]:
             # Save to the OS temporary directory
             filename = "microsoft.png"
             file_path = Path(tempfile.gettempdir()) / filename
+            # outputs can be a list of Content items (data/uri) or a single item
+            out = image_data[0][0] if isinstance(image_data[0], list) else image_data[0]
+            data_bytes: bytes | None = None
+            uri = getattr(out, "uri", None)
+            if isinstance(uri, str):
+                if ";base64," in uri:
+                    try:
+                        b64 = uri.split(";base64,", 1)[1]
+                        data_bytes = base64.b64decode(b64)
+                    except Exception:
+                        data_bytes = None
+                else:
+                    try:
+                        data_bytes = await asyncio.to_thread(lambda: urllib_request.urlopen(uri).read())
+                    except Exception:
+                        data_bytes = None
+
+            if data_bytes is None:
+                raise RuntimeError("Image output present but could not retrieve bytes.")
+
             async with aiofiles.open(file_path, "wb") as f:
-                await f.write(image_data[0].get_data_bytes())
+                await f.write(data_bytes)
 
             print(f"Image downloaded and saved to: {file_path}")
         else:
