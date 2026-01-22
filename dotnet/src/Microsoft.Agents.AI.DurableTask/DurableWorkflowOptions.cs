@@ -79,7 +79,7 @@ public sealed class DurableWorkflowOptions
 
     private static void RegisterExecutors(Workflow workflow, ExecutorRegistry registry)
     {
-        foreach (KeyValuePair<string, ExecutorInfo> executor in workflow.ReflectExecutors())
+        foreach (KeyValuePair<string, ExecutorBinding> executor in workflow.ReflectExecutors())
         {
             int underscoreIndex = executor.Key.IndexOf('_');
             string executorName = underscoreIndex > 0 ? executor.Key[..underscoreIndex] : executor.Key;
@@ -89,9 +89,9 @@ public sealed class DurableWorkflowOptions
 
     private static void RegisterAgenticExecutors(Workflow workflow, DurableAgentsOptions agentOptions)
     {
-        foreach (AIAgent agent in workflow.EnumerateAgentExecutors())
+        foreach (KeyValuePair<string, ExecutorBinding> executor in workflow.ReflectExecutors())
         {
-            if (agent.Name is not null && !agentOptions.ContainsAgent(agent.Name))
+            if (executor.Value.RawValue is AIAgent agent && agent.Name is not null && !agentOptions.ContainsAgent(agent.Name))
             {
                 agentOptions.AddAIAgent(agent, workflowOnly: true);
             }

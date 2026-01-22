@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask;
-using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 using Microsoft.Extensions.Logging;
 
@@ -66,11 +66,11 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                 }
             }
 
-            Dictionary<string, ExecutorInfo> executorInfos = workflow.Value.ReflectExecutors();
+            Dictionary<string, ExecutorBinding> executorBindings = workflow.Value.ReflectExecutors();
 
             foreach (string executorId in executorIds)
             {
-                if (executorInfos.TryGetValue(executorId, out ExecutorInfo? executorInfo))
+                if (executorBindings.TryGetValue(executorId, out ExecutorBinding? executorBinding))
                 {
                     string executorName = WorkflowNamingHelper.GetExecutorName(executorId);
                     string functionName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
@@ -83,14 +83,14 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                     }
 
                     // Check if the executor type is an agent-related type
-                    if (WorkflowHelper.IsAgentExecutorType(executorInfo.ExecutorType))
+                    if (WorkflowHelper.IsAgentExecutorType(executorBinding.ExecutorType))
                     {
-                        this._logger.LogAddingAgentEntityFunction(executorId, executorInfo.ExecutorType.TypeName, workflow.Key);
+                        this._logger.LogAddingAgentEntityFunction(executorId, executorBinding.ExecutorType.FullName ?? executorBinding.ExecutorType.Name, workflow.Key);
                         //original.Add(CreateAgentTrigger(functionName));
                     }
                     else
                     {
-                        this._logger.LogAddingActivityFunction(executorId, executorInfo.ExecutorType.TypeName, workflow.Key);
+                        this._logger.LogAddingActivityFunction(executorId, executorBinding.ExecutorType.FullName ?? executorBinding.ExecutorType.Name, workflow.Key);
                         original.Add(CreateActivityTrigger(functionName));
                     }
                 }

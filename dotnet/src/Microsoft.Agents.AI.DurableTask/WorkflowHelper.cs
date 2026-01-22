@@ -87,7 +87,7 @@ public static class WorkflowHelper
     {
         ArgumentNullException.ThrowIfNull(workflow);
 
-        Dictionary<string, ExecutorInfo> executors = workflow.ReflectExecutors();
+        Dictionary<string, ExecutorBinding> executors = workflow.ReflectExecutors();
         Dictionary<string, HashSet<EdgeInfo>> edges = workflow.ReflectEdges();
 
         WorkflowExecutionPlan plan = new();
@@ -177,9 +177,9 @@ public static class WorkflowHelper
             {
                 processed.Add(executorId);
 
-                if (executors.TryGetValue(executorId, out ExecutorInfo? executorInfo))
+                if (executors.TryGetValue(executorId, out ExecutorBinding? executorBinding))
                 {
-                    bool isAgentic = IsAgentExecutorType(executorInfo.ExecutorType);
+                    bool isAgentic = IsAgentExecutorType(executorBinding.ExecutorType);
                     levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic));
                 }
 
@@ -202,13 +202,13 @@ public static class WorkflowHelper
     /// </summary>
     /// <param name="executorType">The executor type to check.</param>
     /// <returns><c>true</c> if the executor is an agentic executor; otherwise, <c>false</c>.</returns>
-    internal static bool IsAgentExecutorType(TypeId executorType)
+    internal static bool IsAgentExecutorType(Type executorType)
     {
         // hack for now. In the future, the MAF type could expose something which can help with this.
         // Check if the type name or assembly indicates it's an agent executor
         // This includes AgentRunStreamingExecutor, AgentExecutor, ChatClientAgent wrappers, etc.
-        string typeName = executorType.TypeName;
-        string assemblyName = executorType.AssemblyName;
+        string typeName = executorType.FullName ?? executorType.Name;
+        string assemblyName = executorType.Assembly.GetName().Name ?? string.Empty;
 
         return typeName.Contains("AIAgentHostExecutor", StringComparison.OrdinalIgnoreCase) &&
                 assemblyName.Contains("Microsoft.Agents.AI", StringComparison.OrdinalIgnoreCase);

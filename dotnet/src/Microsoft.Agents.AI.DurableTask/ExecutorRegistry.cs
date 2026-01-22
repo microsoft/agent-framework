@@ -39,7 +39,13 @@ internal sealed class ExecutorRegistry
         ArgumentException.ThrowIfNullOrEmpty(executorId);
         ArgumentNullException.ThrowIfNull(workflow);
 
-        this._executors.TryAdd(executorName, new ExecutorRegistration(executorId, workflow));
+        Dictionary<string, ExecutorBinding> bindings = workflow.ReflectExecutors();
+        if (!bindings.TryGetValue(executorId, out ExecutorBinding? binding))
+        {
+            throw new InvalidOperationException($"Executor '{executorId}' not found in workflow.");
+        }
+
+        this._executors.TryAdd(executorName, new ExecutorRegistration(executorId, binding));
     }
 }
 
@@ -47,8 +53,8 @@ internal sealed class ExecutorRegistry
 /// Represents a registered executor with its associated workflow.
 /// </summary>
 /// <param name="ExecutorId">The full executor ID (may include GUID suffix).</param>
-/// <param name="Workflow">The workflow containing the executor.</param>
-internal sealed record ExecutorRegistration(string ExecutorId, Workflow Workflow)
+/// <param name="Binding">The executor binding from the workflow.</param>
+internal sealed record ExecutorRegistration(string ExecutorId, ExecutorBinding Binding)
 {
     /// <summary>
     /// Creates an instance of the executor.
@@ -56,8 +62,13 @@ internal sealed record ExecutorRegistration(string ExecutorId, Workflow Workflow
     /// <param name="runId">A unique identifier for the run context.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The created executor instance.</returns>
-    public ValueTask<Executor> CreateExecutorInstanceAsync(string runId, CancellationToken cancellationToken = default)
+    public async ValueTask<Executor> CreateExecutorInstanceAsync(string runId, CancellationToken cancellationToken = default)
     {
-        return this.Workflow.CreateExecutorInstanceAsync(this.ExecutorId, runId, cancellationToken);
+        if (this.Binding.FactoryAsync is null)
+        {
+            throw new InvalidOperationException($"Cannot create executor '{this.ExecutorId}': Binding is a placeholder.");
+        }
+
+        return await this.Binding.FactoryAsync(runId).ConfigureAwait(false);
     }
 }

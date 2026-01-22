@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -36,15 +36,12 @@ public class Workflow
     }
 
     /// <summary>
-    /// Gets information about all executors in the workflow, keyed by their ID.
+    /// Gets all executor bindings in the workflow, keyed by their ID.
     /// </summary>
-    /// <returns>A dictionary mapping executor IDs to their <see cref="ExecutorInfo"/>.</returns>
-    public Dictionary<string, ExecutorInfo> ReflectExecutors()
+    /// <returns>A dictionary mapping executor IDs to their <see cref="ExecutorBinding"/>.</returns>
+    public Dictionary<string, ExecutorBinding> ReflectExecutors()
     {
-        return this.ExecutorBindings.Values.ToDictionary(
-            keySelector: binding => binding.Id,
-            elementSelector: RepresentationExtensions.ToExecutorInfo
-        );
+        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
     }
 
     internal Dictionary<string, RequestPort> Ports { get; init; } = [];
@@ -203,46 +200,5 @@ public class Workflow
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
         return startExecutor.DescribeProtocol();
-    }
-
-    /// <summary>
-    /// Enumerates all AIAgent instances that are directly bound in this workflow.
-    /// </summary>
-    /// <remarks>
-    /// This method only returns agents that are directly bound as executor values.
-    /// It does not include agents created by factory functions, as those require
-    /// an IServiceProvider to instantiate.
-    /// </remarks>
-    /// <returns>An enumerable collection of AIAgent instances found in the workflow.</returns>
-    public IEnumerable<AIAgent> EnumerateAgentExecutors()
-    {
-        foreach (ExecutorBinding binding in this.ExecutorBindings.Values)
-        {
-            if (binding.RawValue is AIAgent agent)
-            {
-                yield return agent;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Creates an instance of the specified executor.
-    /// </summary>
-    /// <param name="executorId">The identifier of the executor to create.</param>
-    /// <param name="runId">A unique identifier for the run context.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="ValueTask{Executor}"/> representing the asynchronous operation.</returns>
-    /// <remarks>
-    /// This method is useful for Azure Functions scenarios where you need to create executor instances
-    /// outside of the normal workflow execution flow.
-    /// </remarks>
-    public async ValueTask<Executor> CreateExecutorInstanceAsync(string executorId, string runId, CancellationToken cancellationToken = default)
-    {
-        if (!this.ExecutorBindings.TryGetValue(executorId, out ExecutorBinding? binding))
-        {
-            throw new InvalidOperationException($"Executor '{executorId}' not found in workflow.");
-        }
-
-        return await binding.CreateInstanceAsync(runId).ConfigureAwait(false);
     }
 }
