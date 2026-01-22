@@ -12,41 +12,24 @@ from pytest import fixture, mark, raises
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    BaseContent,
+    Annotation,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
-    DataContent,
-    ErrorContent,
+    Content,
     FinishReason,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    HostedFileContent,
-    HostedVectorStoreContent,
-    ImageGenerationToolCallContent,
-    ImageGenerationToolResultContent,
-    MCPServerToolCallContent,
-    MCPServerToolResultContent,
     Role,
-    TextContent,
-    TextReasoningContent,
     TextSpanRegion,
     ToolMode,
     ToolProtocol,
-    UriContent,
-    UsageContent,
     UsageDetails,
     ai_function,
+    detect_media_type_from_base64,
     merge_chat_options,
     prepare_function_call_results,
 )
-from agent_framework.exceptions import AdditionItemMismatch, ContentError
+from agent_framework.exceptions import ContentError
 
 
 @fixture
@@ -83,9 +66,11 @@ def ai_function_tool() -> ToolProtocol:
 
 
 def test_text_content_positional():
-    """Test the TextContent class to ensure it initializes correctly and inherits from BaseContent."""
+    """Test the TextContent class to ensure it initializes correctly and inherits from Content."""
     # Create an instance of TextContent
-    content = TextContent("Hello, world!", raw_representation="Hello, world!", additional_properties={"version": 1})
+    content = Content.from_text(
+        "Hello, world!", raw_representation="Hello, world!", additional_properties={"version": 1}
+    )
 
     # Check the type and content
     assert content.type == "text"
@@ -93,15 +78,15 @@ def test_text_content_positional():
     assert content.raw_representation == "Hello, world!"
     assert content.additional_properties["version"] == 1
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
     # Note: No longer using Pydantic validation, so type assignment should work
     content.type = "text"  # This should work fine now
 
 
 def test_text_content_keyword():
-    """Test the TextContent class to ensure it initializes correctly and inherits from BaseContent."""
+    """Test the TextContent class to ensure it initializes correctly and inherits from Content."""
     # Create an instance of TextContent
-    content = TextContent(
+    content = Content.from_text(
         text="Hello, world!", raw_representation="Hello, world!", additional_properties={"version": 1}
     )
 
@@ -111,7 +96,7 @@ def test_text_content_keyword():
     assert content.raw_representation == "Hello, world!"
     assert content.additional_properties["version"] == 1
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
     # Note: No longer using Pydantic validation, so type assignment should work
     content.type = "text"  # This should work fine now
 
@@ -122,109 +107,112 @@ def test_text_content_keyword():
 def test_data_content_bytes():
     """Test the DataContent class to ensure it initializes correctly."""
     # Create an instance of DataContent
-    content = DataContent(data=b"test", media_type="application/octet-stream", additional_properties={"version": 1})
+    content = Content.from_data(
+        data=b"test", media_type="application/octet-stream", additional_properties={"version": 1}
+    )
 
     # Check the type and content
     assert content.type == "data"
     assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
-    assert content.has_top_level_media_type("application") is True
-    assert content.has_top_level_media_type("image") is False
+    assert content.media_type.startswith("application/") is True
+    assert content.media_type.startswith("image/") is False
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 def test_data_content_uri():
-    """Test the DataContent class to ensure it initializes correctly with a URI."""
-    # Create an instance of DataContent with a URI
-    content = DataContent(uri="data:application/octet-stream;base64,dGVzdA==", additional_properties={"version": 1})
+    """Test the Content.from_uri class to ensure it initializes correctly with a URI."""
+    # Create an instance of Content.from_uri with a URI and explicit media_type
+    content = Content.from_uri(
+        uri="data:application/octet-stream;base64,dGVzdA==",
+        media_type="application/octet-stream",
+        additional_properties={"version": 1},
+    )
 
     # Check the type and content
     assert content.type == "data"
     assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
-    # media_type is extracted from URI now
+    # media_type must be explicitly provided
     assert content.media_type == "application/octet-stream"
-    assert content.has_top_level_media_type("application") is True
+    assert content.media_type.startswith("application/") is True
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 def test_data_content_invalid():
     """Test the DataContent class to ensure it raises an error for invalid initialization."""
-    # Attempt to create an instance of DataContent with invalid data
-    # not a proper uri
-    with raises(ValueError):
-        DataContent(uri="invalid_uri")
-    # unknown media type
-    with raises(ValueError):
-        DataContent(uri="data:application/random;base64,dGVzdA==")
-    # not valid base64 data would still be accepted by our basic validation
-    # but it's not a critical issue for now
+    with pytest.raises(ContentError):
+        Content.from_uri(uri="invalid_uri", media_type="text/plain")
 
 
 def test_data_content_empty():
     """Test the DataContent class to ensure it raises an error for empty data."""
-    # Attempt to create an instance of DataContent with empty data
-    with raises(ValueError):
-        DataContent(data=b"", media_type="application/octet-stream")
-
-    # Attempt to create an instance of DataContent with empty URI
-    with raises(ValueError):
-        DataContent(uri="")
+    data = Content.from_data(data=b"", media_type="application/octet-stream")
+    assert data.uri == "data:application/octet-stream;base64,"
+    assert data.media_type == "application/octet-stream"
 
 
 def test_data_content_detect_image_format_from_base64():
     """Test the detect_image_format_from_base64 static method."""
     # Test each supported format
     png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
-    assert DataContent.detect_image_format_from_base64(base64.b64encode(png_data).decode()) == "png"
+    assert detect_media_type_from_base64(data_bytes=png_data) == "image/png"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(png_data).decode()) == "image/png"
 
     jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
-    assert DataContent.detect_image_format_from_base64(base64.b64encode(jpeg_data).decode()) == "jpeg"
+    assert detect_media_type_from_base64(data_bytes=jpeg_data) == "image/jpeg"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(jpeg_data).decode()) == "image/jpeg"
 
     webp_data = b"RIFF" + b"1234" + b"WEBP" + b"fake_data"
-    assert DataContent.detect_image_format_from_base64(base64.b64encode(webp_data).decode()) == "webp"
-
+    assert detect_media_type_from_base64(data_str=base64.b64encode(webp_data).decode()) == "image/webp"
     gif_data = b"GIF89a" + b"fake_data"
-    assert DataContent.detect_image_format_from_base64(base64.b64encode(gif_data).decode()) == "gif"
+    assert detect_media_type_from_base64(data_str=base64.b64encode(gif_data).decode()) == "image/gif"
 
     # Test fallback behavior
     unknown_data = b"UNKNOWN_FORMAT"
-    assert DataContent.detect_image_format_from_base64(base64.b64encode(unknown_data).decode()) == "png"
-
+    assert detect_media_type_from_base64(data_str=base64.b64encode(unknown_data).decode()) is None
+    assert (
+        detect_media_type_from_base64(
+            data_uri=f"data:application/octet-stream;base64,{base64.b64encode(unknown_data).decode()}"
+        )
+        is None
+    )
+    assert detect_media_type_from_base64(data_bytes=unknown_data) is None
     # Test error handling
-    assert DataContent.detect_image_format_from_base64("invalid_base64!") == "png"
-    assert DataContent.detect_image_format_from_base64("") == "png"
+    with pytest.raises(ValueError, match="Invalid base64 data provided."):
+        detect_media_type_from_base64(data_str="invalid_base64!")
+        detect_media_type_from_base64(data_str="")
+
+    with pytest.raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        detect_media_type_from_base64()
+        detect_media_type_from_base64(
+            data_bytes=b"data", data_str="data", data_uri="data:application/octet-stream;base64,AAA"
+        )
+        detect_media_type_from_base64(data_bytes=b"data", data_str="data")
+        detect_media_type_from_base64(data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA")
+        detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
 
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
     # Test with PNG data
     png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
-    png_base64 = base64.b64encode(png_data).decode()
-    uri, media_type = DataContent.create_data_uri_from_base64(png_base64)
+    content = Content.from_data(png_data, media_type=detect_media_type_from_base64(data_bytes=png_data))
 
-    assert uri == f"data:image/png;base64,{png_base64}"
-    assert media_type == "image/png"
+    assert content.uri == f"data:image/png;base64,{base64.b64encode(png_data).decode()}"
+    assert content.media_type == "image/png"
 
     # Test with different format
     jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
     jpeg_base64 = base64.b64encode(jpeg_data).decode()
-    uri, media_type = DataContent.create_data_uri_from_base64(jpeg_base64)
+    content = Content.from_data(jpeg_data, media_type=detect_media_type_from_base64(data_bytes=jpeg_data))
 
-    assert uri == f"data:image/jpeg;base64,{jpeg_base64}"
-    assert media_type == "image/jpeg"
-
-    # Test fallback for unknown format
-    unknown_data = b"UNKNOWN_FORMAT"
-    unknown_base64 = base64.b64encode(unknown_data).decode()
-    uri, media_type = DataContent.create_data_uri_from_base64(unknown_base64)
-
-    assert uri == f"data:image/png;base64,{unknown_base64}"
-    assert media_type == "image/png"
+    assert content.uri == f"data:image/jpeg;base64,{jpeg_base64}"
+    assert content.media_type == "image/jpeg"
 
 
 # region UriContent
@@ -232,18 +220,16 @@ def test_data_content_create_data_uri_from_base64():
 
 def test_uri_content():
     """Test the UriContent class to ensure it initializes correctly."""
-    content = UriContent(uri="http://example.com", media_type="image/jpg", additional_properties={"version": 1})
+    content = Content.from_uri(uri="http://example.com", media_type="image/jpg", additional_properties={"version": 1})
 
     # Check the type and content
     assert content.type == "uri"
     assert content.uri == "http://example.com"
     assert content.media_type == "image/jpg"
-    assert content.has_top_level_media_type("image") is True
-    assert content.has_top_level_media_type("application") is False
+    assert content.media_type.startswith("image/") is True
+    assert content.media_type.startswith("application/") is False
     assert content.additional_properties["version"] == 1
-
-    # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 # region: HostedFileContent
@@ -251,101 +237,98 @@ def test_uri_content():
 
 def test_hosted_file_content():
     """Test the HostedFileContent class to ensure it initializes correctly."""
-    content = HostedFileContent(file_id="file-123", additional_properties={"version": 1})
+    content = Content.from_hosted_file(file_id="file-123", additional_properties={"version": 1})
 
     # Check the type and content
     assert content.type == "hosted_file"
     assert content.file_id == "file-123"
     assert content.additional_properties["version"] == 1
-
-    # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 def test_hosted_file_content_minimal():
     """Test the HostedFileContent class with minimal parameters."""
-    content = HostedFileContent(file_id="file-456")
+    content = Content.from_hosted_file(file_id="file-456")
 
     # Check the type and content
     assert content.type == "hosted_file"
     assert content.file_id == "file-456"
     assert content.additional_properties == {}
     assert content.raw_representation is None
-
-    # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 def test_hosted_file_content_optional_fields():
     """HostedFileContent should capture optional media type and name."""
-    content = HostedFileContent(file_id="file-789", media_type="image/png", name="plot.png")
+    content = Content.from_hosted_file(file_id="file-789", media_type="image/png", name="plot.png")
 
     assert content.media_type == "image/png"
     assert content.name == "plot.png"
-    assert content.has_top_level_media_type("image")
-    assert content.has_top_level_media_type("application") is False
+    assert content.media_type.startswith("image/")
+    assert content.media_type.startswith("application/") is False
 
 
 # region: CodeInterpreter content
 
 
 def test_code_interpreter_tool_call_content_parses_inputs():
-    call = CodeInterpreterToolCallContent(
+    call = Content.from_code_interpreter_tool_call(
         call_id="call-1",
-        inputs=[{"type": "text", "text": "print('hi')"}],
+        inputs=[Content.from_text(text="print('hi')")],
     )
 
     assert call.type == "code_interpreter_tool_call"
     assert call.call_id == "call-1"
-    assert call.inputs and isinstance(call.inputs[0], TextContent)
+    assert call.inputs and call.inputs[0].type == "text"
     assert call.inputs[0].text == "print('hi')"
 
 
 def test_code_interpreter_tool_result_content_outputs():
-    result = CodeInterpreterToolResultContent(
+    result = Content.from_code_interpreter_tool_result(
         call_id="call-2",
         outputs=[
-            {"type": "text", "text": "log output"},
-            {"type": "uri", "uri": "https://example.com/file.png", "media_type": "image/png"},
+            Content.from_text(text="log output"),
+            Content.from_uri(uri="https://example.com/file.png", media_type="image/png"),
         ],
     )
 
     assert result.type == "code_interpreter_tool_result"
     assert result.call_id == "call-2"
     assert result.outputs is not None
-    assert isinstance(result.outputs[0], TextContent)
-    assert isinstance(result.outputs[1], UriContent)
+    assert result.outputs[0].type == "text"
+    assert result.outputs[1].type == "uri"
 
 
 # region: Image generation content
 
 
 def test_image_generation_tool_contents():
-    call = ImageGenerationToolCallContent(image_id="img-1")
-    outputs = [DataContent(data=b"1234", media_type="image/png")]
-    result = ImageGenerationToolResultContent(image_id="img-1", outputs=outputs)
+    call = Content.from_image_generation_tool_call(image_id="img-1")
+    outputs = [Content.from_data(data=b"1234", media_type="image/png")]
+    result = Content.from_image_generation_tool_result(image_id="img-1", outputs=outputs)
 
     assert call.type == "image_generation_tool_call"
     assert call.image_id == "img-1"
     assert result.type == "image_generation_tool_result"
     assert result.image_id == "img-1"
-    assert result.outputs and isinstance(result.outputs[0], DataContent)
+    assert result.outputs and result.outputs[0].type == "data"
 
 
 # region: MCP server tool content
 
 
 def test_mcp_server_tool_call_and_result():
-    call = MCPServerToolCallContent(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
+    call = Content.from_mcp_server_tool_call(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
     assert call.type == "mcp_server_tool_call"
     assert call.arguments == {"x": 1}
 
-    result = MCPServerToolResultContent(call_id="c-1", output=[{"type": "text", "text": "done"}])
+    result = Content.from_mcp_server_tool_result(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
     assert result.output
 
-    with raises(ValueError):
-        MCPServerToolCallContent(call_id="", tool_name="tool")
+    # Empty call_id is allowed, validation happens elsewhere
+    call2 = Content.from_mcp_server_tool_call(call_id="", tool_name="tool", server_name="server")
+    assert call2.call_id == ""
 
 
 # region: HostedVectorStoreContent
@@ -353,7 +336,7 @@ def test_mcp_server_tool_call_and_result():
 
 def test_hosted_vector_store_content():
     """Test the HostedVectorStoreContent class to ensure it initializes correctly."""
-    content = HostedVectorStoreContent(vector_store_id="vs-789", additional_properties={"version": 1})
+    content = Content.from_hosted_vector_store(vector_store_id="vs-789", additional_properties={"version": 1})
 
     # Check the type and content
     assert content.type == "hosted_vector_store"
@@ -361,13 +344,14 @@ def test_hosted_vector_store_content():
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, HostedVectorStoreContent)
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
+    assert content.type == "hosted_vector_store"
+    assert isinstance(content, Content)
 
 
 def test_hosted_vector_store_content_minimal():
     """Test the HostedVectorStoreContent class with minimal parameters."""
-    content = HostedVectorStoreContent(vector_store_id="vs-101112")
+    content = Content.from_hosted_vector_store(vector_store_id="vs-101112")
 
     # Check the type and content
     assert content.type == "hosted_vector_store"
@@ -375,17 +359,13 @@ def test_hosted_vector_store_content_minimal():
     assert content.additional_properties == {}
     assert content.raw_representation is None
 
-    # Ensure the instance is of type BaseContent
-    assert isinstance(content, HostedVectorStoreContent)
-    assert isinstance(content, BaseContent)
-
 
 # region FunctionCallContent
 
 
 def test_function_call_content():
     """Test the FunctionCallContent class to ensure it initializes correctly."""
-    content = FunctionCallContent(call_id="1", name="example_function", arguments={"param1": "value1"})
+    content = Content.from_function_call(call_id="1", name="example_function", arguments={"param1": "value1"})
 
     # Check the type and content
     assert content.type == "function_call"
@@ -393,42 +373,42 @@ def test_function_call_content():
     assert content.arguments == {"param1": "value1"}
 
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 def test_function_call_content_parse_arguments():
-    c1 = FunctionCallContent(call_id="1", name="f", arguments='{"a": 1, "b": 2}')
+    c1 = Content.from_function_call(call_id="1", name="f", arguments='{"a": 1, "b": 2}')
     assert c1.parse_arguments() == {"a": 1, "b": 2}
-    c2 = FunctionCallContent(call_id="1", name="f", arguments="not json")
+    c2 = Content.from_function_call(call_id="1", name="f", arguments="not json")
     assert c2.parse_arguments() == {"raw": "not json"}
-    c3 = FunctionCallContent(call_id="1", name="f", arguments={"x": None})
+    c3 = Content.from_function_call(call_id="1", name="f", arguments={"x": None})
     assert c3.parse_arguments() == {"x": None}
 
 
 def test_function_call_content_add_merging_and_errors():
     # str + str concatenation
-    a = FunctionCallContent(call_id="1", name="f", arguments="abc")
-    b = FunctionCallContent(call_id="1", name="f", arguments="def")
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc")
+    b = Content.from_function_call(call_id="1", name="f", arguments="def")
     c = a + b
     assert isinstance(c.arguments, str) and c.arguments == "abcdef"
 
     # dict + dict merge
-    a = FunctionCallContent(call_id="1", name="f", arguments={"x": 1})
-    b = FunctionCallContent(call_id="1", name="f", arguments={"y": 2})
+    a = Content.from_function_call(call_id="1", name="f", arguments={"x": 1})
+    b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
     c = a + b
     assert c.arguments == {"x": 1, "y": 2}
 
     # incompatible argument types
-    a = FunctionCallContent(call_id="1", name="f", arguments="abc")
-    b = FunctionCallContent(call_id="1", name="f", arguments={"y": 2})
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc")
+    b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
     with raises(TypeError):
         _ = a + b
 
     # incompatible call ids
-    a = FunctionCallContent(call_id="1", name="f", arguments="abc")
-    b = FunctionCallContent(call_id="2", name="f", arguments="def")
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc")
+    b = Content.from_function_call(call_id="2", name="f", arguments="def")
 
-    with raises(AdditionItemMismatch):
+    with raises(ContentError):
         _ = a + b
 
 
@@ -437,14 +417,14 @@ def test_function_call_content_add_merging_and_errors():
 
 def test_function_result_content():
     """Test the FunctionResultContent class to ensure it initializes correctly."""
-    content = FunctionResultContent(call_id="1", result={"param1": "value1"})
+    content = Content.from_function_result(call_id="1", result={"param1": "value1"})
 
     # Check the type and content
     assert content.type == "function_result"
     assert content.result == {"param1": "value1"}
 
     # Ensure the instance is of type BaseContent
-    assert isinstance(content, BaseContent)
+    assert isinstance(content, Content)
 
 
 # region UsageDetails
@@ -452,13 +432,15 @@ def test_function_result_content():
 
 def test_usage_details():
     usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15)
-    assert usage.input_token_count == 5
-    assert usage.output_token_count == 10
-    assert usage.total_token_count == 15
-    assert usage.additional_counts == {}
+    assert usage["input_token_count"] == 5
+    assert usage["output_token_count"] == 10
+    assert usage["total_token_count"] == 15
+    assert usage.get("additional_counts", {}) == {}
 
 
 def test_usage_details_addition():
+    from agent_framework._types import add_usage_details
+
     usage1 = UsageDetails(
         input_token_count=5,
         output_token_count=10,
@@ -474,39 +456,38 @@ def test_usage_details_addition():
         test3=30,
     )
 
-    combined_usage = usage1 + usage2
-    assert combined_usage.input_token_count == 8
-    assert combined_usage.output_token_count == 16
-    assert combined_usage.total_token_count == 24
-    assert combined_usage.additional_counts["test1"] == 20
-    assert combined_usage.additional_counts["test2"] == 20
-    assert combined_usage.additional_counts["test3"] == 30
+    combined_usage = add_usage_details(usage1, usage2)
+    assert combined_usage["input_token_count"] == 8
+    assert combined_usage["output_token_count"] == 16
+    assert combined_usage["total_token_count"] == 24
+    assert combined_usage["test1"] == 20
+    assert combined_usage["test2"] == 20
+    assert combined_usage["test3"] == 30
 
 
 def test_usage_details_fail():
-    with raises(ValueError):
-        UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")
+    # TypedDict doesn't validate types at runtime, so this test no longer applies
+    # Creating UsageDetails with wrong types won't raise ValueError
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")  # type: ignore[typeddict-item]
+    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]
 
 
 def test_usage_details_additional_counts():
     usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})
-    assert usage.additional_counts["test"] == 1
+    assert usage.get("test") == 1
 
 
 def test_usage_details_add_with_none_and_type_errors():
+    from agent_framework._types import add_usage_details
+
     u = UsageDetails(input_token_count=1)
-    # __add__ with None returns self (no change)
-    v = u + None
-    assert v is u
-    # __iadd__ with None leaves unchanged
-    u2 = UsageDetails(input_token_count=2)
-    u2 += None
-    assert u2.input_token_count == 2
-    # wrong type raises
-    with raises(ValueError):
-        _ = u + 42  # type: ignore[arg-type]
-    with raises(ValueError):
-        u += 42  # type: ignore[arg-type]
+    # add_usage_details with None returns the non-None value
+    v = add_usage_details(u, None)
+    assert v == u
+    # add_usage_details with None on left
+    v2 = add_usage_details(None, u)
+    assert v2 == u
+    # TypedDict doesn't support + operator, use add_usage_details
 
 
 # region UserInputRequest and Response
@@ -514,28 +495,29 @@ def test_usage_details_add_with_none_and_type_errors():
 
 def test_function_approval_request_and_response_creation():
     """Test creating a FunctionApprovalRequestContent and producing a response."""
-    fc = FunctionCallContent(call_id="call-1", name="do_something", arguments={"a": 1})
-    req = FunctionApprovalRequestContent(id="req-1", function_call=fc)
+    fc = Content.from_function_call(call_id="call-1", name="do_something", arguments={"a": 1})
+    req = Content.from_function_approval_request(id="req-1", function_call=fc)
 
     assert req.type == "function_approval_request"
     assert req.function_call == fc
     assert req.id == "req-1"
-    assert isinstance(req, BaseContent)
+    assert isinstance(req, Content)
 
-    resp = req.create_response(True)
+    resp = req.to_function_approval_response(True)
 
-    assert isinstance(resp, FunctionApprovalResponseContent)
+    assert isinstance(resp, Content)
+    assert resp.type == "function_approval_response"
     assert resp.approved is True
     assert resp.function_call == fc
     assert resp.id == "req-1"
 
 
 def test_function_approval_serialization_roundtrip():
-    fc = FunctionCallContent(call_id="c2", name="f", arguments='{"x":1}')
-    req = FunctionApprovalRequestContent(id="id-2", function_call=fc, additional_properties={"meta": 1})
+    fc = Content.from_function_call(call_id="c2", name="f", arguments='{"x":1}')
+    req = Content.from_function_approval_request(id="id-2", function_call=fc, additional_properties={"meta": 1})
 
     dumped = req.to_dict()
-    loaded = FunctionApprovalRequestContent.from_dict(dumped)
+    loaded = Content.from_dict(dumped)
 
     # Test that the basic properties match
     assert loaded.id == req.id
@@ -545,15 +527,17 @@ def test_function_approval_serialization_roundtrip():
     assert loaded.function_call.arguments == req.function_call.arguments
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
-    # The Contents union will need to be handled differently when we fully migrate
+    # The Content union will need to be handled differently when we fully migrate
 
 
 def test_function_approval_accepts_mcp_call():
     """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
-    mcp_call = MCPServerToolCallContent(call_id="c-mcp", tool_name="tool", server_name="srv", arguments={"x": 1})
-    req = FunctionApprovalRequestContent(id="req-mcp", function_call=mcp_call)
+    mcp_call = Content.from_mcp_server_tool_call(
+        call_id="c-mcp", tool_name="tool", server_name="srv", arguments={"x": 1}
+    )
+    req = Content.from_function_approval_request(id="req-mcp", function_call=mcp_call)
 
-    assert isinstance(req.function_call, MCPServerToolCallContent)
+    assert isinstance(req.function_call, Content)
     assert req.function_call.call_id == "c-mcp"
 
 
@@ -561,47 +545,21 @@ def test_function_approval_accepts_mcp_call():
 
 
 @mark.parametrize(
-    "content_type, args",
+    "args",
     [
-        (TextContent, {"text": "Hello, world!"}),
-        (DataContent, {"data": b"Hello, world!", "media_type": "text/plain"}),
-        (UriContent, {"uri": "http://example.com", "media_type": "text/html"}),
-        (FunctionCallContent, {"call_id": "1", "name": "example_function", "arguments": {}}),
-        (FunctionResultContent, {"call_id": "1", "result": {}}),
-        (HostedFileContent, {"file_id": "file-123"}),
-        (HostedVectorStoreContent, {"vector_store_id": "vs-789"}),
+        {"type": "text", "text": "Hello, world!"},
+        {"type": "uri", "uri": "http://example.com", "media_type": "text/html"},
+        {"type": "function_call", "call_id": "1", "name": "example_function", "arguments": {}},
+        {"type": "function_result", "call_id": "1", "result": {}},
+        {"type": "file", "file_id": "file-123"},
+        {"type": "vector_store", "vector_store_id": "vs-789"},
     ],
 )
-def test_ai_content_serialization(content_type: type[BaseContent], args: dict):
-    content = content_type(**args)
+def test_ai_content_serialization(args: dict):
+    content = Content(**args)
     serialized = content.to_dict()
-    deserialized = content_type.from_dict(serialized)
-    # Note: Since we're no longer using Pydantic, we can't do direct equality comparison
-    # Instead, let's check that the deserialized object has the same attributes
-
-    # Special handling for DataContent which doesn't expose the original 'data' parameter
-    if content_type == DataContent and "data" in args:
-        # For DataContent created with data, check uri and media_type instead
-        assert hasattr(deserialized, "uri")
-        assert hasattr(deserialized, "media_type")
-        assert deserialized.media_type == args["media_type"]  # type: ignore
-        # Skip checking the 'data' attribute since it's converted to uri
-        for key, value in args.items():
-            if key != "data":  # Skip the 'data' key for DataContent
-                assert getattr(deserialized, key) == value
-    else:
-        # Normal attribute checking for other content types
-        for key, value in args.items():
-            if value:
-                assert getattr(deserialized, key) == value
-
-    # For now, skip the TestModel validation since it still uses Pydantic
-    # This would need to be updated when we migrate more classes
-    # class TestModel(BaseModel):
-    #     content: Contents
-    #
-    # test_item = TestModel.model_validate({"content": serialized})
-    # assert isinstance(test_item.content, content_type)
+    deserialized = Content.from_dict(serialized)
+    assert content == deserialized
 
 
 # region ChatMessage
@@ -615,26 +573,26 @@ def test_chat_message_text():
     # Check the type and content
     assert message.role == Role.USER
     assert len(message.contents) == 1
-    assert isinstance(message.contents[0], TextContent)
+    assert message.contents[0].type == "text"
     assert message.contents[0].text == "Hello, how are you?"
     assert message.text == "Hello, how are you?"
 
     # Ensure the instance is of type BaseContent
-    assert isinstance(message.contents[0], BaseContent)
+    assert isinstance(message.contents[0], Content)
 
 
 def test_chat_message_contents():
     """Test the ChatMessage class to ensure it initializes correctly with contents."""
     # Create a ChatMessage with a role and multiple contents
-    content1 = TextContent("Hello, how are you?")
-    content2 = TextContent("I'm fine, thank you!")
+    content1 = Content.from_text("Hello, how are you?")
+    content2 = Content.from_text("I'm fine, thank you!")
     message = ChatMessage(role="user", contents=[content1, content2])
 
     # Check the type and content
     assert message.role == Role.USER
     assert len(message.contents) == 2
-    assert isinstance(message.contents[0], TextContent)
-    assert isinstance(message.contents[1], TextContent)
+    assert message.contents[0].type == "text"
+    assert message.contents[1].type == "text"
     assert message.contents[0].text == "Hello, how are you?"
     assert message.contents[1].text == "I'm fine, thank you!"
     assert message.text == "Hello, how are you? I'm fine, thank you!"
@@ -705,28 +663,146 @@ def test_chat_response_with_format_init():
     assert response.value.response == "Hello"
 
 
+def test_chat_response_value_raises_on_invalid_schema():
+    """Test that value property raises ValidationError with field constraint details."""
+    from typing import Literal
+
+    from pydantic import Field, ValidationError
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = ChatResponse(messages=message, response_format=StrictSchema)
+
+    with raises(ValidationError) as exc_info:
+        _ = response.value
+
+    errors = exc_info.value.errors()
+    error_fields = {e["loc"][0] for e in errors}
+    assert "id" in error_fields, "Expected 'id' Literal constraint error"
+    assert "name" in error_fields, "Expected 'name' min_length constraint error"
+    assert "score" in error_fields, "Expected 'score' gt constraint error"
+
+
+def test_chat_response_try_parse_value_returns_none_on_invalid():
+    """Test that try_parse_value returns None on validation failure with Field constraints."""
+    from typing import Literal
+
+    from pydantic import Field
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = ChatResponse(messages=message)
+
+    result = response.try_parse_value(StrictSchema)
+    assert result is None
+
+
+def test_chat_response_try_parse_value_returns_value_on_success():
+    """Test that try_parse_value returns parsed value when all constraints pass."""
+    from pydantic import Field
+
+    class MySchema(BaseModel):
+        name: str = Field(min_length=3)
+        score: int = Field(ge=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
+    response = ChatResponse(messages=message)
+
+    result = response.try_parse_value(MySchema)
+    assert result is not None
+    assert result.name == "test"
+    assert result.score == 85
+
+
+def test_agent_response_value_raises_on_invalid_schema():
+    """Test that AgentResponse.value property raises ValidationError with field constraint details."""
+    from typing import Literal
+
+    from pydantic import Field, ValidationError
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = AgentResponse(messages=message, response_format=StrictSchema)
+
+    with raises(ValidationError) as exc_info:
+        _ = response.value
+
+    errors = exc_info.value.errors()
+    error_fields = {e["loc"][0] for e in errors}
+    assert "id" in error_fields, "Expected 'id' Literal constraint error"
+    assert "name" in error_fields, "Expected 'name' min_length constraint error"
+    assert "score" in error_fields, "Expected 'score' gt constraint error"
+
+
+def test_agent_response_try_parse_value_returns_none_on_invalid():
+    """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
+    from typing import Literal
+
+    from pydantic import Field
+
+    class StrictSchema(BaseModel):
+        id: Literal[5]
+        name: str = Field(min_length=10)
+        score: int = Field(gt=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    response = AgentResponse(messages=message)
+
+    result = response.try_parse_value(StrictSchema)
+    assert result is None
+
+
+def test_agent_response_try_parse_value_returns_value_on_success():
+    """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
+    from pydantic import Field
+
+    class MySchema(BaseModel):
+        name: str = Field(min_length=3)
+        score: int = Field(ge=0, le=100)
+
+    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
+    response = AgentResponse(messages=message)
+
+    result = response.try_parse_value(MySchema)
+    assert result is not None
+    assert result.name == "test"
+    assert result.score == 85
+
+
 # region ChatResponseUpdate
 
 
 def test_chat_response_update():
     """Test the ChatResponseUpdate class to ensure it initializes correctly with a message."""
     # Create a ChatMessage
-    message = TextContent(text="I'm doing well, thank you!")
+    message = Content.from_text(text="I'm doing well, thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_update = ChatResponseUpdate(contents=[message])
 
     # Check the type and content
     assert response_update.contents[0].text == "I'm doing well, thank you!"
-    assert isinstance(response_update.contents[0], TextContent)
+    assert response_update.contents[0].type == "text"
     assert response_update.text == "I'm doing well, thank you!"
 
 
 def test_chat_response_updates_to_chat_response_one():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
-    message1 = TextContent("I'm doing well, ")
-    message2 = TextContent("thank you!")
+    message1 = Content.from_text("I'm doing well, ")
+    message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
@@ -748,8 +824,8 @@ def test_chat_response_updates_to_chat_response_one():
 def test_chat_response_updates_to_chat_response_two():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
-    message1 = TextContent("I'm doing well, ")
-    message2 = TextContent("thank you!")
+    message1 = Content.from_text("I'm doing well, ")
+    message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
@@ -772,13 +848,13 @@ def test_chat_response_updates_to_chat_response_two():
 def test_chat_response_updates_to_chat_response_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
-    message1 = TextContent("I'm doing well, ")
-    message2 = TextContent("thank you!")
+    message1 = Content.from_text("I'm doing well, ")
+    message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
         ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(contents=[TextReasoningContent(text="Additional context")], message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
         ChatResponseUpdate(text=message2, message_id="1"),
     ]
 
@@ -796,15 +872,15 @@ def test_chat_response_updates_to_chat_response_multiple():
 def test_chat_response_updates_to_chat_response_multiple_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage
-    message1 = TextContent("I'm doing well, ", raw_representation="I'm doing well, ")
-    message2 = TextContent("thank you!")
+    message1 = Content.from_text("I'm doing well, ", raw_representation="I'm doing well, ")
+    message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
         ChatResponseUpdate(text=message1, message_id="1"),
         ChatResponseUpdate(text=message2, message_id="1"),
-        ChatResponseUpdate(contents=[TextReasoningContent(text="Additional context")], message_id="1"),
-        ChatResponseUpdate(contents=[TextContent(text="More context")], message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text(text="More context")], message_id="1"),
         ChatResponseUpdate(text="Final part", message_id="1"),
     ]
 
@@ -818,11 +894,11 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert chat_response.messages[0].contents[0].raw_representation is not None
 
     assert len(chat_response.messages[0].contents) == 3
-    assert isinstance(chat_response.messages[0].contents[0], TextContent)
+    assert chat_response.messages[0].contents[0].type == "text"
     assert chat_response.messages[0].contents[0].text == "I'm doing well, thank you!"
-    assert isinstance(chat_response.messages[0].contents[1], TextReasoningContent)
+    assert chat_response.messages[0].contents[1].type == "text_reasoning"
     assert chat_response.messages[0].contents[1].text == "Additional context"
-    assert isinstance(chat_response.messages[0].contents[2], TextContent)
+    assert chat_response.messages[0].contents[2].type == "text"
     assert chat_response.messages[0].contents[2].text == "More contextFinal part"
 
     assert chat_response.text == "I'm doing well, thank you! More contextFinal part"
@@ -1021,8 +1097,8 @@ def chat_message() -> ChatMessage:
 
 
 @fixture
-def text_content() -> TextContent:
-    return TextContent(text="Test content")
+def text_content() -> Content:
+    return Content.from_text(text="Test content")
 
 
 @fixture
@@ -1031,7 +1107,7 @@ def agent_response(chat_message: ChatMessage) -> AgentResponse:
 
 
 @fixture
-def agent_response_update(text_content: TextContent) -> AgentResponseUpdate:
+def agent_response_update(text_content: Content) -> AgentResponseUpdate:
     return AgentResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
 
 
@@ -1079,7 +1155,7 @@ def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:
 # region AgentResponseUpdate
 
 
-def test_agent_run_response_update_init_content_list(text_content: TextContent) -> None:
+def test_agent_run_response_update_init_content_list(text_content: Content) -> None:
     update = AgentResponseUpdate(contents=[text_content, text_content])
     assert len(update.contents) == 2
     assert update.contents[0] == text_content
@@ -1090,7 +1166,7 @@ def test_agent_run_response_update_init_none_content() -> None:
     assert update.contents == []
 
 
-def test_agent_run_response_update_text_property(text_content: TextContent) -> None:
+def test_agent_run_response_update_text_property(text_content: Content) -> None:
     update = AgentResponseUpdate(contents=[text_content, text_content])
     assert update.text == "Test contentTest content"
 
@@ -1100,7 +1176,7 @@ def test_agent_run_response_update_text_property_empty() -> None:
     assert update.text == ""
 
 
-def test_agent_run_response_update_str_method(text_content: TextContent) -> None:
+def test_agent_run_response_update_str_method(text_content: Content) -> None:
     update = AgentResponseUpdate(contents=[text_content])
     assert str(update) == "Test content"
 
@@ -1110,7 +1186,7 @@ def test_agent_run_response_update_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     update = AgentResponseUpdate(
-        contents=[TextContent(text="test")],
+        contents=[Content.from_text(text="test")],
         role=Role.ASSISTANT,
         created_at=utc_timestamp,
     )
@@ -1121,7 +1197,7 @@ def test_agent_run_response_update_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     update_with_now = AgentResponseUpdate(
-        contents=[TextContent(text="test")],
+        contents=[Content.from_text(text="test")],
         role=Role.ASSISTANT,
         created_at=formatted_utc,
     )
@@ -1155,71 +1231,77 @@ def test_agent_run_response_created_at() -> None:
 
 
 def test_error_content_str():
-    e1 = ErrorContent(message="Oops", error_code="E1")
+    e1 = Content.from_error(message="Oops", error_code="E1")
     assert str(e1) == "Error E1: Oops"
-    e2 = ErrorContent(message="Oops")
+    e2 = Content.from_error(message="Oops")
     assert str(e2) == "Oops"
-    e3 = ErrorContent()
+    e3 = Content.from_error()
     assert str(e3) == "Unknown error"
 
 
-# region Annotations
+# region Annotation
 
 
 def test_annotations_models_and_roundtrip():
-    span = TextSpanRegion(start_index=0, end_index=5)
-    cit = CitationAnnotation(title="Doc", url="http://example.com", snippet="Snippet", annotated_regions=[span])
+    span = TextSpanRegion(type="text_span", start_index=0, end_index=5)
+    cit = Annotation(
+        type="citation", title="Doc", url="http://example.com", snippet="Snippet", annotated_regions=[span]
+    )
 
     # Attach to content
-    content = TextContent(text="hello", additional_properties={"v": 1})
+    content = Content.from_text(text="hello", additional_properties={"v": 1})
     content.annotations = [cit]
 
     dumped = content.to_dict()
-    loaded = TextContent.from_dict(dumped)
+    loaded = Content.from_dict(dumped)
     assert isinstance(loaded.annotations, list)
     assert len(loaded.annotations) == 1
-    # After migration from Pydantic, annotations should be properly reconstructed as objects
-    assert isinstance(loaded.annotations[0], CitationAnnotation)
+    # After migration from Pydantic, annotations are now TypedDicts (dicts at runtime)
+    assert isinstance(loaded.annotations[0], dict)
     # Check the annotation properties
     loaded_cit = loaded.annotations[0]
-    assert loaded_cit.type == "citation"
-    assert loaded_cit.title == "Doc"
-    assert loaded_cit.url == "http://example.com"
-    assert loaded_cit.snippet == "Snippet"
+    assert loaded_cit["type"] == "citation"
+    assert loaded_cit["title"] == "Doc"
+    assert loaded_cit["url"] == "http://example.com"
+    assert loaded_cit["snippet"] == "Snippet"
     # Check the annotated_regions
-    assert isinstance(loaded_cit.annotated_regions, list)
-    assert len(loaded_cit.annotated_regions) == 1
-    assert isinstance(loaded_cit.annotated_regions[0], TextSpanRegion)
-    assert loaded_cit.annotated_regions[0].type == "text_span"
-    assert loaded_cit.annotated_regions[0].start_index == 0
-    assert loaded_cit.annotated_regions[0].end_index == 5
+    assert isinstance(loaded_cit["annotated_regions"], list)
+    assert len(loaded_cit["annotated_regions"]) == 1
+    assert isinstance(loaded_cit["annotated_regions"][0], dict)
+    assert loaded_cit["annotated_regions"][0]["type"] == "text_span"
+    assert loaded_cit["annotated_regions"][0]["start_index"] == 0
+    assert loaded_cit["annotated_regions"][0]["end_index"] == 5
 
 
 def test_function_call_merge_in_process_update_and_usage_aggregation():
     # Two function call chunks with same call_id should merge
-    u1 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="c1", name="f", arguments="{")], message_id="m")
-    u2 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="c1", name="f", arguments="}")], message_id="m")
+    u1 = ChatResponseUpdate(
+        contents=[Content.from_function_call(call_id="c1", name="f", arguments="{")], message_id="m"
+    )
+    u2 = ChatResponseUpdate(
+        contents=[Content.from_function_call(call_id="c1", name="f", arguments="}")], message_id="m"
+    )
     # plus usage
-    u3 = ChatResponseUpdate(contents=[UsageContent(UsageDetails(input_token_count=1, output_token_count=2))])
+    u3 = ChatResponseUpdate(contents=[Content.from_usage(UsageDetails(input_token_count=1, output_token_count=2))])
 
     resp = ChatResponse.from_chat_response_updates([u1, u2, u3])
     assert len(resp.messages) == 1
     last_contents = resp.messages[0].contents
-    assert any(isinstance(c, FunctionCallContent) for c in last_contents)
-    fcs = [c for c in last_contents if isinstance(c, FunctionCallContent)]
+    assert any(c.type == "function_call" for c in last_contents)
+    fcs = [c for c in last_contents if c.type == "function_call"]
     assert len(fcs) == 1
     assert fcs[0].arguments == "{}"
     assert resp.usage_details is not None
-    assert resp.usage_details.input_token_count == 1
-    assert resp.usage_details.output_token_count == 2
+    assert resp.usage_details["input_token_count"] == 1
+    assert resp.usage_details["output_token_count"] == 2
 
 
 def test_function_call_incompatible_ids_are_not_merged():
-    u1 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="a", name="f", arguments="x")], message_id="m")
-    u2 = ChatResponseUpdate(contents=[FunctionCallContent(call_id="b", name="f", arguments="y")], message_id="m")
+    u1 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="a", name="f", arguments="x")], message_id="m")
+    u2 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="b", name="f", arguments="y")], message_id="m")
 
     resp = ChatResponse.from_chat_response_updates([u1, u2])
-    fcs = [c for c in resp.messages[0].contents if isinstance(c, FunctionCallContent)]
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
     assert len(fcs) == 2
 
 
@@ -1261,13 +1343,13 @@ def test_response_update_propagates_fields_and_metadata():
 
 
 def test_text_coalescing_preserves_first_properties():
-    t1 = TextContent("A", raw_representation={"r": 1}, additional_properties={"p": 1})
-    t2 = TextContent("B")
+    t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
+    t2 = Content.from_text("B")
     upd1 = ChatResponseUpdate(text=t1, message_id="x")
     upd2 = ChatResponseUpdate(text=t2, message_id="x")
     resp = ChatResponse.from_chat_response_updates([upd1, upd2])
     # After coalescing there should be a single TextContent with merged text and preserved props from first
-    items = [c for c in resp.messages[0].contents if isinstance(c, TextContent)]
+    items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
     assert items[0].text == "AB"
     assert items[0].raw_representation == {"r": 1}
@@ -1275,9 +1357,9 @@ def test_text_coalescing_preserves_first_properties():
 
 
 def test_function_call_content_parse_numeric_or_list():
-    c_num = FunctionCallContent(call_id="1", name="f", arguments="123")
+    c_num = Content.from_function_call(call_id="1", name="f", arguments="123")
     assert c_num.parse_arguments() == {"raw": 123}
-    c_list = FunctionCallContent(call_id="1", name="f", arguments="[1,2]")
+    c_list = Content.from_function_call(call_id="1", name="f", arguments="[1,2]")
     assert c_list.parse_arguments() == {"raw": [1, 2]}
 
 
@@ -1295,8 +1377,8 @@ def agent_run_response_async() -> AgentResponse:
 
 async def test_agent_run_response_from_async_generator():
     async def gen():
-        yield AgentResponseUpdate(contents=[TextContent("A")])
-        yield AgentResponseUpdate(contents=[TextContent("B")])
+        yield AgentResponseUpdate(contents=[Content.from_text("A")])
+        yield AgentResponseUpdate(contents=[Content.from_text("B")])
 
     r = await AgentResponse.from_agent_response_generator(gen())
     assert r.text == "AB"
@@ -1309,67 +1391,65 @@ def test_text_content_add_comprehensive_coverage():
     """Test TextContent __add__ method with various combinations to improve coverage."""
 
     # Test with None raw_representation
-    t1 = TextContent("Hello", raw_representation=None, annotations=None)
-    t2 = TextContent(" World", raw_representation=None, annotations=None)
+    t1 = Content.from_text("Hello", raw_representation=None, annotations=None)
+    t2 = Content.from_text(" World", raw_representation=None, annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation is None
     assert result.annotations is None
 
     # Test first has raw_representation, second has None
-    t1 = TextContent("Hello", raw_representation="raw1", annotations=None)
-    t2 = TextContent(" World", raw_representation=None, annotations=None)
+    t1 = Content.from_text("Hello", raw_representation="raw1", annotations=None)
+    t2 = Content.from_text(" World", raw_representation=None, annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation == "raw1"
 
     # Test first has None, second has raw_representation
-    t1 = TextContent("Hello", raw_representation=None, annotations=None)
-    t2 = TextContent(" World", raw_representation="raw2", annotations=None)
+    t1 = Content.from_text("Hello", raw_representation=None, annotations=None)
+    t2 = Content.from_text(" World", raw_representation="raw2", annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation == "raw2"
 
     # Test both have raw_representation (non-list)
-    t1 = TextContent("Hello", raw_representation="raw1", annotations=None)
-    t2 = TextContent(" World", raw_representation="raw2", annotations=None)
+    t1 = Content.from_text("Hello", raw_representation="raw1", annotations=None)
+    t2 = Content.from_text(" World", raw_representation="raw2", annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation == ["raw1", "raw2"]
 
     # Test first has list raw_representation, second has single
-    t1 = TextContent("Hello", raw_representation=["raw1", "raw2"], annotations=None)
-    t2 = TextContent(" World", raw_representation="raw3", annotations=None)
+    t1 = Content.from_text("Hello", raw_representation=["raw1", "raw2"], annotations=None)
+    t2 = Content.from_text(" World", raw_representation="raw3", annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation == ["raw1", "raw2", "raw3"]
 
     # Test both have list raw_representation
-    t1 = TextContent("Hello", raw_representation=["raw1", "raw2"], annotations=None)
-    t2 = TextContent(" World", raw_representation=["raw3", "raw4"], annotations=None)
+    t1 = Content.from_text("Hello", raw_representation=["raw1", "raw2"], annotations=None)
+    t2 = Content.from_text(" World", raw_representation=["raw3", "raw4"], annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation == ["raw1", "raw2", "raw3", "raw4"]
 
     # Test first has single raw_representation, second has list
-    t1 = TextContent("Hello", raw_representation="raw1", annotations=None)
-    t2 = TextContent(" World", raw_representation=["raw2", "raw3"], annotations=None)
+    t1 = Content.from_text("Hello", raw_representation="raw1", annotations=None)
+    t2 = Content.from_text(" World", raw_representation=["raw2", "raw3"], annotations=None)
     result = t1 + t2
     assert result.text == "Hello World"
     assert result.raw_representation == ["raw1", "raw2", "raw3"]
 
 
 def test_text_content_iadd_coverage():
-    """Test TextContent __iadd__ method for better coverage."""
+    """Test TextContent += operator for better coverage."""
 
-    t1 = TextContent("Hello", raw_representation="raw1", additional_properties={"key1": "val1"})
-    t2 = TextContent(" World", raw_representation="raw2", additional_properties={"key2": "val2"})
+    t1 = Content.from_text("Hello", raw_representation="raw1", additional_properties={"key1": "val1"})
+    t2 = Content.from_text(" World", raw_representation="raw2", additional_properties={"key2": "val2"})
 
-    original_id = id(t1)
     t1 += t2
 
-    # Should modify in place
-    assert id(t1) == original_id
+    # Content doesn't implement __iadd__, so += creates a new object via __add__
     assert t1.text == "Hello World"
     assert t1.raw_representation == ["raw1", "raw2"]
     assert t1.additional_properties == {"key1": "val1", "key2": "val2"}
@@ -1378,23 +1458,22 @@ def test_text_content_iadd_coverage():
 def test_text_reasoning_content_add_coverage():
     """Test TextReasoningContent __add__ method for better coverage."""
 
-    t1 = TextReasoningContent("Thinking 1")
-    t2 = TextReasoningContent(" Thinking 2")
+    t1 = Content.from_text_reasoning(text="Thinking 1")
+    t2 = Content.from_text_reasoning(text=" Thinking 2")
 
     result = t1 + t2
     assert result.text == "Thinking 1 Thinking 2"
 
 
 def test_text_reasoning_content_iadd_coverage():
-    """Test TextReasoningContent __iadd__ method for better coverage."""
+    """Test TextReasoningContent += operator for better coverage."""
 
-    t1 = TextReasoningContent("Thinking 1")
-    t2 = TextReasoningContent(" Thinking 2")
+    t1 = Content.from_text_reasoning(text="Thinking 1")
+    t2 = Content.from_text_reasoning(text=" Thinking 2")
 
-    original_id = id(t1)
     t1 += t2
 
-    assert id(t1) == original_id
+    # Content doesn't implement __iadd__, so += creates a new object via __add__
     assert t1.text == "Thinking 1 Thinking 2"
 
 
@@ -1402,49 +1481,46 @@ def test_comprehensive_to_dict_exclude_options():
     """Test to_dict methods with various exclude options for better coverage."""
 
     # Test TextContent with exclude_none
-    text_content = TextContent("Hello", raw_representation=None, additional_properties={"prop": "val"})
+    text_content = Content.from_text("Hello", raw_representation=None, additional_properties={"prop": "val"})
     text_dict = text_content.to_dict(exclude_none=True)
     assert "raw_representation" not in text_dict
-    assert text_dict["prop"] == "val"
+    assert text_dict["additional_properties"]["prop"] == "val"
 
     # Test with custom exclude set
     text_dict_exclude = text_content.to_dict(exclude={"additional_properties"})
     assert "additional_properties" not in text_dict_exclude
     assert "text" in text_dict_exclude
 
-    # Test UsageDetails with additional counts
+    # Test UsageDetails - it's a TypedDict now, not a class with to_dict
     usage = UsageDetails(input_token_count=5, custom_count=10)
-    usage_dict = usage.to_dict()
-    assert usage_dict["input_token_count"] == 5
-    assert usage_dict["custom_count"] == 10
+    assert usage["input_token_count"] == 5
+    assert usage["custom_count"] == 10
 
-    # Test UsageDetails exclude_none
-    usage_none = UsageDetails(input_token_count=5, output_token_count=None)
-    usage_dict_no_none = usage_none.to_dict(exclude_none=True)
-    assert "output_token_count" not in usage_dict_no_none
-    assert usage_dict_no_none["input_token_count"] == 5
+    # Test UsageDetails exclude_none behavior isn't applicable to TypedDict
+    # TypedDict doesn't have a to_dict method
 
 
 def test_usage_details_iadd_edge_cases():
-    """Test UsageDetails __iadd__ with edge cases for better coverage."""
+    """Test UsageDetails addition with edge cases for better coverage."""
+    from agent_framework._types import add_usage_details
 
     # Test with None values
     u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)
     u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)
 
-    u1 += u2
-    assert u1.input_token_count == 3
-    assert u1.output_token_count == 5
-    assert u1.additional_counts["custom1"] == 10
-    assert u1.additional_counts["custom2"] == 20
+    result = add_usage_details(u1, u2)
+    assert result["input_token_count"] == 3
+    assert result["output_token_count"] == 5
+    assert result.get("custom1") == 10
+    assert result.get("custom2") == 20
 
     # Test merging additional counts
     u3 = UsageDetails(input_token_count=1, shared_count=5)
     u4 = UsageDetails(input_token_count=2, shared_count=15)
 
-    u3 += u4
-    assert u3.input_token_count == 3
-    assert u3.additional_counts["shared_count"] == 20
+    result2 = add_usage_details(u3, u4)
+    assert result2["input_token_count"] == 3
+    assert result2.get("shared_count") == 20
 
 
 def test_chat_message_from_dict_with_mixed_content():
@@ -1461,9 +1537,9 @@ def test_chat_message_from_dict_with_mixed_content():
 
     message = ChatMessage.from_dict(message_data)
     assert len(message.contents) == 3  # Unknown type is ignored
-    assert isinstance(message.contents[0], TextContent)
-    assert isinstance(message.contents[1], FunctionCallContent)
-    assert isinstance(message.contents[2], FunctionResultContent)
+    assert message.contents[0].type == "text"
+    assert message.contents[1].type == "function_call"
+    assert message.contents[2].type == "function_result"
 
     # Test round-trip
     message_dict = message.to_dict()
@@ -1472,7 +1548,7 @@ def test_chat_message_from_dict_with_mixed_content():
 
 def test_text_content_add_type_error():
     """Test TextContent __add__ raises TypeError for incompatible types."""
-    t1 = TextContent("Hello")
+    t1 = Content.from_text("Hello")
 
     with raises(TypeError, match="Incompatible type"):
         t1 + "not a TextContent"
@@ -1483,12 +1559,13 @@ def test_comprehensive_serialization_methods():
 
     # Test TextContent with all fields
     text_data = {
+        "type": "text",
         "text": "Hello world",
         "raw_representation": {"key": "value"},
-        "prop": "val",
+        "additional_properties": {"prop": "val"},
         "annotations": None,
     }
-    text_content = TextContent.from_dict(text_data)
+    text_content = Content.from_dict(text_data)
     assert text_content.text == "Hello world"
     assert text_content.raw_representation == {"key": "value"}
     assert text_content.additional_properties == {"prop": "val"}
@@ -1496,7 +1573,7 @@ def test_comprehensive_serialization_methods():
     # Test round-trip
     text_dict = text_content.to_dict()
     assert text_dict["text"] == "Hello world"
-    assert text_dict["prop"] == "val"
+    assert text_dict["additional_properties"] == {"prop": "val"}
     # Note: raw_representation is always excluded from to_dict() output
 
     # Test with exclude_none
@@ -1504,8 +1581,13 @@ def test_comprehensive_serialization_methods():
     assert "annotations" not in text_dict_no_none
 
     # Test FunctionResultContent
-    result_data = {"call_id": "call123", "result": "success", "additional_properties": {"meta": "data"}}
-    result_content = FunctionResultContent.from_dict(result_data)
+    result_data = {
+        "type": "function_result",
+        "call_id": "call123",
+        "result": "success",
+        "additional_properties": {"meta": "data"},
+    }
+    result_content = Content.from_dict(result_data)
     assert result_content.call_id == "call123"
     assert result_content.result == "success"
 
@@ -1515,9 +1597,9 @@ def test_chat_message_complex_content_serialization():
 
     # Create a message with multiple content types
     contents = [
-        TextContent("Hello"),
-        FunctionCallContent(call_id="call1", name="func", arguments={"arg": "val"}),
-        FunctionResultContent(call_id="call1", result="success"),
+        Content.from_text("Hello"),
+        Content.from_function_call(call_id="call1", name="func", arguments={"arg": "val"}),
+        Content.from_function_result(call_id="call1", result="success"),
     ]
 
     message = ChatMessage(role=Role.ASSISTANT, contents=contents)
@@ -1532,9 +1614,9 @@ def test_chat_message_complex_content_serialization():
     # Test from_dict round-trip
     reconstructed = ChatMessage.from_dict(message_dict)
     assert len(reconstructed.contents) == 3
-    assert isinstance(reconstructed.contents[0], TextContent)
-    assert isinstance(reconstructed.contents[1], FunctionCallContent)
-    assert isinstance(reconstructed.contents[2], FunctionResultContent)
+    assert reconstructed.contents[0].type == "text"
+    assert reconstructed.contents[1].type == "function_call"
+    assert reconstructed.contents[2].type == "function_result"
 
 
 def test_usage_content_serialization_with_details():
@@ -1543,7 +1625,7 @@ def test_usage_content_serialization_with_details():
     # Test from_dict with details as dict
     usage_data = {
         "type": "usage",
-        "details": {
+        "usage_details": {
             "type": "usage_details",
             "input_token_count": 10,
             "output_token_count": 20,
@@ -1551,15 +1633,15 @@ def test_usage_content_serialization_with_details():
             "custom_count": 5,
         },
     }
-    usage_content = UsageContent.from_dict(usage_data)
-    assert isinstance(usage_content.details, UsageDetails)
-    assert usage_content.details.input_token_count == 10
-    assert usage_content.details.additional_counts["custom_count"] == 5
+    usage_content = Content(**usage_data)
+    assert isinstance(usage_content.usage_details, dict)
+    assert usage_content.usage_details["input_token_count"] == 10
+    assert usage_content.usage_details["custom_count"] == 5  # Custom fields go directly in UsageDetails
 
     # Test to_dict with UsageDetails object
     usage_dict = usage_content.to_dict()
-    assert isinstance(usage_dict["details"], dict)
-    assert usage_dict["details"]["input_token_count"] == 10
+    assert isinstance(usage_dict["usage_details"], dict)
+    assert usage_dict["usage_details"]["input_token_count"] == 10
 
 
 def test_function_approval_response_content_serialization():
@@ -1577,8 +1659,8 @@ def test_function_approval_response_content_serialization():
             "arguments": {"param": "value"},
         },
     }
-    response_content = FunctionApprovalResponseContent.from_dict(response_data)
-    assert isinstance(response_content.function_call, FunctionCallContent)
+    response_content = Content.from_dict(response_data)
+    assert response_content.function_call.type == "function_call"
     assert response_content.function_call.call_id == "call123"
 
     # Test to_dict with FunctionCallContent object
@@ -1610,7 +1692,7 @@ def test_chat_response_complex_serialization():
     assert len(response.messages) == 2
     assert isinstance(response.messages[0], ChatMessage)
     assert isinstance(response.finish_reason, FinishReason)
-    assert isinstance(response.usage_details, UsageDetails)
+    assert isinstance(response.usage_details, dict)
     assert response.model_id == "gpt-4"  # Should be stored as model_id
 
     # Test to_dict with complex objects
@@ -1630,10 +1712,10 @@ def test_chat_response_update_all_content_types():
             {"type": "text", "text": "Hello"},
             {"type": "data", "data": b"base64data", "media_type": "text/plain"},
             {"type": "uri", "uri": "http://example.com", "media_type": "text/html"},
-            {"type": "error", "error": "An error occurred"},
+            {"type": "error", "message": "An error occurred"},
             {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             {"type": "function_result", "call_id": "call1", "result": "success"},
-            {"type": "usage", "details": {"type": "usage_details", "input_token_count": 1}},
+            {"type": "usage", "usage_details": {"input_token_count": 1}},
             {"type": "hosted_file", "file_id": "file123"},
             {"type": "hosted_vector_store", "vector_store_id": "vs123"},
             {
@@ -1653,18 +1735,18 @@ def test_chat_response_update_all_content_types():
 
     update = ChatResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is skipped with warning
-    assert isinstance(update.contents[0], TextContent)
-    assert isinstance(update.contents[1], DataContent)
-    assert isinstance(update.contents[2], UriContent)
-    assert isinstance(update.contents[3], ErrorContent)
-    assert isinstance(update.contents[4], FunctionCallContent)
-    assert isinstance(update.contents[5], FunctionResultContent)
-    assert isinstance(update.contents[6], UsageContent)
-    assert isinstance(update.contents[7], HostedFileContent)
-    assert isinstance(update.contents[8], HostedVectorStoreContent)
-    assert isinstance(update.contents[9], FunctionApprovalRequestContent)
-    assert isinstance(update.contents[10], FunctionApprovalResponseContent)
-    assert isinstance(update.contents[11], TextReasoningContent)
+    assert update.contents[0].type == "text"
+    assert update.contents[1].type == "data"
+    assert update.contents[2].type == "uri"
+    assert update.contents[3].type == "error"
+    assert update.contents[4].type == "function_call"
+    assert update.contents[5].type == "function_result"
+    assert update.contents[6].type == "usage"
+    assert update.contents[7].type == "hosted_file"
+    assert update.contents[8].type == "hosted_vector_store"
+    assert update.contents[9].type == "function_approval_request"
+    assert update.contents[10].type == "function_approval_response"
+    assert update.contents[11].type == "text_reasoning"
 
 
 def test_agent_run_response_complex_serialization():
@@ -1686,7 +1768,7 @@ def test_agent_run_response_complex_serialization():
     response = AgentResponse.from_dict(response_data)
     assert len(response.messages) == 2
     assert isinstance(response.messages[0], ChatMessage)
-    assert isinstance(response.usage_details, UsageDetails)
+    assert isinstance(response.usage_details, dict)
 
     # Test to_dict
     response_dict = response.to_dict()
@@ -1703,10 +1785,10 @@ def test_agent_run_response_update_all_content_types():
             {"type": "text", "text": "Hello"},
             {"type": "data", "data": b"base64data", "media_type": "text/plain"},
             {"type": "uri", "uri": "http://example.com", "media_type": "text/html"},
-            {"type": "error", "error": "An error occurred"},
+            {"type": "error", "message": "An error occurred"},
             {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             {"type": "function_result", "call_id": "call1", "result": "success"},
-            {"type": "usage", "details": {"type": "usage_details", "input_token_count": 1}},
+            {"type": "usage", "usage_details": {"input_token_count": 1}},
             {"type": "hosted_file", "file_id": "file123"},
             {"type": "hosted_vector_store", "vector_store_id": "vs123"},
             {
@@ -1750,7 +1832,7 @@ def test_agent_run_response_update_all_content_types():
     "content_class,init_kwargs",
     [
         pytest.param(
-            TextContent,
+            Content,
             {
                 "type": "text",
                 "text": "Hello world",
@@ -1759,7 +1841,7 @@ def test_agent_run_response_update_all_content_types():
             id="text_content",
         ),
         pytest.param(
-            TextReasoningContent,
+            Content,
             {
                 "type": "text_reasoning",
                 "text": "Reasoning text",
@@ -1768,7 +1850,7 @@ def test_agent_run_response_update_all_content_types():
             id="text_reasoning_content",
         ),
         pytest.param(
-            DataContent,
+            Content,
             {
                 "type": "data",
                 "uri": "data:text/plain;base64,dGVzdCBkYXRh",
@@ -1776,7 +1858,7 @@ def test_agent_run_response_update_all_content_types():
             id="data_content_with_uri",
         ),
         pytest.param(
-            DataContent,
+            Content,
             {
                 "type": "data",
                 "data": b"test data",
@@ -1785,7 +1867,7 @@ def test_agent_run_response_update_all_content_types():
             id="data_content_with_bytes",
         ),
         pytest.param(
-            UriContent,
+            Content,
             {
                 "type": "uri",
                 "uri": "http://example.com",
@@ -1794,12 +1876,12 @@ def test_agent_run_response_update_all_content_types():
             id="uri_content",
         ),
         pytest.param(
-            HostedFileContent,
+            Content,
             {"type": "hosted_file", "file_id": "file-123"},
             id="hosted_file_content",
         ),
         pytest.param(
-            HostedVectorStoreContent,
+            Content,
             {
                 "type": "hosted_vector_store",
                 "vector_store_id": "vs-789",
@@ -1807,7 +1889,7 @@ def test_agent_run_response_update_all_content_types():
             id="hosted_vector_store_content",
         ),
         pytest.param(
-            FunctionCallContent,
+            Content,
             {
                 "type": "function_call",
                 "call_id": "call-1",
@@ -1817,7 +1899,7 @@ def test_agent_run_response_update_all_content_types():
             id="function_call_content",
         ),
         pytest.param(
-            FunctionResultContent,
+            Content,
             {
                 "type": "function_result",
                 "call_id": "call-1",
@@ -1826,7 +1908,7 @@ def test_agent_run_response_update_all_content_types():
             id="function_result_content",
         ),
         pytest.param(
-            ErrorContent,
+            Content,
             {
                 "type": "error",
                 "message": "Error occurred",
@@ -1835,10 +1917,10 @@ def test_agent_run_response_update_all_content_types():
             id="error_content",
         ),
         pytest.param(
-            UsageContent,
+            Content,
             {
                 "type": "usage",
-                "details": {
+                "usage_details": {
                     "type": "usage_details",
                     "input_token_count": 10,
                     "output_token_count": 20,
@@ -1848,7 +1930,7 @@ def test_agent_run_response_update_all_content_types():
             id="usage_content",
         ),
         pytest.param(
-            FunctionApprovalRequestContent,
+            Content,
             {
                 "type": "function_approval_request",
                 "id": "req-1",
@@ -1857,7 +1939,7 @@ def test_agent_run_response_update_all_content_types():
             id="function_approval_request",
         ),
         pytest.param(
-            FunctionApprovalResponseContent,
+            Content,
             {
                 "type": "function_approval_response",
                 "id": "resp-1",
@@ -1960,10 +2042,10 @@ def test_agent_run_response_update_all_content_types():
         ),
     ],
 )
-def test_content_roundtrip_serialization(content_class: type[BaseContent], init_kwargs: dict[str, Any]):
+def test_content_roundtrip_serialization(content_class: type[Content], init_kwargs: dict[str, Any]):
     """Test to_dict/from_dict roundtrip for all content types."""
-    # Create instance
-    content = content_class(**init_kwargs)
+    # Create instance using from_dict to handle nested dict-to-object conversions
+    content = content_class.from_dict(init_kwargs)
 
     # Serialize to dict
     content_dict = content.to_dict()
@@ -1991,7 +2073,7 @@ def test_content_roundtrip_serialization(content_class: type[BaseContent], init_
             continue
 
         # Special handling for DataContent created with 'data' parameter
-        if content_class == DataContent and key == "data":
+        if hasattr(content, "type") and content.type == "data" and key == "data":
             # DataContent converts 'data' to 'uri', so we skip checking 'data' attribute
             # Instead we verify that uri and media_type are set correctly
             assert hasattr(reconstructed, "uri")
@@ -2013,108 +2095,48 @@ def test_content_roundtrip_serialization(content_class: type[BaseContent], init_
             if isinstance(value[0], dict) and hasattr(reconstructed_value[0], "to_dict"):
                 # Compare each item by serializing the reconstructed object
                 assert len(reconstructed_value) == len(value)
-
+                for orig_dict, recon_obj in zip(value, reconstructed_value):
+                    recon_dict = recon_obj.to_dict()
+                    # Compare all keys from original dict (reconstructed may have extra default fields)
+                    for k, v in orig_dict.items():
+                        assert k in recon_dict, f"Key '{k}' missing from reconstructed dict"
+                        # For nested lists, recursively compare
+                        if isinstance(v, list) and v and isinstance(v[0], dict):
+                            assert len(recon_dict[k]) == len(v)
+                            for orig_item, recon_item in zip(v, recon_dict[k]):
+                                # Compare essential keys, ignoring fields like additional_properties
+                                for item_key, item_val in orig_item.items():
+                                    assert item_key in recon_item
+                                    assert recon_item[item_key] == item_val
+                        else:
+                            assert recon_dict[k] == v, f"Value mismatch for key '{k}'"
             else:
                 assert reconstructed_value == value
         # Special handling for dicts that get converted to objects (like UsageDetails, FunctionCallContent)
         elif isinstance(value, dict) and hasattr(reconstructed_value, "to_dict"):
-            # Compare the dict with the serialized form of the object, excluding 'type' key
+            # Compare the dict with the serialized form of the object
             reconstructed_dict = reconstructed_value.to_dict()
-            if value:
-                assert len(reconstructed_dict) == len(value)
+            # Verify all keys from the original dict are in the reconstructed dict
+            for k, v in value.items():
+                assert k in reconstructed_dict, f"Key '{k}' missing from reconstructed dict"
+                assert reconstructed_dict[k] == v, f"Value mismatch for key '{k}'"
         else:
             assert reconstructed_value == value
 
 
 def test_text_content_with_annotations_serialization():
-    """Test TextContent with CitationAnnotation and TextSpanRegion roundtrip serialization."""
-    # Create TextSpanRegion
-    region = TextSpanRegion(start_index=0, end_index=5)
-
-    # Create CitationAnnotation with region
-    citation = CitationAnnotation(
-        title="Test Citation",
-        url="http://example.com/citation",
-        file_id="file-123",
-        tool_name="test_tool",
-        snippet="This is a test snippet",
-        annotated_regions=[region],
-        additional_properties={"custom": "value"},
-    )
-
-    # Create TextContent with annotation
-    content = TextContent(
-        text="Hello world", annotations=[citation], additional_properties={"content_key": "content_val"}
-    )
-
-    # Serialize to dict
-    content_dict = content.to_dict()
-
-    # Verify structure
-    assert content_dict["type"] == "text"
-    assert content_dict["text"] == "Hello world"
-    assert content_dict["content_key"] == "content_val"
-    assert len(content_dict["annotations"]) == 1
-
-    # Verify annotation structure
-    annotation_dict = content_dict["annotations"][0]
-    assert annotation_dict["type"] == "citation"
-    assert annotation_dict["title"] == "Test Citation"
-    assert annotation_dict["url"] == "http://example.com/citation"
-    assert annotation_dict["file_id"] == "file-123"
-    assert annotation_dict["tool_name"] == "test_tool"
-    assert annotation_dict["snippet"] == "This is a test snippet"
-    assert annotation_dict["custom"] == "value"
-
-    # Verify region structure
-    assert len(annotation_dict["annotated_regions"]) == 1
-    region_dict = annotation_dict["annotated_regions"][0]
-    assert region_dict["type"] == "text_span"
-    assert region_dict["start_index"] == 0
-    assert region_dict["end_index"] == 5
-
-    # Deserialize from dict
-    reconstructed = TextContent.from_dict(content_dict)
-
-    # Verify reconstructed content
-    assert isinstance(reconstructed, TextContent)
-    assert reconstructed.text == "Hello world"
-    assert reconstructed.type == "text"
-    assert reconstructed.additional_properties == {"content_key": "content_val"}
-
-    # Verify reconstructed annotation
-    assert len(reconstructed.annotations) == 1  # type: ignore[arg-type]
-    recon_annotation = reconstructed.annotations[0]  # type: ignore[index]
-    assert isinstance(recon_annotation, CitationAnnotation)
-    assert recon_annotation.title == "Test Citation"
-    assert recon_annotation.url == "http://example.com/citation"
-    assert recon_annotation.file_id == "file-123"
-    assert recon_annotation.tool_name == "test_tool"
-    assert recon_annotation.snippet == "This is a test snippet"
-    assert recon_annotation.additional_properties == {"custom": "value"}
-
-    # Verify reconstructed region
-    assert len(recon_annotation.annotated_regions) == 1  # type: ignore[arg-type]
-    recon_region = recon_annotation.annotated_regions[0]  # type: ignore[index]
-    assert isinstance(recon_region, TextSpanRegion)
-    assert recon_region.start_index == 0
-    assert recon_region.end_index == 5
-    assert recon_region.type == "text_span"
-
-
-def test_text_content_with_multiple_annotations_serialization():
     """Test TextContent with multiple annotations roundtrip serialization."""
     # Create multiple regions
-    region1 = TextSpanRegion(start_index=0, end_index=5)
-    region2 = TextSpanRegion(start_index=6, end_index=11)
+    region1 = TextSpanRegion(type="text_span", start_index=0, end_index=5)
+    region2 = TextSpanRegion(type="text_span", start_index=6, end_index=11)
 
     # Create multiple citations
-    citation1 = CitationAnnotation(title="Citation 1", url="http://example.com/1", annotated_regions=[region1])
+    citation1 = Annotation(type="citation", title="Citation 1", url="http://example.com/1", annotated_regions=[region1])
 
-    citation2 = CitationAnnotation(title="Citation 2", url="http://example.com/2", annotated_regions=[region2])
+    citation2 = Annotation(type="citation", title="Citation 2", url="http://example.com/2", annotated_regions=[region2])
 
     # Create TextContent with multiple annotations
-    content = TextContent(text="Hello world", annotations=[citation1, citation2])
+    content = Content.from_text(text="Hello world", annotations=[citation1, citation2])
 
     # Serialize
     content_dict = content.to_dict()
@@ -2125,14 +2147,15 @@ def test_text_content_with_multiple_annotations_serialization():
     assert content_dict["annotations"][1]["title"] == "Citation 2"
 
     # Deserialize
-    reconstructed = TextContent.from_dict(content_dict)
+    reconstructed = Content.from_dict(content_dict)
 
     # Verify reconstruction
     assert len(reconstructed.annotations) == 2
-    assert all(isinstance(ann, CitationAnnotation) for ann in reconstructed.annotations)
-    assert reconstructed.annotations[0].title == "Citation 1"
-    assert reconstructed.annotations[1].title == "Citation 2"
-    assert all(isinstance(ann.annotated_regions[0], TextSpanRegion) for ann in reconstructed.annotations)
+    # Annotation are TypedDicts (dicts at runtime)
+    assert all(isinstance(ann, dict) for ann in reconstructed.annotations)
+    assert reconstructed.annotations[0]["title"] == "Citation 1"
+    assert reconstructed.annotations[1]["title"] == "Citation 2"
+    assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)
 
 
 # region prepare_function_call_results with Pydantic models

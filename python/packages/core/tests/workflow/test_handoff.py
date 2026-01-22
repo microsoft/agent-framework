@@ -11,12 +11,11 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
+    Content,
     HandoffAgentUserRequest,
     HandoffBuilder,
     RequestInfoEvent,
     Role,
-    TextContent,
     WorkflowEvent,
     WorkflowOutputEvent,
     resolve_agent_id,
@@ -74,14 +73,16 @@ def _build_reply_contents(
     agent_name: str,
     handoff_to: str | None,
     call_id: str | None,
-) -> list[TextContent | FunctionCallContent]:
-    contents: list[TextContent | FunctionCallContent] = []
+) -> list[Content]:
+    contents: list[Content] = []
     if handoff_to and call_id:
         contents.append(
-            FunctionCallContent(call_id=call_id, name=f"handoff_to_{handoff_to}", arguments={"handoff_to": handoff_to})
+            Content.from_function_call(
+                call_id=call_id, name=f"handoff_to_{handoff_to}", arguments={"handoff_to": handoff_to}
+            )
         )
     text = f"{agent_name} reply"
-    contents.append(TextContent(text=text))
+    contents.append(Content.from_text(text=text))
     return contents
 
 

@@ -6,6 +6,7 @@ import sys
 from typing import Any, TypedDict
 
 from agent_framework import ChatOptions
+from pydantic import BaseModel, Field
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -18,8 +19,6 @@ __all__ = [
     "PredictStateConfig",
     "RunMetadata",
 ]
-
-from pydantic import BaseModel, Field
 
 
 class PredictStateConfig(TypedDict):

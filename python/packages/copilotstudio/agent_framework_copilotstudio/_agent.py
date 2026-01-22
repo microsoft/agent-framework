@@ -10,9 +10,10 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Content,
     ContextProvider,
     Role,
-    TextContent,
+    normalize_messages,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
@@ -237,7 +238,7 @@ class CopilotStudioAgent(BaseAgent):
             thread = self.get_new_thread()
         thread.service_thread_id = await self._start_new_conversation()
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
@@ -278,7 +279,7 @@ class CopilotStudioAgent(BaseAgent):
             thread = self.get_new_thread()
         thread.service_thread_id = await self._start_new_conversation()
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
@@ -331,7 +332,7 @@ class CopilotStudioAgent(BaseAgent):
             ):
                 yield ChatMessage(
                     role=Role.ASSISTANT,
-                    contents=[TextContent(activity.text)],
+                    contents=[Content.from_text(activity.text)],
                     author_name=activity.from_property.name if activity.from_property else None,
                     message_id=activity.id,
                     raw_representation=activity,

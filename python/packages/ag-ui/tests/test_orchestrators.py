@@ -13,8 +13,8 @@ from agent_framework import (
     BaseChatClient,
     ChatAgent,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationConfiguration,
-    TextContent,
     ai_function,
 )
 
@@ -79,11 +79,11 @@ def _create_mock_chat_agent(
         if capture_messages is not None:
             capture_messages.extend(messages)
         yield AgentResponseUpdate(
-            contents=[TextContent(text="ok")],
+            contents=[Content.from_text(text="ok")],
             role="assistant",
             response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
             raw_representation=ChatResponseUpdate(
-                contents=[TextContent(text="ok")],
+                contents=[Content.from_text(text="ok")],
                 conversation_id=thread.metadata.get("ag_ui_thread_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
                 response_id=thread.metadata.get("ag_ui_run_id"),  # type: ignore[attr-defined] (metadata always created in orchestrator)
             ),
@@ -253,7 +253,7 @@ async def test_state_context_injected_when_tool_call_state_mismatch() -> None:
         if role_value != "system":
             continue
         for content in msg.contents or []:
-            if isinstance(content, TextContent) and content.text.startswith("Current state of the application:"):
+            if content.type == "text" and content.text.startswith("Current state of the application:"):
                 state_messages.append(content.text)
     assert state_messages
     assert "Vegetarian" in state_messages[0]
@@ -302,6 +302,6 @@ async def test_state_context_not_injected_when_tool_call_matches_state() -> None
         if role_value != "system":
             continue
         for content in msg.contents or []:
-            if isinstance(content, TextContent) and content.text.startswith("Current state of the application:"):
+            if content.type == "text" and content.text.startswith("Current state of the application:"):
                 state_messages.append(content.text)
     assert not state_messages

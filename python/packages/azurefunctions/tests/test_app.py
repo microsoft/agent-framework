@@ -12,7 +12,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentResponse, ChatMessage, ErrorContent
+from agent_framework import AgentResponse, ChatMessage
 from agent_framework_durabletask import (
     MIMETYPE_APPLICATION_JSON,
     MIMETYPE_TEXT_PLAIN,
@@ -636,7 +636,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
         assert "Agent error" in (content.message or "")
         assert content.error_code == "Exception"
 
@@ -649,6 +649,7 @@ class TestErrorHandling:
         entity_function = create_agent_entity(mock_agent)
 
         mock_context = Mock()
+        mock_context.operation_name = "run"
         mock_context.operation_name = "run"
         mock_context.get_input.side_effect = Exception("Input error")
         mock_context.get_state.return_value = None

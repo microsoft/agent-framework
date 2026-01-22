@@ -63,7 +63,7 @@ async def example_global_thread_scope() -> None:
         scope_to_per_operation_thread_id=False,  # Share memories across all threads
     )
 
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="GlobalMemoryAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
@@ -125,7 +125,7 @@ async def example_per_operation_thread_scope() -> None:
         vector_distance_metric="cosine",
     )
 
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
         context_provider=provider,
@@ -190,7 +190,7 @@ async def example_multiple_agents() -> None:
         vector_distance_metric="cosine",
     )
 
-    personal_agent = client.create_agent(
+    personal_agent = client.as_agent(
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
         context_provider=personal_provider,
@@ -208,7 +208,7 @@ async def example_multiple_agents() -> None:
         vector_distance_metric="cosine",
     )
 
-    work_agent = client.create_agent(
+    work_agent = client.as_agent(
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",
         context_provider=work_provider,

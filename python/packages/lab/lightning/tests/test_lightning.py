@@ -9,8 +9,8 @@ import pytest
 
 agentlightning = pytest.importorskip("agentlightning")
 
-from agent_framework import AgentExecutor, AgentRunEvent, ChatAgent, WorkflowBuilder
-from agent_framework.lab.lightning import AgentFrameworkTracer
+from agent_framework import AgentExecutor, AgentRunEvent, ChatAgent, WorkflowBuilder, Workflow
+from agent_framework_lab_lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import TracerTraceToTriplet
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
@@ -106,7 +106,7 @@ def workflow_two_agents():
             yield workflow
 
 
-async def test_openai_workflow_two_agents(workflow_two_agents):
+async def test_openai_workflow_two_agents(workflow_two_agents: Workflow):
     events = await workflow_two_agents.run("Please analyze the quarterly sales data")
 
     # Get all AgentRunEvent data
@@ -121,7 +121,7 @@ async def test_openai_workflow_two_agents(workflow_two_agents):
     )
 
 
-async def test_observability(workflow_two_agents):
+async def test_observability(workflow_two_agents: Workflow):
     r"""Expected trace tree:
 
                     [workflow.run]

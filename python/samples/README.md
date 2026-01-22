@@ -180,6 +180,17 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | [`getting_started/context_providers/simple_context_provider.py`](./getting_started/context_providers/simple_context_provider.py) | Simple context provider implementation example |
 | [`getting_started/context_providers/aggregate_context_provider.py`](./getting_started/context_providers/aggregate_context_provider.py) | Shows how to combine multiple context providers using an AggregateContextProvider |
 
+## Declarative
+
+| File | Description |
+|------|-------------|
+| [`getting_started/declarative/azure_openai_responses_agent.py`](./getting_started/declarative/azure_openai_responses_agent.py) | Basic agent using Azure OpenAI with structured responses |
+| [`getting_started/declarative/get_weather_agent.py`](./getting_started/declarative/get_weather_agent.py) | Agent with custom function tools using declarative bindings |
+| [`getting_started/declarative/inline_yaml.py`](./getting_started/declarative/inline_yaml.py) | Agent created from inline YAML string |
+| [`getting_started/declarative/mcp_tool_yaml.py`](./getting_started/declarative/mcp_tool_yaml.py) | MCP tool configuration with API key and Azure Foundry connection auth |
+| [`getting_started/declarative/microsoft_learn_agent.py`](./getting_started/declarative/microsoft_learn_agent.py) | Agent with MCP server integration for Microsoft Learn documentation |
+| [`getting_started/declarative/openai_responses_agent.py`](./getting_started/declarative/openai_responses_agent.py) | Basic agent using OpenAI directly |
+
 ## DevUI
 
 | File | Description |
@@ -242,6 +253,21 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | [`getting_started/azure_functions/05_multi_agent_orchestration_concurrency/`](./getting_started/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
 | [`getting_started/azure_functions/06_multi_agent_orchestration_conditionals/`](./getting_started/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |
 | [`getting_started/azure_functions/07_single_agent_orchestration_hitl/`](./getting_started/azure_functions/07_single_agent_orchestration_hitl/) | Implement a human-in-the-loop approval loop that iterates on agent output inside a durable orchestration. |
+| [`getting_started/azure_functions/08_mcp_server/`](./getting_started/azure_functions/08_mcp_server/) | Configure agents as both HTTP endpoints and MCP tools for flexible integration patterns. |
+
+## Durable Task
+
+These samples demonstrate durable agent hosting using the Durable Task Scheduler with a worker-client architecture pattern, enabling distributed agent execution with persistent conversation state.
+
+| Sample | Description |
+|--------|-------------|
+| [`getting_started/durabletask/01_single_agent/`](./getting_started/durabletask/01_single_agent/) | Host a single conversational agent with worker-client architecture and agent state management. |
+| [`getting_started/durabletask/02_multi_agent/`](./getting_started/durabletask/02_multi_agent/) | Host multiple domain-specific agents and route requests based on question topic. |
+| [`getting_started/durabletask/03_single_agent_streaming/`](./getting_started/durabletask/03_single_agent_streaming/) | Implement reliable streaming using Redis Streams with cursor-based resumption for durable agents. |
+| [`getting_started/durabletask/04_single_agent_orchestration_chaining/`](./getting_started/durabletask/04_single_agent_orchestration_chaining/) | Chain multiple agent invocations using durable orchestration while preserving conversation context. |
+| [`getting_started/durabletask/05_multi_agent_orchestration_concurrency/`](./getting_started/durabletask/05_multi_agent_orchestration_concurrency/) | Run multiple agents concurrently within an orchestration and aggregate their responses. |
+| [`getting_started/durabletask/06_multi_agent_orchestration_conditionals/`](./getting_started/durabletask/06_multi_agent_orchestration_conditionals/) | Implement conditional branching with spam detection using structured outputs and activity functions. |
+| [`getting_started/durabletask/07_single_agent_orchestration_hitl/`](./getting_started/durabletask/07_single_agent_orchestration_hitl/) | Human-in-the-loop pattern with external event handling, timeouts, and iterative refinement. |
 
 ## Observability
 

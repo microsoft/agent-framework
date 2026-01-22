@@ -710,9 +710,9 @@ class HandoffBuilder:
             from agent_framework.openai import OpenAIChatClient
 
             client = OpenAIChatClient()
-            triage = client.create_agent(instructions="...", name="triage_agent")
-            refund = client.create_agent(instructions="...", name="refund_agent")
-            billing = client.create_agent(instructions="...", name="billing_agent")
+            triage = client.as_agent(instructions="...", name="triage_agent")
+            refund = client.as_agent(instructions="...", name="refund_agent")
+            billing = client.as_agent(instructions="...", name="billing_agent")
 
             builder = HandoffBuilder().participants([triage, refund, billing])
             builder.with_start_agent(triage)

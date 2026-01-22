@@ -32,7 +32,7 @@ runtime_schema = {
 async def non_streaming_example() -> None:
     print("=== Non-streaming runtime JSON schema example ===")
 
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="RuntimeSchemaAgent",
         instructions="Return only JSON that matches the provided schema. Do not add commentary.",
     )
@@ -65,7 +65,7 @@ async def non_streaming_example() -> None:
 async def streaming_example() -> None:
     print("=== Streaming runtime JSON schema example ===")
 
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="RuntimeSchemaAgent",
         instructions="Return only JSON that matches the provided schema. Do not add commentary.",
     )

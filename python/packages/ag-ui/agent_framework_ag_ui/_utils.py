@@ -141,11 +141,14 @@ def make_json_safe(obj: Any) -> Any:  # noqa: ANN401
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if is_dataclass(obj):
-        return asdict(obj)  # type: ignore[arg-type]
+        # asdict may return nested non-dataclass objects, so recursively make them safe
+        return make_json_safe(asdict(obj))  # type: ignore[arg-type]
     if hasattr(obj, "model_dump"):
-        return obj.model_dump()  # type: ignore[no-any-return]
+        return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
+    if hasattr(obj, "to_dict"):
+        return make_json_safe(obj.to_dict())  # type: ignore[no-any-return]
     if hasattr(obj, "dict"):
-        return obj.dict()  # type: ignore[no-any-return]
+        return make_json_safe(obj.dict())  # type: ignore[no-any-return]
     if hasattr(obj, "__dict__"):
         return {key: make_json_safe(value) for key, value in vars(obj).items()}  # type: ignore[misc]
     if isinstance(obj, (list, tuple)):

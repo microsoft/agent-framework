@@ -168,7 +168,7 @@ class Coordinator(Executor):
 
 def create_writer_agent() -> ChatAgent:
     """Creates a writer agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="writer_agent",
         instructions=(
             "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
@@ -182,7 +182,7 @@ def create_writer_agent() -> ChatAgent:
 
 def create_final_editor_agent() -> ChatAgent:
     """Creates a final editor agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

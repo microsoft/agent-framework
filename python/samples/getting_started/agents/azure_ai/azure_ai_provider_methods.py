@@ -145,49 +145,6 @@ async def get_agent_by_reference_example() -> None:
             )
 
 
-async def get_agent_by_details_example() -> None:
-    """Example of using provider.get_agent(details=...) with pre-fetched AgentDetails.
-
-    This method uses pre-fetched AgentDetails to get the latest version.
-    Use this when you already have AgentDetails from a previous API call.
-    """
-    print("=== provider.get_agent(details=...) Example ===")
-
-    async with (
-        AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
-    ):
-        # First, create an agent using the SDK directly
-        created_agent = await project_client.agents.create_version(
-            agent_name="TestAgentByDetails",
-            description="Test agent for get_agent by details example.",
-            definition=PromptAgentDefinition(
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-                instructions="You are a helpful assistant. Always include an emoji in your response.",
-            ),
-        )
-
-        try:
-            # Fetch AgentDetails separately (simulating a previous API call)
-            agent_details = await project_client.agents.get(agent_name=created_agent.name)
-
-            # Get the agent using the pre-fetched details (sync - no HTTP call)
-            provider = AzureAIProjectAgentProvider(project_client=project_client)
-            agent = provider.as_agent(agent_details.versions.latest)
-
-            print(f"Retrieved agent: {agent.name} (from pre-fetched details)")
-
-            query = "How are you today?"
-            print(f"User: {query}")
-            result = await agent.run(query)
-            print(f"Agent: {result}\n")
-        finally:
-            # Clean up the agent
-            await project_client.agents.delete_version(
-                agent_name=created_agent.name, agent_version=created_agent.version
-            )
-
-
 async def multiple_agents_example() -> None:
     """Example of using a single provider to spawn multiple agents.
 
@@ -284,7 +241,6 @@ async def main() -> None:
     await create_agent_example()
     await get_agent_by_name_example()
     await get_agent_by_reference_example()
-    await get_agent_by_details_example()
     await as_agent_example()
     await multiple_agents_example()
 

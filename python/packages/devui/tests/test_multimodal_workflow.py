@@ -49,7 +49,7 @@ class TestMultimodalWorkflowInput:
 
     def test_convert_openai_input_to_chat_message_with_image(self):
         """Test that OpenAI format with image is converted to ChatMessage with DataContent."""
-        from agent_framework import ChatMessage, DataContent, Role, TextContent
+        from agent_framework import ChatMessage, Role
 
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
@@ -78,11 +78,11 @@ class TestMultimodalWorkflowInput:
         assert len(result.contents) == 2, f"Expected 2 contents, got {len(result.contents)}"
 
         # First content should be text
-        assert isinstance(result.contents[0], TextContent)
+        assert result.contents[0].type == "text"
         assert result.contents[0].text == "Describe this image"
 
         # Second content should be image (DataContent)
-        assert isinstance(result.contents[1], DataContent)
+        assert result.contents[1].type == "data"
         assert result.contents[1].media_type == "image/png"
         assert result.contents[1].uri == TEST_IMAGE_DATA_URI
 
@@ -90,7 +90,7 @@ class TestMultimodalWorkflowInput:
         """Test that _parse_workflow_input correctly handles JSON string with multimodal content."""
         import asyncio
 
-        from agent_framework import ChatMessage, DataContent, TextContent
+        from agent_framework import ChatMessage
 
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
@@ -120,11 +120,11 @@ class TestMultimodalWorkflowInput:
         assert len(result.contents) == 2
 
         # Verify text content
-        assert isinstance(result.contents[0], TextContent)
+        assert result.contents[0].type == "text"
         assert result.contents[0].text == "What is in this image?"
 
         # Verify image content
-        assert isinstance(result.contents[1], DataContent)
+        assert result.contents[1].type == "data"
         assert result.contents[1].media_type == "image/png"
 
     def test_parse_workflow_input_still_handles_simple_dict(self):

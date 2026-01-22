@@ -14,8 +14,7 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
-    DataContent,
-    FunctionResultContent,
+    Content,
     HostedWebSearchTool,
     ToolProtocol,
     ai_function,
@@ -282,7 +281,9 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     client = OpenAIChatClient()
 
     # Test with empty list (falsy but not None)
-    message_with_empty_list = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-123", result=[])])
+    message_with_empty_list = ChatMessage(
+        role="tool", contents=[Content.from_function_result(call_id="call-123", result=[])]
+    )
 
     openai_messages = client._prepare_message_for_openai(message_with_empty_list)
     assert len(openai_messages) == 1
@@ -290,7 +291,7 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
 
     # Test with empty string (falsy but not None)
     message_with_empty_string = ChatMessage(
-        role="tool", contents=[FunctionResultContent(call_id="call-456", result="")]
+        role="tool", contents=[Content.from_function_result(call_id="call-456", result="")]
     )
 
     openai_messages = client._prepare_message_for_openai(message_with_empty_string)
@@ -298,7 +299,9 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     assert openai_messages[0]["content"] == ""  # Empty string should be preserved
 
     # Test with False (falsy but not None)
-    message_with_false = ChatMessage(role="tool", contents=[FunctionResultContent(call_id="call-789", result=False)])
+    message_with_false = ChatMessage(
+        role="tool", contents=[Content.from_function_result(call_id="call-789", result=False)]
+    )
 
     openai_messages = client._prepare_message_for_openai(message_with_false)
     assert len(openai_messages) == 1
@@ -317,7 +320,7 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     message_with_exception = ChatMessage(
         role="tool",
         contents=[
-            FunctionResultContent(call_id="call-123", result="Error: Function failed.", exception=test_exception)
+            Content.from_function_result(call_id="call-123", result="Error: Function failed.", exception=test_exception)
         ],
     )
 
@@ -339,7 +342,7 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     client = OpenAIChatClient()
 
     # Test DataContent with image media type
-    image_data_content = DataContent(
+    image_data_content = Content.from_uri(
         uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
         media_type="image/png",
     )
@@ -351,7 +354,7 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     assert result["image_url"]["url"] == image_data_content.uri
 
     # Test DataContent with non-image media type should use default model_dump
-    text_data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
+    text_data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
 
     result = client._prepare_content_for_openai(text_data_content)  # type: ignore
 
@@ -361,7 +364,7 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     assert result["media_type"] == "text/plain"
 
     # Test DataContent with audio media type
-    audio_data_content = DataContent(
+    audio_data_content = Content.from_uri(
         uri="data:audio/wav;base64,UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA",
         media_type="audio/wav",
     )
@@ -375,7 +378,9 @@ def test_prepare_content_for_openai_data_content_image(openai_unit_test_env: dic
     assert result["input_audio"]["format"] == "wav"
 
     # Test DataContent with MP3 audio
-    mp3_data_content = DataContent(uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3")
+    mp3_data_content = Content.from_uri(
+        uri="data:audio/mp3;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==", media_type="audio/mp3"
+    )
 
     result = client._prepare_content_for_openai(mp3_data_content)  # type: ignore
 
@@ -391,7 +396,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
     client = OpenAIChatClient()
 
     # Test PDF without filename - should omit filename in OpenAI payload
-    pdf_data_content = DataContent(
+    pdf_data_content = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXS9QYXJlbnQgMiAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDQgMCBSPj4+Pi9Db250ZW50cyA1IDAgUj4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+CmVuZG9iago1IDAgb2JqCjw8L0xlbmd0aCA0ND4+CnN0cmVhbQpCVApxCjcwIDUwIFRECi9GMSA4IFRmCihIZWxsbyBXb3JsZCEpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQ1IDAwMDAwIG4gCjAwMDAwMDAzMDcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgo0MDUKJSVFT0Y=",
         media_type="application/pdf",
     )
@@ -407,7 +412,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
     assert result["file"]["file_data"] == pdf_data_content.uri
 
     # Test PDF with custom filename via additional_properties
-    pdf_with_filename = DataContent(
+    pdf_with_filename = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
         additional_properties={"filename": "report.pdf"},
@@ -441,7 +446,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
 
     for case in test_cases:
         # Test without filename
-        doc_content = DataContent(
+        doc_content = Content.from_uri(
             uri=f"data:{case['media_type']};base64,{case['base64']}",
             media_type=case["media_type"],
         )
@@ -454,7 +459,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
         assert result["file"]["file_data"] == doc_content.uri
 
         # Test with filename - should now use file format with filename
-        doc_with_filename = DataContent(
+        doc_with_filename = Content.from_uri(
             uri=f"data:{case['media_type']};base64,{case['base64']}",
             media_type=case["media_type"],
             additional_properties={"filename": case["filename"]},
@@ -468,7 +473,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
         assert result["file"]["file_data"] == doc_with_filename.uri
 
     # Test edge case: empty additional_properties dict
-    pdf_empty_props = DataContent(
+    pdf_empty_props = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
         additional_properties={},
@@ -480,7 +485,7 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
     assert "filename" not in result["file"]
 
     # Test edge case: None filename in additional_properties
-    pdf_none_filename = DataContent(
+    pdf_none_filename = Content.from_uri(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
         additional_properties={"filename": None},

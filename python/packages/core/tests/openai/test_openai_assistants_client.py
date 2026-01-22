@@ -19,15 +19,10 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    HostedVectorStoreContent,
     Role,
-    TextContent,
-    UriContent,
-    UsageContent,
     ai_function,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -68,7 +63,7 @@ def create_test_openai_assistants_client(
     return client
 
 
-async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, HostedVectorStoreContent]:
+async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 25C."), purpose="user_data"
@@ -81,7 +76,7 @@ async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, Host
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
+    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
 async def delete_vector_store(client: OpenAIAssistantsClient, file_id: str, vector_store_id: str) -> None:
@@ -464,7 +459,7 @@ async def test_process_stream_events_requires_action(mock_async_openai: MagicMoc
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Mock the _parse_function_calls_from_assistants method to return test content
-    test_function_content = FunctionCallContent(call_id="call-123", name="test_func", arguments={"arg": "value"})
+    test_function_content = Content.from_function_call(call_id="call-123", name="test_func", arguments={"arg": "value"})
     chat_client._parse_function_calls_from_assistants = MagicMock(return_value=[test_function_content])  # type: ignore
 
     # Create a mock Run object
@@ -578,10 +573,10 @@ async def test_process_stream_events_run_completed_with_usage(
 
     # Check the usage content
     usage_content = update.contents[0]
-    assert isinstance(usage_content, UsageContent)
-    assert usage_content.details.input_token_count == 100
-    assert usage_content.details.output_token_count == 50
-    assert usage_content.details.total_token_count == 150
+    assert usage_content.type == "usage"
+    assert usage_content.usage_details["input_token_count"] == 100
+    assert usage_content.usage_details["output_token_count"] == 50
+    assert usage_content.usage_details["total_token_count"] == 150
     assert update.raw_representation == mock_run
 
 
@@ -609,7 +604,7 @@ def test_parse_function_calls_from_assistants_basic(mock_async_openai: MagicMock
 
     # Test that one function call content was created
     assert len(contents) == 1
-    assert isinstance(contents[0], FunctionCallContent)
+    assert contents[0].type == "function_call"
     assert contents[0].name == "get_weather"
     assert contents[0].arguments == {"location": "Seattle"}
 
@@ -830,7 +825,7 @@ def test_prepare_options_with_image_content(mock_async_openai: MagicMock) -> Non
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create message with image content
-    image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
+    image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
     # Call the method
@@ -861,7 +856,7 @@ def test_prepare_tool_outputs_for_assistants_valid(mock_async_openai: MagicMock)
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     call_id = json.dumps(["run-123", "call-456"])
-    function_result = FunctionResultContent(call_id=call_id, result="Function executed successfully")
+    function_result = Content.from_function_result(call_id=call_id, result="Function executed successfully")
 
     run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([function_result])  # type: ignore
 
@@ -881,8 +876,8 @@ def test_prepare_tool_outputs_for_assistants_mismatched_run_ids(
     # Create function results with different run IDs
     call_id1 = json.dumps(["run-123", "call-456"])
     call_id2 = json.dumps(["run-789", "call-xyz"])  # Different run ID
-    function_result1 = FunctionResultContent(call_id=call_id1, result="Result 1")
-    function_result2 = FunctionResultContent(call_id=call_id2, result="Result 2")
+    function_result1 = Content.from_function_result(call_id=call_id1, result="Result 1")
+    function_result2 = Content.from_function_result(call_id=call_id2, result="Result 2")
 
     run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([function_result1, function_result2])  # type: ignore
 
@@ -1006,7 +1001,7 @@ async def test_streaming() -> None:
             assert chunk is not None
             assert isinstance(chunk, ChatResponseUpdate)
             for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
+                if content.type == "text" and content.text:
                     full_message += content.text
 
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather", "seattle"])
@@ -1035,7 +1030,7 @@ async def test_streaming_tools() -> None:
             assert chunk is not None
             assert isinstance(chunk, ChatResponseUpdate)
             for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
+                if content.type == "text" and content.text:
                     full_message += content.text
 
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])
@@ -1121,7 +1116,7 @@ async def test_file_search_streaming() -> None:
             assert chunk is not None
             assert isinstance(chunk, ChatResponseUpdate)
             for content in chunk.contents:
-                if isinstance(content, TextContent) and content.text:
+                if content.type == "text" and content.text:
                     full_message += content.text
         await delete_vector_store(openai_assistants_client, file_id, vector_store.vector_store_id)
 

@@ -1,35 +1,38 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Mapping, MutableSequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, TypeVar, cast
+from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
+    ChatAgent,
     ChatMessage,
+    ChatMessageStoreProtocol,
+    ContextProvider,
     HostedMCPTool,
-    TextContent,
+    Middleware,
+    ToolProtocol,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
+from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
+    RaiConfig,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
-from ._shared import AzureAISettings, create_text_format_config
-
-if TYPE_CHECKING:
-    from agent_framework.openai import OpenAIResponsesOptions
+from ._shared import AzureAISettings, _extract_project_connection_id, create_text_format_config
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -47,10 +50,18 @@ else:
 
 logger = get_logger("agent_framework.azure")
 
+
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions):
+    """Azure AI Project Agent options."""
+
+    rai_config: RaiConfig
+    """Configuration for Responsible AI (RAI) content filtering and safety features."""
+
+
 TAzureAIClientOptions = TypeVar(
     "TAzureAIClientOptions",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIResponsesOptions",
+    default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
@@ -392,6 +403,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             "model",
             "tools",
             "response_format",
+            "rai_config",
             "temperature",
             "top_p",
             "text",
@@ -464,8 +476,8 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
         for message in messages:
             if message.role.value in ["system", "developer"]:
-                for text_content in [content for content in message.contents if isinstance(content, TextContent)]:
-                    instructions_list.append(text_content.text)
+                for text_content in [content for content in message.contents if content.type == "text"]:
+                    instructions_list.append(text_content.text)  # type: ignore[arg-type]
             else:
                 result.append(message)
 
@@ -497,6 +509,17 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         """Get MCP tool from HostedMCPTool."""
         mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
+        if tool.description:
+            mcp["server_description"] = tool.description
+
+        # Check for project_connection_id in additional_properties (for Azure AI Foundry connections)
+        project_connection_id = _extract_project_connection_id(tool.additional_properties)
+        if project_connection_id:
+            mcp["project_connection_id"] = project_connection_id
+        elif tool.headers:
+            # Only use headers if no project_connection_id is available
+            mcp["headers"] = tool.headers
+
         if tool.allowed_tools:
             mcp["allowed_tools"] = list(tool.allowed_tools)
 
@@ -511,3 +534,59 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                         mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
         return mcp
+
+    @override
+    def as_agent(
+        self,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        default_options: TAzureAIClientOptions | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> ChatAgent[TAzureAIClientOptions]:
+        """Convert this chat client to a ChatAgent.
+
+        This method creates a ChatAgent instance with this client pre-configured.
+        It does NOT create an agent on the Azure AI service - the actual agent
+        will be created on the server during the first invocation (run).
+
+        For creating and managing persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead.
+
+        Keyword Args:
+            id: The unique identifier for the agent. Will be created automatically if not provided.
+            name: The name of the agent.
+            description: A brief description of the agent's purpose.
+            instructions: Optional instructions for the agent.
+            tools: The tools to use for the request.
+            default_options: A TypedDict containing chat options.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+            context_provider: Context providers to include during agent invocation.
+            middleware: List of middleware to intercept agent and function invocations.
+            kwargs: Any additional keyword arguments.
+
+        Returns:
+            A ChatAgent instance configured with this chat client.
+        """
+        return super().as_agent(
+            id=id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )
