@@ -3,8 +3,8 @@
 // This sample shows how to create and use a simple AI agent with GitHub Copilot SDK.
 
 using GitHub.Copilot.SDK;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GithubCopilot;
-using Microsoft.Extensions.AI;
 
 // Create a Copilot client with default options
 var copilotClientOptions = new CopilotClientOptions

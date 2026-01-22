@@ -43,10 +43,6 @@ public sealed class GithubCopilotAgentThreadTests
 
         // Act
         JsonElement serialized = originalThread.Serialize();
-
-        // Debug output
-        Console.WriteLine($"Serialized JSON: {serialized.GetRawText()}");
-
         GithubCopilotAgentThread deserializedThread = new(serialized);
 
         // Assert
