@@ -189,6 +189,130 @@ public sealed class AnthropicBetaServiceExtensionsTests
     }
 
     /// <summary>
+    /// Verify that CreateAIAgent with tools correctly assigns tools to ChatOptions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithTools_AssignsToolsCorrectly()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+        IList<AITool> tools = [AIFunctionFactory.Create(() => "test result", "TestFunction", "A test function")];
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with explicit defaultMaxTokens uses the provided value.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithExplicitMaxTokens_UsesProvidedValue()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            defaultMaxTokens: 8192);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with tools and instructions correctly assigns both.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithToolsAndInstructions_AssignsBothCorrectly()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+        IList<AITool> tools = [AIFunctionFactory.Create(() => "test result", "TestFunction", "A test function")];
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            instructions: "Test instructions",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with empty tools list does not assign tools.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithEmptyTools_DoesNotAssignTools()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+        IList<AITool> tools = [];
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with null instructions does not set instructions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithNullInstructions_DoesNotSetInstructions()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            instructions: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with whitespace instructions does not set instructions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithWhitespaceInstructions_DoesNotSetInstructions()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            instructions: "   ");
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
     /// Test custom chat client that can be used to verify clientFactory functionality.
     /// </summary>
     private sealed class TestChatClient : IChatClient
