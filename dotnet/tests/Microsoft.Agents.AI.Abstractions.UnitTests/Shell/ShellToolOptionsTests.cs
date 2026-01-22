@@ -23,6 +23,10 @@ public class ShellToolOptionsTests
         Assert.Null(options.AllowedCommands);
         Assert.Null(options.DeniedCommands);
         Assert.True(options.BlockPrivilegeEscalation);
+        Assert.True(options.BlockCommandChaining);
+        Assert.True(options.BlockDangerousPatterns);
+        Assert.Null(options.BlockedPaths);
+        Assert.Null(options.AllowedPaths);
         Assert.Null(options.Shell);
     }
 
@@ -133,5 +137,63 @@ public class ShellToolOptionsTests
         // Assert - Patterns should be updated
         Assert.NotNull(options.CompiledAllowedPatterns);
         Assert.Equal(2, options.CompiledAllowedPatterns.Count);
+    }
+
+    [Fact]
+    public void BlockCommandChaining_CanBeDisabled()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false
+        };
+
+        // Assert
+        Assert.False(options.BlockCommandChaining);
+    }
+
+    [Fact]
+    public void BlockDangerousPatterns_CanBeDisabled()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockDangerousPatterns = false
+        };
+
+        // Assert
+        Assert.False(options.BlockDangerousPatterns);
+    }
+
+    [Fact]
+    public void BlockedPaths_CanBeConfigured()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockedPaths = new List<string> { "/etc", "/var/log" }
+        };
+
+        // Assert
+        Assert.NotNull(options.BlockedPaths);
+        Assert.Equal(2, options.BlockedPaths.Count);
+        Assert.Contains("/etc", options.BlockedPaths);
+        Assert.Contains("/var/log", options.BlockedPaths);
+    }
+
+    [Fact]
+    public void AllowedPaths_CanBeConfigured()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            AllowedPaths = new List<string> { "/tmp", "/home/user" }
+        };
+
+        // Assert
+        Assert.NotNull(options.AllowedPaths);
+        Assert.Equal(2, options.AllowedPaths.Count);
+        Assert.Contains("/tmp", options.AllowedPaths);
+        Assert.Contains("/home/user", options.AllowedPaths);
     }
 }

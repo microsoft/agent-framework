@@ -92,6 +92,57 @@ public class ShellToolOptions
     public bool BlockPrivilegeEscalation { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether command chaining operators are blocked.
+    /// Default: true.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When enabled, commands containing shell metacharacters for chaining are blocked.
+    /// This includes: <c>;</c> (command separator), <c>|</c> (pipe), <c>&amp;&amp;</c> (AND),
+    /// <c>||</c> (OR), <c>$()</c> (command substitution), and backticks.
+    /// </para>
+    /// <para>
+    /// Operators inside quoted strings are allowed.
+    /// </para>
+    /// </remarks>
+    public bool BlockCommandChaining { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether default dangerous patterns are blocked.
+    /// Default: true.
+    /// </summary>
+    /// <remarks>
+    /// When enabled, commands matching dangerous patterns are blocked, including fork bombs,
+    /// <c>rm -rf /</c> variants, filesystem formatting commands, and direct disk writes.
+    /// </remarks>
+    public bool BlockDangerousPatterns { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets paths that commands are not allowed to access.
+    /// Takes priority over <see cref="AllowedPaths"/>.
+    /// </summary>
+    /// <remarks>
+    /// Paths are normalized for comparison. A command is blocked if it references
+    /// any path that starts with a blocked path.
+    /// </remarks>
+    public IList<string>? BlockedPaths { get; set; }
+
+    /// <summary>
+    /// Gets or sets paths that commands are allowed to access.
+    /// If set, commands can only access these paths.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When configured, all paths in the command must be within one of the allowed paths.
+    /// If a command references a path not in the allowed list, it will be blocked.
+    /// </para>
+    /// <para>
+    /// <see cref="BlockedPaths"/> takes priority over this setting.
+    /// </para>
+    /// </remarks>
+    public IList<string>? AllowedPaths { get; set; }
+
+    /// <summary>
     /// Gets or sets the shell executable to use.
     /// When null, auto-detects based on OS (cmd.exe on Windows, /bin/sh on Unix).
     /// </summary>

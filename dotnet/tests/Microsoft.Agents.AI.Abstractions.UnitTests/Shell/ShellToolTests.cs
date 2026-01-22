@@ -23,6 +23,20 @@ public class ShellToolTests
     private static readonly string[] s_testCommand = ["test"];
     private static readonly string[] s_mixedCommands = ["safe command", "dangerous command"];
 
+    // Command chaining test arrays
+    private static readonly string[] s_echoHelloEchoWorldCommand = ["echo hello; echo world"];
+    private static readonly string[] s_rmRfSlashCommand = ["rm -rf /"];
+
+    // Path access control test arrays
+    private static readonly string[] s_catEtcPasswdCommand = ["cat /etc/passwd"];
+    private static readonly string[] s_catTmpFileCommand = ["cat /tmp/file.txt"];
+    private static readonly string[] s_catHomeUserFileCommand = ["cat /home/user/file.txt"];
+    private static readonly string[] s_catTmpSecretFileCommand = ["cat /tmp/secret/file.txt"];
+    private static readonly string[] s_catAnyPathFileCommand = ["cat /any/path/file.txt"];
+
+    // Shell wrapper test arrays
+    private static readonly string[] s_nestedShellWrapperSudoCommand = ["sh -c \"bash -c 'sudo command'\""];
+
     private readonly Mock<ShellExecutor> _executorMock;
 
     public ShellToolTests()
@@ -319,4 +333,323 @@ public class ShellToolTests
                 It.IsAny<CancellationToken>()),
             Times.Never);
     }
+
+    #region Command Chaining Tests
+
+    [Theory]
+    [InlineData("echo hello; echo world")]
+    [InlineData("cat file | grep pattern")]
+    [InlineData("test && echo success")]
+    [InlineData("test || echo failure")]
+    [InlineData("echo $(whoami)")]
+    [InlineData("echo `whoami`")]
+    public async Task ExecuteAsync_WithCommandChaining_ThrowsInvalidOperationException(string command)
+    {
+        // Arrange
+        var tool = new ShellTool(_executorMock.Object);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("CHAINING", ex.Message.ToUpperInvariant());
+    }
+
+    [Theory]
+    [InlineData("echo \"semicolon; in quotes\"")]
+    [InlineData("echo 'pipe | in single quotes'")]
+    [InlineData("echo \"ampersand && in quotes\"")]
+    [InlineData("echo \"dollar $(in quotes)\"")]
+    public async Task ExecuteAsync_WithOperatorsInQuotes_ReturnsResult(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockDangerousPatterns = false // Allow dangerous patterns for this test
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithCommandChainingDisabled_AllowsChainingOperators()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false,
+            BlockDangerousPatterns = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_echoHelloEchoWorldCommand);
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    #endregion
+
+    #region Dangerous Patterns Tests
+
+    [Theory]
+    [InlineData(":(){ :|:& };:")]
+    [InlineData("rm -rf /")]
+    [InlineData("rm -rf /*")]
+    [InlineData("rm -r /")]
+    [InlineData("rm -f /")]
+    [InlineData("mkfs.ext4 /dev/sda")]
+    [InlineData("dd if=/dev/zero of=/dev/sda")]
+    [InlineData("> /dev/sda")]
+    [InlineData("chmod 777 /")]
+    [InlineData("chmod -R 777 /")]
+    public async Task ExecuteAsync_WithDangerousPattern_ThrowsInvalidOperationException(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false // Disable chaining detection for these tests
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("DANGEROUS", ex.Message.ToUpperInvariant());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithDangerousPatternsDisabled_AllowsDangerousCommands()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockDangerousPatterns = false,
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_rmRfSlashCommand);
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    #endregion
+
+    #region Token-Based Privilege Escalation Tests
+
+    [Theory]
+    [InlineData("/usr/bin/sudo apt install")]
+    [InlineData("\"/usr/bin/sudo\" command")]
+    [InlineData("C:\\Windows\\System32\\runas.exe /user:admin cmd")]
+    public async Task ExecuteAsync_WithPrivilegeEscalationInPath_ThrowsInvalidOperationException(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("PRIVILEGE ESCALATION", ex.Message.ToUpperInvariant());
+    }
+
+    [Theory]
+    [InlineData("/usr/bin/mysudo command")]  // "mysudo" is not "sudo"
+    [InlineData("sudo-like command")]         // Not the sudo command
+    public async Task ExecuteAsync_WithSimilarToPrivilegeEscalation_ReturnsResult(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    #endregion
+
+    #region Shell Wrapper Privilege Escalation Tests
+
+    [Theory]
+    [InlineData("sh -c \"sudo apt install\"")]
+    [InlineData("bash -c \"sudo apt update\"")]
+    [InlineData("/bin/sh -c \"sudo command\"")]
+    [InlineData("/usr/bin/bash -c \"doas command\"")]
+    [InlineData("zsh -c \"pkexec command\"")]
+    [InlineData("dash -c 'su -'")]
+    public async Task ExecuteAsync_WithShellWrapperContainingPrivilegeEscalation_ThrowsInvalidOperationException(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false // Disable chaining to test privilege escalation detection
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("PRIVILEGE ESCALATION", ex.Message.ToUpperInvariant());
+    }
+
+    [Theory]
+    [InlineData("sh -c \"echo hello\"")]
+    [InlineData("bash -c \"ls -la\"")]
+    [InlineData("/bin/sh -c \"cat file.txt\"")]
+    public async Task ExecuteAsync_WithShellWrapperContainingSafeCommand_ReturnsResult(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false // Disable chaining to test shell wrappers
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithNestedShellWrapperContainingPrivilegeEscalation_ThrowsInvalidOperationException()
+    {
+        // Arrange - Nested shell wrapper with privilege escalation
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_nestedShellWrapperSudoCommand);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("PRIVILEGE ESCALATION", ex.Message.ToUpperInvariant());
+    }
+
+    #endregion
+
+    #region Path-Based Access Control Tests
+
+    [Fact]
+    public async Task ExecuteAsync_WithBlockedPath_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockedPaths = new List<string> { "/etc" },
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_catEtcPasswdCommand);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("BLOCKED", ex.Message.ToUpperInvariant());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithAllowedPath_ReturnsResult()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            AllowedPaths = new List<string> { "/tmp" },
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_catTmpFileCommand);
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPathNotInAllowedList_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            AllowedPaths = new List<string> { "/tmp" },
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_catHomeUserFileCommand);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("NOT ALLOWED", ex.Message.ToUpperInvariant());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithBlockedPathTakesPriorityOverAllowed_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockedPaths = new List<string> { "/tmp/secret" },
+            AllowedPaths = new List<string> { "/tmp" },
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_catTmpSecretFileCommand);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("BLOCKED", ex.Message.ToUpperInvariant());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithNoPathRestrictions_ReturnsResult()
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", s_catAnyPathFileCommand);
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    #endregion
 }

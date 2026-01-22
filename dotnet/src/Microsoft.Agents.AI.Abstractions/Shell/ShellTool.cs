@@ -2,7 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -36,6 +39,39 @@ public class ShellTool : AITool
         "doas",
         "pkexec"
     ];
+
+    private static readonly string[] ShellWrapperCommands =
+    [
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "csh",
+        "tcsh"
+    ];
+
+    private static readonly Regex[] DefaultDangerousPatterns =
+    [
+        // Fork bomb: :(){ :|:& };:
+        new Regex(@":\(\)\s*\{\s*:\|:\s*&\s*\}\s*;", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // rm -rf / variants
+        new Regex(@"rm\s+(-[rRfF]+\s+)*(/|/\*|\*/)", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // Format filesystem
+        new Regex(@"mkfs\.", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // Direct disk write
+        new Regex(@"dd\s+.*of=/dev/", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // Overwrite disk
+        new Regex(@">\s*/dev/sd", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+        // chmod 777 /
+        new Regex(@"chmod\s+(-[rR]\s+)?777\s+/", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
+    ];
+
+    // Pattern to extract paths from commands (Unix and Windows paths)
+    private static readonly Regex PathPattern = new Regex(
+        @"(?:^|\s)(/[^\s""'|;&<>]+|[A-Za-z]:\\[^\s""'|;&<>]+|""[^""]+"")",
+        RegexOptions.Compiled,
+        TimeSpan.FromSeconds(1));
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ShellTool"/> class.
@@ -129,6 +165,10 @@ public class ShellTool : AITool
             AllowedCommands = baseOptions.AllowedCommands,
             DeniedCommands = baseOptions.DeniedCommands,
             BlockPrivilegeEscalation = baseOptions.BlockPrivilegeEscalation,
+            BlockCommandChaining = baseOptions.BlockCommandChaining,
+            BlockDangerousPatterns = baseOptions.BlockDangerousPatterns,
+            BlockedPaths = baseOptions.BlockedPaths,
+            AllowedPaths = baseOptions.AllowedPaths,
             Shell = baseOptions.Shell
         };
     }
@@ -148,7 +188,37 @@ public class ShellTool : AITool
             }
         }
 
-        // 2. Check allowlist (if configured)
+        // 2. Check default dangerous patterns (if enabled)
+        if (_options.BlockDangerousPatterns)
+        {
+            foreach (var pattern in DefaultDangerousPatterns)
+            {
+                if (pattern.IsMatch(command))
+                {
+                    throw new InvalidOperationException(
+                        "Command blocked by dangerous pattern.");
+                }
+            }
+        }
+
+        // 3. Check command chaining (if enabled)
+        if (_options.BlockCommandChaining && ContainsCommandChaining(command))
+        {
+            throw new InvalidOperationException(
+                "Command chaining operators are blocked.");
+        }
+
+        // 4. Check privilege escalation
+        if (_options.BlockPrivilegeEscalation && ContainsPrivilegeEscalation(command))
+        {
+            throw new InvalidOperationException(
+                "Privilege escalation commands are blocked.");
+        }
+
+        // 5. Check path access control
+        ValidatePathAccess(command);
+
+        // 6. Check allowlist (if configured)
         if (_options.CompiledAllowedPatterns is { Count: > 0 })
         {
             bool allowed = _options.CompiledAllowedPatterns
@@ -159,29 +229,310 @@ public class ShellTool : AITool
                     "Command not in allowlist.");
             }
         }
+    }
 
-        // 3. Check privilege escalation
-        if (_options.BlockPrivilegeEscalation &&
-            ContainsPrivilegeEscalation(command))
+    private static bool ContainsCommandChaining(string command)
+    {
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var i = 0;
+
+        while (i < command.Length)
         {
-            throw new InvalidOperationException(
-                "Privilege escalation commands are blocked.");
+            var c = command[i];
+
+            // Handle escape sequences
+            if (c == '\\' && i + 1 < command.Length)
+            {
+                i += 2;
+                continue;
+            }
+
+            // Handle quote state transitions
+            if (c == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                i++;
+                continue;
+            }
+
+            if (c == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                i++;
+                continue;
+            }
+
+            // Only check for operators outside quotes
+            if (!inSingleQuote && !inDoubleQuote)
+            {
+                // Check for semicolon
+                if (c == ';')
+                {
+                    return true;
+                }
+
+                // Check for pipe (but not ||)
+                if (c == '|')
+                {
+                    // Check if it's || (OR operator) or just |
+                    return true; // Both are blocked
+                }
+
+                // Check for &&
+                if (c == '&' && i + 1 < command.Length && command[i + 1] == '&')
+                {
+                    return true;
+                }
+
+                // Check for $() command substitution
+                if (c == '$' && i + 1 < command.Length && command[i + 1] == '(')
+                {
+                    return true;
+                }
+
+                // Check for backtick command substitution
+                if (c == '`')
+                {
+                    return true;
+                }
+            }
+
+            i++;
         }
+
+        return false;
     }
 
     private static bool ContainsPrivilegeEscalation(string command)
     {
-        var trimmed = command.TrimStart();
+        var tokens = TokenizeCommand(command);
 
-        foreach (var dangerous in PrivilegeEscalationCommands)
+        if (tokens.Count == 0)
         {
-            if (trimmed.StartsWith(dangerous + " ", StringComparison.OrdinalIgnoreCase) ||
-                trimmed.Equals(dangerous, StringComparison.OrdinalIgnoreCase))
+            return false;
+        }
+
+        var firstToken = tokens[0];
+
+        // Normalize: extract filename from path (e.g., "/usr/bin/sudo" -> "sudo")
+        var executable = Path.GetFileName(firstToken);
+
+        // Also handle Windows .exe extension (e.g., "runas.exe" -> "runas")
+        var executableWithoutExt = Path.GetFileNameWithoutExtension(firstToken);
+
+        // Check if the first token is a privilege escalation command
+        if (PrivilegeEscalationCommands.Any(d =>
+            string.Equals(executable, d, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(executableWithoutExt, d, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        // Check for shell wrapper patterns (e.g., "sh -c 'sudo ...'") and recursively validate
+        if (IsShellWrapper(executable, executableWithoutExt) && tokens.Count >= 3)
+        {
+            // Look for -c flag followed by command string
+            for (var i = 1; i < tokens.Count - 1; i++)
             {
-                return true;
+                if (string.Equals(tokens[i], "-c", StringComparison.Ordinal))
+                {
+                    // The next token is the command string to execute
+                    var nestedCommand = tokens[i + 1];
+                    if (ContainsPrivilegeEscalation(nestedCommand))
+                    {
+                        return true;
+                    }
+
+                    break;
+                }
             }
         }
 
         return false;
+    }
+
+    private static bool IsShellWrapper(string executable, string executableWithoutExt)
+    {
+        return ShellWrapperCommands.Any(s =>
+            string.Equals(executable, s, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(executableWithoutExt, s, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<string> TokenizeCommand(string command)
+    {
+        var tokens = new List<string>();
+        var currentToken = new StringBuilder();
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var i = 0;
+
+        while (i < command.Length)
+        {
+            var c = command[i];
+
+            // Handle escape sequences (only when inside double quotes or for special characters)
+            // Don't treat backslash as escape if followed by alphanumeric (likely Windows path)
+            if (c == '\\' && i + 1 < command.Length && !inSingleQuote)
+            {
+                var nextChar = command[i + 1];
+                var isEscapeSequence = inDoubleQuote || !char.IsLetterOrDigit(nextChar);
+
+                if (isEscapeSequence)
+                {
+                    currentToken.Append(nextChar);
+                    i += 2;
+                    continue;
+                }
+            }
+
+            // Handle quote state transitions
+            if (c == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                i++;
+                continue;
+            }
+
+            if (c == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                i++;
+                continue;
+            }
+
+            // Handle whitespace
+            if (char.IsWhiteSpace(c) && !inSingleQuote && !inDoubleQuote)
+            {
+                if (currentToken.Length > 0)
+                {
+                    tokens.Add(currentToken.ToString());
+                    currentToken.Clear();
+                }
+
+                i++;
+                continue;
+            }
+
+            currentToken.Append(c);
+            i++;
+        }
+
+        // Add the last token if any
+        if (currentToken.Length > 0)
+        {
+            tokens.Add(currentToken.ToString());
+        }
+
+        return tokens;
+    }
+
+    private void ValidatePathAccess(string command)
+    {
+        var blockedPaths = _options.BlockedPaths;
+        var allowedPaths = _options.AllowedPaths;
+
+        // If no path restrictions are configured, skip
+        if ((blockedPaths is null || blockedPaths.Count == 0) &&
+            (allowedPaths is null || allowedPaths.Count == 0))
+        {
+            return;
+        }
+
+        // Extract paths from the command
+        foreach (var path in ExtractPaths(command))
+        {
+            var normalizedPath = NormalizePath(path);
+
+            // Check blocklist first (takes priority)
+            if (blockedPaths is { Count: > 0 })
+            {
+                foreach (var blockedPath in blockedPaths)
+                {
+                    var normalizedBlockedPath = NormalizePath(blockedPath);
+                    if (IsPathWithin(normalizedPath, normalizedBlockedPath))
+                    {
+                        throw new InvalidOperationException(
+                            $"Access to path '{path}' is blocked.");
+                    }
+                }
+            }
+
+            // Check allowlist (if configured, all paths must be within allowed paths)
+            if (allowedPaths is { Count: > 0 })
+            {
+                var isAllowed = allowedPaths.Any(allowedPath =>
+                    IsPathWithin(normalizedPath, NormalizePath(allowedPath)));
+
+                if (!isAllowed)
+                {
+                    throw new InvalidOperationException(
+                        $"Access to path '{path}' is not allowed.");
+                }
+            }
+        }
+    }
+
+    private static List<string> ExtractPaths(string command)
+    {
+        var paths = new List<string>();
+
+        foreach (Match match in PathPattern.Matches(command))
+        {
+            var path = match.Groups[1].Value.Trim();
+
+            // Remove surrounding quotes if present
+            if (path.Length > 1 && path[0] == '"' && path[path.Length - 1] == '"')
+            {
+                path = path.Substring(1, path.Length - 2);
+            }
+
+            // Only add actual paths (not empty or just whitespace)
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                paths.Add(path);
+            }
+        }
+
+        return paths;
+    }
+
+    private static string NormalizePath(string path)
+    {
+        // Handle empty or whitespace
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        // Normalize path separators and resolve . and ..
+        try
+        {
+            // Use GetFullPath to resolve relative paths like /etc/../etc
+            var fullPath = Path.GetFullPath(path);
+
+            // Normalize to forward slashes for consistent comparison on all platforms
+            return fullPath.Replace('\\', '/').TrimEnd('/').ToUpperInvariant();
+        }
+        catch
+        {
+            // If path resolution fails, just normalize separators
+            return path.Replace('\\', '/').TrimEnd('/').ToUpperInvariant();
+        }
+    }
+
+    private static bool IsPathWithin(string path, string basePath)
+    {
+        if (string.IsNullOrEmpty(basePath))
+        {
+            return false;
+        }
+
+        // Ensure basePath ends with separator for proper prefix matching
+        var basePathWithSep = basePath[basePath.Length - 1] == '/' ? basePath : basePath + "/";
+
+        // Path is within basePath if it equals basePath or starts with basePath/
+        return string.Equals(path, basePath, StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith(basePathWithSep, StringComparison.OrdinalIgnoreCase);
     }
 }
