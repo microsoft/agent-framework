@@ -43,7 +43,7 @@ async def main() -> None:
             if isinstance(content, TextReasoningContent):
                 print(f"\033[32m{content.text}\033[0m", end="", flush=True)
             if isinstance(content, UsageContent):
-                print(f"\n\033[34m[Usage so far: {content.details}]\033[0m\n", end="", flush=True)
+                print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)
         if chunk.text:
             print(chunk.text, end="", flush=True)
 

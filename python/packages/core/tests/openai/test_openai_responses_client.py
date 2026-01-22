@@ -33,26 +33,13 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
-    DataContent,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedFileSearchTool,
     HostedImageGenerationTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
-    ImageGenerationToolCallContent,
-    ImageGenerationToolResultContent,
     Role,
-    TextContent,
-    TextReasoningContent,
-    UriContent,
     ai_function,
 )
 from agent_framework.exceptions import (
@@ -81,7 +68,7 @@ class OutputStruct(BaseModel):
 
 async def create_vector_store(
     client: OpenAIResponsesClient,
-) -> tuple[str, HostedVectorStoreContent]:
+) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."),
@@ -99,7 +86,7 @@ async def create_vector_store(
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
+    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
 async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
@@ -285,7 +272,7 @@ def test_file_search_tool_with_invalid_inputs() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with invalid inputs type (should trigger ValueError)
-    file_search_tool = HostedFileSearchTool(inputs=[HostedFileContent(file_id="invalid")])
+    file_search_tool = HostedFileSearchTool(inputs=[Content.from_hosted_file(file_id="invalid")])
 
     # Should raise an error due to invalid inputs
     with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
@@ -314,7 +301,7 @@ def test_code_interpreter_tool_variations() -> None:
 
     # Test code interpreter with files
     code_tool_with_files = HostedCodeInterpreterTool(
-        inputs=[HostedFileContent(file_id="file1"), HostedFileContent(file_id="file2")]
+        inputs=[Content.from_hosted_file(file_id="file1"), Content.from_hosted_file(file_id="file2")]
     )
 
     with pytest.raises(ServiceResponseException):
@@ -367,14 +354,14 @@ def test_chat_message_parsing_with_function_calls() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create messages with function call and result content
-    function_call = FunctionCallContent(
+    function_call = Content.from_function_call(
         call_id="test-call-id",
         name="test_function",
         arguments='{"param": "value"}',
         additional_properties={"fc_id": "test-fc-id"},
     )
 
-    function_result = FunctionResultContent(call_id="test-call-id", result="Function executed successfully")
+    function_result = Content.from_function_result(call_id="test-call-id", result="Function executed successfully")
 
     messages = [
         ChatMessage(role="user", text="Call a function"),
@@ -516,7 +503,7 @@ def test_response_content_creation_with_annotations() -> None:
         response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
         assert len(response.messages[0].contents) >= 1
-        assert isinstance(response.messages[0].contents[0], TextContent)
+        assert response.messages[0].contents[0].type == "text"
         assert response.messages[0].contents[0].text == "Text with annotations."
         assert response.messages[0].contents[0].annotations is not None
 
@@ -547,7 +534,7 @@ def test_response_content_creation_with_refusal() -> None:
     response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 1
-    assert isinstance(response.messages[0].contents[0], TextContent)
+    assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "I cannot provide that information."
 
 
@@ -577,7 +564,7 @@ def test_response_content_creation_with_reasoning() -> None:
     response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 2
-    assert isinstance(response.messages[0].contents[0], TextReasoningContent)
+    assert response.messages[0].contents[0].type == "text_reasoning"
     assert response.messages[0].contents[0].text == "Reasoning step"
 
 
@@ -614,13 +601,13 @@ def test_response_content_creation_with_code_interpreter() -> None:
 
     assert len(response.messages[0].contents) == 2
     call_content, result_content = response.messages[0].contents
-    assert isinstance(call_content, CodeInterpreterToolCallContent)
+    assert call_content.type == "code_interpreter_tool_call"
     assert call_content.inputs is not None
-    assert isinstance(call_content.inputs[0], TextContent)
-    assert isinstance(result_content, CodeInterpreterToolResultContent)
+    assert call_content.inputs[0].type == "text"
+    assert result_content.type == "code_interpreter_tool_result"
     assert result_content.outputs is not None
-    assert any(isinstance(out, TextContent) for out in result_content.outputs)
-    assert any(isinstance(out, UriContent) for out in result_content.outputs)
+    assert any(out.type == "text" for out in result_content.outputs)
+    assert any(out.type == "uri" for out in result_content.outputs)
 
 
 def test_response_content_creation_with_function_call() -> None:
@@ -648,7 +635,7 @@ def test_response_content_creation_with_function_call() -> None:
     response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 1
-    assert isinstance(response.messages[0].contents[0], FunctionCallContent)
+    assert response.messages[0].contents[0].type == "function_call"
     function_call = response.messages[0].contents[0]
     assert function_call.call_id == "call_123"
     assert function_call.name == "get_weather"
@@ -708,7 +695,7 @@ def test_parse_response_from_openai_with_mcp_approval_request() -> None:
 
     response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
-    assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
+    assert response.messages[0].contents[0].type == "function_approval_request"
     req = response.messages[0].contents[0]
     assert req.id == "approval-1"
     assert req.function_call.name == "do_sensitive_action"
@@ -874,8 +861,8 @@ def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
     mock_event.item = mock_item
 
     update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
-    assert any(isinstance(c, FunctionApprovalRequestContent) for c in update.contents)
-    fa = next(c for c in update.contents if isinstance(c, FunctionApprovalRequestContent))
+    assert any(c.type == "function_approval_request" for c in update.contents)
+    fa = next(c for c in update.contents if c.type == "function_approval_request")
     assert fa.id == "approval-stream-1"
     assert fa.function_call.name == "do_stream_action"
 
@@ -925,12 +912,12 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
         # First call: get the approval request
         response = await client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")])
-        assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
+        assert response.messages[0].contents[0].type == "function_approval_request"
         req = response.messages[0].contents[0]
         assert req.id == "approval-1"
 
         # Build a user approval and send it (include required function_call)
-        approval = FunctionApprovalResponseContent(approved=True, id=req.id, function_call=req.function_call)
+        approval = Content.from_function_approval_response(approved=True, id=req.id, function_call=req.function_call)
         approval_message = ChatMessage(role="user", contents=[approval])
         _ = await client.get_response(messages=[approval_message])
 
@@ -961,9 +948,9 @@ def test_usage_details_basic() -> None:
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
-    assert details.input_token_count == 100
-    assert details.output_token_count == 50
-    assert details.total_token_count == 150
+    assert details["input_token_count"] == 100
+    assert details["output_token_count"] == 50
+    assert details["total_token_count"] == 150
 
 
 def test_usage_details_with_cached_tokens() -> None:
@@ -980,8 +967,8 @@ def test_usage_details_with_cached_tokens() -> None:
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
-    assert details.input_token_count == 200
-    assert details.additional_counts["openai.cached_input_tokens"] == 25
+    assert details["input_token_count"] == 200
+    assert details["openai.cached_input_tokens"] == 25
 
 
 def test_usage_details_with_reasoning_tokens() -> None:
@@ -998,8 +985,8 @@ def test_usage_details_with_reasoning_tokens() -> None:
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
-    assert details.output_token_count == 80
-    assert details.additional_counts["openai.reasoning_tokens"] == 30
+    assert details["output_token_count"] == 80
+    assert details["openai.reasoning_tokens"] == 30
 
 
 def test_get_metadata_from_response() -> None:
@@ -1098,7 +1085,7 @@ def test_streaming_annotation_added_with_file_path() -> None:
 
     assert len(response.contents) == 1
     content = response.contents[0]
-    assert isinstance(content, HostedFileContent)
+    assert content.type == "hosted_file"
     assert content.file_id == "file-abc123"
     assert content.additional_properties is not None
     assert content.additional_properties.get("annotation_index") == 0
@@ -1125,7 +1112,7 @@ def test_streaming_annotation_added_with_file_citation() -> None:
 
     assert len(response.contents) == 1
     content = response.contents[0]
-    assert isinstance(content, HostedFileContent)
+    assert content.type == "hosted_file"
     assert content.file_id == "file-xyz789"
     assert content.additional_properties is not None
     assert content.additional_properties.get("filename") == "sample.txt"
@@ -1154,7 +1141,7 @@ def test_streaming_annotation_added_with_container_file_citation() -> None:
 
     assert len(response.contents) == 1
     content = response.contents[0]
-    assert isinstance(content, HostedFileContent)
+    assert content.type == "hosted_file"
     assert content.file_id == "file-container123"
     assert content.additional_properties is not None
     assert content.additional_properties.get("container_id") == "container-456"
@@ -1228,7 +1215,7 @@ def test_prepare_content_for_openai_image_content() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test image content with detail parameter and file_id
-    image_content_with_detail = UriContent(
+    image_content_with_detail = Content.from_uri(
         uri="https://example.com/image.jpg",
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
@@ -1240,7 +1227,7 @@ def test_prepare_content_for_openai_image_content() -> None:
     assert result["file_id"] == "file_123"
 
     # Test image content without additional properties (defaults)
-    image_content_basic = UriContent(uri="https://example.com/basic.png", media_type="image/png")
+    image_content_basic = Content.from_uri(uri="https://example.com/basic.png", media_type="image/png")
     result = client._prepare_content_for_openai(Role.USER, image_content_basic, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
@@ -1252,14 +1239,14 @@ def test_prepare_content_for_openai_audio_content() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test WAV audio content
-    wav_content = UriContent(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
+    wav_content = Content.from_uri(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
     result = client._prepare_content_for_openai(Role.USER, wav_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
     assert result["input_audio"]["format"] == "wav"
 
     # Test MP3 audio content
-    mp3_content = UriContent(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
+    mp3_content = Content.from_uri(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
     result = client._prepare_content_for_openai(Role.USER, mp3_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
@@ -1270,12 +1257,12 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test unsupported audio format
-    unsupported_audio = UriContent(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
+    unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
     result = client._prepare_content_for_openai(Role.USER, unsupported_audio, {})  # type: ignore
     assert result == {}
 
     # Test non-media content
-    text_uri_content = UriContent(uri="https://example.com/document.txt", media_type="text/plain")
+    text_uri_content = Content.from_uri(uri="https://example.com/document.txt", media_type="text/plain")
     result = client._prepare_content_for_openai(Role.USER, text_uri_content, {})  # type: ignore
     assert result == {}
 
@@ -1299,11 +1286,9 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
 
     result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
-    assert isinstance(result.contents[0], CodeInterpreterToolResultContent)
+    assert result.contents[0].type == "code_interpreter_tool_result"
     assert result.contents[0].outputs
-    assert any(
-        isinstance(out, UriContent) and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs
-    )
+    assert any(out.type == "uri" and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs)
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:
@@ -1324,7 +1309,7 @@ def test_parse_chunk_from_openai_reasoning() -> None:
 
     result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
-    assert isinstance(result.contents[0], TextReasoningContent)
+    assert result.contents[0].type == "text_reasoning"
     assert result.contents[0].text == "Analyzing the problem step by step..."
     if result.contents[0].additional_properties:
         assert result.contents[0].additional_properties["summary"] == "Problem analysis summary"
@@ -1335,7 +1320,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test TextReasoningContent with all additional properties
-    comprehensive_reasoning = TextReasoningContent(
+    comprehensive_reasoning = Content.from_text_reasoning(
         text="Comprehensive reasoning summary",
         additional_properties={
             "status": "in_progress",
@@ -1371,7 +1356,7 @@ def test_streaming_reasoning_text_delta_event() -> None:
         response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].type == "text_reasoning"
         assert response.contents[0].text == "reasoning delta"
         assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
@@ -1396,7 +1381,7 @@ def test_streaming_reasoning_text_done_event() -> None:
         response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].type == "text_reasoning"
         assert response.contents[0].text == "complete reasoning"
         assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
@@ -1422,7 +1407,7 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
         response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].type == "text_reasoning"
         assert response.contents[0].text == "summary delta"
         assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
@@ -1447,7 +1432,7 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
         response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
+        assert response.contents[0].type == "text_reasoning"
         assert response.contents[0].text == "complete summary"
         assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
@@ -1488,8 +1473,8 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
         assert reasoning_response.additional_properties == {"test": "metadata"}
 
         # Content types should be different
-        assert isinstance(text_response.contents[0], TextContent)
-        assert isinstance(reasoning_response.contents[0], TextReasoningContent)
+        assert text_response.contents[0].type == "text"
+        assert reasoning_response.contents[0].type == "text_reasoning"
 
 
 def test_parse_response_from_openai_image_generation_raw_base64():
@@ -1521,11 +1506,11 @@ def test_parse_response_from_openai_image_generation_raw_base64():
     # Verify the response contains call + result with DataContent output
     assert len(response.messages[0].contents) == 2
     call_content, result_content = response.messages[0].contents
-    assert isinstance(call_content, ImageGenerationToolCallContent)
-    assert isinstance(result_content, ImageGenerationToolResultContent)
+    assert call_content.type == "image_generation_tool_call"
+    assert result_content.type == "image_generation_tool_result"
     assert result_content.outputs
     data_out = result_content.outputs
-    assert isinstance(data_out, DataContent)
+    assert data_out.type == "data"
     assert data_out.uri.startswith("data:image/png;base64,")
     assert data_out.media_type == "image/png"
 
@@ -1558,11 +1543,11 @@ def test_parse_response_from_openai_image_generation_existing_data_uri():
     # Verify the response contains call + result with DataContent output
     assert len(response.messages[0].contents) == 2
     call_content, result_content = response.messages[0].contents
-    assert isinstance(call_content, ImageGenerationToolCallContent)
-    assert isinstance(result_content, ImageGenerationToolResultContent)
+    assert call_content.type == "image_generation_tool_call"
+    assert result_content.type == "image_generation_tool_result"
     assert result_content.outputs
     data_out = result_content.outputs
-    assert isinstance(data_out, DataContent)
+    assert data_out.type == "data"
     assert data_out.uri == f"data:image/webp;base64,{valid_webp_base64}"
     assert data_out.media_type == "image/webp"
 
@@ -1591,9 +1576,9 @@ def test_parse_response_from_openai_image_generation_format_detection():
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response_jpeg = client._parse_response_from_openai(mock_response_jpeg, options={})  # type: ignore
     result_contents = response_jpeg.messages[0].contents
-    assert isinstance(result_contents[1], ImageGenerationToolResultContent)
+    assert result_contents[1].type == "image_generation_tool_result"
     outputs = result_contents[1].outputs
-    assert outputs and isinstance(outputs, DataContent)
+    assert outputs and outputs.type == "data"
     assert outputs.media_type == "image/jpeg"
     assert "data:image/jpeg;base64," in outputs.uri
 
@@ -1617,7 +1602,7 @@ def test_parse_response_from_openai_image_generation_format_detection():
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response_webp = client._parse_response_from_openai(mock_response_webp, options={})  # type: ignore
     outputs_webp = response_webp.messages[0].contents[1].outputs
-    assert outputs_webp and isinstance(outputs_webp, DataContent)
+    assert outputs_webp and outputs_webp.type == "data"
     assert outputs_webp.media_type == "image/webp"
     assert "data:image/webp;base64," in outputs_webp.uri
 
@@ -1650,7 +1635,7 @@ def test_parse_response_from_openai_image_generation_fallback():
     # Verify it falls back to PNG format for unrecognized binary data
     assert len(response.messages[0].contents) == 2
     result_content = response.messages[0].contents[1]
-    assert isinstance(result_content, ImageGenerationToolResultContent)
+    assert result_content.type == "image_generation_tool_result"
     assert result_content.outputs
     content = result_content.outputs
     assert content.media_type == "image/png"
@@ -1944,7 +1929,7 @@ async def test_integration_streaming_file_search() -> None:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
         for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
+            if content.type == "text" and content.text:
                 full_message += content.text
 
     await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)

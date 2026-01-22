@@ -40,7 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
-        Contents,
+        Content,
         FinishReason,
     )
 
@@ -1096,7 +1096,12 @@ def _trace_get_response(
             )
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                    _capture_messages(span=span, provider_name=provider_name, messages=messages)
+                    _capture_messages(
+                        span=span,
+                        provider_name=provider_name,
+                        messages=messages,
+                        system_instructions=options.get("instructions"),
+                    )
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
                 try:
@@ -1189,6 +1194,7 @@ def _trace_get_streaming_response(
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
+                        system_instructions=options.get("instructions"),
                     )
                 start_time_stamp = perf_counter()
                 end_time_stamp: float | None = None
@@ -1744,8 +1750,10 @@ def _to_otel_message(message: "ChatMessage") -> dict[str, Any]:
     return {"role": message.role.value, "parts": [_to_otel_part(content) for content in message.contents]}
 
 
-def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
+def _to_otel_part(content: "Content") -> dict[str, Any] | None:
     """Create a otel representation of a Content."""
+    from ._types import _get_data_bytes_as_str
+
     match content.type:
         case "text":
             return {"type": "text", "content": content.text}
@@ -1761,7 +1769,7 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
         case "data":
             return {
                 "type": "blob",
-                "content": content.get_data_bytes_as_str(),
+                "content": _get_data_bytes_as_str(content),
                 "mime_type": content.media_type,
                 "modality": content.media_type.split("/")[0] if content.media_type else None,
             }
@@ -1802,10 +1810,10 @@ def _get_response_attributes(
     if model_id := getattr(response, "model_id", None):
         attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
     if capture_usage and (usage := response.usage_details):
-        if usage.input_token_count:
-            attributes[OtelAttr.INPUT_TOKENS] = usage.input_token_count
-        if usage.output_token_count:
-            attributes[OtelAttr.OUTPUT_TOKENS] = usage.output_token_count
+        if usage.get("input_token_count"):
+            attributes[OtelAttr.INPUT_TOKENS] = usage["input_token_count"]
+        if usage.get("output_token_count"):
+            attributes[OtelAttr.OUTPUT_TOKENS] = usage["output_token_count"]
     if duration:
         attributes[Meters.LLM_OPERATION_DURATION] = duration
     return attributes

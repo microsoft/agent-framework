@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from ag_ui.core import StateSnapshotEvent
-from agent_framework import ChatAgent, ChatResponseUpdate, TextContent
+from agent_framework import ChatAgent, ChatResponseUpdate, Content
 
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
@@ -20,7 +20,7 @@ from utils_test_ag_ui import StreamingChatClientStub, stream_from_updates
 @pytest.fixture
 def mock_agent() -> ChatAgent:
     """Create a mock agent for testing."""
-    updates = [ChatResponseUpdate(contents=[TextContent(text="Hello!")])]
+    updates = [ChatResponseUpdate(contents=[Content.from_text(text="Hello!")])]
     chat_client = StreamingChatClientStub(stream_from_updates(updates))
     return ChatAgent(name="test_agent", instructions="Test agent", chat_client=chat_client)
 

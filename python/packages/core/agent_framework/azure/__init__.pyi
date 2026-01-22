@@ -4,6 +4,7 @@ from agent_framework_azure_ai import (
     AzureAIAgentClient,
     AzureAIAgentsProvider,
     AzureAIClient,
+    AzureAIProjectAgentOptions,
     AzureAIProjectAgentProvider,
     AzureAISettings,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "AzureAIAgentClient",
     "AzureAIAgentsProvider",
     "AzureAIClient",
+    "AzureAIProjectAgentOptions",
     "AzureAIProjectAgentProvider",
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",

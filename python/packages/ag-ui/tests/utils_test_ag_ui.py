@@ -16,7 +16,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    TextContent,
+    Content,
 )
 from agent_framework._clients import TOptions_co
 
@@ -91,7 +91,7 @@ class StubAgent(AgentProtocol):
         self.id = agent_id
         self.name = agent_name
         self.description = "stub agent"
-        self.updates = updates or [AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
+        self.updates = updates or [AgentResponseUpdate(contents=[Content.from_text(text="response")], role="assistant")]
         self.default_options: dict[str, Any] = (
             default_options if isinstance(default_options, dict) else {"tools": None, "response_format": None}
         )
