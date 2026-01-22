@@ -63,22 +63,6 @@ __all__ = [
     "ThinkingConfig",
 ]
 
-if sys.version_info >= (3, 13):
-    from typing import TypeVar
-else:
-    from typing_extensions import TypeVar
-
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
-__all__ = [
-    "AnthropicChatOptions",
-    "AnthropicClient",
-    "ThinkingConfig",
-]
-
 logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024

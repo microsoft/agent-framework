@@ -1515,11 +1515,12 @@ async def _auto_invoke_function(
     Raises:
         KeyError: If the requested function is not found in the tool map.
     """
+    from ._types import Content
+
     # Note: The scenarios for approval_mode="always_require", declaration_only, and
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
-    from ._types import Content
 
     tool: AIFunction[BaseModel, Any] | None = None
     if function_call_content.type == "function_call":

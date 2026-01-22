@@ -26,7 +26,6 @@ __all__ = [
     "AgentResponseUpdate",
     "Annotation",
     "ChatMessage",
-    "ChatOptions",  # Backward compatibility alias
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
