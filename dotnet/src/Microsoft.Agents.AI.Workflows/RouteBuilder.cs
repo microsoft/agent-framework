@@ -117,6 +117,22 @@ public class RouteBuilder
         }
     }
 
+    /// <summary>
+    /// Registers a port and associated handler for external requests originating from the executor. This generates a PortBinding that can be used to
+    /// submit requests through to the workflow Run call.
+    /// </summary>
+    /// <typeparam name="TRequest">The type of request messages that will be sent through this port.</typeparam>
+    /// <typeparam name="TResponse">The type of response messages that will be sent through this port.</typeparam>
+    /// <param name="id">A unique identifier for the port.</param>
+    /// <param name="handler">A delegate that processes messages of type <typeparamref name="TResponse"/> within the workflow context. The
+    /// delegate is invoked for each incoming response to requests through this port.</param>
+    /// <param name="portBinding">A <see cref="PortBinding"/> representing this port registration providing a means to submit requests.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified response; if a port with this id is not
+    /// this will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
+    /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of additional handlers or route
+    /// options.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     internal RouteBuilder AddPortHandler<TRequest, TResponse>(string id, Func<TResponse, IWorkflowContext, CancellationToken, ValueTask> handler, out PortBinding portBinding, bool overwrite = false)
     {
         if (this._externalRequestContext == null)
@@ -164,10 +180,12 @@ public class RouteBuilder
     /// <typeparam name="TInput"></typeparam>
     /// <param name="handler">A delegate that processes messages of type <typeparamref name="TInput"/> within the workflow context. The
     /// delegate is invoked for each incoming message of the specified type.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the specified input type; otherwise, <see
-    /// langword="false"/> to preserve the existing handler.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of additional handlers or route
     /// options.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput>(Action<TInput, IWorkflowContext, CancellationToken> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -190,10 +208,12 @@ public class RouteBuilder
     /// <typeparam name="TInput"></typeparam>
     /// <param name="handler">A delegate that processes messages of type <typeparamref name="TInput"/> within the workflow context. The
     /// delegate is invoked for each incoming message of the specified type.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the specified input type; otherwise, <see
-    /// langword="false"/> to preserve the existing handler.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of additional handlers or route
     /// options.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput>(Action<TInput, IWorkflowContext> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -216,10 +236,12 @@ public class RouteBuilder
     /// <typeparam name="TInput"></typeparam>
     /// <param name="handler">A delegate that processes messages of type <typeparamref name="TInput"/> within the workflow context. The
     /// delegate is invoked for each incoming message of the specified type.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the specified input type; otherwise, <see
-    /// langword="false"/> to preserve the existing handler.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of additional handlers or route
     /// options.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput>(Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -242,10 +264,12 @@ public class RouteBuilder
     /// <typeparam name="TInput"></typeparam>
     /// <param name="handler">A delegate that processes messages of type <typeparamref name="TInput"/> within the workflow context. The
     /// delegate is invoked for each incoming message of the specified type.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the specified input type; otherwise, <see
-    /// langword="false"/> to preserve the existing handler.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of additional handlers or route
     /// options.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput>(Func<TInput, IWorkflowContext, ValueTask> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -269,9 +293,11 @@ public class RouteBuilder
     /// <typeparam name="TResult">The type of result produced by the handler.</typeparam>
     /// <param name="handler">A function that processes messages of type <typeparamref name="TInput"/> within the workflow context and returns
     /// a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput, TResult>(Func<TInput, IWorkflowContext, CancellationToken, TResult> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -295,9 +321,11 @@ public class RouteBuilder
     /// <typeparam name="TResult">The type of result produced by the handler.</typeparam>
     /// <param name="handler">A function that processes messages of type <typeparamref name="TInput"/> within the workflow context and returns
     /// a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput, TResult>(Func<TInput, IWorkflowContext, TResult> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -321,9 +349,11 @@ public class RouteBuilder
     /// <typeparam name="TResult">The type of result produced by the handler.</typeparam>
     /// <param name="handler">A function that processes messages of type <typeparamref name="TInput"/> within the workflow context and returns
     /// a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput, TResult>(Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TResult>> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -347,9 +377,11 @@ public class RouteBuilder
     /// <typeparam name="TResult">The type of result produced by the handler.</typeparam>
     /// <param name="handler">A function that processes messages of type <typeparamref name="TInput"/> within the workflow context and returns
     /// a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddHandler<TInput, TResult>(Func<TInput, IWorkflowContext, ValueTask<TResult>> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -383,9 +415,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context. The delegate is invoked for each incoming message not otherwise handled.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll(Func<PortableValue, IWorkflowContext, CancellationToken, ValueTask> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -407,9 +441,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context. The delegate is invoked for each incoming message not otherwise handled.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll(Func<PortableValue, IWorkflowContext, ValueTask> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -431,9 +467,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context and returns a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll<TResult>(Func<PortableValue, IWorkflowContext, CancellationToken, ValueTask<TResult>> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -455,9 +493,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context and returns a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll<TResult>(Func<PortableValue, IWorkflowContext, ValueTask<TResult>> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -479,9 +519,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context. The delegate is invoked for each incoming message not otherwise handled.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll(Action<PortableValue, IWorkflowContext, CancellationToken> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -503,9 +545,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context. The delegate is invoked for each incoming message not otherwise handled.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll(Action<PortableValue, IWorkflowContext> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -527,9 +571,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context and returns a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll<TResult>(Func<PortableValue, IWorkflowContext, CancellationToken, TResult> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
@@ -551,9 +597,11 @@ public class RouteBuilder
     /// wrapped as <see cref="PortableValue"/> and workflow context, and returns a result asynchronously.</remarks>
     /// <param name="handler">A function that processes messages wrapped as <see cref="PortableValue"/> within the
     /// workflow context and returns a <see cref="ValueTask{TResult}"/> representing the asynchronous result.</param>
-    /// <param name="overwrite"><see langword="true"/> to replace any existing handler for the input type; otherwise, <see langword="false"/> to
-    /// preserve existing handlers.</param>
+    /// <param name="overwrite">Set <see langword="true"/> to replace an existing handler for the specified input type; if no
+    /// handler is registered will throw. If set to <see langword="false"/> and a handler is registered, this will throw. </param>
     /// <returns>The current <see cref="RouteBuilder"/> instance, enabling fluent configuration of workflow routes.</returns>
+    /// <exception cref="InvalidOperationException">If a handler is already registered for the specified type, and overwrite is set
+    /// to <see langword="false"/>, or if a handler is not already registered, but overwrite is set to <see langword="true"/>.</exception>
     public RouteBuilder AddCatchAll<TResult>(Func<PortableValue, IWorkflowContext, TResult> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
