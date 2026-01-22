@@ -28,6 +28,19 @@ internal static class ItemContentConverter
         mediaType.Equals("audio/flac", StringComparison.OrdinalIgnoreCase) ? "flac" :
         mediaType.Equals("audio/pcm", StringComparison.OrdinalIgnoreCase) ? "pcm16" :
         "mp3";
+
+    private static string ImageUriToMediaType(string uri)
+    {
+        return
+            uri.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" :
+            uri.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" :
+            uri.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" :
+            uri.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) ? "image/gif" :
+            uri.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase) ? "image/bmp" :
+            uri.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp" :
+            "image/*";
+    }
+
     /// <summary>
     /// Converts <see cref="ItemContent"/> to <see cref="AIContent"/>.
     /// </summary>
@@ -54,7 +67,7 @@ internal static class ItemContentConverter
             ItemContentInputImage inputImage when !string.IsNullOrEmpty(inputImage.ImageUrl) =>
                 inputImage.ImageUrl!.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? new DataContent(inputImage.ImageUrl)
-                    : new UriContent(inputImage.ImageUrl, "image/*"),
+                    : new UriContent(inputImage.ImageUrl, ImageUriToMediaType(inputImage.ImageUrl)),
             ItemContentInputImage inputImage when !string.IsNullOrEmpty(inputImage.FileId) =>
                 new HostedFileContent(inputImage.FileId!),
 
