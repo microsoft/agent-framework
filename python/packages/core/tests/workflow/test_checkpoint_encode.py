@@ -7,8 +7,6 @@ from agent_framework._workflows._checkpoint_encoding import (
     _CYCLE_SENTINEL,
     DATACLASS_MARKER,
     MODEL_MARKER,
-    PRESERVED_MARKER,
-    decode_checkpoint_value,
     encode_checkpoint_value,
 )
 
@@ -298,44 +296,43 @@ def test_encode_list_with_self_reference() -> None:
 
 
 # --- Tests for reserved keyword handling ---
-# User data containing marker keys + "value" is preserved in a special envelope
-# during serialization and recovered during deserialization.
+# Note: Security is enforced at deserialization time by validating class types,
+# not at serialization time. This allows legitimate encoded data to be re-encoded.
 
 
-def test_encode_preserves_dict_with_model_marker_and_value() -> None:
-    """Test that user dict with MODEL_MARKER and 'value' is preserved in envelope."""
+def test_encode_allows_dict_with_model_marker_and_value() -> None:
+    """Test that encoding a dict with MODEL_MARKER and 'value' is allowed.
+
+    Security is enforced at deserialization time, not serialization time.
+    """
     data = {
         MODEL_MARKER: "some.module:SomeClass",
         "value": {"data": "test"},
     }
     result = encode_checkpoint_value(data)
-    # Should be wrapped in preservation envelope
-    assert PRESERVED_MARKER in result
-    assert result[PRESERVED_MARKER] is True
+    assert MODEL_MARKER in result
     assert "value" in result
-    # The inner value should contain the original dict
-    assert MODEL_MARKER in result["value"]
-    assert result["value"]["value"] == {"data": "test"}
 
 
-def test_encode_preserves_dict_with_dataclass_marker_and_value() -> None:
-    """Test that user dict with DATACLASS_MARKER and 'value' is preserved in envelope."""
+def test_encode_allows_dict_with_dataclass_marker_and_value() -> None:
+    """Test that encoding a dict with DATACLASS_MARKER and 'value' is allowed.
+
+    Security is enforced at deserialization time, not serialization time.
+    """
     data = {
         DATACLASS_MARKER: "some.module:SomeClass",
         "value": {"field": "test"},
     }
     result = encode_checkpoint_value(data)
-    # Should be wrapped in preservation envelope
-    assert PRESERVED_MARKER in result
-    assert result[PRESERVED_MARKER] is True
+    assert DATACLASS_MARKER in result
     assert "value" in result
-    # The inner value should contain the original dict
-    assert DATACLASS_MARKER in result["value"]
-    assert result["value"]["value"] == {"field": "test"}
 
 
-def test_encode_preserves_nested_dict_with_marker_keys() -> None:
-    """Test that nested dict with marker keys is preserved in envelope."""
+def test_encode_allows_nested_dict_with_marker_keys() -> None:
+    """Test that encoding nested dict with marker keys is allowed.
+
+    Security is enforced at deserialization time, not serialization time.
+    """
     nested_data = {
         "outer": {
             MODEL_MARKER: "some.module:SomeClass",
@@ -344,61 +341,27 @@ def test_encode_preserves_nested_dict_with_marker_keys() -> None:
     }
     result = encode_checkpoint_value(nested_data)
     assert "outer" in result
-    # The nested dict should be wrapped in preservation envelope
-    assert PRESERVED_MARKER in result["outer"]
-    assert result["outer"][PRESERVED_MARKER] is True
-
-
-def test_decode_recovers_preserved_dict_with_model_marker() -> None:
-    """Test that preserved dict with MODEL_MARKER is recovered correctly."""
-    original_data = {
-        MODEL_MARKER: "some.module:SomeClass",
-        "value": {"data": "test"},
-    }
-    encoded = encode_checkpoint_value(original_data)
-    decoded = decode_checkpoint_value(encoded)
-    # Should recover the original dict structure
-    assert MODEL_MARKER in decoded
-    assert decoded[MODEL_MARKER] == "some.module:SomeClass"
-    assert decoded["value"] == {"data": "test"}
-
-
-def test_decode_recovers_preserved_dict_with_dataclass_marker() -> None:
-    """Test that preserved dict with DATACLASS_MARKER is recovered correctly."""
-    original_data = {
-        DATACLASS_MARKER: "some.module:SomeClass",
-        "value": {"field": "test"},
-    }
-    encoded = encode_checkpoint_value(original_data)
-    decoded = decode_checkpoint_value(encoded)
-    # Should recover the original dict structure
-    assert DATACLASS_MARKER in decoded
-    assert decoded[DATACLASS_MARKER] == "some.module:SomeClass"
-    assert decoded["value"] == {"field": "test"}
+    assert MODEL_MARKER in result["outer"]
 
 
 def test_encode_allows_marker_without_value() -> None:
-    """Test that a dict with marker key but without 'value' key is NOT preserved."""
+    """Test that a dict with marker key but without 'value' key is allowed."""
     data = {
         MODEL_MARKER: "some.module:SomeClass",
         "other_key": "allowed",
     }
     result = encode_checkpoint_value(data)
-    # Should NOT be wrapped (no "value" key present)
-    assert PRESERVED_MARKER not in result
     assert MODEL_MARKER in result
     assert result["other_key"] == "allowed"
 
 
 def test_encode_allows_value_without_marker() -> None:
-    """Test that a dict with 'value' key but without marker is NOT preserved."""
+    """Test that a dict with 'value' key but without marker is allowed."""
     data = {
         "value": {"nested": "data"},
         "other_key": "allowed",
     }
     result = encode_checkpoint_value(data)
-    # Should NOT be wrapped (no marker key present)
-    assert PRESERVED_MARKER not in result
     assert "value" in result
     assert result["other_key"] == "allowed"
 

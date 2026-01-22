@@ -10,7 +10,6 @@ from typing import Any, cast
 # Checkpoint serialization helpers
 MODEL_MARKER = "__af_model__"
 DATACLASS_MARKER = "__af_dataclass__"
-PRESERVED_MARKER = "__af_preserved__"
 
 # Guards to prevent runaway recursion while encoding arbitrary user data
 _MAX_ENCODE_DEPTH = 100
@@ -93,22 +92,9 @@ def encode_checkpoint_value(value: Any) -> Any:
                 return _CYCLE_SENTINEL
             stack.add(oid)
             try:
-                # Check if this dict looks like a marker pattern (has marker key + "value" key)
-                # If so, preserve it to prevent confusion during deserialization
-                has_model_marker = MODEL_MARKER in v_dict
-                has_dataclass_marker = DATACLASS_MARKER in v_dict
-                has_value_key = "value" in v_dict
-                if (has_model_marker or has_dataclass_marker) and has_value_key:
-                    # This is user data that looks like a marker pattern - preserve it
-                    json_dict: dict[str, Any] = {}
-                    for k_any, val_any in v_dict.items():  # type: ignore[assignment]
-                        k_str: str = str(k_any)
-                        json_dict[k_str] = _enc(val_any, stack, depth + 1)
-                    return {PRESERVED_MARKER: True, "value": json_dict}
-
-                json_dict = {}
+                json_dict: dict[str, Any] = {}
                 for k_any, val_any in v_dict.items():  # type: ignore[assignment]
-                    k_str = str(k_any)
+                    k_str: str = str(k_any)
                     json_dict[k_str] = _enc(val_any, stack, depth + 1)
                 return json_dict
             finally:
@@ -146,13 +132,6 @@ def decode_checkpoint_value(value: Any) -> Any:
     """Recursively decode values previously encoded by encode_checkpoint_value."""
     if isinstance(value, dict):
         value_dict = cast(dict[str, Any], value)  # encoded form always uses string keys
-
-        # Handle preserved marker first - this was user data that looked like a marker pattern
-        if PRESERVED_MARKER in value_dict and "value" in value_dict:
-            preserved_value = value_dict.get("value")
-            # Decode as a regular dict without marker interpretation
-            return _decode_as_regular_dict(preserved_value)
-
         # Structured model marker handling
         if MODEL_MARKER in value_dict and "value" in value_dict:
             type_key: str | None = value_dict.get(MODEL_MARKER)  # type: ignore[assignment]
@@ -214,23 +193,6 @@ def decode_checkpoint_value(value: Any) -> Any:
         # After isinstance check, treat value as list[Any] for decoding
         value_list: list[Any] = value  # type: ignore[assignment]
         return [decode_checkpoint_value(v_any) for v_any in value_list]
-    return value
-
-
-def _decode_as_regular_dict(value: Any) -> Any:
-    """Decode value as a regular dict/list without marker interpretation.
-
-    Used to recover preserved user data that looked like marker patterns.
-    """
-    if isinstance(value, dict):
-        value_dict = cast(dict[str, Any], value)
-        decoded: dict[str, Any] = {}
-        for k_any, v_any in value_dict.items():
-            decoded[k_any] = _decode_as_regular_dict(v_any)
-        return decoded
-    if isinstance(value, list):
-        value_list: list[Any] = value  # type: ignore[assignment]
-        return [_decode_as_regular_dict(v_any) for v_any in value_list]
     return value
 
 
