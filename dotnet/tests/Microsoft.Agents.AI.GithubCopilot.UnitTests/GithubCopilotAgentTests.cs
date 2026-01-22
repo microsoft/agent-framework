@@ -1,0 +1,93 @@
+// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Threading.Tasks;
+using GitHub.Copilot.SDK;
+
+namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
+
+/// <summary>
+/// Unit tests for the <see cref="GithubCopilotAgent"/> class.
+/// </summary>
+public sealed class GithubCopilotAgentTests
+{
+    [Fact]
+    public void Constructor_WithCopilotClientOptions_InitializesPropertiesCorrectly()
+    {
+        // Arrange
+        var options = new CopilotClientOptions { AutoStart = false };
+        const string TestId = "test-id";
+        const string TestName = "test-name";
+        const string TestDescription = "test-description";
+
+        // Act
+        var agent = new GithubCopilotAgent(options, id: TestId, name: TestName, description: TestDescription);
+
+        // Assert
+        Assert.Equal(TestId, agent.Id);
+        Assert.Equal(TestName, agent.Name);
+        Assert.Equal(TestDescription, agent.Description);
+    }
+
+    [Fact]
+    public void Constructor_WithNullCopilotClientOptions_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent((CopilotClientOptions)null!));
+    }
+
+    [Fact]
+    public void Constructor_WithNullCopilotClient_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent((CopilotClient)null!));
+    }
+
+    [Fact]
+    public void Constructor_WithDefaultParameters_UsesBaseProperties()
+    {
+        // Arrange
+        var options = new CopilotClientOptions { AutoStart = false };
+
+        // Act
+        var agent = new GithubCopilotAgent(options);
+
+        // Assert
+        Assert.NotNull(agent.Id);
+        Assert.NotEmpty(agent.Id);
+        Assert.Null(agent.Name);
+        Assert.Null(agent.Description);
+    }
+
+    [Fact]
+    public async Task GetNewThreadAsync_ReturnsGithubCopilotAgentThreadAsync()
+    {
+        // Arrange
+        var options = new CopilotClientOptions { AutoStart = false };
+        var agent = new GithubCopilotAgent(options);
+
+        // Act
+        var thread = await agent.GetNewThreadAsync();
+
+        // Assert
+        Assert.NotNull(thread);
+        Assert.IsType<GithubCopilotAgentThread>(thread);
+    }
+
+    [Fact]
+    public async Task GetNewThreadAsync_WithSessionId_ReturnsThreadWithSessionIdAsync()
+    {
+        // Arrange
+        var options = new CopilotClientOptions { AutoStart = false };
+        var agent = new GithubCopilotAgent(options);
+        const string TestSessionId = "test-session-id";
+
+        // Act
+        var thread = await agent.GetNewThreadAsync(TestSessionId);
+
+        // Assert
+        Assert.NotNull(thread);
+        var typedThread = Assert.IsType<GithubCopilotAgentThread>(thread);
+        Assert.Equal(TestSessionId, typedThread.SessionId);
+    }
+}
