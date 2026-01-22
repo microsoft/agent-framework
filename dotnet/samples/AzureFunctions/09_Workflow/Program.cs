@@ -18,7 +18,7 @@ Func<string, string> orderParserFunc = input =>
 
     return input;
 };
-var orderParserExecutor = orderParserFunc.BindAsExecutor("OrderParser");
+var orderParserExecutor = orderParserFunc.BindAsExecutor("ParseOrderId");
 
 OrderLookup orderLookupExecutor = new();
 OrderEnrich orderEnricherExeecutor = new();
