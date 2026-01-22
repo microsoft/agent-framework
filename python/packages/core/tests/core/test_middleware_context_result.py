@@ -14,6 +14,7 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Content,
+    ResponseStream,
     Role,
 )
 from agent_framework._middleware import (
@@ -84,18 +85,22 @@ class TestResultOverrideMiddleware:
             ) -> None:
                 # Execute the pipeline first, then override the response stream
                 await next(context)
-                context.result = override_stream()
+                context.result = ResponseStream(override_stream())
 
         middleware = StreamResponseOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
+        async def final_handler(ctx: AgentRunContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
+
+            return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
+        stream = await pipeline.execute_stream(mock_agent, messages, context, final_handler)
+        async for update in stream:
             updates.append(update)
 
         # Verify the overridden response stream is returned

@@ -31,7 +31,6 @@ from agent_framework import (
     Content,
     Role,
     SequentialBuilder,
-    use_chat_middleware,
 )
 from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
@@ -94,7 +93,6 @@ class MockChatClient:
             yield ChatResponseUpdate(text=Content.from_text(text="test streaming response"), role="assistant")
 
 
-@use_chat_middleware
 class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """Full BaseChatClient mock with middleware support.
 

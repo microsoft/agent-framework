@@ -5,6 +5,8 @@ import re
 import sys
 from collections.abc import (
     AsyncIterable,
+    AsyncIterator,
+    Awaitable,
     Callable,
     Mapping,
     MutableMapping,
@@ -12,7 +14,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -40,6 +42,7 @@ __all__ = [
     "ChatResponseUpdate",
     "Content",
     "FinishReason",
+    "ResponseStream",
     "Role",
     "TextSpanRegion",
     "ToolMode",
@@ -84,7 +87,7 @@ class EnumLike(type):
         return cls
 
 
-def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
+def _parse_content_list(contents_data: Sequence["Content | dict[str, Any]"]) -> list["Content"]:
     """Parse a list of content data dictionaries into appropriate Content objects.
 
     Args:
@@ -1719,7 +1722,8 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | ChatMessage | Sequence[str | ChatMessage], system_instructions: str | Sequence[str] | None = None
+    messages: str | ChatMessage | Sequence[str | ChatMessage] | None,
+    system_instructions: str | Sequence[str] | None = None,
 ) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
@@ -1737,6 +1741,8 @@ def prepare_messages(
     else:
         system_instruction_messages = []
 
+    if messages is None:
+        return system_instruction_messages
     if isinstance(messages, str):
         return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
     if isinstance(messages, ChatMessage):
@@ -2354,7 +2360,7 @@ class ChatResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: Sequence[Content | dict[str, Any]] | None = None,
+        contents: Sequence[Content] | None = None,
         text: Content | str | None = None,
         role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any] | None = None,
         author_name: str | None = None,
@@ -2388,7 +2394,7 @@ class ChatResponseUpdate(SerializationMixin):
 
         """
         # Handle contents conversion
-        contents = [] if contents is None else _parse_content_list(contents)
+        contents: list[Content] = [] if contents is None else _parse_content_list(contents)
 
         if text is not None:
             if isinstance(text, str):
@@ -2405,7 +2411,7 @@ class ChatResponseUpdate(SerializationMixin):
         if isinstance(finish_reason, dict):
             finish_reason = FinishReason.from_dict(finish_reason)
 
-        self.contents = list(contents)
+        self.contents = contents
         self.role = role
         self.author_name = author_name
         self.response_id = response_id
@@ -2424,6 +2430,183 @@ class ChatResponseUpdate(SerializationMixin):
 
     def __str__(self) -> str:
         return self.text
+
+
+# region ResponseStream
+
+
+TUpdate = TypeVar("TUpdate")
+TFinal = TypeVar("TFinal")
+
+
+class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
+    """Async stream wrapper that supports iteration and deferred finalization."""
+
+    def __init__(
+        self,
+        stream: AsyncIterable[TUpdate] | Awaitable[AsyncIterable[TUpdate]],
+        *,
+        finalizer: Callable[[Sequence[TUpdate]], TFinal | Awaitable[TFinal]] | None = None,
+    ) -> None:
+        self._stream_source = stream
+        self._finalizer = finalizer
+        self._stream: AsyncIterable[TUpdate] | None = None
+        self._iterator: AsyncIterator[TUpdate] | None = None
+        self._updates: list[TUpdate] = []
+        self._consumed: bool = False
+        self._finalized: bool = False
+        self._final_result: TFinal | None = None
+        self._update_hooks: list[Callable[[TUpdate], TUpdate | Awaitable[TUpdate]]] = []
+        self._finalizers: list[Callable[[TFinal], TFinal | Awaitable[TFinal]]] = []
+        self._teardown_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._teardown_run: bool = False
+        self._inner_stream: "ResponseStream[Any, Any] | None" = None
+        self._inner_stream_source: "ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None" = None
+        self._wrap_inner: bool = False
+        self._map_update: Callable[[Any], Any | Awaitable[Any]] | None = None
+
+    @classmethod
+    def wrap(
+        cls,
+        inner: "ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]]",
+        *,
+        map_update: Callable[[Any], Any | Awaitable[Any]] | None = None,
+    ) -> "ResponseStream[Any, Any]":
+        """Wrap an existing ResponseStream with distinct hooks/finalizers."""
+        stream = cls(inner)
+        stream._inner_stream_source = inner
+        stream._wrap_inner = True
+        stream._map_update = map_update
+        return stream
+
+    async def _get_stream(self) -> AsyncIterable[TUpdate]:
+        if self._stream is None:
+            if hasattr(self._stream_source, "__aiter__"):
+                self._stream = self._stream_source  # type: ignore[assignment]
+            else:
+                self._stream = await self._stream_source  # type: ignore[assignment]
+            if isinstance(self._stream, ResponseStream):
+                if self._wrap_inner:
+                    self._inner_stream = self._stream
+                    return self._stream
+                if self._finalizer is None:
+                    self._finalizer = self._stream._finalizer  # type: ignore[assignment]
+                if self._update_hooks:
+                    self._stream._update_hooks.extend(self._update_hooks)  # type: ignore[assignment]
+                    self._update_hooks = []
+                if self._finalizers:
+                    self._stream._finalizers.extend(self._finalizers)  # type: ignore[assignment]
+                    self._finalizers = []
+                if self._teardown_hooks:
+                    self._stream._teardown_hooks.extend(self._teardown_hooks)  # type: ignore[assignment]
+                    self._teardown_hooks = []
+                return self._stream
+        return self._stream
+
+    def __aiter__(self) -> "ResponseStream[TUpdate, TFinal]":
+        return self
+
+    async def __anext__(self) -> TUpdate:
+        if self._iterator is None:
+            stream = await self._get_stream()
+            self._iterator = stream.__aiter__()
+        try:
+            update = await self._iterator.__anext__()
+        except StopAsyncIteration:
+            self._consumed = True
+            await self._run_teardown_hooks()
+            raise
+        if self._map_update is not None:
+            update = self._map_update(update)
+            if isinstance(update, Awaitable):
+                update = await update
+        self._updates.append(update)
+        for hook in self._update_hooks:
+            update = hook(update)
+            if isinstance(update, Awaitable):
+                update = await update
+        return update
+
+    def __await__(self) -> Any:
+        async def _wrap() -> "ResponseStream[TUpdate, TFinal]":
+            await self._get_stream()
+            return self
+
+        return _wrap().__await__()
+
+    async def get_final_response(self) -> TFinal:
+        """Get the final response by applying the finalizer to all collected updates."""
+        if self._wrap_inner:
+            if self._inner_stream is None:
+                if self._inner_stream_source is None:
+                    raise ValueError("No inner stream configured for this stream.")
+                if isinstance(self._inner_stream_source, ResponseStream):
+                    self._inner_stream = self._inner_stream_source
+                else:
+                    self._inner_stream = await self._inner_stream_source
+            result: Any = await self._inner_stream.get_final_response()
+            for finalizer in self._finalizers:
+                result = finalizer(result)
+                if isinstance(result, Awaitable):
+                    result = await result
+            self._final_result = result
+            self._finalized = True
+            return self._final_result  # type: ignore[return-value]
+        if self._finalizer is None:
+            raise ValueError("No finalizer configured for this stream.")
+        if not self._finalized:
+            if not self._consumed:
+                async for _ in self:
+                    pass
+            result = self._finalizer(self._updates)
+            if isinstance(result, Awaitable):
+                result = await result
+            for finalizer in self._finalizers:
+                result = finalizer(result)
+                if isinstance(result, Awaitable):
+                    result = await result
+            self._final_result = result
+            self._finalized = True
+        return self._final_result  # type: ignore[return-value]
+
+    def with_update_hook(
+        self,
+        hook: Callable[[TUpdate], TUpdate | Awaitable[TUpdate]],
+    ) -> "ResponseStream[TUpdate, TFinal]":
+        """Register a per-update hook executed during iteration."""
+        self._update_hooks.append(hook)
+        return self
+
+    def with_finalizer(
+        self,
+        finalizer: Callable[[TFinal], TFinal | Awaitable[TFinal]],
+    ) -> "ResponseStream[TUpdate, TFinal]":
+        """Register a finalizer executed on the finalized result."""
+        self._finalizers.append(finalizer)
+        self._finalized = False
+        self._final_result = None
+        return self
+
+    def with_teardown(
+        self,
+        hook: Callable[[], Awaitable[None] | None],
+    ) -> "ResponseStream[TUpdate, TFinal]":
+        """Register a teardown hook executed after stream consumption."""
+        self._teardown_hooks.append(hook)
+        return self
+
+    async def _run_teardown_hooks(self) -> None:
+        if self._teardown_run:
+            return
+        self._teardown_run = True
+        for hook in self._teardown_hooks:
+            result = hook()
+            if isinstance(result, Awaitable):
+                await result
+
+    @property
+    def updates(self) -> Sequence[TUpdate]:
+        return self._updates
 
 
 # region AgentResponse
@@ -2864,6 +3047,8 @@ class _ChatOptionsBase(TypedDict, total=False):
     tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
+    additional_function_arguments: dict[str, Any]
+    # Extra arguments passed to function invocations for tools that accept **kwargs.
 
     # Response configuration
     response_format: type[BaseModel] | Mapping[str, Any] | None

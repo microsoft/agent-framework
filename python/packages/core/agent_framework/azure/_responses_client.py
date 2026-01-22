@@ -9,10 +9,7 @@ from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
-from .._middleware import use_chat_middleware
-from .._tools import use_function_invocation
 from ..exceptions import ServiceInitializationError
-from ..observability import use_instrumentation
 from ..openai._responses_client import OpenAIBaseResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
@@ -46,9 +43,6 @@ TAzureOpenAIResponsesOptions = TypeVar(
 )
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
 class AzureOpenAIResponsesClient(
     AzureOpenAIConfigMixin,
     OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],

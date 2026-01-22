@@ -14,12 +14,12 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvokingMixin,
     FunctionTool,
     Role,
     agent_middleware,
     chat_middleware,
     function_middleware,
-    use_function_invocation,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -1856,7 +1856,7 @@ class TestChatAgentChatMiddleware:
         )
         final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
-        chat_client = use_function_invocation(MockBaseChatClient)()
+        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
         chat_client.run_responses = [function_call_response, final_response]
 
         # Create ChatAgent with function middleware and tools

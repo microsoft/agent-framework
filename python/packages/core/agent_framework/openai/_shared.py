@@ -143,6 +143,7 @@ class OpenAIBase(SerializationMixin):
         additional_properties = kwargs.pop("additional_properties", None)
         middleware = kwargs.pop("middleware", None)
         instruction_role = kwargs.pop("instruction_role", None)
+        function_invocation_configuration = kwargs.pop("function_invocation_configuration", None)
 
         # Build super().__init__() args
         super_kwargs = {}
@@ -150,6 +151,8 @@ class OpenAIBase(SerializationMixin):
             super_kwargs["additional_properties"] = additional_properties
         if middleware is not None:
             super_kwargs["middleware"] = middleware
+        if function_invocation_configuration is not None:
+            super_kwargs["function_invocation_configuration"] = function_invocation_configuration
 
         # Call super().__init__() with filtered kwargs
         super().__init__(**super_kwargs)
