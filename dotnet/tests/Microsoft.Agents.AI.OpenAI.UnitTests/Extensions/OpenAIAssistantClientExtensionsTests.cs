@@ -845,7 +845,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.AsAIAgent(null!));
+            assistantClient.AsAIAgent(null!, chatOptions: null));
 
         Assert.Equal("assistantClientResult", exception.ParamName);
     }
