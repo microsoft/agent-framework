@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider, Role
 from agent_framework._logging import get_logger
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -118,7 +118,7 @@ logger = get_logger("agent_framework.azure")
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 
 
-class AzureAISearchSettings(AFBaseSettings):
+class AzureAISearchSettings(AFSettings):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
     The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.

@@ -257,7 +257,14 @@ class AFSettings:
 
             # kwargs take precedence
             if field_name in kwargs:
-                setattr(self, field_name, kwargs[field_name])
+                kwarg_value = kwargs[field_name]
+                # Coerce string values to SecretStr if needed
+                if isinstance(kwarg_value, str) and field_type is not str:
+                    try:
+                        kwarg_value = _coerce_value(kwarg_value, field_type)
+                    except (ValueError, TypeError):
+                        pass  # Keep original value
+                setattr(self, field_name, kwarg_value)
                 continue
 
             # Then env var values
@@ -273,6 +280,16 @@ class AFSettings:
             # Finally, default value from class
             default_value = getattr(self.__class__, field_name, None)
             setattr(self, field_name, default_value)
+
+    @property
+    def env_file_path(self) -> str | None:
+        """Get the .env file path used for loading settings."""
+        return self._env_file_path
+
+    @property
+    def env_file_encoding(self) -> str:
+        """Get the encoding used for reading the .env file."""
+        return self._env_file_encoding
 
     def _get_field_hints(self) -> dict[str, type]:
         """Get type hints for fields defined on this class and its bases.

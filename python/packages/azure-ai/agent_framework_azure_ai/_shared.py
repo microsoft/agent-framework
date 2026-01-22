@@ -15,7 +15,7 @@ from agent_framework import (
     ToolProtocol,
     get_logger,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 from azure.ai.agents.models import (
     BingCustomSearchTool,
@@ -49,7 +49,7 @@ from pydantic import BaseModel
 logger = get_logger("agent_framework.azure")
 
 
-class AzureAISettings(AFBaseSettings):
+class AzureAISettings(AFSettings):
     """Azure AI Project settings.
 
     The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.

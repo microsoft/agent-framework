@@ -31,7 +31,7 @@ async def main() -> None:
     """Example of streaming response with Azure AI Foundry backend."""
     # The backend="foundry" explicitly selects Azure AI Foundry
     # Without it, the backend is auto-detected based on available credentials
-    agent = AnthropicClient(backend="foundry").create_agent(
+    agent = AnthropicClient(backend="foundry").as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[

@@ -205,8 +205,9 @@ class TestSecretStr:
         """Test that string kwargs are converted to SecretStr."""
         settings = SecretSettings(api_key="kwarg-secret")
 
-        # kwargs are passed as-is, not converted
-        assert settings.api_key == "kwarg-secret"
+        # String kwargs are coerced to SecretStr
+        assert isinstance(settings.api_key, SecretStr)
+        assert settings.api_key.get_secret_value() == "kwarg-secret"
 
     def test_secretstr_masked_in_repr(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that SecretStr values are masked in repr."""

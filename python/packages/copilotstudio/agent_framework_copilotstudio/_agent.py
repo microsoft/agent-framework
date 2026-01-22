@@ -15,7 +15,7 @@ from agent_framework import (
     Role,
     normalize_messages,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 from pydantic import ValidationError
@@ -23,7 +23,7 @@ from pydantic import ValidationError
 from ._acquire_token import acquire_token
 
 
-class CopilotStudioSettings(AFBaseSettings):
+class CopilotStudioSettings(AFSettings):
     """Copilot Studio model settings.
 
     The settings are first loaded from environment variables with the prefix 'COPILOTSTUDIOAGENT__'.

@@ -27,7 +27,7 @@ from agent_framework import (
     use_function_invocation,
     validate_tool_mode,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
@@ -197,7 +197,7 @@ FINISH_REASON_MAP: dict[str, FinishReason] = {
 }
 
 
-class BedrockSettings(AFBaseSettings):
+class BedrockSettings(AFSettings):
     """Bedrock configuration settings pulled from environment variables or .env files."""
 
     env_prefix: ClassVar[str] = "BEDROCK_"

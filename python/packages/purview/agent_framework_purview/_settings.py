@@ -2,9 +2,8 @@
 
 from enum import Enum
 
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from pydantic import BaseModel, Field
-from pydantic_settings import SettingsConfigDict
 
 
 class PurviewLocationType(str, Enum):
@@ -34,11 +33,11 @@ class PurviewAppLocation(BaseModel):
         return {"@odata.type": dt, "value": self.location_value}
 
 
-class PurviewSettings(AFBaseSettings):
+class PurviewSettings(AFSettings):
     """Settings for Purview integration mirroring .NET PurviewSettings.
 
-    Attributes:
-        app_name: Public app name.
+    Keyword Args:
+        app_name: Public app name (required).
         app_version: Optional version string of the application.
         tenant_id: Optional tenant id (guid) of the user making the request.
         purview_app_location: Optional app location for policy evaluation.
@@ -51,37 +50,17 @@ class PurviewSettings(AFBaseSettings):
         max_cache_size_bytes: Maximum cache size in bytes (default 200MB).
     """
 
-    app_name: str = Field(...)
-    app_version: str | None = Field(default=None)
-    tenant_id: str | None = Field(default=None)
-    purview_app_location: PurviewAppLocation | None = Field(default=None)
-    graph_base_uri: str = Field(default="https://graph.microsoft.com/v1.0/")
-    blocked_prompt_message: str = Field(
-        default="Prompt blocked by policy",
-        description="Message to return when a prompt is blocked by policy.",
-    )
-    blocked_response_message: str = Field(
-        default="Response blocked by policy",
-        description="Message to return when a response is blocked by policy.",
-    )
-    ignore_exceptions: bool = Field(
-        default=False,
-        description="If True, all Purview exceptions will be logged but not thrown in middleware.",
-    )
-    ignore_payment_required: bool = Field(
-        default=False,
-        description="If True, 402 payment required errors will be logged but not thrown.",
-    )
-    cache_ttl_seconds: int = Field(
-        default=14400,
-        description="Time to live for cache entries in seconds (default 14400 = 4 hours).",
-    )
-    max_cache_size_bytes: int = Field(
-        default=200 * 1024 * 1024,
-        description="Maximum cache size in bytes (default 200MB).",
-    )
-
-    model_config = SettingsConfigDict(populate_by_name=True, validate_assignment=True)
+    app_name: str | None = None
+    app_version: str | None = None
+    tenant_id: str | None = None
+    purview_app_location: PurviewAppLocation | None = None
+    graph_base_uri: str = "https://graph.microsoft.com/v1.0/"
+    blocked_prompt_message: str = "Prompt blocked by policy"
+    blocked_response_message: str = "Response blocked by policy"
+    ignore_exceptions: bool = False
+    ignore_payment_required: bool = False
+    cache_ttl_seconds: int = 14400
+    max_cache_size_bytes: int = 200 * 1024 * 1024
 
     def get_scopes(self) -> list[str]:
         from urllib.parse import urlparse

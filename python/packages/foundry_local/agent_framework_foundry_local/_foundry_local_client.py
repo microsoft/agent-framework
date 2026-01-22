@@ -4,7 +4,7 @@ import sys
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import ChatOptions, use_chat_middleware, use_function_invocation
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._chat_client import OpenAIBaseChatClient
@@ -99,7 +99,7 @@ TFoundryLocalChatOptions = TypeVar(
 # endregion
 
 
-class FoundryLocalSettings(AFBaseSettings):
+class FoundryLocalSettings(AFSettings):
     """Foundry local model settings.
 
     The settings are first loaded from environment variables with the prefix 'FOUNDRY_LOCAL_'.

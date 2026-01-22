@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 contact: eavanvalkenburg
 date: 2025-11-18
 deciders: markwallace-microsoft, dmytrostruk, sphenry, alliscode
