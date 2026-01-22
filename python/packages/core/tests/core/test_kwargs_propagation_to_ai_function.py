@@ -72,6 +72,9 @@ class TestKwargsPropagationToAIFunction:
         assert captured_kwargs["session_token"] == "secret-token"
         assert "custom_data" in captured_kwargs
         assert captured_kwargs["custom_data"] == {"key": "value"}
+        # Verify tools list is also present in kwargs
+        assert "tools" in captured_kwargs, f"Expected 'tools' in captured kwargs: {captured_kwargs}"
+        assert isinstance(captured_kwargs["tools"], list)
         # Verify result
         assert result.messages[-1].text == "Done!"
 
