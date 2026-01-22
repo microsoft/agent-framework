@@ -234,7 +234,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "aiohttp" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0b2" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0b3" },
 ]
 
 [[package]]
