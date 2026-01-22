@@ -108,7 +108,7 @@ AIAgent agent = this._client.CreateAIAgent(model: s_deploymentName, options: new
 
 AgentResponse response = await agent.RunAsync("What is most efficient and reliable car in 2026?");
 
-JsonElement carInfo = response.Deserialize<object>();
+JsonElement carInfo = response.Deserialize<JsonElement>();
 ```
 
 **Scenario B: Configure SO at agent invocation (when the target type is not known at compile time)**
