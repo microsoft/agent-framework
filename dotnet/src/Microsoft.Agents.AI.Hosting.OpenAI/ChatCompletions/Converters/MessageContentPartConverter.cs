@@ -26,7 +26,7 @@ internal static class MessageContentPartConverter
             // image
             ImageContentPart imagePart when !string.IsNullOrEmpty(imagePart.UrlOrData) =>
                 imagePart.UrlOrData.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                    ? new DataContent(imagePart.UrlOrData, "image/*")
+                    ? new DataContent(imagePart.UrlOrData)
                     : new UriContent(imagePart.Url, ImageUriToMediaType(imagePart.Url)),
 
             // audio

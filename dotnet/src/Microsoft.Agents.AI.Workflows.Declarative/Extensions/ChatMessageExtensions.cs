@@ -176,7 +176,7 @@ internal static class ChatMessageExtensions
 
     private static AIContent GetImageContent(string uriText) =>
         uriText.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?
-            new DataContent(uriText, "image/*") :
+            new DataContent(uriText) :
             new UriContent(uriText, "image/*");
 
     private static TValue? GetProperty<TValue>(this RecordDataValue record, string name)

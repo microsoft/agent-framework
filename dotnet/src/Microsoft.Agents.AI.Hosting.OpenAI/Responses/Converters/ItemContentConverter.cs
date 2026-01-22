@@ -53,7 +53,7 @@ internal static class ItemContentConverter
             // Image content
             ItemContentInputImage inputImage when !string.IsNullOrEmpty(inputImage.ImageUrl) =>
                 inputImage.ImageUrl!.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                    ? new DataContent(inputImage.ImageUrl, "image/*")
+                    ? new DataContent(inputImage.ImageUrl)
                     : new UriContent(inputImage.ImageUrl, "image/*"),
             ItemContentInputImage inputImage when !string.IsNullOrEmpty(inputImage.FileId) =>
                 new HostedFileContent(inputImage.FileId!),
