@@ -20,12 +20,10 @@ Func<string, string> orderParserFunc = input =>
 };
 var orderParserExecutor = orderParserFunc.BindAsExecutor("OrderParser");
 
-Func<string, string> cancelOrderFunc = input => $"Cancelled order:{input}";
-var orderArchiver = orderParserFunc.BindAsExecutor("OrderArchiver");
-
-OrderLookupExecutor orderLookupExecutor = new();
-OrderEnricherExecutor orderEnricherExeecutor = new();
-PaymentProcessorExecutor paymentProcessorExecutor = new();
+OrderLookup orderLookupExecutor = new();
+OrderEnrich orderEnricherExeecutor = new();
+PaymentProcessor paymentProcessorExecutor = new();
+OrderCancel orderArchiverExecutor = new();
 
 Workflow processOrder = new WorkflowBuilder(orderParserExecutor)
     .WithName("FulfillOrder")
@@ -39,12 +37,16 @@ Workflow cancelOrder = new WorkflowBuilder(orderParserExecutor)
     .WithName("CancelOrder")
     .WithDescription("Cancel an order")
     .AddEdge(orderParserExecutor, orderLookupExecutor)
-    .AddEdge(orderLookupExecutor, orderArchiver)
+    .AddEdge(orderLookupExecutor, orderArchiverExecutor)
     .Build();
 
 var host = FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow([processOrder, cancelOrder]))
+    .ConfigureDurableOptions(options =>
+    {
+        options.Workflows.AddWorkflow(processOrder);
+        options.Workflows.AddWorkflow(cancelOrder, true);
+    })
     .Build();
 
 host.Run();

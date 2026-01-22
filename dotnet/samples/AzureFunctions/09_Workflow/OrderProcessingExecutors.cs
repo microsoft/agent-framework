@@ -7,7 +7,7 @@ namespace SingleAgent;
 /// <summary>
 /// Parses an Order ID from a string input and returns an Order object populated.
 /// </summary>
-internal sealed class OrderLookupExecutor() : Executor<string, Order>("OrderLookup")
+internal sealed class OrderLookup() : Executor<string, Order>("OrderLookup")
 {
     public override async ValueTask<Order> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -19,7 +19,7 @@ internal sealed class OrderLookupExecutor() : Executor<string, Order>("OrderLook
 /// <summary>
 /// Enriches an Order object with additional information.
 /// </summary>
-internal sealed class OrderEnricherExecutor() : Executor<Order, Order>("EnrichOrder")
+internal sealed class OrderEnrich() : Executor<Order, Order>("EnrichOrder")
 {
     public override async ValueTask<Order> HandleAsync(Order message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -33,13 +33,21 @@ internal sealed class OrderEnricherExecutor() : Executor<Order, Order>("EnrichOr
     }
 }
 
-internal sealed class PaymentProcessorExecutor() : Executor<Order, Order>("ProcessPayment")
+internal sealed class PaymentProcessor() : Executor<Order, Order>("ProcessPayment")
 {
     public override async ValueTask<Order> HandleAsync(Order message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         message.PaymentReferenceNumber = Guid.NewGuid().ToString()[^4..];
 
         return message;
+    }
+}
+
+internal sealed class OrderCancel() : Executor<Order, string>("OrderCancel")
+{
+    public override async ValueTask<string> HandleAsync(Order message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return $"Order {message.Id} cancelled at {DateTime.UtcNow:g} UTC.";
     }
 }
 

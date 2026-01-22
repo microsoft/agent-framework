@@ -6,12 +6,10 @@ using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
@@ -244,9 +242,7 @@ internal static class BuiltInFunctions
         string workflowName = context.Name;
         string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
 
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
-            orchestrationFunctionName,
-            new DurableWorkflowRunRequest { WorkflowName = workflowName, Input = input });
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, input);
 
         // Wait for the orchestration to complete and return the result
         OrchestrationMetadata? metadata = await client.WaitForInstanceCompletionAsync(
@@ -256,26 +252,6 @@ internal static class BuiltInFunctions
 
         return metadata?.ReadOutputAs<string>();
     }
-
-#pragma warning disable DURTASK001 // Durable analyzer complained
-    public static Task<DurableWorkflowRunResult> WorkflowRunnerOrchestrationAsync(TaskOrchestrationContext context, DurableWorkflowRunRequest input)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-
-        ILogger logger = context.CreateReplaySafeLogger("BuiltInFunctions");
-        logger.LogInformation("WorkflowRunnerOrchestrationAsync function called.");
-
-        FunctionContext? functionContext = context.GetFunctionContext();
-        if (functionContext == null)
-        {
-            throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
-        }
-
-        var workFlowName = input.WorkflowName;
-
-        return Task.FromResult(new DurableWorkflowRunResult(workFlowName, workFlowName));
-    }
-#pragma warning restore DURTASK001
 
     /// <summary>
     /// Creates an error response with the specified status code and error message.
