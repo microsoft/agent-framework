@@ -11,11 +11,6 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 public class ShellToolOptions
 {
-    private IList<string>? _allowedCommands;
-    private IList<string>? _deniedCommands;
-    private IReadOnlyList<Regex>? _compiledAllowedPatterns;
-    private IReadOnlyList<Regex>? _compiledDeniedPatterns;
-
     /// <summary>
     /// Gets or sets the working directory for command execution.
     /// When null, uses the current working directory.
@@ -50,11 +45,11 @@ public class ShellToolOptions
     /// </remarks>
     public IList<string>? AllowedCommands
     {
-        get => _allowedCommands;
+        get;
         set
         {
-            _allowedCommands = value;
-            _compiledAllowedPatterns = CompilePatterns(value);
+            field = value;
+            this.CompiledAllowedPatterns = CompilePatterns(value);
         }
     }
 
@@ -73,11 +68,11 @@ public class ShellToolOptions
     /// </remarks>
     public IList<string>? DeniedCommands
     {
-        get => _deniedCommands;
+        get;
         set
         {
-            _deniedCommands = value;
-            _compiledDeniedPatterns = CompilePatterns(value);
+            field = value;
+            this.CompiledDeniedPatterns = CompilePatterns(value);
         }
     }
 
@@ -151,12 +146,12 @@ public class ShellToolOptions
     /// <summary>
     /// Gets the compiled allowlist patterns for internal use.
     /// </summary>
-    internal IReadOnlyList<Regex>? CompiledAllowedPatterns => _compiledAllowedPatterns;
+    internal IReadOnlyList<Regex>? CompiledAllowedPatterns { get; private set; }
 
     /// <summary>
     /// Gets the compiled denylist patterns for internal use.
     /// </summary>
-    internal IReadOnlyList<Regex>? CompiledDeniedPatterns => _compiledDeniedPatterns;
+    internal IReadOnlyList<Regex>? CompiledDeniedPatterns { get; private set; }
 
     private static List<Regex>? CompilePatterns(IList<string>? patterns)
     {

@@ -1,9 +1,8 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.ComponentModel;
 using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -18,8 +17,6 @@ public static class ShellToolExtensions
     /// Converts a <see cref="ShellTool"/> to an <see cref="AIFunction"/> for use with agents.
     /// </summary>
     /// <param name="shellTool">The shell tool to convert.</param>
-    /// <param name="timeoutInMilliseconds">Optional override for timeout in milliseconds. If null, uses <see cref="ShellToolOptions.TimeoutInMilliseconds"/>.</param>
-    /// <param name="maxOutputLength">Optional override for max output length. If null, uses <see cref="ShellToolOptions.MaxOutputLength"/>.</param>
     /// <returns>An <see cref="AIFunction"/> that wraps the shell tool.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="shellTool"/> is null.</exception>
     /// <remarks>
@@ -29,10 +26,7 @@ public static class ShellToolExtensions
     /// the output for each command.
     /// </para>
     /// </remarks>
-    public static AIFunction AsAIFunction(
-        this ShellTool shellTool,
-        int? timeoutInMilliseconds = null,
-        int? maxOutputLength = null)
+    public static AIFunction AsAIFunction(this ShellTool shellTool)
     {
         _ = Throw.IfNull(shellTool);
 
@@ -44,11 +38,7 @@ public static class ShellToolExtensions
             {
                 var callContent = new ShellCallContent(
                     Guid.NewGuid().ToString(),
-                    commands)
-                {
-                    TimeoutInMilliseconds = timeoutInMilliseconds,
-                    MaxOutputLength = maxOutputLength
-                };
+                    commands);
 
                 return await shellTool.ExecuteAsync(callContent, cancellationToken).ConfigureAwait(false);
             },

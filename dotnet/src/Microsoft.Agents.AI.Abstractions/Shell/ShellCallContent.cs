@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -22,8 +22,8 @@ public sealed class ShellCallContent : AIContent
     [JsonConstructor]
     public ShellCallContent(string callId, IReadOnlyList<string> commands)
     {
-        CallId = Throw.IfNull(callId);
-        Commands = Throw.IfNull(commands);
+        this.CallId = Throw.IfNull(callId);
+        this.Commands = Throw.IfNull(commands);
     }
 
     /// <summary>
@@ -36,24 +36,8 @@ public sealed class ShellCallContent : AIContent
     /// </summary>
     public IReadOnlyList<string> Commands { get; }
 
-    /// <summary>
-    /// Gets or sets the timeout in milliseconds.
-    /// </summary>
-    /// <remarks>
-    /// If not specified, the <see cref="ShellToolOptions.TimeoutInMilliseconds"/> value will be used.
-    /// </remarks>
-    public int? TimeoutInMilliseconds { get; set; }
-
-    /// <summary>
-    /// Gets or sets the maximum output length in bytes.
-    /// </summary>
-    /// <remarks>
-    /// If not specified, the <see cref="ShellToolOptions.MaxOutputLength"/> value will be used.
-    /// </remarks>
-    public int? MaxOutputLength { get; set; }
-
     /// <summary>Gets a string representing this instance to display in the debugger.</summary>
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
-        $"ShellCall = {CallId}, Commands = {Commands.Count}";
+        $"ShellCall = {this.CallId}, Commands = {this.Commands.Count}";
 }

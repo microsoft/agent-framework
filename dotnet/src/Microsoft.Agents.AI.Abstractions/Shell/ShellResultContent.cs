@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -22,8 +22,8 @@ public sealed class ShellResultContent : AIContent
     [JsonConstructor]
     public ShellResultContent(string callId, IReadOnlyList<ShellCommandOutput> output)
     {
-        CallId = Throw.IfNull(callId);
-        Output = Throw.IfNull(output);
+        this.CallId = Throw.IfNull(callId);
+        this.Output = Throw.IfNull(output);
     }
 
     /// <summary>
@@ -44,5 +44,5 @@ public sealed class ShellResultContent : AIContent
     /// <summary>Gets a string representing this instance to display in the debugger.</summary>
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
-        $"ShellResult = {CallId}, Outputs = {Output.Count}";
+        $"ShellResult = {this.CallId}, Outputs = {this.Output.Count}";
 }

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -28,10 +28,9 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public class ShellTool : AITool
 {
-    private readonly ShellToolOptions _options;
     private readonly ShellExecutor _executor;
 
-    private static readonly string[] PrivilegeEscalationCommands =
+    private static readonly string[] s_privilegeEscalationCommands =
     [
         "sudo",
         "su",
@@ -40,7 +39,7 @@ public class ShellTool : AITool
         "pkexec"
     ];
 
-    private static readonly string[] ShellWrapperCommands =
+    private static readonly string[] s_shellWrapperCommands =
     [
         "sh",
         "bash",
@@ -51,7 +50,7 @@ public class ShellTool : AITool
         "tcsh"
     ];
 
-    private static readonly Regex[] DefaultDangerousPatterns =
+    private static readonly Regex[] s_defaultDangerousPatterns =
     [
         // Fork bomb: :(){ :|:& };:
         new Regex(@":\(\)\s*\{\s*:\|:\s*&\s*\}\s*;", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
@@ -67,12 +66,6 @@ public class ShellTool : AITool
         new Regex(@"chmod\s+(-[rR]\s+)?777\s+/", RegexOptions.Compiled, TimeSpan.FromSeconds(1)),
     ];
 
-    // Pattern to extract paths from commands (Unix and Windows paths)
-    private static readonly Regex PathPattern = new Regex(
-        @"(?:^|\s)(/[^\s""'|;&<>]+|[A-Za-z]:\\[^\s""'|;&<>]+|""[^""]+"")",
-        RegexOptions.Compiled,
-        TimeSpan.FromSeconds(1));
-
     /// <summary>
     /// Initializes a new instance of the <see cref="ShellTool"/> class.
     /// </summary>
@@ -81,8 +74,8 @@ public class ShellTool : AITool
     /// <exception cref="ArgumentNullException"><paramref name="executor"/> is null.</exception>
     public ShellTool(ShellExecutor executor, ShellToolOptions? options = null)
     {
-        _executor = Throw.IfNull(executor);
-        _options = options ?? new ShellToolOptions();
+        this._executor = Throw.IfNull(executor);
+        this.Options = options ?? new ShellToolOptions();
     }
 
     /// <summary>
@@ -99,7 +92,7 @@ public class ShellTool : AITool
     /// <summary>
     /// Gets the configured options for this shell tool.
     /// </summary>
-    public ShellToolOptions Options => _options;
+    public ShellToolOptions Options { get; }
 
     /// <summary>
     /// Executes shell commands and returns result content.
@@ -115,19 +108,16 @@ public class ShellTool : AITool
     {
         _ = Throw.IfNull(callContent);
 
-        // Apply call-specific overrides
-        var effectiveOptions = ApplyOverrides(_options, callContent);
-
         // Validate all commands first
         foreach (var command in callContent.Commands)
         {
-            ValidateCommand(command);
+            this.ValidateCommand(command);
         }
 
         // Execute via the executor
-        var rawOutputs = await _executor.ExecuteAsync(
+        var rawOutputs = await this._executor.ExecuteAsync(
             callContent.Commands,
-            effectiveOptions,
+            this.Options,
             cancellationToken).ConfigureAwait(false);
 
         // Convert to content
@@ -144,41 +134,16 @@ public class ShellTool : AITool
 
         return new ShellResultContent(callContent.CallId, outputs)
         {
-            MaxOutputLength = effectiveOptions.MaxOutputLength
-        };
-    }
-
-    private static ShellToolOptions ApplyOverrides(ShellToolOptions baseOptions, ShellCallContent callContent)
-    {
-        // If no overrides specified, use base options
-        if (callContent.TimeoutInMilliseconds is null && callContent.MaxOutputLength is null)
-        {
-            return baseOptions;
-        }
-
-        // Create effective options with overrides
-        return new ShellToolOptions
-        {
-            WorkingDirectory = baseOptions.WorkingDirectory,
-            TimeoutInMilliseconds = callContent.TimeoutInMilliseconds ?? baseOptions.TimeoutInMilliseconds,
-            MaxOutputLength = callContent.MaxOutputLength ?? baseOptions.MaxOutputLength,
-            AllowedCommands = baseOptions.AllowedCommands,
-            DeniedCommands = baseOptions.DeniedCommands,
-            BlockPrivilegeEscalation = baseOptions.BlockPrivilegeEscalation,
-            BlockCommandChaining = baseOptions.BlockCommandChaining,
-            BlockDangerousPatterns = baseOptions.BlockDangerousPatterns,
-            BlockedPaths = baseOptions.BlockedPaths,
-            AllowedPaths = baseOptions.AllowedPaths,
-            Shell = baseOptions.Shell
+            MaxOutputLength = this.Options.MaxOutputLength
         };
     }
 
     private void ValidateCommand(string command)
     {
         // 1. Check denylist first (priority over allowlist)
-        if (_options.CompiledDeniedPatterns is { Count: > 0 })
+        if (this.Options.CompiledDeniedPatterns is { Count: > 0 })
         {
-            foreach (var pattern in _options.CompiledDeniedPatterns)
+            foreach (var pattern in this.Options.CompiledDeniedPatterns)
             {
                 if (pattern.IsMatch(command))
                 {
@@ -189,9 +154,9 @@ public class ShellTool : AITool
         }
 
         // 2. Check default dangerous patterns (if enabled)
-        if (_options.BlockDangerousPatterns)
+        if (this.Options.BlockDangerousPatterns)
         {
-            foreach (var pattern in DefaultDangerousPatterns)
+            foreach (var pattern in s_defaultDangerousPatterns)
             {
                 if (pattern.IsMatch(command))
                 {
@@ -202,26 +167,26 @@ public class ShellTool : AITool
         }
 
         // 3. Check command chaining (if enabled)
-        if (_options.BlockCommandChaining && ContainsCommandChaining(command))
+        if (this.Options.BlockCommandChaining && ContainsCommandChaining(command))
         {
             throw new InvalidOperationException(
                 "Command chaining operators are blocked.");
         }
 
         // 4. Check privilege escalation
-        if (_options.BlockPrivilegeEscalation && ContainsPrivilegeEscalation(command))
+        if (this.Options.BlockPrivilegeEscalation && ContainsPrivilegeEscalation(command))
         {
             throw new InvalidOperationException(
                 "Privilege escalation commands are blocked.");
         }
 
         // 5. Check path access control
-        ValidatePathAccess(command);
+        this.ValidatePathAccess(command);
 
         // 6. Check allowlist (if configured)
-        if (_options.CompiledAllowedPatterns is { Count: > 0 })
+        if (this.Options.CompiledAllowedPatterns is { Count: > 0 })
         {
-            bool allowed = _options.CompiledAllowedPatterns
+            bool allowed = this.Options.CompiledAllowedPatterns
                 .Any(p => p.IsMatch(command));
             if (!allowed)
             {
@@ -322,7 +287,7 @@ public class ShellTool : AITool
         var executableWithoutExt = Path.GetFileNameWithoutExtension(firstToken);
 
         // Check if the first token is a privilege escalation command
-        if (PrivilegeEscalationCommands.Any(d =>
+        if (s_privilegeEscalationCommands.Any(d =>
             string.Equals(executable, d, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(executableWithoutExt, d, StringComparison.OrdinalIgnoreCase)))
         {
@@ -354,7 +319,7 @@ public class ShellTool : AITool
 
     private static bool IsShellWrapper(string executable, string executableWithoutExt)
     {
-        return ShellWrapperCommands.Any(s =>
+        return s_shellWrapperCommands.Any(s =>
             string.Equals(executable, s, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(executableWithoutExt, s, StringComparison.OrdinalIgnoreCase));
     }
@@ -429,8 +394,8 @@ public class ShellTool : AITool
 
     private void ValidatePathAccess(string command)
     {
-        var blockedPaths = _options.BlockedPaths;
-        var allowedPaths = _options.AllowedPaths;
+        var blockedPaths = this.Options.BlockedPaths;
+        var allowedPaths = this.Options.AllowedPaths;
 
         // If no path restrictions are configured, skip
         if ((blockedPaths is null || blockedPaths.Count == 0) &&
@@ -473,24 +438,31 @@ public class ShellTool : AITool
         }
     }
 
-    private static List<string> ExtractPaths(string command)
+    private List<string> ExtractPaths(string command)
     {
         var paths = new List<string>();
+        var tokens = TokenizeCommand(command);
 
-        foreach (Match match in PathPattern.Matches(command))
+        // Skip command name (first token), check remaining for paths
+        for (var i = 1; i < tokens.Count; i++)
         {
-            var path = match.Groups[1].Value.Trim();
+            var token = tokens[i];
 
-            // Remove surrounding quotes if present
-            if (path.Length > 1 && path[0] == '"' && path[path.Length - 1] == '"')
+            // Skip flags/options
+            if (token.StartsWith("-", StringComparison.Ordinal))
             {
-                path = path.Substring(1, path.Length - 2);
+                continue;
             }
 
-            // Only add actual paths (not empty or just whitespace)
-            if (!string.IsNullOrWhiteSpace(path))
+            // Check if token looks like a path (contains separators or starts with .)
+            if (token.IndexOf('/') >= 0 || token.IndexOf('\\') >= 0 ||
+                token.StartsWith(".", StringComparison.Ordinal))
             {
-                paths.Add(path);
+                // Resolve relative paths against working directory
+                var resolved = Path.IsPathRooted(token)
+                    ? token
+                    : Path.Combine(this.Options.WorkingDirectory ?? Environment.CurrentDirectory, token);
+                paths.Add(resolved);
             }
         }
 

@@ -20,7 +20,6 @@ public class ShellToolTests
     private static readonly string[] s_rmFileCommand = ["rm file.txt"];
     private static readonly string[] s_sudoAptInstallCommand = ["sudo apt install"];
     private static readonly string[] s_echoHelloCommand = ["echo hello"];
-    private static readonly string[] s_testCommand = ["test"];
     private static readonly string[] s_mixedCommands = ["safe command", "dangerous command"];
 
     // Command chaining test arrays
@@ -244,70 +243,6 @@ public class ShellToolTests
         Assert.Equal("echo hello", result.Output[0].Command);
         Assert.Equal("hello\n", result.Output[0].StandardOutput);
         Assert.Equal(0, result.Output[0].ExitCode);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WithTimeoutOverride_AppliesOverrideValue()
-    {
-        // Arrange
-        var baseOptions = new ShellToolOptions
-        {
-            TimeoutInMilliseconds = 60000
-        };
-        ShellToolOptions? capturedOptions = null;
-        _executorMock
-            .Setup(e => e.ExecuteAsync(
-                It.IsAny<IReadOnlyList<string>>(),
-                It.IsAny<ShellToolOptions>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IReadOnlyList<string>, ShellToolOptions, CancellationToken>((_, opts, _) =>
-                capturedOptions = opts)
-            .ReturnsAsync(new List<ShellExecutorOutput>());
-
-        var tool = new ShellTool(_executorMock.Object, baseOptions);
-        var callContent = new ShellCallContent("call-1", s_testCommand)
-        {
-            TimeoutInMilliseconds = 30000
-        };
-
-        // Act
-        await tool.ExecuteAsync(callContent);
-
-        // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.Equal(30000, capturedOptions.TimeoutInMilliseconds);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WithMaxOutputLengthOverride_AppliesOverrideValue()
-    {
-        // Arrange
-        var baseOptions = new ShellToolOptions
-        {
-            MaxOutputLength = 51200
-        };
-        ShellToolOptions? capturedOptions = null;
-        _executorMock
-            .Setup(e => e.ExecuteAsync(
-                It.IsAny<IReadOnlyList<string>>(),
-                It.IsAny<ShellToolOptions>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IReadOnlyList<string>, ShellToolOptions, CancellationToken>((_, opts, _) =>
-                capturedOptions = opts)
-            .ReturnsAsync(new List<ShellExecutorOutput>());
-
-        var tool = new ShellTool(_executorMock.Object, baseOptions);
-        var callContent = new ShellCallContent("call-1", s_testCommand)
-        {
-            MaxOutputLength = 10240
-        };
-
-        // Act
-        await tool.ExecuteAsync(callContent);
-
-        // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.Equal(10240, capturedOptions.MaxOutputLength);
     }
 
     [Fact]
@@ -643,6 +578,51 @@ public class ShellToolTests
         };
         var tool = new ShellTool(_executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_catAnyPathFileCommand);
+
+        // Act
+        var result = await tool.ExecuteAsync(callContent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Theory]
+    [InlineData("cat ../../../etc/passwd")]
+    [InlineData("cat ./../../etc/passwd")]
+    [InlineData("ls ../secret")]
+    public async Task ExecuteAsync_WithRelativePathTraversal_ThrowsInvalidOperationException(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            WorkingDirectory = "/tmp/safe",
+            AllowedPaths = new List<string> { "/tmp/safe" },
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            tool.ExecuteAsync(callContent));
+        Assert.Contains("NOT ALLOWED", ex.Message.ToUpperInvariant());
+    }
+
+    [Theory]
+    [InlineData("cat ./file.txt")]
+    [InlineData("ls ./subdir")]
+    [InlineData("cat subdir/file.txt")]
+    public async Task ExecuteAsync_WithRelativePathWithinAllowed_ReturnsResult(string command)
+    {
+        // Arrange
+        var options = new ShellToolOptions
+        {
+            WorkingDirectory = "/tmp/safe",
+            AllowedPaths = new List<string> { "/tmp/safe" },
+            BlockCommandChaining = false
+        };
+        var tool = new ShellTool(_executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", new[] { command });
 
         // Act
         var result = await tool.ExecuteAsync(callContent);
