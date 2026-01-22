@@ -62,17 +62,21 @@ var shellTool = new ShellTool(
 // Wrap with ApprovalRequiredAIFunction to require user approval before execution.
 var shellFunction = new ApprovalRequiredAIFunction(shellTool.AsAIFunction());
 
+// Detect platform for shell command guidance
+var operatingSystem = OperatingSystem.IsWindows() ? "Windows" : "Unix/Linux";
+
 // Create the chat client and agent with the shell tool.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(
-        instructions: """
+        instructions: $"""
             You are a helpful assistant with access to a shell tool.
             You can execute shell commands to help the user with file system tasks.
             Always explain what commands you're about to run before executing them.
             The working directory is a temporary folder, so feel free to create files and folders there.
+            The operating system is {operatingSystem}.
             """,
         tools: [shellFunction]);
 
