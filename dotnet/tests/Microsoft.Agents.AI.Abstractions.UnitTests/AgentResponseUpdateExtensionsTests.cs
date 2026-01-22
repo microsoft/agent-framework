@@ -42,9 +42,9 @@ public class AgentResponseUpdateExtensionsTests
     {
         AgentResponseUpdate[] updates =
         [
-            new(ChatRole.Assistant, "Hello") { ResponseId = "someResponse", MessageId = "12345", CreatedAt = new DateTimeOffset(1, 2, 3, 4, 5, 6, TimeSpan.Zero), AgentId = "agentId" },
+            new(ChatRole.Assistant, "Hello") { ResponseId = "someResponse", MessageId = "12345", CreatedAt = new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero), AgentId = "agentId" },
             new(new("human"), ", ") { AuthorName = "Someone", AdditionalProperties = new() { ["a"] = "b" } },
-            new(null, "world!") { CreatedAt = new DateTimeOffset(2, 2, 3, 4, 5, 6, TimeSpan.Zero), AdditionalProperties = new() { ["c"] = "d" } },
+            new(null, "world!") { CreatedAt = new DateTimeOffset(2025, 2, 3, 4, 5, 6, TimeSpan.Zero), AdditionalProperties = new() { ["c"] = "d" } },
 
             new() { Contents = [new UsageContent(new() { InputTokenCount = 1, OutputTokenCount = 2 })] },
             new() { Contents = [new UsageContent(new() { InputTokenCount = 4, OutputTokenCount = 5 })] },
@@ -62,7 +62,7 @@ public class AgentResponseUpdateExtensionsTests
         Assert.Equal(7, response.Usage.OutputTokenCount);
 
         Assert.Equal("someResponse", response.ResponseId);
-        Assert.Equal(new DateTimeOffset(2, 2, 3, 4, 5, 6, TimeSpan.Zero), response.CreatedAt);
+        Assert.Equal(new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero), response.CreatedAt);
 
         Assert.Equal(2, response.Messages.Count);
 
@@ -226,13 +226,13 @@ public class AgentResponseUpdateExtensionsTests
             // Unix epoch (as "null") should not overwrite
             new(null, "b") { CreatedAt = unixEpoch },
 
-            // Newer timestamp should overwrite
+            // Newer timestamp should not overwrite (first timestamp wins)
             new(null, "c") { CreatedAt = middle },
 
             // Older timestamp should not overwrite
             new(null, "d") { CreatedAt = early },
 
-            // Even newer timestamp should overwrite
+            // Even newer timestamp should not overwrite (first timestamp wins)
             new(null, "e") { CreatedAt = late },
 
             // Unix epoch should not overwrite again
@@ -249,20 +249,20 @@ public class AgentResponseUpdateExtensionsTests
 
         Assert.Equal("abcdefg", response.Messages[0].Text);
         Assert.Equal(ChatRole.Tool, response.Messages[0].Role);
-        Assert.Equal(late, response.Messages[0].CreatedAt);
-        Assert.Equal(late, response.CreatedAt);
+        Assert.Equal(early, response.Messages[0].CreatedAt);
+        Assert.Equal(early, response.CreatedAt);
     }
 
     public static IEnumerable<object?[]> ToAgentResponse_TimestampFolding_MemberData()
     {
-        // Base test cases
+        // Base test cases - first non-null valid timestamp wins
         var testCases = new (string? timestamp1, string? timestamp2, string? expectedTimestamp)[]
         {
             (null, null, null),
             ("2024-01-01T10:00:00Z", null, "2024-01-01T10:00:00Z"),
             (null, "2024-01-01T10:00:00Z", "2024-01-01T10:00:00Z"),
-            ("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", "2024-01-01T11:00:00Z"),
-            ("2024-01-01T11:00:00Z", "2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z"),
+            ("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", "2024-01-01T10:00:00Z"),  // First timestamp wins
+            ("2024-01-01T11:00:00Z", "2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z"),  // First timestamp wins
             ("2024-01-01T10:00:00Z", "1970-01-01T00:00:00Z", "2024-01-01T10:00:00Z"),
             ("1970-01-01T00:00:00Z", "2024-01-01T10:00:00Z", "2024-01-01T10:00:00Z"),
         };

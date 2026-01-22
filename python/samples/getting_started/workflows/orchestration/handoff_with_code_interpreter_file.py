@@ -90,7 +90,7 @@ async def create_agents_v1(credential: AzureCliCredential) -> AsyncIterator[tupl
     from agent_framework.azure import AzureAIAgentClient
 
     async with AzureAIAgentClient(credential=credential) as client:
-        triage = client.create_agent(
+        triage = client.as_agent(
             name="triage_agent",
             instructions=(
                 "You are a triage agent. Route code-related requests to the code_specialist. "
@@ -99,7 +99,7 @@ async def create_agents_v1(credential: AzureCliCredential) -> AsyncIterator[tupl
             ),
         )
 
-        code_specialist = client.create_agent(
+        code_specialist = client.as_agent(
             name="code_specialist",
             instructions=(
                 "You are a Python code specialist. Use the code interpreter to execute Python code "
@@ -124,12 +124,12 @@ async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tupl
         AzureAIClient(credential=credential) as triage_client,
         AzureAIClient(credential=credential) as code_client,
     ):
-        triage = triage_client.create_agent(
+        triage = triage_client.as_agent(
             name="TriageAgent",
             instructions="You are a triage agent. Your ONLY job is to route requests to the appropriate specialist.",
         )
 
-        code_specialist = code_client.create_agent(
+        code_specialist = code_client.as_agent(
             name="CodeSpecialist",
             instructions=(
                 "You are a Python code specialist. You have access to a code interpreter tool. "

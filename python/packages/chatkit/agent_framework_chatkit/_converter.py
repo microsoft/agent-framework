@@ -8,12 +8,8 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from agent_framework import (
     ChatMessage,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
 )
 from chatkit.types import (
     AssistantMessageItem,
@@ -91,8 +87,8 @@ class ThreadItemConverter:
                 if isinstance(content_part, UserMessageTextContent):
                     text_content += content_part.text
 
-        # Convert attachments to DataContent or UriContent
-        data_contents: list[DataContent | UriContent] = []
+        # Convert attachments to Content
+        data_contents: list[Content] = []
         if item.attachments:
             for attachment in item.attachments:
                 content = await self.attachment_to_message_content(attachment)
@@ -108,9 +104,9 @@ class ThreadItemConverter:
             user_message = ChatMessage(role=Role.USER, text=text_content.strip())
         else:
             # Build contents list with both text and attachments
-            contents: list[TextContent | DataContent | UriContent] = []
+            contents: list[Content] = []
             if text_content.strip():
-                contents.append(TextContent(text=text_content.strip()))
+                contents.append(Content.from_text(text=text_content.strip()))
             contents.extend(data_contents)
             user_message = ChatMessage(role=Role.USER, contents=contents)
 
@@ -126,7 +122,7 @@ class ThreadItemConverter:
 
         return messages
 
-    async def attachment_to_message_content(self, attachment: Attachment) -> DataContent | UriContent | None:
+    async def attachment_to_message_content(self, attachment: Attachment) -> Content | None:
         """Convert a ChatKit attachment to Agent Framework content.
 
         This method is called internally by `user_message_to_input()` to handle attachments.
@@ -169,14 +165,14 @@ class ThreadItemConverter:
         if self.attachment_data_fetcher is not None:
             try:
                 data = await self.attachment_data_fetcher(attachment.id)
-                return DataContent(data=data, media_type=attachment.mime_type)
+                return Content.from_data(data=data, media_type=attachment.mime_type)
             except Exception as e:
                 # If fetch fails, fall through to URL-based approach
                 logger.debug(f"Failed to fetch attachment data for {attachment.id}: {e}")
 
         # For ImageAttachment, try to use preview_url
         if isinstance(attachment, ImageAttachment) and attachment.preview_url:
-            return UriContent(uri=str(attachment.preview_url), media_type=attachment.mime_type)
+            return Content.from_uri(uri=str(attachment.preview_url), media_type=attachment.mime_type)
 
         # For FileAttachment without data fetcher, skip the attachment
         # Subclasses can override this method to provide custom handling
@@ -220,7 +216,7 @@ class ThreadItemConverter:
         """
         return ChatMessage(role=Role.SYSTEM, text=f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>")
 
-    def tag_to_message_content(self, tag: UserMessageTagContent) -> TextContent:
+    def tag_to_message_content(self, tag: UserMessageTagContent) -> Content:
         """Convert a ChatKit tag (@-mention) to Agent Framework content.
 
         This method is called internally by `user_message_to_input()` to handle tags.
@@ -248,10 +244,10 @@ class ThreadItemConverter:
                     type="input_tag", id="tag_1", text="john", data={"name": "John Doe"}, interactive=False
                 )
                 content = converter.tag_to_message_content(tag)
-                # Returns: TextContent(text="<TAG>Name:John Doe</TAG>")
+                # Returns: Content.from_text(text="<TAG>Name:John Doe</TAG>")
         """
         name = getattr(tag.data, "name", tag.text if hasattr(tag, "text") else "unknown")
-        return TextContent(text=f"<TAG>Name:{name}</TAG>")
+        return Content.from_text(text=f"<TAG>Name:{name}</TAG>")
 
     def task_to_input(self, item: TaskItem) -> ChatMessage | list[ChatMessage] | None:
         """Convert a ChatKit TaskItem to Agent Framework ChatMessage(s).
@@ -448,7 +444,7 @@ class ThreadItemConverter:
         function_call_msg = ChatMessage(
             role=Role.ASSISTANT,
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id=item.call_id,
                     name=item.name,
                     arguments=json.dumps(item.arguments),
@@ -460,7 +456,7 @@ class ThreadItemConverter:
         function_result_msg = ChatMessage(
             role=Role.TOOL,
             contents=[
-                FunctionResultContent(
+                Content.from_function_result(
                     call_id=item.call_id,
                     result=json.dumps(item.output) if item.output is not None else "",
                 )

@@ -13,10 +13,8 @@ from agent_framework import (
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
     agent_middleware,
     chat_middleware,
     function_middleware,
@@ -201,7 +199,9 @@ class TestChatAgentFunctionBasedMiddleware:
                     ChatMessage(
                         role=Role.ASSISTANT,
                         contents=[
-                            FunctionCallContent(call_id="test_call", name="test_function", arguments={"text": "test"})
+                            Content.from_function_call(
+                                call_id="test_call", name="test_function", arguments={"text": "test"}
+                            )
                         ],
                     )
                 ]
@@ -256,7 +256,9 @@ class TestChatAgentFunctionBasedMiddleware:
                     ChatMessage(
                         role=Role.ASSISTANT,
                         contents=[
-                            FunctionCallContent(call_id="test_call", name="test_function", arguments={"text": "test"})
+                            Content.from_function_call(
+                                call_id="test_call", name="test_function", arguments={"text": "test"}
+                            )
                         ],
                     )
                 ]
@@ -365,8 +367,8 @@ class TestChatAgentStreamingMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[TextContent(text="Streaming")], role=Role.ASSISTANT),
-                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text="Streaming")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
@@ -550,7 +552,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_123",
                             name="sample_tool_function",
                             arguments='{"location": "Seattle"}',
@@ -585,8 +587,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -610,7 +612,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_456",
                             name="sample_tool_function",
                             arguments='{"location": "San Francisco"}',
@@ -644,8 +646,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -682,7 +684,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_789",
                             name="sample_tool_function",
                             arguments='{"location": "New York"}',
@@ -723,8 +725,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -769,14 +771,16 @@ class TestChatAgentFunctionMiddlewareWithTools:
                     ChatMessage(
                         role=Role.ASSISTANT,
                         contents=[
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="test_call", name="sample_tool_function", arguments={"location": "Seattle"}
                             )
                         ],
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Function completed")])]),
+            ChatResponse(
+                messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("Function completed")])]
+            ),
         ]
 
         # Create ChatAgent with function middleware
@@ -1076,8 +1080,8 @@ class TestRunLevelMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[TextContent(text="Stream")], role=Role.ASSISTANT),
-                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
@@ -1159,7 +1163,7 @@ class TestRunLevelMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1204,8 +1208,8 @@ class TestRunLevelMiddleware:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -1248,7 +1252,7 @@ class TestMiddlewareDecoratorLogic:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1315,7 +1319,7 @@ class TestMiddlewareDecoratorLogic:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1365,7 +1369,7 @@ class TestMiddlewareDecoratorLogic:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1704,8 +1708,8 @@ class TestChatAgentChatMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[TextContent(text="Stream")], role=Role.ASSISTANT),
-                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
@@ -1806,7 +1810,7 @@ class TestChatAgentChatMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_456",
                             name="sample_tool_function",
                             arguments='{"location": "San Francisco"}',
@@ -1850,8 +1854,8 @@ class TestChatAgentChatMiddleware:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -1902,3 +1906,59 @@ class TestChatAgentChatMiddleware:
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
+
+
+class TestMiddlewareWithProtocolOnlyAgent:
+    """Test use_agent_middleware with agents implementing only AgentProtocol."""
+
+    async def test_middleware_with_protocol_only_agent(self) -> None:
+        """Verify middleware works without BaseAgent inheritance for both run and run_stream."""
+        from collections.abc import AsyncIterable
+
+        from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate, use_agent_middleware
+
+        execution_order: list[str] = []
+
+        class TrackingMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_order.append("before")
+                await next(context)
+                execution_order.append("after")
+
+        @use_agent_middleware
+        class ProtocolOnlyAgent:
+            """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
+
+            def __init__(self):
+                self.id = "protocol-only-agent"
+                self.name = "Protocol Only Agent"
+                self.description = "Test agent"
+                self.middleware = [TrackingMiddleware()]
+
+            async def run(self, messages=None, *, thread=None, **kwargs) -> AgentResponse:
+                return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+            def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentResponseUpdate]:
+                async def _stream():
+                    yield AgentResponseUpdate()
+
+                return _stream()
+
+            def get_new_thread(self, **kwargs):
+                return None
+
+        agent = ProtocolOnlyAgent()
+        assert isinstance(agent, AgentProtocol)
+
+        # Test run (non-streaming)
+        response = await agent.run("test message")
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
+        # Test run_stream (streaming)
+        execution_order.clear()
+        async for _ in agent.run_stream("test message"):
+            pass
+        assert execution_order == ["before", "after"]

@@ -19,7 +19,7 @@ In this case they are here: https://platform.openai.com/docs/api-reference/respo
 """
 
 
-agent = OpenAIResponsesClient[OpenAIResponsesOptions](model_id="gpt-5").create_agent(
+agent = OpenAIResponsesClient[OpenAIResponsesOptions](model_id="gpt-5").as_agent(
     name="MathHelper",
     instructions="You are a personal math tutor. When asked a math question, "
     "reason over how best to approach the problem and share your thought process.",
@@ -66,7 +66,7 @@ async def streaming_reasoning_example() -> None:
                     usage = content
     print("\n")
     if usage:
-        print(f"Usage: {usage.details}")
+        print(f"Usage: {usage.usage_details}")
 
 
 async def main() -> None:

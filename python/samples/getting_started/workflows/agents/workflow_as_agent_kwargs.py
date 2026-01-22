@@ -79,7 +79,7 @@ async def main() -> None:
     chat_client = OpenAIChatClient()
 
     # Create agent with tools that use kwargs
-    agent = chat_client.create_agent(
+    agent = chat_client.as_agent(
         name="assistant",
         instructions=(
             "You are a helpful assistant. Use the available tools to help users. "

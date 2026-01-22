@@ -183,7 +183,7 @@ async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, 
 
 def create_email_analysis_agent() -> ChatAgent:
     """Creates the email analysis agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
@@ -196,7 +196,7 @@ def create_email_analysis_agent() -> ChatAgent:
 
 def create_email_assistant_agent() -> ChatAgent:
     """Creates the email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
         default_options={"response_format": EmailResponse},
@@ -205,7 +205,7 @@ def create_email_assistant_agent() -> ChatAgent:
 
 def create_email_summary_agent() -> ChatAgent:
     """Creates the email summary agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an assistant that helps users summarize emails."),
         name="email_summary_agent",
         default_options={"response_format": EmailSummaryModel},

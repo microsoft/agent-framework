@@ -142,7 +142,7 @@ async def class_based_chat_middleware() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="EnhancedChatAgent",
             instructions="You are a helpful AI assistant.",
             # Register class-based middleware at agent level (applies to all runs)
@@ -164,7 +164,7 @@ async def function_based_chat_middleware() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="FunctionMiddlewareAgent",
             instructions="You are a helpful AI assistant.",
             # Register function-based middleware at agent level
@@ -194,7 +194,7 @@ async def run_level_middleware() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="RunLevelAgent",
             instructions="You are a helpful AI assistant.",
             tools=get_weather,

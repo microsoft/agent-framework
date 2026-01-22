@@ -43,7 +43,7 @@ class Writer(Executor):
 
     def __init__(self, id: str = "writer"):
         # Create a domain specific agent using your configured AzureOpenAIChatClient.
-        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -85,7 +85,7 @@ class Reviewer(Executor):
 
     def __init__(self, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),

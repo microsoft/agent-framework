@@ -321,7 +321,7 @@ class InMemoryConversationStore(ConversationStore):
             # Convert ChatMessage contents to OpenAI TextContent format
             message_content = []
             for content_item in msg.contents:
-                if hasattr(content_item, "type") and content_item.type == "text":
+                if content_item.type == "text":
                     # Extract text from TextContent object
                     text_value = getattr(content_item, "text", "")
                     message_content.append(TextContent(type="text", text=text_value))

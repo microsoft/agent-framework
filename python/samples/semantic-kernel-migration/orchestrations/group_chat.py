@@ -234,7 +234,7 @@ async def run_agent_framework_example(task: str) -> str:
     workflow = (
         GroupChatBuilder()
         .set_manager(
-            manager=AzureOpenAIChatClient(credential=credential).create_agent(),
+            manager=AzureOpenAIChatClient(credential=credential).as_agent(),
             display_name="Coordinator",
         )
         .participants(researcher=researcher, planner=planner)

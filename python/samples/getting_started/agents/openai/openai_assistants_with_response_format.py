@@ -59,13 +59,14 @@ async def main() -> None:
 
             result1 = await agent.run(query1)
 
-            if isinstance(result1.value, WeatherInfo):
-                weather = result1.value
+            if weather := result1.try_parse_value(WeatherInfo):
                 print("Agent:")
                 print(f"  Location: {weather.location}")
                 print(f"  Temperature: {weather.temperature}")
                 print(f"  Conditions: {weather.conditions}")
                 print(f"  Recommendation: {weather.recommendation}")
+            else:
+                print(f"Failed to parse response: {result1.text}")
 
             # Request 2: Override response_format at runtime with CityInfo
             print("\n--- Request 2: Runtime override with CityInfo ---")
@@ -74,12 +75,13 @@ async def main() -> None:
 
             result2 = await agent.run(query2, options={"response_format": CityInfo})
 
-            if isinstance(result2.value, CityInfo):
-                city = result2.value
+            if city := result2.try_parse_value(CityInfo):
                 print("Agent:")
                 print(f"  City: {city.city_name}")
                 print(f"  Population: {city.population}")
                 print(f"  Country: {city.country}")
+            else:
+                print(f"Failed to parse response: {result2.text}")
         finally:
             await client.beta.assistants.delete(agent.id)
 

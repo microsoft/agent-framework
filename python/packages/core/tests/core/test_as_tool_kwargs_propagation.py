@@ -5,7 +5,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agent_framework import ChatAgent, ChatMessage, ChatResponse, FunctionCallContent, agent_middleware
+from agent_framework import ChatAgent, ChatMessage, ChatResponse, Content, agent_middleware
 from agent_framework._middleware import AgentRunContext
 
 from .conftest import MockChatClient
@@ -113,7 +113,7 @@ class TestAsToolKwargsPropagation:
                     ChatMessage(
                         role="assistant",
                         contents=[
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="call_c_1",
                                 name="call_c",
                                 arguments='{"task": "Please execute agent_c"}',
@@ -170,10 +170,10 @@ class TestAsToolKwargsPropagation:
             await next(context)
 
         # Setup mock streaming responses
-        from agent_framework import ChatResponseUpdate, TextContent
+        from agent_framework import ChatResponseUpdate
 
         chat_client.streaming_responses = [
-            [ChatResponseUpdate(text=TextContent(text="Streaming response"), role="assistant")],
+            [ChatResponseUpdate(text=Content.from_text(text="Streaming response"), role="assistant")],
         ]
 
         sub_agent = ChatAgent(
@@ -313,3 +313,44 @@ class TestAsToolKwargsPropagation:
         # Verify second call had its own kwargs (not leaked from first)
         assert second_call_kwargs.get("session_id") == "session-2"
         assert second_call_kwargs.get("api_token") == "token-2"
+
+    async def test_as_tool_excludes_conversation_id_from_forwarded_kwargs(self, chat_client: MockChatClient) -> None:
+        """Test that conversation_id is not forwarded to sub-agent."""
+        captured_kwargs: dict[str, Any] = {}
+
+        @agent_middleware
+        async def capture_middleware(
+            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+        ) -> None:
+            captured_kwargs.update(context.kwargs)
+            await next(context)
+
+        # Setup mock response
+        chat_client.responses = [
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
+        ]
+
+        sub_agent = ChatAgent(
+            chat_client=chat_client,
+            name="sub_agent",
+            middleware=[capture_middleware],
+        )
+
+        tool = sub_agent.as_tool(name="delegate", arg_name="task")
+
+        # Invoke tool with conversation_id in kwargs (simulating parent's conversation state)
+        await tool.invoke(
+            arguments=tool.input_model(task="Test delegation"),
+            conversation_id="conv-parent-456",
+            api_token="secret-xyz-123",
+            user_id="user-456",
+        )
+
+        # Verify conversation_id was NOT forwarded to sub-agent
+        assert "conversation_id" not in captured_kwargs, (
+            f"conversation_id should not be forwarded, but got: {captured_kwargs}"
+        )
+
+        # Verify other kwargs were still forwarded
+        assert captured_kwargs.get("api_token") == "secret-xyz-123"
+        assert captured_kwargs.get("user_id") == "user-456"

@@ -9,7 +9,7 @@ from agent_framework import (
     AgentRunUpdateEvent,
     ChatClientProtocol,
     ChatMessage,
-    Contents,
+    Content,
     Executor,
     Role,
     WorkflowBuilder,
@@ -155,7 +155,7 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            contents: list[Contents] = []
+            contents: list[Content] = []
             for message in request.agent_messages:
                 contents.extend(message.contents)
 

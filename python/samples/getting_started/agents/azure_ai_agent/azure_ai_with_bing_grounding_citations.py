@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import CitationAnnotation, HostedWebSearchTool
+from agent_framework import Annotation, HostedWebSearchTool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -57,7 +57,7 @@ async def main() -> None:
         print("Agent: ", end="", flush=True)
 
         # Stream the response and collect citations
-        citations: list[CitationAnnotation] = []
+        citations: list[Annotation] = []
         async for chunk in agent.run_stream(user_input):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
@@ -74,9 +74,9 @@ async def main() -> None:
         if citations:
             print("\n\nCitations:")
             for i, citation in enumerate(citations, 1):
-                print(f"[{i}] {citation.title}: {citation.url}")
-                if citation.snippet:
-                    print(f"    Snippet: {citation.snippet}")
+                print(f"[{i}] {citation['title']}: {citation.get('url')}")
+                if "snippet" in citation:
+                    print(f"    Snippet: {citation.get('snippet')}")
         else:
             print("\nNo citations found in the response.")
 

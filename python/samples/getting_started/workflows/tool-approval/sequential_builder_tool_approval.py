@@ -67,7 +67,7 @@ def get_database_schema() -> str:
 async def main() -> None:
     # 2. Create the agent with tools (approval mode is set per-tool via decorator)
     chat_client = OpenAIChatClient()
-    database_agent = chat_client.create_agent(
+    database_agent = chat_client.as_agent(
         name="DatabaseAgent",
         instructions=(
             "You are a database assistant. You can view the database schema and execute "

@@ -25,7 +25,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    TextContent,
     ai_function,
 )
 from agent_framework._telemetry import USER_AGENT_KEY
@@ -304,9 +303,9 @@ async def test_azure_on_your_data(
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
-    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert content.messages[0].contents[0].type == "text"
     assert len(content.messages[0].contents[0].annotations) == 1
-    assert content.messages[0].contents[0].annotations[0].title == "test title"
+    assert content.messages[0].contents[0].annotations[0]["title"] == "test title"
     assert content.messages[0].contents[0].text == "test"
 
     mock_create.assert_awaited_once_with(
@@ -374,9 +373,9 @@ async def test_azure_on_your_data_string(
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
-    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert content.messages[0].contents[0].type == "text"
     assert len(content.messages[0].contents[0].annotations) == 1
-    assert content.messages[0].contents[0].annotations[0].title == "test title"
+    assert content.messages[0].contents[0].annotations[0]["title"] == "test title"
     assert content.messages[0].contents[0].text == "test"
 
     mock_create.assert_awaited_once_with(
@@ -433,7 +432,7 @@ async def test_azure_on_your_data_fail(
     )
     assert len(content.messages) == 1
     assert len(content.messages[0].contents) == 1
-    assert isinstance(content.messages[0].contents[0], TextContent)
+    assert content.messages[0].contents[0].type == "text"
     assert content.messages[0].contents[0].text == "test"
 
     mock_create.assert_awaited_once_with(
@@ -592,6 +591,46 @@ async def test_get_streaming(
     )
 
 
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_streaming_with_none_delta(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    """Test streaming handles None delta from async content filtering."""
+    # First chunk has None delta (simulates async filtering)
+    chunk_choice_with_none = ChunkChoice.model_construct(index=0, delta=None, finish_reason=None)
+    chunk_with_none_delta = ChatCompletionChunk.model_construct(
+        id="test_id",
+        choices=[chunk_choice_with_none],
+        created=0,
+        model="test",
+        object="chat.completion.chunk",
+    )
+    # Second chunk has actual content
+    chunk_with_content = ChatCompletionChunk(
+        id="test_id",
+        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        created=0,
+        model="test",
+        object="chat.completion.chunk",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk_with_none_delta, chunk_with_content]
+    mock_create.return_value = stream
+
+    chat_history.append(ChatMessage(text="hello world", role="user"))
+    azure_chat_client = AzureOpenAIChatClient()
+
+    results: list[ChatResponseUpdate] = []
+    async for msg in azure_chat_client.get_streaming_response(messages=chat_history):
+        results.append(msg)
+
+    assert len(results) > 0
+    assert any(content.type == "text" and content.text == "test" for msg in results for content in msg.contents)
+    assert any(msg.contents for msg in results)
+
+
 @ai_function
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
@@ -689,7 +728,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
         assert chunk.message_id is not None
         assert chunk.response_id is not None
         for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
+            if content.type == "text" and content.text:
                 full_message += content.text
 
     assert "Emily" in full_message or "David" in full_message
@@ -715,7 +754,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
         assert chunk is not None
         assert isinstance(chunk, ChatResponseUpdate)
         for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
+            if content.type == "text" and content.text:
                 full_message += content.text
 
     assert "Emily" in full_message or "David" in full_message

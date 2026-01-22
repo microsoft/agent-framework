@@ -16,7 +16,7 @@ from azure.identity import AzureCliCredential
 def _create_agent() -> Any:
     """Create the Joker agent."""
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="Joker",
         instructions="You are good at telling jokes.",
     )

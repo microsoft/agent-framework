@@ -45,7 +45,14 @@ export interface AgentInfo {
 
 // JSON Schema types for workflow input
 export interface JSONSchemaProperty {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?:
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "array"
+    | "object"
+    | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -53,6 +60,16 @@ export interface JSONSchemaProperty {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  // Union types (Pydantic generates these for Optional[T], Union[T1, T2], etc.)
+  anyOf?: JSONSchemaProperty[];
+  oneOf?: JSONSchemaProperty[];
+  allOf?: JSONSchemaProperty[];
+  // Additional JSON Schema properties
+  title?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
 }
 
 export interface JSONSchema {
@@ -171,7 +188,7 @@ export interface MetaResponse {
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
-  contents: import("./agent-framework").Contents[];
+  contents: import("./agent-framework").Content[];
   timestamp: string;
   streaming?: boolean;
   author_name?: string;
