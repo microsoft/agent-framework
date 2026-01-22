@@ -4,6 +4,7 @@ using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.ChatClient;
 
@@ -120,7 +121,7 @@ public sealed class StreamingUpdatePipelineResponseTests
     /// Verify that BufferContentAsync throws NotSupportedException.
     /// </summary>
     [Fact]
-    public async System.Threading.Tasks.Task BufferContentAsync_ThrowsNotSupportedExceptionAsync()
+    public async Task BufferContentAsync_ThrowsNotSupportedExceptionAsync()
     {
         // Arrange
         IAsyncEnumerable<AgentResponseUpdate> updates = CreateTestUpdatesAsync();
@@ -149,6 +150,6 @@ public sealed class StreamingUpdatePipelineResponseTests
     private static async IAsyncEnumerable<AgentResponseUpdate> CreateTestUpdatesAsync()
     {
         yield return new AgentResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, "test");
-        await System.Threading.Tasks.Task.CompletedTask;
+        await Task.CompletedTask;
     }
 }
