@@ -666,4 +666,76 @@ public sealed class ChatMessageExtensionsTests
         RecordValue metadataRecord = Assert.IsType<RecordValue>(metadataField, exactMatch: false);
         Assert.Equal(2, metadataRecord.Fields.Count());
     }
+
+    [Theory]
+    [InlineData("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "image/png")]
+    [InlineData("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlbaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5/ooooA//2Q==", "image/jpeg")]
+    [InlineData("data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==", "image/gif")]
+    [InlineData("data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vuUAAA=", "image/webp")]
+    [InlineData("data:image/bmp;base64,Qk0eAAAAAAAAABoAAAAMAAAAAQAAAAEAAAABACAAAAA=", "image/bmp")]
+    public void ToContentWithImageDataUri_PreservesMimeType(string dataUri, string expectedMediaType)
+    {
+        // Arrange & Act
+        AIContent? result = AgentMessageContentType.ImageUrl.ToContent(dataUri);
+
+        // Assert
+        Assert.NotNull(result);
+        DataContent dataContent = Assert.IsType<DataContent>(result);
+        Assert.Equal(expectedMediaType, dataContent.MediaType);
+        Assert.Equal(dataUri, dataContent.Uri);
+    }
+
+    [Theory]
+    [InlineData("https://example.com/image.png")]
+    [InlineData("https://example.com/photo.jpg")]
+    [InlineData("https://example.com/animation.gif")]
+    [InlineData("http://test.com/picture.webp")]
+    public void ToContentWithImageHttpUri_UsesGenericMimeType(string uri)
+    {
+        // Arrange & Act
+        AIContent? result = AgentMessageContentType.ImageUrl.ToContent(uri);
+
+        // Assert
+        Assert.NotNull(result);
+        UriContent uriContent = Assert.IsType<UriContent>(result);
+        // ChatMessageExtensions.GetImageContent uses "image/*" for all non-data URIs
+        Assert.Equal("image/*", uriContent.MediaType);
+        Assert.Equal(uri, uriContent.Uri?.ToString());
+    }
+
+    [Fact]
+    public void ToChatMessageFromRecordWithImageDataUri_PreservesMimeType()
+    {
+        // Arrange
+        const string dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA";
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent(dataUri)!]);
+        DataValue record = source.ToRecord().ToDataValue();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        AIContent content = Assert.Single(result.Contents);
+        DataContent dataContent = Assert.IsType<DataContent>(content);
+        Assert.Equal("image/png", dataContent.MediaType);
+    }
+
+    [Fact]
+    public void ToChatMessageFromRecordWithImageHttpUri_UsesGenericMimeType()
+    {
+        // Arrange
+        const string uri = "https://example.com/test.png";
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent(uri)!]);
+        DataValue record = source.ToRecord().ToDataValue();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        AIContent content = Assert.Single(result.Contents);
+        UriContent uriContent = Assert.IsType<UriContent>(content);
+        Assert.Equal("image/*", uriContent.MediaType);
+    }
 }
