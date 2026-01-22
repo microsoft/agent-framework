@@ -19,11 +19,8 @@ from agent_framework_durabletask import (
     DurableAIAgentWorker,
 )
 
-from agent_framework.azure._assistants_client import AzureOpenAIAssistantsClient
-from agent_framework.azure._chat_client import AzureOpenAIChatClient
 from agent_framework.azure._entra_id_authentication import get_entra_auth_token
-from agent_framework.azure._responses_client import AzureOpenAIResponsesClient
-from agent_framework.azure._shared import AzureOpenAISettings
+from agent_framework.openai._chat_client import AzureUserSecurityContext
 
 __all__ = [
     "AgentCallbackContext",
@@ -37,10 +34,7 @@ __all__ = [
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
     "AzureAISettings",
-    "AzureOpenAIAssistantsClient",
-    "AzureOpenAIChatClient",
-    "AzureOpenAIResponsesClient",
-    "AzureOpenAISettings",
+    "AzureUserSecurityContext",
     "DurableAIAgent",
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",

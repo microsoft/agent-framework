@@ -16,7 +16,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -28,7 +28,7 @@ What it does:
 - The workflow completes when the correct number is guessed.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agent.
+- Azure AI/ Azure OpenAI for `OpenAIChatClient` agent.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
@@ -118,7 +118,7 @@ class ParseJudgeResponse(Executor):
 
 def create_judge_agent() -> ChatAgent:
     """Create a judge agent that evaluates guesses."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
         name="judge_agent",
     )

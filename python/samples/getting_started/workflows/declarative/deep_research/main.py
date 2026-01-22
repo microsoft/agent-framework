@@ -25,8 +25,8 @@ import asyncio
 from pathlib import Path
 
 from agent_framework import WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
@@ -123,7 +123,7 @@ class ManagerResponse(BaseModel):
 async def main() -> None:
     """Run the deep research workflow."""
     # Create Azure OpenAI client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     # Create agents
     research_agent = chat_client.as_agent(

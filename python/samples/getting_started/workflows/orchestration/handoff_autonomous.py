@@ -16,7 +16,7 @@ from agent_framework import (
     resolve_agent_id,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 logging.basicConfig(level=logging.ERROR)
@@ -33,7 +33,7 @@ Routing Pattern:
 
 Prerequisites:
     - `az login` (Azure CLI authentication)
-    - Environment variables for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - Environment variables for OpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
 
 Key Concepts:
     - Autonomous interaction mode: agents iterate until they handoff
@@ -42,7 +42,7 @@ Key Concepts:
 
 
 def create_agents(
-    chat_client: AzureOpenAIChatClient,
+    chat_client: OpenAIChatClient,
 ) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
     """Create coordinator and specialists for autonomous iteration."""
     coordinator = chat_client.as_agent(
@@ -104,7 +104,7 @@ def _display_event(event: WorkflowEvent) -> None:
 
 async def main() -> None:
     """Run an autonomous handoff workflow with specialist iteration enabled."""
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     coordinator, research_agent, summary_agent = create_agents(chat_client)
 
     # Build the workflow with autonomous mode

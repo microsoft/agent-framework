@@ -24,7 +24,7 @@ from agent_framework import (
     response_handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from typing_extensions import Never
@@ -46,7 +46,7 @@ Demonstrates:
 - Streaming AgentRunUpdateEvent updates alongside human-in-the-loop pauses.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for OpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -172,7 +172,7 @@ class Coordinator(Executor):
 
 def create_writer_agent() -> ChatAgent:
     """Creates a writer agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         name="writer_agent",
         instructions=(
             "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
@@ -186,7 +186,7 @@ def create_writer_agent() -> ChatAgent:
 
 def create_final_editor_agent() -> ChatAgent:
     """Creates a final editor agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

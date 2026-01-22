@@ -4,7 +4,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from agent_framework import ChatAgent, HostedMCPTool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
@@ -97,7 +97,7 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
+        chat_client=OpenAIResponsesClient(backend="azure",
             credential=credential,
         ),
         name="DocsAgent",
@@ -130,7 +130,7 @@ async def run_hosted_mcp_without_approval() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
+        chat_client=OpenAIResponsesClient(backend="azure",
             credential=credential,
         ),
         name="DocsAgent",
@@ -164,7 +164,7 @@ async def run_hosted_mcp_with_thread() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
+        chat_client=OpenAIResponsesClient(backend="azure",
             credential=credential,
         ),
         name="DocsAgent",
@@ -197,7 +197,7 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
+        chat_client=OpenAIResponsesClient(backend="azure",
             credential=credential,
         ),
         name="DocsAgent",

@@ -16,8 +16,8 @@ import asyncio
 from pathlib import Path
 
 from agent_framework import WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 ANALYST_INSTRUCTIONS = """You are a product analyst. Analyze the given product and identify:
@@ -50,7 +50,7 @@ Return the final polished version."""
 
 async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     analyst_agent = chat_client.as_agent(
         name="AnalystAgent",

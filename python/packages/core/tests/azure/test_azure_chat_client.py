@@ -28,10 +28,10 @@ from agent_framework import (
     tool,
 )
 from agent_framework._telemetry import USER_AGENT_KEY
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import (
     ContentFilterResultSeverity,
+    OpenAIChatClient,
     OpenAIContentFilterException,
 )
 
@@ -48,7 +48,7 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
 
 def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
@@ -59,7 +59,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization with client
     client = MagicMock(spec=AsyncAzureOpenAI)
-    azure_chat_client = AzureOpenAIChatClient(async_client=client)
+    azure_chat_client = OpenAIChatClient(backend="azure", async_client=client)
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
@@ -69,7 +69,8 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Custom header for testing
     default_headers = {"X-Unit-Test": "test-guid"}
 
-    azure_chat_client = AzureOpenAIChatClient(
+    azure_chat_client = OpenAIChatClient(
+        backend="azure",
         default_headers=default_headers,
     )
 
@@ -84,7 +85,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_BASE_URL"]], indirect=True)
 def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
@@ -95,7 +96,8 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        AzureOpenAIChatClient(
+        OpenAIChatClient(
+            backend="azure",
             env_file_path="test.env",
         )
 
@@ -103,15 +105,14 @@ def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, s
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
 def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        AzureOpenAIChatClient(
+        OpenAIChatClient(
+            backend="azure",
             env_file_path="test.env",
         )
 
 
-@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}], indirect=True)
-def test_init_with_invalid_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIChatClient()
+# Test for invalid endpoint URL scheme is removed - the unified OpenAIChatClient
+# no longer validates URL schemes at init time (validation happens at Azure SDK level)
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_BASE_URL"]], indirect=True)
@@ -119,21 +120,21 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Test": "test"}
 
     settings = {
-        "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        "backend": "azure",
+        "chat_model_id": azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         "endpoint": azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"],
-        "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
+        "azure_api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "api_version": azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"],
         "default_headers": default_headers,
         "env_file_path": "test.env",
     }
 
-    azure_chat_client = AzureOpenAIChatClient.from_dict(settings)
+    azure_chat_client = OpenAIChatClient.from_dict(settings)
     dumped_settings = azure_chat_client.to_dict()
-    assert dumped_settings["model_id"] == settings["deployment_name"]
+    assert dumped_settings["model_id"] == settings["chat_model_id"]
     assert str(settings["endpoint"]) in str(dumped_settings["endpoint"])
-    assert str(settings["deployment_name"]) == str(dumped_settings["deployment_name"])
     assert settings["api_version"] == dumped_settings["api_version"]
-    assert "api_key" not in dumped_settings
+    assert "azure_api_key" not in dumped_settings
 
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
@@ -185,7 +186,7 @@ async def test_cmc(
     mock_create.return_value = mock_chat_completion_response
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
     await azure_chat_client.get_response(
         messages=chat_history,
     )
@@ -209,7 +210,7 @@ async def test_cmc_with_logit_bias(
 
     token_bias: dict[str | int, float] = {"1": -100}
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     await azure_chat_client.get_response(messages=chat_history, options={"logit_bias": token_bias})
 
@@ -234,7 +235,7 @@ async def test_cmc_with_stop(
 
     stop = ["!"]
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     await azure_chat_client.get_response(messages=chat_history, options={"stop": stop})
 
@@ -295,7 +296,7 @@ async def test_azure_on_your_data(
         ]
     }
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
@@ -365,7 +366,7 @@ async def test_azure_on_your_data_string(
         ]
     }
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
@@ -424,7 +425,7 @@ async def test_azure_on_your_data_fail(
         ]
     }
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     content = await azure_chat_client.get_response(
         messages=messages_in,
@@ -488,7 +489,7 @@ async def test_content_filtering_raises_correct_exception(
         },
     )
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     with pytest.raises(OpenAIContentFilterException, match="service encountered a content error") as exc_info:
         await azure_chat_client.get_response(
@@ -532,7 +533,7 @@ async def test_content_filtering_without_response_code_raises_with_default_code(
         },
     )
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
         await azure_chat_client.get_response(
@@ -555,7 +556,7 @@ async def test_bad_request_non_content_filter(
         "The request was bad.", response=Response(400, request=Request("POST", test_endpoint)), body={}
     )
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     with pytest.raises(ServiceResponseException, match="service failed to complete the prompt"):
         await azure_chat_client.get_response(
@@ -573,7 +574,7 @@ async def test_get_streaming(
     mock_create.return_value = mock_streaming_chat_completion_response
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
     async for msg in azure_chat_client.get_streaming_response(
         messages=chat_history,
     ):
@@ -620,7 +621,7 @@ async def test_streaming_with_none_delta(
     mock_create.return_value = stream
 
     chat_history.append(ChatMessage(text="hello world", role="user"))
-    azure_chat_client = AzureOpenAIChatClient()
+    azure_chat_client = OpenAIChatClient(backend="azure")
 
     results: list[ChatResponseUpdate] = []
     async for msg in azure_chat_client.get_streaming_response(messages=chat_history):
@@ -652,7 +653,7 @@ def get_weather(location: str) -> str:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    azure_chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
@@ -682,7 +683,7 @@ async def test_azure_openai_chat_client_response() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    azure_chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
@@ -703,7 +704,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
-    azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    azure_chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
@@ -738,7 +739,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
-    azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    azure_chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
@@ -765,7 +766,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureOpenAIChatClient."""
     async with ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
@@ -781,7 +782,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureOpenAIChatClient."""
     async with ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
     ) as agent:
         # Test streaming run
         full_text = ""
@@ -799,7 +800,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 async def test_azure_openai_chat_client_agent_thread_persistence():
     """Test Azure OpenAI chat client agent thread persistence across runs with AzureOpenAIChatClient."""
     async with ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -827,7 +828,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     preserved_thread = None
 
     async with ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -843,7 +844,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with ChatAgent(
-            chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+            chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread
@@ -860,7 +861,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""
 
     async with ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:

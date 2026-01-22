@@ -17,7 +17,7 @@ Demonstrate:
 - Injecting human guidance for specific agents before aggregation
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
+- Azure OpenAI configured for OpenAIChatClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -36,11 +36,11 @@ from agent_framework import (
     tool,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 # Store chat client at module level for aggregator access
-_chat_client: AzureOpenAIChatClient | None = None
+_chat_client: OpenAIChatClient | None = None
 
 
 async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
@@ -97,7 +97,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 
 async def main() -> None:
     global _chat_client
-    _chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    _chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     # Create agents that analyze from different perspectives
     technical_analyst = _chat_client.as_agent(

@@ -13,7 +13,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 logging.basicConfig(level=logging.WARNING)
@@ -44,8 +44,8 @@ Prerequisites:
 """
 
 
-def _get_chat_client() -> AzureOpenAIChatClient:
-    return AzureOpenAIChatClient(credential=AzureCliCredential())
+def _get_chat_client() -> OpenAIChatClient:
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
 
 async def main() -> None:

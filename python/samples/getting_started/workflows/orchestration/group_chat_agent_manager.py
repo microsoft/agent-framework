@@ -11,7 +11,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -38,7 +38,7 @@ Guidelines:
 
 async def main() -> None:
     # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     # Orchestrator agent that manages the conversation
     # Note: This agent (and the underlying chat client) must support structured outputs.

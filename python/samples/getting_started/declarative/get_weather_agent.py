@@ -4,8 +4,8 @@ from pathlib import Path
 from random import randint
 from typing import Literal
 
-from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import AgentFactory
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 
@@ -26,7 +26,7 @@ async def main():
 
     # create the AgentFactory with a chat client and bindings
     agent_factory = AgentFactory(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        chat_client=OpenAIResponsesClient(backend="azure", credential=AzureCliCredential()),
         bindings={"get_weather": get_weather},
     )
     # create the agent from the yaml

@@ -10,8 +10,8 @@ from agent_framework_anthropic import (
 
 __all__ = [
     "AnthropicBackend",
+    "AnthropicChatOptions",
     "AnthropicClient",
     "AnthropicSettings",
     "__version__",
-    "AnthropicChatOptions",
 ]

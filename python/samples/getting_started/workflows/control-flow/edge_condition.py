@@ -15,7 +15,7 @@ from agent_framework import (  # Core chat primitives used to build requests
     executor,  # Decorator to declare a Python function as a workflow executor
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.openai import OpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs for safer parsing
 from typing_extensions import Never
@@ -35,7 +35,7 @@ Purpose:
 Prerequisites:
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
-- Azure OpenAI access is configured for AzureOpenAIChatClient. You should be logged in with Azure CLI (AzureCliCredential)
+- Azure OpenAI access is configured for OpenAIChatClient. You should be logged in with Azure CLI (AzureCliCredential)
 and have the Azure OpenAI environment variables set as documented in the getting started chat client README.
 - The sample email resource file exists at workflow/resources/email.txt.
 
@@ -132,7 +132,7 @@ async def to_email_assistant_request(
 def create_spam_detector_agent() -> ChatAgent:
     """Helper to create a spam detection agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
@@ -146,7 +146,7 @@ def create_spam_detector_agent() -> ChatAgent:
 def create_email_assistant_agent() -> ChatAgent:
     """Helper to create an email assistant agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an email assistant that helps users draft professional responses to emails. "
             "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "

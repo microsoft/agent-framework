@@ -18,7 +18,7 @@ Demonstrate:
 - Steering agent behavior with pre-agent human input
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
+- Azure OpenAI configured for OpenAIChatClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -37,12 +37,12 @@ from agent_framework import (
     WorkflowStatusEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     # Create agents for a group discussion
     optimist = chat_client.as_agent(

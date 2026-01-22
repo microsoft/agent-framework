@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from agent_framework import ChatAgent, ChatMessage, GroupChatBuilder, WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
@@ -221,19 +221,19 @@ async def run_agent_framework_example(task: str) -> str:
             "Gather concise facts or considerations that help plan a community hackathon. "
             "Keep your responses factual and scannable."
         ),
-        chat_client=AzureOpenAIChatClient(credential=credential),
+        chat_client=OpenAIChatClient(backend="azure", credential=credential),
     )
 
     planner = ChatAgent(
         name="Planner",
         description="Turns the collected notes into a concrete action plan.",
         instructions=("Propose a structured action plan that accounts for logistics, roles, and timeline."),
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        chat_client=OpenAIResponsesClient(backend="azure", credential=credential),
     )
 
     workflow = (
         GroupChatBuilder()
-        .with_orchestrator(agent=AzureOpenAIChatClient(credential=credential).as_agent())
+        .with_orchestrator(agent=OpenAIChatClient(backend="azure", credential=credential).as_agent())
         .participants([researcher, planner])
         .build()
     )

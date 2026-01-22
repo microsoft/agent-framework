@@ -16,7 +16,7 @@ from agent_framework import (
     executor,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -35,7 +35,7 @@ Demonstrates:
 - Streaming AgentRunUpdateEvent events across agent + function + agent chain.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for OpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -88,7 +88,7 @@ async def enrich_with_references(
 
 
 def create_research_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         name="research_agent",
         instructions=(
             "Produce a short, bullet-style briefing with two actionable ideas. Label the section as 'Initial Draft'."
@@ -97,7 +97,7 @@ def create_research_agent():
 
 
 def create_final_editor_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "Use all conversation context (including external notes) to produce the final answer. "

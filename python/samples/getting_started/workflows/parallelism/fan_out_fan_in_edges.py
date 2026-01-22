@@ -18,7 +18,7 @@ from agent_framework import (  # Core chat primitives to build LLM requests
     handler,  # Decorator to mark an Executor method as invokable
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from typing_extensions import Never
 
@@ -36,7 +36,7 @@ Show how to construct a parallel branch pattern in workflows. Demonstrate:
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
-- Azure OpenAI access configured for AzureOpenAIChatClient. Log in with Azure CLI and set any required environment variables.
+- Azure OpenAI access configured for OpenAIChatClient. Log in with Azure CLI and set any required environment variables.
 - Comfort reading AgentExecutorResponse.agent_response.text for assistant output aggregation.
 """
 
@@ -95,7 +95,7 @@ class AggregateInsights(Executor):
 
 def create_researcher_agent() -> ChatAgent:
     """Creates a research domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
@@ -106,7 +106,7 @@ def create_researcher_agent() -> ChatAgent:
 
 def create_marketer_agent() -> ChatAgent:
     """Creates a marketing domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
@@ -117,7 +117,7 @@ def create_marketer_agent() -> ChatAgent:
 
 def create_legal_agent() -> ChatAgent:
     """Creates a legal/compliance domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."

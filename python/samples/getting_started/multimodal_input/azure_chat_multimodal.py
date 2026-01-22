@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import ChatMessage, Content, Role
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 
@@ -20,8 +20,8 @@ async def test_image() -> None:
     # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
     # environment variables to be set.
     # Alternatively, you can pass deployment_name explicitly:
-    # client = AzureOpenAIChatClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # client = OpenAIChatClient(backend="azure", credential=AzureCliCredential(), model_id="your-deployment-name")
+    client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     image_uri = create_sample_image()
     message = ChatMessage(

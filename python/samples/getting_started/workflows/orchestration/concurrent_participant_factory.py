@@ -14,7 +14,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -24,7 +24,7 @@ Build a concurrent workflow with ConcurrentBuilder that fans out one prompt to
 multiple domain agents and fans in their responses.
 
 Override the default aggregator with a custom Executor class that uses
-AzureOpenAIChatClient.get_response() to synthesize a concise, consolidated summary
+OpenAIChatClient.get_response() to synthesize a concise, consolidated summary
 from the experts' outputs.
 
 All participants and the aggregator are created via factory functions that return
@@ -41,13 +41,13 @@ Demonstrates:
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient (az login + required env vars)
+- Azure OpenAI configured for OpenAIChatClient (az login + required env vars)
 """
 
 
 def create_researcher() -> ChatAgent:
     """Factory function to create a researcher agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
@@ -58,7 +58,7 @@ def create_researcher() -> ChatAgent:
 
 def create_marketer() -> ChatAgent:
     """Factory function to create a marketer agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
@@ -69,7 +69,7 @@ def create_marketer() -> ChatAgent:
 
 def create_legal() -> ChatAgent:
     """Factory function to create a legal/compliance agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -83,7 +83,7 @@ class SummarizationExecutor(Executor):
 
     def __init__(self) -> None:
         super().__init__(id="summarization_executor")
-        self.chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+        self.chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     @handler
     async def summarize_results(self, results: list[Any], ctx: WorkflowContext[Never, str]) -> None:

@@ -13,7 +13,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -51,7 +51,7 @@ class Accumulate(Executor):
 
 
 def create_agent() -> ChatAgent:
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="ContentProducer",
     )

@@ -40,7 +40,7 @@ source .venv/bin/activate
     - Install Python dependencies – from the sample directory, run `pip install -r requirements.txt` (or the equivalent in your active virtual environment).
   
     - Copy `local.settings.json.template` to `local.settings.json`, then update `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` for Azure OpenAI authentication. The samples use `AzureCliCredential` by default, so ensure you're logged in via `az login`. 
-        - Alternatively, you can use API key authentication by setting `AZURE_OPENAI_API_KEY` and updating the code to use `AzureOpenAIChatClient()` without the credential parameter.
+        - Alternatively, you can use API key authentication by setting `AZURE_OPENAI_API_KEY` and updating the code to use `OpenAIChatClient()` without the credential parameter.
         - Keep `TASKHUB_NAME` set to `default` unless you plan to change the durable task hub name.
 
     - Run the command `func start` from the root of the sample

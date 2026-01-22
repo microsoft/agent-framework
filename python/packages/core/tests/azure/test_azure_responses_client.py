@@ -22,8 +22,8 @@ from agent_framework import (
     HostedWebSearchTool,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.openai import OpenAIResponsesClient
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -48,7 +48,7 @@ async def get_weather(location: Annotated[str, "The location as a city name"]) -
     return f"The weather in {location} is sunny and 72°F."
 
 
-async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, Content]:
+async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
@@ -64,7 +64,7 @@ async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
-async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
+async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
     """Delete the vector store after tests."""
 
     await client.client.vector_stores.delete(vector_store_id=vector_store_id)
@@ -73,7 +73,7 @@ async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, 
 
 def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    azure_responses_client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
 
     assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert isinstance(azure_responses_client, ChatClientProtocol)
@@ -82,13 +82,13 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 def test_init_validation_fail() -> None:
     # Test successful initialization
     with pytest.raises(ServiceInitializationError):
-        AzureOpenAIResponsesClient(api_key="34523", deployment_name={"test": "dict"})  # type: ignore
+        OpenAIResponsesClient(backend="azure", api_key="34523", chat_model_id={"test": "dict"})  # type: ignore
 
 
 def test_init_model_id_constructor(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     model_id = "test_model_id"
-    azure_responses_client = AzureOpenAIResponsesClient(deployment_name=model_id)
+    azure_responses_client = OpenAIResponsesClient(backend="azure", model_id=model_id)
 
     assert azure_responses_client.model_id == model_id
     assert isinstance(azure_responses_client, ChatClientProtocol)
@@ -98,7 +98,8 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
     default_headers = {"X-Unit-Test": "test-guid"}
 
     # Test successful initialization
-    azure_responses_client = AzureOpenAIResponsesClient(
+    azure_responses_client = OpenAIResponsesClient(
+        backend="azure",
         default_headers=default_headers,
     )
 
@@ -114,7 +115,8 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="azure",
             env_file_path="test.env",
         )
 
@@ -128,7 +130,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         "default_headers": default_headers,
     }
 
-    azure_responses_client = AzureOpenAIResponsesClient.from_dict(settings)
+    azure_responses_client = OpenAIResponsesClient.from_dict(settings)
     dumped_settings = azure_responses_client.to_dict()
     assert dumped_settings["deployment_name"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert "api_key" not in dumped_settings
@@ -213,7 +215,7 @@ async def test_integration_options(
     they don't cause failures. Options marked with needs_validation also
     check that the feature actually works correctly.
     """
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
     # to ensure toolmode required does not endlessly loop
     client.function_invocation_configuration.max_iterations = 1
 
@@ -282,7 +284,7 @@ async def test_integration_options(
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_integration_web_search() -> None:
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
 
     for streaming in [False, True]:
         content = {
@@ -328,7 +330,7 @@ async def test_integration_web_search() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
-    azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    azure_responses_client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
     file_id, vector_store = await create_vector_store(azure_responses_client)
     try:
         # Test that the client will use the file search tool
@@ -352,7 +354,7 @@ async def test_integration_client_file_search() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
-    azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    azure_responses_client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
     file_id, vector_store = await create_vector_store(azure_responses_client)
     # Test that the client will use the file search tool
     try:
@@ -378,7 +380,7 @@ async def test_integration_client_file_search_streaming() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
     response = await client.get_response(
         "How to create an Azure storage account using az cli?",
         options={
@@ -402,7 +404,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with HostedCodeInterpreterTool through AzureOpenAIResponsesClient."""
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
 
     response = await client.get_response(
         "Calculate the sum of numbers from 1 to 10 using Python code.",
@@ -425,7 +427,7 @@ async def test_integration_client_agent_existing_thread():
     preserved_thread = None
 
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        chat_client=OpenAIResponsesClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -441,7 +443,7 @@ async def test_integration_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with ChatAgent(
-            chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+            chat_client=OpenAIResponsesClient(backend="azure", credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread

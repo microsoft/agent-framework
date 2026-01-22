@@ -3,24 +3,28 @@
 import json
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from copy import copy
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, overload
 
+from azure.core.credentials import TokenCredential
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
+from openai.lib.azure import AsyncAzureOpenAI
 from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
+from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
+    Annotation,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -38,7 +42,10 @@ from ..exceptions import (
 )
 from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
+from ._shared import OpenAIBackend, OpenAIBase, OpenAISettings, _check_openai_version_for_callable_api_key
+
+if TYPE_CHECKING:
+    from openai.lib.azure import AsyncAzureADTokenProvider
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -50,7 +57,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
+__all__ = ["OpenAIBackend", "OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
@@ -370,13 +377,60 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         return details
 
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
-        """Parse the choice into a Content object with type='text'."""
+        """Parse the choice into a Content object with type='text'.
+
+        When using Azure backend, this also handles the Azure "On Your Data" feature
+        which adds context (intent, citations) to the response.
+        See: https://learn.microsoft.com/azure/ai-foundry/openai/references/on-your-data
+        """
         message = choice.message if isinstance(choice, Choice) else choice.delta
-        if message.content:
-            return Content.from_text(text=message.content, raw_representation=choice)
+
+        # Azure OpenAI: When async content filtering is enabled, you may receive empty deltas
+        if message is None:  # type: ignore
+            return None
+
         if hasattr(message, "refusal") and message.refusal:
             return Content.from_text(text=message.refusal, raw_representation=choice)
-        return None
+        if not message.content:
+            return None
+
+        text_content = Content.from_text(text=message.content, raw_representation=choice)
+
+        # Azure "On Your Data" feature: parse context from model_extra
+        # This is only present when using Azure backend with data sources
+        if not message.model_extra or "context" not in message.model_extra:
+            return text_content
+
+        context: dict[str, Any] | str = message.context  # type: ignore[assignment, union-attr]
+        if isinstance(context, str):
+            try:
+                context = json.loads(context)
+            except json.JSONDecodeError:
+                logger.warning("Context is not a valid JSON string, ignoring context.")
+                return text_content
+        if not isinstance(context, dict):
+            logger.warning("Context is not a valid dictionary, ignoring context.")
+            return text_content
+        # `all_retrieved_documents` is currently not used, but can be retrieved
+        # through the raw_representation in the text content.
+        if intent := context.get("intent"):
+            text_content.additional_properties = {"intent": intent}
+        if citations := context.get("citations"):
+            text_content.annotations = []
+            for citation in citations:
+                text_content.annotations.append(
+                    Annotation(
+                        type="citation",
+                        title=citation.get("title", ""),
+                        url=citation.get("url", ""),
+                        snippet=citation.get("content", ""),
+                        file_id=citation.get("filepath", ""),
+                        tool_name="Azure-on-your-Data",
+                        additional_properties={"chunk_id": citation.get("chunk_id", "")},
+                        raw_representation=citation,
+                    )
+                )
+        return text_content
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
         """Get metadata from a chat response."""
@@ -563,99 +617,379 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
-    """OpenAI Chat completion class."""
+class OpenAIChatClient(OpenAIBaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
+    """OpenAI Chat completion client with multi-backend support.
+
+    This client supports two backends:
+    - **openai**: Direct OpenAI API (default)
+    - **azure**: Azure OpenAI Service
+
+    The backend is determined automatically based on which credentials are available,
+    or can be explicitly specified via the `backend` parameter.
+    """
+
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+
+    @overload
+    def __init__(
+        self,
+        *,
+        backend: Literal["openai"],
+        model_id: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize with direct OpenAI API backend.
+
+        Args:
+            backend: Must be "openai" for direct OpenAI API.
+            model_id: The model to use (e.g., "gpt-4o").
+                Env var: OPENAI_CHAT_MODEL_ID
+            api_key: OpenAI API key. Supports callable for dynamic key generation.
+                Env var: OPENAI_API_KEY
+            org_id: OpenAI organization ID.
+                Env var: OPENAI_ORG_ID
+            base_url: Optional custom base URL for the API.
+                Env var: OPENAI_BASE_URL
+            default_headers: Default headers for HTTP requests.
+            client: Pre-configured AsyncOpenAI client instance. If provided,
+                other connection parameters are ignored.
+            instruction_role: Role for 'instruction' messages ("system" or "developer").
+            env_file_path: Path to .env file to load environment variables from.
+            env_file_encoding: Encoding of the .env file.
+            **kwargs: Additional arguments passed to the underlying client.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        backend: Literal["azure"],
+        model_id: str | None = None,
+        azure_api_key: str | None = None,
+        endpoint: str | None = None,
+        azure_base_url: str | None = None,
+        api_version: str | None = None,
+        ad_token: str | None = None,
+        ad_token_provider: "AsyncAzureADTokenProvider | None" = None,
+        token_endpoint: str | None = None,
+        credential: TokenCredential | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncAzureOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize with Azure OpenAI backend.
+
+        Args:
+            backend: Must be "azure" for Azure OpenAI Service.
+            model_id: The deployment name to use.
+                Env var: AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+            azure_api_key: Azure OpenAI API key.
+                Env var: AZURE_OPENAI_API_KEY
+            endpoint: Azure OpenAI endpoint URL (e.g., "https://my-resource.openai.azure.com").
+                Env var: AZURE_OPENAI_ENDPOINT
+            azure_base_url: Custom base URL. Alternative to endpoint.
+                Env var: AZURE_OPENAI_BASE_URL
+            api_version: Azure API version.
+                Env var: AZURE_OPENAI_API_VERSION
+            ad_token: Azure AD token for authentication.
+            ad_token_provider: Callable that provides Azure AD tokens.
+            token_endpoint: Token endpoint for Azure AD authentication.
+                Env var: AZURE_OPENAI_TOKEN_ENDPOINT
+            credential: Azure TokenCredential for authentication.
+            default_headers: Default headers for HTTP requests.
+            client: Pre-configured AsyncAzureOpenAI client instance. If provided,
+                other connection parameters are ignored.
+            instruction_role: Role for 'instruction' messages ("system" or "developer").
+            env_file_path: Path to .env file to load environment variables from.
+            env_file_encoding: Encoding of the .env file.
+            **kwargs: Additional arguments passed to the underlying client.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        backend: None = None,
+        model_id: str | None = None,
+        # OpenAI backend parameters
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        # Azure backend parameters
+        azure_api_key: str | None = None,
+        endpoint: str | None = None,
+        azure_base_url: str | None = None,
+        api_version: str | None = None,
+        ad_token: str | None = None,
+        ad_token_provider: "AsyncAzureADTokenProvider | None" = None,
+        token_endpoint: str | None = None,
+        credential: TokenCredential | None = None,
+        # Common parameters
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncOpenAI | AsyncAzureOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize with auto-detected backend based on available credentials.
+
+        Backend detection order (first match wins):
+        1. openai - if OPENAI_API_KEY is set
+        2. azure - if AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY is set
+
+        You can also explicitly set the backend via OPENAI_CHAT_CLIENT_BACKEND env var.
+
+        Args:
+            backend: None for auto-detection.
+            model_id: Model name (OpenAI) or deployment name (Azure).
+                Env var: OPENAI_CHAT_MODEL_ID or AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+            api_key: OpenAI API key (for openai backend).
+                Env var: OPENAI_API_KEY
+            org_id: OpenAI organization ID (for openai backend).
+                Env var: OPENAI_ORG_ID
+            base_url: Custom base URL (for openai backend).
+                Env var: OPENAI_BASE_URL
+            azure_api_key: Azure OpenAI API key (for azure backend).
+                Env var: AZURE_OPENAI_API_KEY
+            endpoint: Azure OpenAI endpoint URL (for azure backend).
+                Env var: AZURE_OPENAI_ENDPOINT
+            azure_base_url: Custom base URL (for azure backend).
+                Env var: AZURE_OPENAI_BASE_URL
+            api_version: Azure API version (for azure backend).
+                Env var: AZURE_OPENAI_API_VERSION
+            ad_token: Azure AD token (for azure backend).
+            ad_token_provider: Azure AD token provider callable (for azure backend).
+            token_endpoint: Token endpoint for Azure AD (for azure backend).
+                Env var: AZURE_OPENAI_TOKEN_ENDPOINT
+            credential: Azure TokenCredential (for azure backend).
+            default_headers: Default headers for HTTP requests.
+            client: Pre-configured client instance. If provided,
+                other connection parameters are ignored.
+            instruction_role: Role for 'instruction' messages.
+            env_file_path: Path to .env file to load environment variables from.
+            env_file_encoding: Encoding of the .env file.
+            **kwargs: Additional arguments passed to the underlying client.
+        """
+        ...
 
     def __init__(
         self,
         *,
+        backend: OpenAIBackend | None = None,
         model_id: str | None = None,
+        # OpenAI backend parameters
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
-        default_headers: Mapping[str, str] | None = None,
-        async_client: AsyncOpenAI | None = None,
-        instruction_role: str | None = None,
         base_url: str | None = None,
+        # Azure backend parameters
+        azure_api_key: str | None = None,
+        endpoint: str | None = None,
+        azure_base_url: str | None = None,
+        api_version: str | None = None,
+        ad_token: str | None = None,
+        ad_token_provider: "AsyncAzureADTokenProvider | None" = None,
+        token_endpoint: str | None = None,
+        credential: TokenCredential | None = None,
+        # Common parameters
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncOpenAI | AsyncAzureOpenAI | None = None,
+        instruction_role: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        # Backward compatibility
+        async_client: AsyncOpenAI | AsyncAzureOpenAI | None = None,
+        **kwargs: Any,
     ) -> None:
-        """Initialize an OpenAI Chat completion client.
+        """Initialize an OpenAI Chat completion client."""
+        # Handle backward compatibility
+        if async_client is not None and client is None:
+            client = async_client
 
-        Keyword Args:
-            model_id: OpenAI model name, see https://platform.openai.com/docs/models.
-                Can also be set via environment variable OPENAI_CHAT_MODEL_ID.
-            api_key: The API key to use. If provided will override the env vars or .env file value.
-                Can also be set via environment variable OPENAI_API_KEY.
-            org_id: The org ID to use. If provided will override the env vars or .env file value.
-                Can also be set via environment variable OPENAI_ORG_ID.
-            default_headers: The default headers mapping of string keys to
-                string values for HTTP requests.
-            async_client: An existing client to use.
-            instruction_role: The role to use for 'instruction' messages, for example,
-                "system" or "developer". If not provided, the default is "system".
-            base_url: The base URL to use. If provided will override
-                the standard value for an OpenAI connector, the env vars or .env file value.
-                Can also be set via environment variable OPENAI_BASE_URL.
-            env_file_path: Use the environment settings file as a fallback
-                to environment variables.
-            env_file_encoding: The encoding of the environment settings file.
-
-        Examples:
-            .. code-block:: python
-
-                from agent_framework.openai import OpenAIChatClient
-
-                # Using environment variables
-                # Set OPENAI_API_KEY=sk-...
-                # Set OPENAI_CHAT_MODEL_ID=<model name>
-                client = OpenAIChatClient()
-
-                # Or passing parameters directly
-                client = OpenAIChatClient(model_id="<model name>", api_key="sk-...")
-
-                # Or loading from a .env file
-                client = OpenAIChatClient(env_file_path="path/to/.env")
-
-                # Using custom ChatOptions with type safety:
-                from typing import TypedDict
-                from agent_framework.openai import OpenAIChatOptions
-
-
-                class MyOptions(OpenAIChatOptions, total=False):
-                    my_custom_option: str
-
-
-                client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="<model name>")
-                response = await client.get_response("Hello", options={"my_custom_option": "value"})
-        """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                base_url=base_url,
-                org_id=org_id,
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
-
-        if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError(
-                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
-            )
-        if not openai_settings.chat_model_id:
-            raise ServiceInitializationError(
-                "OpenAI model ID is required. "
-                "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
-            )
-
-        super().__init__(
-            model_id=openai_settings.chat_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            base_url=openai_settings.base_url if openai_settings.base_url else None,
-            org_id=openai_settings.org_id,
+        # Create settings to resolve env vars and detect backend
+        settings = OpenAISettings(
+            backend=backend,
+            chat_model_id=model_id,
+            api_key=api_key if isinstance(api_key, str) or api_key is None else None,
+            org_id=org_id,
+            base_url=base_url,
+            azure_api_key=azure_api_key,
+            endpoint=endpoint,
+            azure_base_url=azure_base_url,
+            api_version=api_version,
+            ad_token=ad_token,
+            ad_token_provider=ad_token_provider,
+            token_endpoint=token_endpoint,
+            credential=credential,
             default_headers=default_headers,
-            client=async_client,
-            instruction_role=instruction_role,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
         )
+
+        # Store callable API key if provided
+        callable_api_key: Callable[[], str | Awaitable[str]] | None = None
+        if callable(api_key):
+            callable_api_key = api_key
+            _check_openai_version_for_callable_api_key()
+
+        # Determine the backend
+        self._backend: OpenAIBackend = settings._backend or "openai"  # type: ignore[assignment]
+
+        # Validate required fields based on backend
+        if self._backend == "openai":
+            if not client and not settings.api_key and not callable_api_key:
+                raise ServiceInitializationError(
+                    "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
+                )
+            if not settings.chat_model_id:
+                raise ServiceInitializationError(
+                    "OpenAI model ID is required. "
+                    "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
+                )
+        else:  # azure
+            if not client:
+                has_auth = (
+                    settings.azure_api_key or settings.ad_token or settings.ad_token_provider or settings.credential
+                )
+                if not has_auth:
+                    raise ServiceInitializationError(
+                        "Azure OpenAI authentication is required. Provide azure_api_key, ad_token, "
+                        "ad_token_provider, or credential."
+                    )
+                if not settings.endpoint and not settings.azure_base_url:
+                    raise ServiceInitializationError(
+                        "Azure OpenAI endpoint is required. Set via 'endpoint' parameter "
+                        "or 'AZURE_OPENAI_ENDPOINT' environment variable."
+                    )
+            if not settings.chat_model_id:
+                raise ServiceInitializationError(
+                    "Azure OpenAI deployment name is required. Set via 'model_id' parameter "
+                    "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
+                )
+
+        # Create the appropriate client
+        if client is None:
+            client = self._create_client(settings, callable_api_key, default_headers)
+
+        # Set the OTEL provider name based on backend
+        if self._backend == "azure":
+            self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
+
+        # Store configuration for serialization
+        self.org_id = settings.org_id
+        self.base_url = str(settings.base_url) if settings.base_url else None
+        self.endpoint = str(settings.endpoint) if settings.endpoint else None
+        self.api_version = settings.api_version
+        self.instruction_role = instruction_role
+        # Store default_headers but filter out USER_AGENT_KEY for serialization
+        from .._telemetry import USER_AGENT_KEY
+
+        if default_headers:
+            self.default_headers: dict[str, Any] | None = {
+                k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
+            }
+        else:
+            self.default_headers = None
+
+        # Call parent __init__
+        super().__init__(
+            model_id=settings.chat_model_id,
+            client=client,
+            instruction_role=instruction_role,
+            **kwargs,
+        )
+
+    def _create_client(
+        self,
+        settings: OpenAISettings,
+        callable_api_key: Callable[[], str | Awaitable[str]] | None,
+        default_headers: Mapping[str, str] | None,
+    ) -> AsyncOpenAI | AsyncAzureOpenAI:
+        """Create the appropriate client based on backend."""
+        # Merge APP_INFO into headers
+        merged_headers = dict(copy(default_headers)) if default_headers else {}
+        if APP_INFO:
+            merged_headers.update(APP_INFO)
+            merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
+
+        if self._backend == "openai":
+            return self._create_openai_client(settings, callable_api_key, merged_headers)
+        return self._create_azure_client(settings, merged_headers)
+
+    def _create_openai_client(
+        self,
+        settings: OpenAISettings,
+        callable_api_key: Callable[[], str | Awaitable[str]] | None,
+        headers: dict[str, str],
+    ) -> AsyncOpenAI:
+        """Create an OpenAI client."""
+        # Get API key - prefer callable, then SecretStr value
+        api_key_value: str | Callable[[], str | Awaitable[str]] | None = callable_api_key
+        if api_key_value is None:
+            api_key_value = settings.get_api_key_value()
+
+        args: dict[str, Any] = {
+            "api_key": api_key_value,
+            "default_headers": headers,
+        }
+        if settings.org_id:
+            args["organization"] = settings.org_id
+        if settings.base_url:
+            args["base_url"] = str(settings.base_url)
+
+        return AsyncOpenAI(**args)
+
+    def _create_azure_client(
+        self,
+        settings: OpenAISettings,
+        headers: dict[str, str],
+    ) -> AsyncAzureOpenAI:
+        """Create an Azure OpenAI client."""
+        # Get Azure AD token if credential is provided
+        ad_token = settings.ad_token
+        if not ad_token and not settings.ad_token_provider and settings.credential:
+            ad_token = settings.get_azure_auth_token()
+
+        # Validate we have some form of authentication
+        api_key = settings.get_api_key_value()
+        if not api_key and not ad_token and not settings.ad_token_provider:
+            raise ServiceInitializationError(
+                "Please provide either azure_api_key, ad_token, ad_token_provider, or credential."
+            )
+
+        args: dict[str, Any] = {"default_headers": headers}
+
+        if settings.api_version:
+            args["api_version"] = settings.api_version
+        if ad_token:
+            args["azure_ad_token"] = ad_token
+        if settings.ad_token_provider:
+            args["azure_ad_token_provider"] = settings.ad_token_provider
+        if api_key:
+            args["api_key"] = api_key
+        if settings.azure_base_url:
+            args["base_url"] = str(settings.azure_base_url)
+        if settings.endpoint and not settings.azure_base_url:
+            args["azure_endpoint"] = str(settings.endpoint)
+        if settings.chat_model_id:
+            args["azure_deployment"] = settings.chat_model_id
+
+        return AsyncAzureOpenAI(**args)
+
+    @property
+    def backend(self) -> OpenAIBackend:
+        """Get the backend being used."""
+        return self._backend

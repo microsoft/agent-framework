@@ -11,7 +11,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -21,12 +21,12 @@ This sample uses two custom executors. A Writer agent creates or edits content,
 then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
 
 Purpose:
-Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate the @handler pattern
+Show how to wrap chat agents created by OpenAIChatClient inside workflow executors. Demonstrate the @handler pattern
 with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder, and finish
 by yielding outputs from the terminal node.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for OpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming or non streaming runs.
 """
@@ -43,8 +43,8 @@ class Writer(Executor):
     agent: ChatAgent
 
     def __init__(self, id: str = "writer"):
-        # Create a domain specific agent using your configured AzureOpenAIChatClient.
-        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        # Create a domain specific agent using your configured OpenAIChatClient.
+        self.agent = OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -86,7 +86,7 @@ class Reviewer(Executor):
 
     def __init__(self, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        self.agent = OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),

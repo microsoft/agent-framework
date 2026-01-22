@@ -13,7 +13,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -30,7 +30,7 @@ Custom executor contract:
 - Emit the updated conversation via ctx.send_message([...])
 
 Prerequisites:
-- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- Azure OpenAI access configured for OpenAIChatClient (use az login + env vars)
 """
 
 
@@ -60,7 +60,7 @@ class Summarizer(Executor):
 
 async def main() -> None:
     # 1) Create a content agent
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     content = chat_client.as_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="content",

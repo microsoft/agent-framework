@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureOpenAIAssistantsClient
+from agent_framework.openai import OpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from agent_framework import tool
@@ -32,7 +32,7 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    async with AzureOpenAIAssistantsClient(
+    async with OpenAIAssistantsClient(backend="azure",
         endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         deployment_name=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),

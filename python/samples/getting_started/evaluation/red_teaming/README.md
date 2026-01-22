@@ -11,7 +11,7 @@ For more details on the Red Team setup see [the Azure AI Foundry docs](https://l
 A focused sample demonstrating Azure AI's RedTeam functionality to assess the safety and resilience of Agent Framework agents against adversarial attacks.
 
 **What it demonstrates:**
-1. Creating a financial advisor agent inline using `AzureOpenAIChatClient`
+1. Creating a financial advisor agent inline using `OpenAIChatClient`
 2. Setting up an async callback to interface the agent with RedTeam evaluator
 3. Running comprehensive evaluations with 11 different attack strategies:
    - Basic: EASY and MODERATE difficulty levels
@@ -113,7 +113,7 @@ async def main() -> None:
     credential = AzureCliCredential()
 
     # 2. Create agent inline
-    agent = AzureOpenAIChatClient(credential=credential).as_agent(
+    agent = OpenAIChatClient(credential=credential).as_agent(
         model="gpt-4o",
         instructions="You are a helpful financial advisor..."
     )

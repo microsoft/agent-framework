@@ -18,7 +18,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """Sample: Simple handoff workflow.
@@ -28,7 +28,7 @@ them to transfer control to each other based on the conversation context.
 
 Prerequisites:
     - `az login` (Azure CLI authentication)
-    - Environment variables configured for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - Environment variables configured for OpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -57,11 +57,11 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(chat_client: OpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        chat_client: The AzureOpenAIChatClient to use for creating agents.
+        chat_client: The OpenAIChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
@@ -196,7 +196,7 @@ async def main() -> None:
     replace the scripted_responses with actual user input collection.
     """
     # Initialize the Azure OpenAI chat client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     # Create all agents: triage + specialists
     triage, refund, order, support = create_agents(chat_client)

@@ -4,9 +4,8 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatAgent, ChatMessageStore
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import AgentThread, ChatAgent, ChatMessageStore, tool
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
@@ -16,6 +15,7 @@ Azure OpenAI Chat Client with Thread Management Example
 This sample demonstrates thread management with Azure OpenAI Chat Client, comparing
 automatic thread creation with explicit thread management for persistent context.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
@@ -34,7 +34,7 @@ async def example_with_automatic_thread_creation() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -61,7 +61,7 @@ async def example_with_thread_persistence() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -96,7 +96,7 @@ async def example_with_existing_thread_messages() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -118,7 +118,7 @@ async def example_with_existing_thread_messages() -> None:
 
     # Create a new agent instance but use the existing thread with its message history
     new_agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

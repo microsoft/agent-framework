@@ -7,7 +7,7 @@ This agent uses the Responses API which supports:
 - Audio inputs
 - And other multimodal content
 
-The Chat Completions API (AzureOpenAIChatClient) does NOT support PDF uploads.
+The Chat Completions API (OpenAIChatClient) does NOT support PDF uploads.
 Use this agent when you need to process documents or other file types.
 
 Required environment variables:
@@ -22,7 +22,7 @@ import os
 from typing import Annotated
 
 from agent_framework import ChatAgent, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,8 @@ agent = ChatAgent(
     For PDFs, you can read and understand the text, tables, and structure.
     For images, you can describe what you see and extract any text.
     """,
-    chat_client=AzureOpenAIResponsesClient(
+    chat_client=OpenAIResponsesClient(
+        backend="azure",
         deployment_name=_deployment_name,
         endpoint=_endpoint,
         api_version="2025-03-01-preview",  # Required for Responses API

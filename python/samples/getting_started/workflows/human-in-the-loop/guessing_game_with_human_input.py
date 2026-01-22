@@ -20,7 +20,7 @@ from agent_framework import (
     response_handler,  # Decorator to expose an Executor method as a step
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
@@ -41,7 +41,7 @@ Demonstrate:
 - Driving the loop in application code with run_stream and responses parameter.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for OpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -146,7 +146,7 @@ class TurnManager(Executor):
 
 def create_guessing_agent() -> ChatAgent:
     """Create the guessing agent with instructions to guess a number between 1 and 10."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "

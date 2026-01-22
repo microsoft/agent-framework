@@ -1,7 +1,7 @@
 """Host multiple Azure OpenAI agents inside a single Azure Functions app.
 
 Components used in this sample:
-- AzureOpenAIChatClient to create agents bound to a shared Azure OpenAI deployment.
+- OpenAIChatClient to create agents bound to a shared Azure OpenAI deployment.
 - AgentFunctionApp to register multiple agents and expose dedicated HTTP endpoints.
 - Custom tool functions to demonstrate tool invocation from different agents.
 
@@ -11,7 +11,8 @@ Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAM
 import logging
 from typing import Any
 
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from agent_framework import tool
 
@@ -52,7 +53,7 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 
 # 1. Create multiple agents, each with its own instruction set and tools.
-chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
 weather_agent = chat_client.as_agent(
     name="WeatherAgent",

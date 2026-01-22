@@ -27,12 +27,12 @@ import uuid
 from pathlib import Path
 
 from agent_framework import RequestInfoEvent, WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.declarative import (
     AgentExternalInputRequest,
     AgentExternalInputResponse,
     WorkflowFactory,
 )
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 from ticketing_plugin import TicketingPlugin
@@ -165,7 +165,7 @@ async def main() -> None:
     plugin = TicketingPlugin()
 
     # Create Azure OpenAI client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     # Create agents with structured outputs
     self_service_agent = chat_client.as_agent(

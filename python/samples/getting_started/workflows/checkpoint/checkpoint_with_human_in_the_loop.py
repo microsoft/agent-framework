@@ -28,7 +28,7 @@ from agent_framework import (
     response_handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -179,7 +179,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     workflow_builder = (
         WorkflowBuilder(max_iterations=6)
         .register_agent(
-            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            lambda: OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
                 instructions="Write concise, warm release notes that sound human and helpful.",
                 # The agent name is stable across runs which keeps checkpoints deterministic.
                 name="writer",

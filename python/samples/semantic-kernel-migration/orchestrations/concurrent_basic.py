@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import cast
 
 from agent_framework import ChatMessage, ConcurrentBuilder, WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
@@ -75,7 +75,7 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 
 
 async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     physics = chat_client.as_agent(
         instructions=("You are an expert in physics. Answer questions from a physics perspective."),

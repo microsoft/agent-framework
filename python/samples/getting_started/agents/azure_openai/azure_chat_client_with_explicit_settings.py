@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from agent_framework import tool
@@ -32,7 +32,7 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(
+    agent = OpenAIChatClient(backend="azure",
         deployment_name=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         credential=AzureCliCredential(),

@@ -22,11 +22,12 @@ Required environment variables:
 Authentication uses AzureCliCredential (Azure Identity).
 """
 
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 
 # Create Azure OpenAI Chat Client
 # This uses AzureCliCredential for authentication (requires 'az login')
-chat_client = AzureOpenAIChatClient()
+chat_client = OpenAIChatClient(backend="azure")
 
 # Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)
