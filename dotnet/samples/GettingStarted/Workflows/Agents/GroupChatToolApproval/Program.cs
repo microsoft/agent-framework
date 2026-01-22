@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use GroupChatBuilder with tools that require human
 // approval before execution. A group of specialized agents collaborate on a task, and
