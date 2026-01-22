@@ -193,6 +193,7 @@ class Workflow(DictConvertible):
             name: Optional human-readable name for the workflow.
             description: Optional description of what the workflow does.
             output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
+                              If None or empty, all executor outputs are treated as workflow outputs.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
         self.edge_groups = list(edge_groups)
@@ -204,8 +205,8 @@ class Workflow(DictConvertible):
         self.description = description
 
         # `WorkflowOutputEvent`s from these executors are treated as workflow outputs.
-        # If None, all executor outputs are considered workflow outputs.
-        self._output_executors = list(output_executors) if output_executors is not None else []
+        # If None or empty, all executor outputs are considered workflow outputs.
+        self._output_executors = list(output_executors) if output_executors else list(self.executors.keys())
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -246,6 +247,7 @@ class Workflow(DictConvertible):
             "max_iterations": self.max_iterations,
             "edge_groups": [group.to_dict() for group in self.edge_groups],
             "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
+            "output_executors": self._output_executors,
         }
 
         # Add optional name and description if provided
@@ -281,6 +283,10 @@ class Workflow(DictConvertible):
             The starting executor instance.
         """
         return self.executors[self.start_executor_id]
+
+    def get_output_executors(self) -> list[Executor]:
+        """Get the list of output executors in the workflow."""
+        return [self.executors[executor_id] for executor_id in self._output_executors]
 
     def get_executors_list(self) -> list[Executor]:
         """Get the list of executors in the workflow."""

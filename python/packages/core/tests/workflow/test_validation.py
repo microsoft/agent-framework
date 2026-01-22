@@ -650,7 +650,8 @@ def test_output_validation_empty_list_passes():
     )
 
     assert workflow is not None
-    assert workflow._output_executors == []
+    # All executors are outputs
+    assert workflow._output_executors == ["executor1", "executor2"]  # type: ignore
 
 
 def test_output_validation_with_direct_validate_workflow_graph():

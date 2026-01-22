@@ -26,10 +26,8 @@ from agent_framework import (
 )
 
 from ..exceptions import AgentExecutionException
-from ._agent_executor import AgentExecutor
 from ._checkpoint import CheckpointStorage
 from ._events import (
-    AgentRunUpdateEvent,
     RequestInfoEvent,
     WorkflowEvent,
     WorkflowOutputEvent,
@@ -93,6 +91,12 @@ class WorkflowAgent(BaseAgent):
             name: Optional name for the agent.
             description: Optional description of the agent.
             **kwargs: Additional keyword arguments passed to BaseAgent.
+
+        Note:
+            Only WorkflowOutputEvents and RequestInfoEvents from the workflow are considered and
+            converted to agent responses of the WorkflowAgent. Other workflow events are ignored.
+            Use `with_output_from` in WorkflowBuilder to control which executors' outputs are surfaced
+            as agent responses.
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
@@ -109,6 +113,9 @@ class WorkflowAgent(BaseAgent):
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._workflow: "Workflow" = workflow
         self._pending_requests: dict[str, RequestInfoEvent] = {}
+
+        # Output related members
+        self._output_executors: set[str] = set([executor.id for executor in workflow.get_output_executors()])
 
     @property
     def workflow(self) -> "Workflow":
@@ -302,32 +309,18 @@ class WorkflowAgent(BaseAgent):
         through since they explicitly chose to emit the event.
         """
         match event:
-            case AgentRunUpdateEvent(data=update, executor_id=executor_id):
-                # For AgentExecutor instances, only pass through if output_response=True.
-                # Non-AgentExecutor executors that emit AgentRunUpdateEvent are allowed through.
-                executor = self.workflow.executors.get(executor_id)
-                if isinstance(executor, AgentExecutor) and not executor.output_response:
-                    return None
-                if update:
-                    # Enrich with executor identity if author_name is not already set
-                    if not update.author_name:
-                        update.author_name = executor_id
-                    return update
-                return None
-
             case WorkflowOutputEvent(data=data, executor_id=executor_id):
                 # Convert workflow output to an agent response update.
                 # Handle different data types appropriately.
-
-                # Skip AgentResponse from AgentExecutor with output_response=True
-                # since streaming events already surfaced the content.
-                if isinstance(data, AgentResponse):
-                    executor = self.workflow.executors.get(executor_id)
-                    if isinstance(executor, AgentExecutor) and executor.output_response:
-                        return None
+                if executor_id not in self._output_executors:
+                    return None
 
                 if isinstance(data, AgentResponseUpdate):
+                    # Enrich with executor identity if author_name is not already set
+                    if not data.author_name:
+                        data.author_name = executor_id
                     return data
+
                 if isinstance(data, ChatMessage):
                     return AgentResponseUpdate(
                         contents=list(data.contents),

@@ -5,6 +5,8 @@ import sys
 from dataclasses import dataclass
 from typing import Any, cast
 
+from typing_extensions import Never
+
 from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResponseContent
 
 from .._agents import AgentProtocol
@@ -14,10 +16,6 @@ from ._agent_utils import resolve_agent_id
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._conversation_state import encode_chat_messages
-from ._events import (
-    AgentRunEvent,
-    AgentRunUpdateEvent,  # type: ignore[reportPrivateUsage]
-)
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -67,8 +65,15 @@ class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
 
     AgentExecutor adapts its behavior based on the workflow execution mode:
-    - run_stream(): Emits incremental AgentRunUpdateEvent events as the agent produces tokens
-    - run(): Emits a single AgentRunEvent containing the complete response
+    - run_stream(): Emits incremental WorkflowOutputEvents as the agent produces tokens
+    - run(): Emits a single WorkflowOutputEvent containing the complete response
+
+    Use `with_output_from` in WorkflowBuilder to control whether the AgentResponse
+    or AgentResponseUpdate objects are yielded as workflow outputs.
+
+    Messages sent to downstream executors will always be the complete AgentResponse. In
+    streaming mode, incremental AgentResponseUpdates will be concatenated to form the full
+    response to be sent downstream.
 
     The executor automatically detects the mode via WorkflowContext.is_streaming().
     """
@@ -78,7 +83,6 @@ class AgentExecutor(Executor):
         agent: AgentProtocol,
         *,
         agent_thread: AgentThread | None = None,
-        output_response: bool = True,
         id: str | None = None,
     ):
         """Initialize the executor with a unique identifier.
@@ -86,9 +90,6 @@ class AgentExecutor(Executor):
         Args:
             agent: The agent to be wrapped by this executor.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
-                This is True by default. Outputs can be disabled here or filtered by `with_output_from` in the
-                workflow builder.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
@@ -100,24 +101,11 @@ class AgentExecutor(Executor):
         self._agent_thread = agent_thread or self._agent.get_new_thread()
         self._pending_agent_requests: dict[str, FunctionApprovalRequestContent] = {}
         self._pending_responses_to_agent: list[FunctionApprovalResponseContent] = []
-        self._output_response = output_response
 
         # AgentExecutor maintains an internal cache of messages in between runs
         self._cache: list[ChatMessage] = []
         # This tracks the full conversation after each run
         self._full_conversation: list[ChatMessage] = []
-
-    @property
-    def output_response(self) -> bool:
-        """Whether this executor yields AgentResponse as workflow output when complete."""
-        return self._output_response
-
-    @property
-    def workflow_output_types(self) -> list[type[Any]]:
-        # Override to declare AgentResponse as a possible output type only if enabled.
-        if self._output_response:
-            return [AgentResponse]
-        return []
 
     @property
     def description(self) -> str | None:
@@ -126,7 +114,9 @@ class AgentExecutor(Executor):
 
     @handler
     async def run(
-        self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse]
+        self,
+        request: AgentExecutorRequest,
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Handle an AgentExecutorRequest (canonical input).
 
@@ -139,7 +129,9 @@ class AgentExecutor(Executor):
 
     @handler
     async def from_response(
-        self, prior: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse]
+        self,
+        prior: AgentExecutorResponse,
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Enable seamless chaining: accept a prior AgentExecutorResponse as input.
 
@@ -154,7 +146,9 @@ class AgentExecutor(Executor):
         await self._run_agent_and_emit(ctx)
 
     @handler
-    async def from_str(self, text: str, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse]) -> None:
+    async def from_str(
+        self, text: str, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate]
+    ) -> None:
         """Accept a raw user prompt string and run the agent (one-shot)."""
         self._cache = normalize_messages_input(text)
         await self._run_agent_and_emit(ctx)
@@ -163,7 +157,7 @@ class AgentExecutor(Executor):
     async def from_message(
         self,
         message: ChatMessage,
-        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse],
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Accept a single ChatMessage as input."""
         self._cache = normalize_messages_input(message)
@@ -173,7 +167,7 @@ class AgentExecutor(Executor):
     async def from_messages(
         self,
         messages: list[str | ChatMessage],
-        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse],
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Accept a list of chat inputs (strings or ChatMessage) as conversation context."""
         self._cache = normalize_messages_input(messages)
@@ -184,7 +178,7 @@ class AgentExecutor(Executor):
         self,
         original_request: FunctionApprovalRequestContent,
         response: FunctionApprovalResponseContent,
-        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse],
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Handle user input responses for function approvals during agent execution.
 
@@ -295,18 +289,22 @@ class AgentExecutor(Executor):
         logger.debug("AgentExecutor %s: Resetting cache", self.id)
         self._cache.clear()
 
-    async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse]) -> None:
+    async def _run_agent_and_emit(
+        self,
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
+    ) -> None:
         """Execute the underlying agent, emit events, and enqueue response.
 
-        Checks ctx.is_streaming() to determine whether to emit incremental AgentRunUpdateEvent
-        events (streaming mode) or a single AgentRunEvent (non-streaming mode).
+        Checks ctx.is_streaming() to determine whether to emit WorkflowOutputEvents
+        containing incremental updates (streaming mode) or a single WorkflowOutputEvent
+        containing the complete response (non-streaming mode).
         """
         if ctx.is_streaming():
             # Streaming mode: emit incremental updates
-            response = await self._run_agent_streaming(cast(WorkflowContext, ctx))
+            response = await self._run_agent_streaming(cast(WorkflowContext[Never, AgentResponseUpdate], ctx))
         else:
             # Non-streaming mode: use run() and emit single event
-            response = await self._run_agent(cast(WorkflowContext, ctx))
+            response = await self._run_agent(cast(WorkflowContext[Never, AgentResponse], ctx))
 
         # Always extend full conversation with cached messages plus agent outputs
         # (agent_response.messages) after each run. This is to avoid losing context
@@ -319,14 +317,11 @@ class AgentExecutor(Executor):
             logger.info("AgentExecutor %s: Agent did not complete, awaiting user input", self.id)
             return
 
-        if self._output_response:
-            await ctx.yield_output(response)
-
         agent_response = AgentExecutorResponse(self.id, response, full_conversation=self._full_conversation)
         await ctx.send_message(agent_response)
         self._cache.clear()
 
-    async def _run_agent(self, ctx: WorkflowContext) -> AgentResponse | None:
+    async def _run_agent(self, ctx: WorkflowContext[Never, AgentResponse]) -> AgentResponse | None:
         """Execute the underlying agent in non-streaming mode.
 
         Args:
@@ -342,7 +337,7 @@ class AgentExecutor(Executor):
             thread=self._agent_thread,
             **run_kwargs,
         )
-        await ctx.add_event(AgentRunEvent(self.id, response))
+        await ctx.yield_output(response)
 
         # Handle any user input requests
         if response.user_input_requests:
@@ -353,7 +348,7 @@ class AgentExecutor(Executor):
 
         return response
 
-    async def _run_agent_streaming(self, ctx: WorkflowContext) -> AgentResponse | None:
+    async def _run_agent_streaming(self, ctx: WorkflowContext[Never, AgentResponseUpdate]) -> AgentResponse | None:
         """Execute the underlying agent in streaming mode and collect the full response.
 
         Args:
@@ -372,7 +367,7 @@ class AgentExecutor(Executor):
             **run_kwargs,
         ):
             updates.append(update)
-            await ctx.add_event(AgentRunUpdateEvent(self.id, update))
+            await ctx.yield_output(update)
 
             if update.user_input_requests:
                 user_input_requests.extend(update.user_input_requests)

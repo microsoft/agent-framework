@@ -233,9 +233,7 @@ def test_register_agent_basic():
     builder = WorkflowBuilder()
 
     # Register an agent factory
-    result = builder.register_agent(
-        lambda: DummyAgent(id="agent_test", name="test_agent"), name="TestAgent", output_response=True
-    )
+    result = builder.register_agent(lambda: DummyAgent(id="agent_test", name="test_agent"), name="TestAgent")
 
     # Verify that register_agent returns the builder for chaining
     assert result is builder
@@ -244,7 +242,6 @@ def test_register_agent_basic():
     workflow = builder.set_start_executor("TestAgent").build()
     assert "test_agent" in workflow.executors
     assert isinstance(workflow.executors["test_agent"], AgentExecutor)
-    assert workflow.executors["test_agent"]._output_response is True  # type: ignore
 
 
 def test_register_agent_with_thread():
@@ -257,7 +254,6 @@ def test_register_agent_with_thread():
         lambda: DummyAgent(id="agent_with_thread", name="threaded_agent"),
         name="ThreadedAgent",
         agent_thread=custom_thread,
-        output_response=False,
     )
 
     # Build workflow and verify agent executor configuration
@@ -266,7 +262,6 @@ def test_register_agent_with_thread():
 
     assert isinstance(executor, AgentExecutor)
     assert executor.id == "threaded_agent"
-    assert executor._output_response is False  # type: ignore
     assert executor._agent_thread is custom_thread  # type: ignore
 
 

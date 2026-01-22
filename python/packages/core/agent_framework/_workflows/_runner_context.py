@@ -284,7 +284,7 @@ class InProcRunnerContext:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
         self._messages: dict[str, list[Message]] = {}
-        # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
+        # Event queue for immediate streaming of events
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
         # An additional storage for pending request info events

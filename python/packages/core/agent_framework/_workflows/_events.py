@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeAlias
 
-from agent_framework import AgentResponse, AgentResponseUpdate
-
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._typing_utils import deserialize_type, serialize_type
 
@@ -362,34 +360,6 @@ class ExecutorFailedEvent(ExecutorEvent):
 
     def __repr__(self) -> str:  # pragma: no cover - representation only
         return f"{self.__class__.__name__}(executor_id={self.executor_id}, details={self.details})"
-
-
-class AgentRunUpdateEvent(ExecutorEvent):
-    """Event triggered when an agent is streaming messages."""
-
-    data: AgentResponseUpdate
-
-    def __init__(self, executor_id: str, data: AgentResponseUpdate):
-        """Initialize the agent streaming event."""
-        super().__init__(executor_id, data)
-
-    def __repr__(self) -> str:
-        """Return a string representation of the agent streaming event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, messages={self.data})"
-
-
-class AgentRunEvent(ExecutorEvent):
-    """Event triggered when an agent run is completed."""
-
-    data: AgentResponse
-
-    def __init__(self, executor_id: str, data: AgentResponse):
-        """Initialize the agent run event."""
-        super().__init__(executor_id, data)
-
-    def __repr__(self) -> str:
-        """Return a string representation of the agent run event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
 
 
 WorkflowLifecycleEvent: TypeAlias = WorkflowStartedEvent | WorkflowStatusEvent | WorkflowFailedEvent

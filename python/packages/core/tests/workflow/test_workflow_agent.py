@@ -12,7 +12,6 @@ from agent_framework import (
     AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunUpdateEvent,
     AgentThread,
     BaseContent,
     ChatMessage,
@@ -40,13 +39,16 @@ from agent_framework import (
 class SimpleExecutor(Executor):
     """Simple executor that emits AgentRunEvent or AgentRunStreamingEvent."""
 
-    def __init__(self, id: str, response_text: str, emit_streaming: bool = False):
+    def __init__(self, id: str, response_text: str):
         super().__init__(id=id)
         self.response_text = response_text
-        self.emit_streaming = emit_streaming
 
     @handler
-    async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def handle_message(
+        self,
+        message: list[ChatMessage],
+        ctx: WorkflowContext[list[ChatMessage]],
+    ) -> None:
         input_text = (
             message[0].contents[0].text if message and isinstance(message[0].contents[0], TextContent) else "no input"
         )
@@ -94,7 +96,11 @@ class ConversationHistoryCapturingExecutor(Executor):
         self.received_messages: list[ChatMessage] = []
 
     @handler
-    async def handle_message(self, messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def handle_message(
+        self,
+        messages: list[ChatMessage],
+        ctx: WorkflowContext[list[ChatMessage]],
+    ) -> None:
         # Capture all received messages
         self.received_messages = list(messages)
 
@@ -117,8 +123,8 @@ class TestWorkflowAgent:
     async def test_end_to_end_basic_workflow(self):
         """Test basic end-to-end workflow execution with 2 executors emitting AgentRunEvent."""
         # Create workflow with two executors
-        executor1 = SimpleExecutor(id="executor1", response_text="Step1", emit_streaming=False)
-        executor2 = SimpleExecutor(id="executor2", response_text="Step2", emit_streaming=False)
+        executor1 = SimpleExecutor(id="executor1", response_text="Step1")
+        executor2 = SimpleExecutor(id="executor2", response_text="Step2")
 
         workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
 
@@ -157,8 +163,8 @@ class TestWorkflowAgent:
     async def test_end_to_end_basic_workflow_streaming(self):
         """Test end-to-end workflow with streaming executor that emits AgentRunStreamingEvent."""
         # Create a single streaming executor
-        executor1 = SimpleExecutor(id="stream1", response_text="Streaming1", emit_streaming=True)
-        executor2 = SimpleExecutor(id="stream2", response_text="Streaming2", emit_streaming=True)
+        executor1 = SimpleExecutor(id="stream1", response_text="Streaming1")
+        executor2 = SimpleExecutor(id="stream2", response_text="Streaming2")
 
         # Create workflow with just one executor
         workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
@@ -185,7 +191,7 @@ class TestWorkflowAgent:
     async def test_end_to_end_request_info_handling(self):
         """Test end-to-end workflow with RequestInfoEvent handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
-        simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse", emit_streaming=False)
+        simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse")
         requesting_executor = RequestingExecutor(id="requester")
 
         workflow = (
@@ -260,7 +266,7 @@ class TestWorkflowAgent:
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""
         # Create a simple workflow
-        executor = SimpleExecutor(id="executor1", response_text="Response", emit_streaming=False)
+        executor = SimpleExecutor(id="executor1", response_text="Response")
         workflow = WorkflowBuilder().set_start_executor(executor).build()
 
         # Test as_agent with a name
@@ -723,7 +729,7 @@ class TestWorkflowAgentAuthorName:
         identification of which agent produced them in multi-agent workflows.
         """
         # Create workflow with executor that emits AgentRunUpdateEvent without author_name
-        executor1 = SimpleExecutor(id="my_executor_id", response_text="Response", emit_streaming=False)
+        executor1 = SimpleExecutor(id="my_executor_id", response_text="Response")
         workflow = WorkflowBuilder().set_start_executor(executor1).build()
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
 
@@ -745,7 +751,11 @@ class TestWorkflowAgentAuthorName:
             """Executor that sets author_name explicitly."""
 
             @handler
-            async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+            async def handle_message(
+                self,
+                message: list[ChatMessage],
+                ctx: WorkflowContext[list[ChatMessage]],
+            ) -> None:
                 # Emit update with explicit author_name
                 update = AgentResponseUpdate(
                     contents=[TextContent(text="Response with author")],
@@ -771,8 +781,8 @@ class TestWorkflowAgentAuthorName:
     async def test_multiple_executors_have_distinct_author_names(self):
         """Test that multiple executors in a workflow have their own author_name."""
         # Create workflow with two executors
-        executor1 = SimpleExecutor(id="first_executor", response_text="First", emit_streaming=False)
-        executor2 = SimpleExecutor(id="second_executor", response_text="Second", emit_streaming=False)
+        executor1 = SimpleExecutor(id="first_executor", response_text="First")
+        executor2 = SimpleExecutor(id="second_executor", response_text="Second")
 
         workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
         agent = WorkflowAgent(workflow=workflow, name="Multi-Executor Agent")

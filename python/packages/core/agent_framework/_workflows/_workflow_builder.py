@@ -325,7 +325,6 @@ class WorkflowBuilder:
         factory_func: Callable[[], AgentProtocol],
         name: str,
         agent_thread: AgentThread | None = None,
-        output_response: bool = True,
     ) -> Self:
         """Register an agent factory function for lazy initialization.
 
@@ -339,9 +338,6 @@ class WorkflowBuilder:
                   the agent's internal name. But it must be unique within the workflow.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created when
                           the agent is instantiated.
-            output_response: Whether to yield an AgentResponse as a workflow output when the agent completes.
-                             This is true by default. Outputs can be disabled using this parameter, or filtered
-                             by `with_output_from` when building the workflow.
 
         Example:
             .. code-block:: python
@@ -372,7 +368,6 @@ class WorkflowBuilder:
             return AgentExecutor(
                 agent,
                 agent_thread=agent_thread,
-                output_response=output_response,
             )
 
         self._executor_registry[name] = wrapped_factory

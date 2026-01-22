@@ -12,7 +12,6 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
     ChatAgent,
@@ -103,9 +102,9 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
 
     # Act: run in streaming mode
-    events: list[AgentRunUpdateEvent] = []
+    events: list[WorkflowOutputEvent] = []
     async for event in workflow.run_stream("What's the weather?"):
-        if isinstance(event, AgentRunUpdateEvent):
+        if isinstance(event, WorkflowOutputEvent):
             events.append(event)
 
     # Assert: we should receive 4 events (text, function call, function result, text)

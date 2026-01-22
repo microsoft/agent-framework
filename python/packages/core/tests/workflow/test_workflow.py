@@ -13,8 +13,6 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunEvent,
-    AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -885,7 +883,7 @@ class _StreamingTestAgent(BaseAgent):
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
-    """Test that run() emits AgentRunEvent while run_stream() emits AgentRunUpdateEvent."""
+    """Test that run() and run_stream() both emits WorkflowOutputEvents correctly with the right data types."""
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
@@ -895,8 +893,10 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     result = await workflow.run("test message")
 
     # Filter for agent events (result is a list of events)
-    agent_run_events = [e for e in result if isinstance(e, AgentRunEvent)]
-    agent_update_events = [e for e in result if isinstance(e, AgentRunUpdateEvent)]
+    agent_run_events = [e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)]
+    agent_update_events = [
+        e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
+    ]
 
     # In non-streaming mode, should have AgentRunEvent, no AgentRunUpdateEvent
     assert len(agent_run_events) == 1, "Expected exactly one AgentRunEvent in non-streaming mode"
@@ -911,8 +911,12 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         stream_events.append(event)
 
     # Filter for agent events
-    stream_agent_run_events = [e for e in stream_events if isinstance(e, AgentRunEvent)]
-    stream_agent_update_events = [e for e in stream_events if isinstance(e, AgentRunUpdateEvent)]
+    stream_agent_run_events = [
+        e for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)
+    ]
+    stream_agent_update_events = [
+        e for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
+    ]
 
     # In streaming mode, should have AgentRunUpdateEvent, no AgentRunEvent
     assert len(stream_agent_run_events) == 0, "Expected no AgentRunEvent in streaming mode"
