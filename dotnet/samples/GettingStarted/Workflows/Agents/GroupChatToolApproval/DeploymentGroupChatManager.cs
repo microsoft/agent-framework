@@ -36,12 +36,12 @@ internal sealed class DeploymentGroupChatManager : GroupChatManager
         // First speaker after initial user message
         if (this.IterationCount == 0)
         {
-            AIAgent qaAgent = this._agents.First(a => a.Id == "QAEngineer");
+            AIAgent qaAgent = this._agents.First(a => a.Name == "QAEngineer");
             return new ValueTask<AIAgent>(qaAgent);
         }
 
         // Subsequent speakers are DevOps Engineer
-        AIAgent devopsAgent = this._agents.First(a => a.Id == "DevOpsEngineer");
+        AIAgent devopsAgent = this._agents.First(a => a.Name == "DevOpsEngineer");
         return new ValueTask<AIAgent>(devopsAgent);
     }
 }
