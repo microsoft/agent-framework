@@ -7,7 +7,6 @@ from typing import Any, ClassVar, Final, Generic, Literal
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
-    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -21,12 +20,10 @@ from agent_framework import (
     UsageDetails,
     get_logger,
     prepare_function_call_results,
-    use_chat_middleware,
-    use_function_invocation,
 )
+from agent_framework._clients import FunctionInvokingChatClient
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
     BetaContentBlock,
@@ -223,10 +220,7 @@ class AnthropicSettings(AFBaseSettings):
     chat_model_id: str | None = None
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptions]):
+class AnthropicClient(FunctionInvokingChatClient[TAnthropicOptions], Generic[TAnthropicOptions]):
     """Anthropic Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]

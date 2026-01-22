@@ -27,13 +27,11 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BaseChatClient
-from .._middleware import use_chat_middleware
+from .._clients import FunctionInvokingChatClient
 from .._tools import (
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    use_function_invocation,
 )
 from .._types import (
     ChatMessage,
@@ -45,7 +43,6 @@ from .._types import (
     prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
-from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
@@ -198,12 +195,9 @@ TOpenAIAssistantsOptions = TypeVar(
 # endregion
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
 class OpenAIAssistantsClient(
     OpenAIConfigMixin,
-    BaseChatClient[TOpenAIAssistantsOptions],
+    FunctionInvokingChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
 ):
     """OpenAI Assistants client."""

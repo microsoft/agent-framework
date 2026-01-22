@@ -14,7 +14,6 @@ from itertools import chain
 from typing import Any, ClassVar, Generic
 
 from agent_framework import (
-    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -24,16 +23,14 @@ from agent_framework import (
     ToolProtocol,
     UsageDetails,
     get_logger,
-    use_chat_middleware,
-    use_function_invocation,
 )
+from agent_framework._clients import FunctionInvokingChatClient
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import (
     ServiceInitializationError,
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from agent_framework.observability import use_instrumentation
 from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
@@ -283,10 +280,7 @@ class OllamaSettings(AFBaseSettings):
 logger = get_logger("agent_framework.ollama")
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOptions]):
+class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[TOllamaChatOptions]):
     """Ollama Chat completion class."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"

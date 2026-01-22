@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -21,13 +20,11 @@ from agent_framework import (
     UsageDetails,
     get_logger,
     prepare_function_call_results,
-    use_chat_middleware,
-    use_function_invocation,
     validate_tool_mode,
 )
+from agent_framework._clients import FunctionInvokingChatClient
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
-from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
@@ -212,10 +209,7 @@ class BedrockSettings(AFBaseSettings):
     session_token: SecretStr | None = None
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockChatOptions]):
+class BedrockChatClient(FunctionInvokingChatClient[TBedrockChatOptions], Generic[TBedrockChatOptions]):
     """Async chat client for Amazon Bedrock's Converse API."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]

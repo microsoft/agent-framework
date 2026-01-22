@@ -62,7 +62,7 @@ async def streaming_example() -> None:
     # Get structured response from streaming agent using AgentResponse.from_agent_response_generator
     # This method collects all streaming updates and combines them into a single AgentResponse
     result = await AgentResponse.from_agent_response_generator(
-        agent.run_stream(query, options={"response_format": OutputStruct}),
+        agent.run(query, stream=True, options={"response_format": OutputStruct}),
         output_format_type=OutputStruct,
     )
 

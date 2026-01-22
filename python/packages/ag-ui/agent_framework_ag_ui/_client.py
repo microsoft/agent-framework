@@ -18,10 +18,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
-    use_chat_middleware,
-    use_function_invocation,
 )
-from agent_framework.observability import use_instrumentation
+from agent_framework._clients import FunctionInvokingChatClient
 
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
@@ -91,7 +89,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Streaming wrapper implementation."""
         async for update in original_func(self, *args, stream=True, **kwargs):
-            _unwrap_server_function_call_contents(cast(MutableSequence[Contents | dict[str, Any]], update.contents))
+            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
             yield update
 
     chat_client.get_response = response_wrapper  # type: ignore[assignment]
@@ -99,10 +97,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 
 
 @_apply_server_function_call_unwrap
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
+class AGUIChatClient(FunctionInvokingChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
     """Chat client for communicating with AG-UI compliant servers.
 
     This client implements the BaseChatClient interface and automatically handles:
@@ -122,10 +117,10 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
     Important: Tool Handling (Hybrid Execution - matches .NET)
         1. Client tool metadata sent to server - LLM knows about both client and server tools
         2. Server has its own tools that execute server-side
-        3. When LLM calls a client tool, @use_function_invocation executes it locally
+        3. When LLM calls a client tool, function invocation executes it locally
         4. Both client and server tools work together (hybrid pattern)
 
-        The wrapping ChatAgent's @use_function_invocation handles client tool execution
+        The wrapping ChatAgent's function invocation handles client tool execution
         automatically when the server's LLM decides to call them.
 
     Examples:
@@ -375,7 +370,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         agui_messages = self._convert_messages_to_agui_format(messages_to_send)
 
         # Send client tools to server so LLM knows about them
-        # Client tools execute via ChatAgent's @use_function_invocation wrapper
+        # Client tools execute via ChatAgent's function invocation wrapper
         agui_tools = convert_tools_to_agui_format(options.get("tools"))
 
         # Build set of client tool names (matches .NET clientToolSet)
@@ -422,12 +417,12 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
                             f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"  # type: ignore[attr-defined]
                         )
                         if content.name in client_tool_set:  # type: ignore[attr-defined]
-                            # Client tool - let @use_function_invocation execute it
+                            # Client tool - let function invocation execute it
                             if not content.additional_properties:  # type: ignore[attr-defined]
                                 content.additional_properties = {}  # type: ignore[attr-defined]
                             content.additional_properties["agui_thread_id"] = thread_id  # type: ignore[attr-defined]
                         else:
-                            # Server tool - wrap so @use_function_invocation ignores it
+                            # Server tool - wrap so function invocation ignores it
                             logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")  # type: ignore[union-attr]
                             self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore

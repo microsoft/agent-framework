@@ -10,7 +10,7 @@ This demonstrates the HYBRID pattern matching .NET AGUIClient implementation:
    - Thread automatically maintains conversation history via message_store
 
 2. Hybrid Tool Execution:
-   - AGUIChatClient has @use_function_invocation decorator
+   - AGUIChatClient uses function invocation mixin
    - Client-side tools (get_weather) can execute locally when server requests them
    - Server may also have its own tools that execute server-side
    - Both work together: server LLM decides which tool to call, decorator handles client execution
@@ -73,7 +73,7 @@ async def main():
     print(f"\nServer: {server_url}")
     print("\nThis example demonstrates:")
     print("  1. AgentThread maintains conversation state (like .NET)")
-    print("  2. Client-side tools execute locally via @use_function_invocation")
+    print("  2. Client-side tools execute locally via function invocation mixin")
     print("  3. Server may have additional tools that execute server-side")
     print("  4. HYBRID: Client and server tools work together simultaneously\n")
 

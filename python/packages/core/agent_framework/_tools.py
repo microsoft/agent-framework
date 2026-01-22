@@ -13,7 +13,7 @@ from collections.abc import (
     MutableMapping,
     Sequence,
 )
-from functools import wraps
+from functools import partial, wraps
 from time import perf_counter, time_ns
 from typing import (
     TYPE_CHECKING,
@@ -37,7 +37,7 @@ from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
-from .exceptions import ChatClientInitializationError, ToolException
+from .exceptions import ToolException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
@@ -47,21 +47,10 @@ from .observability import (
     get_meter,
 )
 
-if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
-    from ._types import (
-        ChatMessage,
-        ChatResponse,
-        ChatResponseUpdate,
-        Content,
-    )
-
-
-# TypeVar with defaults support for Python < 3.13
 if sys.version_info >= (3, 13):
-    from typing import TypeVar as TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar as TypeVar  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -72,11 +61,23 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
+if TYPE_CHECKING:
+    from ._clients import ChatClientProtocol
+    from ._types import (
+        ChatMessage,
+        ChatOptions,
+        ChatResponse,
+        ChatResponseUpdate,
+        Content,
+        ResponseStream,
+    )
+
+
 logger = get_logger()
 
 __all__ = [
-    "FUNCTION_INVOKING_CHAT_CLIENT_MARKER",
     "FunctionInvocationConfiguration",
+    "FunctionInvokingMixin",
     "FunctionTool",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
@@ -85,13 +86,12 @@ __all__ = [
     "HostedMCPTool",
     "HostedWebSearchTool",
     "ToolProtocol",
+    "normalize_function_invocation_configuration",
     "tool",
-    "use_function_invocation",
 ]
 
 
 logger = get_logger()
-FUNCTION_INVOKING_CHAT_CLIENT_MARKER: Final[str] = "__function_invoking_chat_client__"
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
@@ -1360,11 +1360,8 @@ def tool(
 # region Function Invoking Chat Client
 
 
-class FunctionInvocationConfiguration(SerializationMixin):
+class FunctionInvocationConfiguration(TypedDict, total=False):
     """Configuration for function invocation in chat clients.
-
-    This class is created automatically on every chat client that supports function invocation.
-    This means that for most cases you can just alter the attributes on the instance, rather then creating a new one.
 
     Example:
         .. code-block:: python
@@ -1374,102 +1371,61 @@ class FunctionInvocationConfiguration(SerializationMixin):
             client = OpenAIChatClient(api_key="your_api_key")
 
             # Disable function invocation
-            client.function_invocation_config.enabled = False
+            client.function_invocation_configuration["enabled"] = False
 
             # Set maximum iterations to 10
-            client.function_invocation_config.max_iterations = 10
+            client.function_invocation_configuration["max_iterations"] = 10
 
             # Enable termination on unknown function calls
-            client.function_invocation_config.terminate_on_unknown_calls = True
+            client.function_invocation_configuration["terminate_on_unknown_calls"] = True
 
             # Add additional tools for function execution
-            client.function_invocation_config.additional_tools = [my_custom_tool]
+            client.function_invocation_configuration["additional_tools"] = [my_custom_tool]
 
             # Enable detailed error information in function results
-            client.function_invocation_config.include_detailed_errors = True
+            client.function_invocation_configuration["include_detailed_errors"] = True
 
-            # You can also create a new configuration instance if needed
-            new_config = FunctionInvocationConfiguration(
-                enabled=True,
-                max_iterations=20,
-                terminate_on_unknown_calls=False,
-                additional_tools=[another_tool],
-                include_detailed_errors=False,
-            )
+            # You can also create a new configuration dict if needed
+            new_config: FunctionInvocationConfiguration = {
+                "enabled": True,
+                "max_iterations": 20,
+                "terminate_on_unknown_calls": False,
+                "additional_tools": [another_tool],
+                "include_detailed_errors": False,
+            }
 
             # and then assign it to the client
-            client.function_invocation_config = new_config
-
-
-    Attributes:
-        enabled: Whether function invocation is enabled.
-            When this is set to False, the client will not attempt to invoke any functions,
-            because the tool mode will be set to None.
-        max_iterations: Maximum number of function invocation iterations.
-            Each request to this client might end up making multiple requests to the model. Each time the model responds
-            with a function call request, this client might perform that invocation and send the results back to the
-            model in a new request. This property limits the number of times such a roundtrip is performed. The value
-            must be at least one, as it includes the initial request.
-            If you want to fully disable function invocation, use the ``enabled`` property.
-            The default is 40.
-        max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
-            The maximum number of consecutive function call errors allowed before stopping
-            further function calls for the request.
-            The default is 3.
-        terminate_on_unknown_calls: Whether to terminate on unknown function calls.
-            When False, call requests to any tools that aren't available to the client
-            will result in a response message automatically being created and returned to the inner client stating that
-            the tool couldn't be found. This behavior can help in cases where a model hallucinates a function, but it's
-            problematic if the model has been made aware of the existence of tools outside of the normal mechanisms, and
-            requests one of those. ``additional_tools`` can be used to help with that. But if instead the consumer wants
-            to know about all function call requests that the client can't handle, this can be set to True. Upon
-            receiving a request to call a function that the client doesn't know about, it will terminate the function
-            calling loop and return the response, leaving the handling of the function call requests to the consumer of
-            the client.
-        additional_tools: Additional tools to include for function execution.
-            These will not impact the requests sent by the client, which will pass through the
-            ``tools`` unmodified. However, if the inner client requests the invocation of a tool
-            that was not in ``ChatOptions.tools``, this ``additional_tools`` collection will also be consulted to look
-            for a corresponding tool. This is useful when the service might have been pre-configured to be aware of
-            certain tools that aren't also sent on each individual request. These tools are treated the same as
-            ``declaration_only`` tools and will be returned to the user.
-        include_detailed_errors: Whether to include detailed error information in function results.
-            When set to True, detailed error information such as exception type and message
-            will be included in the function result content when a function invocation fails.
-            When False, only a generic error message will be included.
-
-
+            client.function_invocation_configuration = new_config
     """
 
-    def __init__(
-        self,
-        enabled: bool = True,
-        max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        max_consecutive_errors_per_request: int = DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
-        terminate_on_unknown_calls: bool = False,
-        additional_tools: Sequence[ToolProtocol] | None = None,
-        include_detailed_errors: bool = False,
-    ) -> None:
-        """Initialize FunctionInvocationConfiguration.
+    enabled: bool
+    max_iterations: int
+    max_consecutive_errors_per_request: int
+    terminate_on_unknown_calls: bool
+    additional_tools: Sequence[ToolProtocol]
+    include_detailed_errors: bool
 
-        Args:
-            enabled: Whether function invocation is enabled.
-            max_iterations: Maximum number of function invocation iterations.
-            max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
-            terminate_on_unknown_calls: Whether to terminate on unknown function calls.
-            additional_tools: Additional tools to include for function execution.
-            include_detailed_errors: Whether to include detailed error information in function results.
-        """
-        self.enabled = enabled
-        if max_iterations < 1:
-            raise ValueError("max_iterations must be at least 1.")
-        self.max_iterations = max_iterations
-        if max_consecutive_errors_per_request < 0:
-            raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
-        self.max_consecutive_errors_per_request = max_consecutive_errors_per_request
-        self.terminate_on_unknown_calls = terminate_on_unknown_calls
-        self.additional_tools = additional_tools or []
-        self.include_detailed_errors = include_detailed_errors
+
+def normalize_function_invocation_configuration(
+    config: FunctionInvocationConfiguration | None,
+) -> FunctionInvocationConfiguration:
+    normalized: FunctionInvocationConfiguration = {
+        "enabled": True,
+        "max_iterations": DEFAULT_MAX_ITERATIONS,
+        "max_consecutive_errors_per_request": DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
+        "terminate_on_unknown_calls": False,
+        "additional_tools": [],
+        "include_detailed_errors": False,
+    }
+    if config:
+        normalized.update(config)
+    if normalized["max_iterations"] < 1:
+        raise ValueError("max_iterations must be at least 1.")
+    if normalized["max_consecutive_errors_per_request"] < 0:
+        raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
+    if normalized["additional_tools"] is None:
+        normalized["additional_tools"] = []
+    return normalized
 
 
 class FunctionExecutionResult:
@@ -1576,7 +1532,7 @@ async def _auto_invoke_function(
         args = tool.input_model.model_validate(parsed_args)
     except ValidationError as exc:
         message = "Error: Argument parsing failed."
-        if config.include_detailed_errors:
+        if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
         return FunctionExecutionResult(
             content=Content.from_function_result(
@@ -1604,7 +1560,7 @@ async def _auto_invoke_function(
             )
         except Exception as exc:
             message = "Error: Function failed."
-            if config.include_detailed_errors:
+            if config["include_detailed_errors"]:
                 message = f"{message} Exception: {exc}"
             return FunctionExecutionResult(
                 content=Content.from_function_result(
@@ -1645,7 +1601,7 @@ async def _auto_invoke_function(
         )
     except Exception as exc:
         message = "Error: Function failed."
-        if config.include_detailed_errors:
+        if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
         return FunctionExecutionResult(
             content=Content.from_function_result(
@@ -1712,7 +1668,7 @@ async def _try_execute_function_calls(
         approval_tools,
     )
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
-    additional_tool_names = [tool.name for tool in config.additional_tools] if config.additional_tools else []
+    additional_tool_names = [tool.name for tool in config["additional_tools"]] if config["additional_tools"] else []
     # check if any are calling functions that need approval
     # if so, we return approval request for all
     approval_needed = False
@@ -1732,7 +1688,9 @@ async def _try_execute_function_calls(
         if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
             declaration_only_flag = True
             break
-        if config.terminate_on_unknown_calls and fcc.type == "function_call" and fcc.name not in tool_map:  # type: ignore[attr-defined]
+        if (
+            config["terminate_on_unknown_calls"] and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
+        ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
@@ -1778,6 +1736,30 @@ async def _try_execute_function_calls(
     return (contents, should_terminate)
 
 
+async def _execute_function_calls(
+    *,
+    custom_args: dict[str, Any],
+    attempt_idx: int,
+    function_calls: list["Content"],
+    tool_options: dict[str, Any] | None,
+    config: FunctionInvocationConfiguration,
+    middleware_pipeline: Any = None,
+) -> tuple[list["Content"], bool, bool]:
+    tools = _extract_tools(tool_options)
+    if not tools:
+        return [], False, False
+    results, should_terminate = await _try_execute_function_calls(
+        custom_args=custom_args,
+        attempt_idx=attempt_idx,
+        function_calls=function_calls,
+        tools=tools,  # type: ignore
+        middleware_pipeline=middleware_pipeline,
+        config=config,
+    )
+    had_errors = any(fcr.exception is not None for fcr in results if fcr.type == "function_result")
+    return list(results), should_terminate, had_errors
+
+
 def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
     """Update kwargs with conversation id.
 
@@ -1791,6 +1773,19 @@ def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None)
         kwargs["chat_options"].conversation_id = conversation_id
     else:
         kwargs["conversation_id"] = conversation_id
+
+
+async def _ensure_response_stream(
+    stream_like: "ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]]",
+) -> "ResponseStream[Any, Any]":
+    from ._types import ResponseStream
+
+    stream = await stream_like if isinstance(stream_like, Awaitable) else stream_like
+    if not isinstance(stream, ResponseStream):
+        raise ValueError("Streaming function invocation requires a ResponseStream result.")
+    if getattr(stream, "_stream", None) is None:
+        await stream
+    return stream
 
 
 def _extract_tools(options: dict[str, Any] | None) -> Any:
@@ -1812,9 +1807,9 @@ def _collect_approval_responses(
     messages: "list[ChatMessage]",
 ) -> dict[str, "Content"]:
     """Collect approval responses (both approved and rejected) from messages."""
-    from ._types import ChatMessage, Content
+    from ._types import ChatMessage
 
-    fcc_todo: dict[str, Content] = {}
+    fcc_todo: dict[str, "Content"] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, ChatMessage) else []:
             # Collect BOTH approved and rejected responses
@@ -1831,6 +1826,7 @@ def _replace_approval_contents_with_results(
     """Replace approval request/response contents with function call/result contents in-place."""
     from ._types import (
         Content,
+        Role,
     )
 
     result_idx = 0
@@ -1860,7 +1856,7 @@ def _replace_approval_contents_with_results(
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
                         result_idx += 1
-                        msg.role = "tool"
+                        msg.role = Role.TOOL
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
@@ -1868,287 +1864,391 @@ def _replace_approval_contents_with_results(
                         call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
-                    msg.role = "tool"
+                    msg.role = Role.TOOL
 
         # Remove approval requests that were duplicates (in reverse order to preserve indices)
         for idx in reversed(contents_to_remove):
             msg.contents.pop(idx)
 
 
-def _function_calling_get_response(
-    func: Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]],
-) -> Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]]:
-    """Decorate the unified get_response method to handle function calls.
+def _get_finalizers_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
+    inner_stream = getattr(stream, "_inner_stream", None)
+    if inner_stream is None:
+        inner_source = getattr(stream, "_inner_stream_source", None)
+        if inner_source is not None:
+            inner_stream = inner_source
+    if inner_stream is None:
+        inner_stream = stream
+    return list(getattr(inner_stream, "_finalizers", []))
 
-    Args:
-        func: The get_response method to decorate.
 
-    Returns:
-        A decorated function that handles function calls for both streaming and non-streaming modes.
-    """
+def _extract_function_calls(response: "ChatResponse") -> list["Content"]:
+    function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
+    return [
+        it for it in response.messages[0].contents if it.type == "function_call" and it.call_id not in function_results
+    ]
 
-    def decorator(
-        func: Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]],
-    ) -> Callable[..., Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]]:
-        """Inner decorator."""
 
-        @wraps(func)
-        def function_invocation_wrapper(
-            self: "ChatClientProtocol",
-            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-            *,
-            stream: bool = False,
-            options: dict[str, Any] | None = None,
-            **kwargs: Any,
-        ) -> Awaitable["ChatResponse"] | AsyncIterable["ChatResponseUpdate"]:
-            if stream:
-                return _function_invocation_stream_impl(self, messages, options=options, **kwargs)
-            return _function_invocation_impl(self, messages, options=options, **kwargs)
+def _prepend_fcc_messages(response: "ChatResponse", fcc_messages: list["ChatMessage"]) -> None:
+    if not fcc_messages:
+        return
+    for msg in reversed(fcc_messages):
+        response.messages.insert(0, msg)
 
-        async def _function_invocation_impl(
-            self: "ChatClientProtocol",
-            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-            *,
-            options: dict[str, Any] | None = None,
-            **kwargs: Any,
-        ) -> "ChatResponse":
-            """Non-streaming implementation of function invocation wrapper."""
-            from ._middleware import extract_and_merge_function_middleware
-            from ._types import (
-                ChatMessage,
-                Content,
-                prepare_messages,
+
+def _handle_function_call_results(
+    *,
+    response: "ChatResponse",
+    function_call_results: list["Content"],
+    fcc_messages: list["ChatMessage"],
+    errors_in_a_row: int,
+    should_terminate: bool,
+    had_errors: bool,
+    max_errors: int,
+) -> FunctionRequestResult:
+    from ._types import ChatMessage
+
+    if any(fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results):
+        if response.messages and response.messages[0].role.value == "assistant":
+            response.messages[0].contents.extend(function_call_results)
+        else:
+            response.messages.append(ChatMessage(role="assistant", contents=function_call_results))
+        return {
+            "action": "return",
+            "errors_in_a_row": errors_in_a_row,
+            "result_message": None,
+            "update_role": "assistant",
+            "function_call_results": None,
+        }
+
+    if should_terminate:
+        result_message = ChatMessage(role="tool", contents=function_call_results)
+        response.messages.append(result_message)
+        _prepend_fcc_messages(response, fcc_messages)
+        return {
+            "action": "return",
+            "errors_in_a_row": errors_in_a_row,
+            "result_message": result_message,
+            "update_role": "tool",
+            "function_call_results": None,
+        }
+
+    if had_errors:
+        errors_in_a_row += 1
+        if errors_in_a_row >= max_errors:
+            logger.warning(
+                "Maximum consecutive function call errors reached (%d). "
+                "Stopping further function calls for this request.",
+                max_errors,
             )
+            return {
+                "action": "stop",
+                "errors_in_a_row": errors_in_a_row,
+                "result_message": None,
+                "update_role": None,
+                "function_call_results": None,
+            }
+    else:
+        errors_in_a_row = 0
 
-            # Extract and merge function middleware from chat client with kwargs
-            stored_middleware_pipeline = extract_and_merge_function_middleware(self, kwargs)
+    result_message = ChatMessage(role="tool", contents=function_call_results)
+    response.messages.append(result_message)
+    fcc_messages.extend(response.messages)
+    return {
+        "action": "continue",
+        "errors_in_a_row": errors_in_a_row,
+        "result_message": result_message,
+        "update_role": "tool",
+        "function_call_results": None,
+    }
 
-            # Get the config for function invocation
-            config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
-            if not config:
-                config = FunctionInvocationConfiguration()
 
-            errors_in_a_row: int = 0
-            prepped_messages = prepare_messages(messages)
-            fcc_messages: "list[ChatMessage]" = []
-            response: "ChatResponse | None" = None
-
-            for attempt_idx in range(config.max_iterations if config.enabled else 0):
-                # Handle approval responses
-                fcc_todo = _collect_approval_responses(prepped_messages)
-                if fcc_todo:
-                    tools = _extract_tools(options)
-                    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
-                    approved_function_results: list[Content] = []
-                    if approved_responses:
-                        results, _ = await _try_execute_function_calls(
-                            custom_args=kwargs,
-                            attempt_idx=attempt_idx,
-                            function_calls=approved_responses,
-                            tools=tools,  # type: ignore
-                            middleware_pipeline=stored_middleware_pipeline,
-                            config=config,
+async def _process_function_requests(
+    *,
+    response: "ChatResponse | None",
+    prepped_messages: list["ChatMessage"] | None,
+    tool_options: dict[str, Any] | None,
+    attempt_idx: int,
+    fcc_messages: list["ChatMessage"] | None,
+    errors_in_a_row: int,
+    max_errors: int,
+    execute_function_calls: Callable[..., Awaitable[tuple[list["Content"], bool, bool]]],
+) -> FunctionRequestResult:
+    if prepped_messages is not None:
+        fcc_todo = _collect_approval_responses(prepped_messages)
+        if not fcc_todo:
+            fcc_todo = {}
+        if fcc_todo:
+            approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+            approved_function_results: list[Content] = []
+            if approved_responses:
+                results, _, had_errors = await execute_function_calls(
+                    attempt_idx=attempt_idx,
+                    function_calls=approved_responses,
+                    tool_options=tool_options,
+                )
+                approved_function_results = list(results)
+                if had_errors:
+                    errors_in_a_row += 1
+                    if errors_in_a_row >= max_errors:
+                        logger.warning(
+                            "Maximum consecutive function call errors reached (%d). "
+                            "Stopping further function calls for this request.",
+                            max_errors,
                         )
-                        approved_function_results = list(results)
-                        if any(
-                            fcr.exception is not None
-                            for fcr in approved_function_results
-                            if fcr.type == "function_result"
-                        ):
-                            errors_in_a_row += 1
-                            if errors_in_a_row >= config.max_consecutive_errors_per_request:
-                                logger.warning(
-                                    "Maximum consecutive function call errors reached (%d). "
-                                    "Stopping further function calls for this request.",
-                                    config.max_consecutive_errors_per_request,
-                                )
-                                break
-                    _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+            return {
+                "action": "stop",
+                "errors_in_a_row": errors_in_a_row,
+                "result_message": None,
+                "update_role": None,
+                "function_call_results": None,
+            }
+            _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+            return {
+                "action": "continue",
+                "errors_in_a_row": errors_in_a_row,
+                "result_message": None,
+                "update_role": None,
+                "function_call_results": None,
+            }
 
-                # Call the underlying function - non-streaming
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
+    if response is None or fcc_messages is None:
+        return {
+            "action": "continue",
+            "errors_in_a_row": errors_in_a_row,
+            "result_message": None,
+            "update_role": None,
+            "function_call_results": None,
+        }
 
-                response = await func(
-                    self,
+    tools = _extract_tools(tool_options)
+    function_calls = _extract_function_calls(response)
+    if not (function_calls and tools):
+        _prepend_fcc_messages(response, fcc_messages)
+        return {
+            "action": "return",
+            "errors_in_a_row": errors_in_a_row,
+            "result_message": None,
+            "update_role": None,
+            "function_call_results": None,
+        }
+
+    function_call_results, should_terminate, had_errors = await execute_function_calls(
+        attempt_idx=attempt_idx,
+        function_calls=function_calls,
+        tool_options=tool_options,
+    )
+    result = _handle_function_call_results(
+        response=response,
+        function_call_results=function_call_results,
+        fcc_messages=fcc_messages,
+        errors_in_a_row=errors_in_a_row,
+        should_terminate=should_terminate,
+        had_errors=had_errors,
+        max_errors=max_errors,
+    )
+    result["function_call_results"] = list(function_call_results)
+    return result
+
+
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    covariant=True,
+)
+
+
+class FunctionInvokingMixin(Generic[TOptions_co]):
+    """Mixin for chat clients to apply function invocation around get_response."""
+
+    def __init__(
+        self,
+        *,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.function_invocation_configuration = normalize_function_invocation_configuration(
+            function_invocation_configuration
+        )
+        super().__init__(**kwargs)
+
+    @overload
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: Literal[False] = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable["ChatResponse"]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: Literal[True],
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
+
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]":
+        from ._types import (
+            ChatMessage,
+            ChatResponse,
+            ChatResponseUpdate,
+            ResponseStream,
+            prepare_messages,
+        )
+
+        super_get_response = super().get_response
+        function_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+        max_errors = self.function_invocation_configuration["max_consecutive_errors_per_request"]
+        additional_function_arguments = (options or {}).get("additional_function_arguments") or {}
+        execute_function_calls = partial(
+            _execute_function_calls,
+            custom_args=additional_function_arguments,
+            config=self.function_invocation_configuration,
+            middleware_pipeline=function_middleware_pipeline,
+        )
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+
+        if not stream:
+
+            async def _get_response() -> ChatResponse:
+                nonlocal options
+                nonlocal filtered_kwargs
+                errors_in_a_row: int = 0
+                prepped_messages = prepare_messages(messages)
+                fcc_messages: list[ChatMessage] = []
+                response: ChatResponse | None = None
+
+                for attempt_idx in range(
+                    self.function_invocation_configuration["max_iterations"]
+                    if self.function_invocation_configuration["enabled"]
+                    else 0
+                ):
+                    approval_result = await _process_function_requests(
+                        response=None,
+                        prepped_messages=prepped_messages,
+                        tool_options=options,
+                        attempt_idx=attempt_idx,
+                        fcc_messages=None,
+                        errors_in_a_row=errors_in_a_row,
+                        max_errors=max_errors,
+                        execute_function_calls=execute_function_calls,
+                    )
+                    if approval_result["action"] == "stop":
+                        break
+                    errors_in_a_row = approval_result["errors_in_a_row"]
+
+                    response = await super_get_response(
+                        messages=prepped_messages,
+                        stream=False,
+                        options=options,
+                        **filtered_kwargs,
+                    )
+
+                    if response.conversation_id is not None:
+                        _update_conversation_id(kwargs, response.conversation_id)
+                        prepped_messages = []
+
+                    result = await _process_function_requests(
+                        response=response,
+                        prepped_messages=None,
+                        tool_options=options,
+                        attempt_idx=attempt_idx,
+                        fcc_messages=fcc_messages,
+                        errors_in_a_row=errors_in_a_row,
+                        max_errors=max_errors,
+                        execute_function_calls=execute_function_calls,
+                    )
+                    if result["action"] == "return":
+                        return response
+                    if result["action"] == "stop":
+                        break
+                    errors_in_a_row = result["errors_in_a_row"]
+
+                    if response.conversation_id is not None:
+                        prepped_messages.clear()
+                        prepped_messages.extend(response.messages)
+                    else:
+                        prepped_messages.extend(response.messages)
+                    continue
+
+                if response is not None:
+                    return response
+
+                if options is None:
+                    options = {}
+                options["tool_choice"] = "none"
+                response = await super_get_response(
                     messages=prepped_messages,
                     stream=False,
                     options=options,
                     **filtered_kwargs,
                 )
-
-                # Extract function calls from response
-                function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
-                function_calls = [
-                    it
-                    for it in response.messages[0].contents
-                    if it.type == "function_call" and it.call_id not in function_results
-                ]
-
-                if response.conversation_id is not None:
-                    _update_conversation_id(kwargs, response.conversation_id)
-                    prepped_messages = []
-
-                # Execute function calls if any
-                tools = _extract_tools(options)
-                if function_calls and tools:
-                    function_call_results, should_terminate = await _try_execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=function_calls,
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                        config=config,
-                    )
-                    # Handle approval requests and declaration only
-                    if any(
-                        fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results
-                    ):
-                        if response.messages and response.messages[0].role.value == "assistant":
-                            response.messages[0].contents.extend(function_call_results)
-                        else:
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
-                            response.messages.append(result_message)
-                        return response  # type: ignore
-
-                    # Handle termination
-                    if should_terminate:
-                        result_message = ChatMessage(role="tool", contents=function_call_results)
-                        response.messages.append(result_message)
-                        if fcc_messages:
-                            for msg in reversed(fcc_messages):
-                                response.messages.insert(0, msg)
-                        return response  # type: ignore
-
-                    if any(fcr.exception is not None for fcr in function_call_results if fcr.type == "function_result"):
-                        errors_in_a_row += 1
-                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
-                            logger.warning(
-                                "Maximum consecutive function call errors reached (%d). "
-                                "Stopping further function calls for this request.",
-                                config.max_consecutive_errors_per_request,
-                            )
-                            break
-                    else:
-                        errors_in_a_row = 0
-
-                    # Add function results to messages
-                    result_message = ChatMessage(role="tool", contents=function_call_results)
-                    response.messages.append(result_message)
-                    fcc_messages.extend(response.messages)
-
-                    if response.conversation_id is not None:
-                        prepped_messages.clear()
-                        prepped_messages.append(result_message)
-                    else:
-                        prepped_messages.extend(response.messages)
-                    continue
-
-                # No more function calls, exit loop
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)
-                return response  # type: ignore
+                return response
 
-            # After loop completion or break, handle final response
-            if response is not None:
-                return response  # type: ignore
+            return _get_response()
 
-            # Failsafe - disable function calling
-            if options is None:
-                options = {}
-            options["tool_choice"] = "none"
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+        response_format = options.get("response_format") if options else None
+        output_format_type = response_format if isinstance(response_format, type) else None
+        stream_finalizers: list[Callable[[ChatResponse], Any]] = []
 
-            response = await func(
-                self,
-                messages=prepped_messages,
-                stream=False,
-                options=options,
-                **filtered_kwargs,
-            )
-            if fcc_messages:
-                for msg in reversed(fcc_messages):
-                    response.messages.insert(0, msg)
-            return response  # type: ignore
-
-        async def _function_invocation_stream_impl(
-            self: "ChatClientProtocol",
-            messages: "str | ChatMessage | list[str] | list[ChatMessage]",
-            *,
-            options: dict[str, Any] | None = None,
-            **kwargs: Any,
-        ) -> AsyncIterable["ChatResponseUpdate"]:
-            """Streaming implementation of function invocation wrapper."""
-            from ._middleware import extract_and_merge_function_middleware
-            from ._types import (
-                ChatMessage,
-                ChatResponse,
-                ChatResponseUpdate,
-                prepare_messages,
-            )
-
-            # Extract and merge function middleware from chat client with kwargs
-            stored_middleware_pipeline = extract_and_merge_function_middleware(self, kwargs)
-
-            # Get the config for function invocation
-            config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
-            if not config:
-                config = FunctionInvocationConfiguration()
-
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            nonlocal filtered_kwargs
+            nonlocal options
+            nonlocal stream_finalizers
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
-            fcc_messages: "list[ChatMessage]" = []
-            response: "ChatResponse | None" = None
+            fcc_messages: list[ChatMessage] = []
+            response: ChatResponse | None = None
 
-            for attempt_idx in range(config.max_iterations if config.enabled else 0):
-                # Handle approval responses
-                fcc_todo = _collect_approval_responses(prepped_messages)
-                if fcc_todo:
-                    tools = _extract_tools(options)
-                    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
-                    approved_function_results: list[Content] = []
-                    if approved_responses:
-                        results, _ = await _try_execute_function_calls(
-                            custom_args=kwargs,
-                            attempt_idx=attempt_idx,
-                            function_calls=approved_responses,
-                            tools=tools,  # type: ignore
-                            middleware_pipeline=stored_middleware_pipeline,
-                            config=config,
-                        )
-                        approved_function_results = list(results)
-                        if any(
-                            fcr.exception is not None
-                            for fcr in approved_function_results
-                            if fcr.type == "function_result"
-                        ):
-                            errors_in_a_row += 1
-                            if errors_in_a_row >= config.max_consecutive_errors_per_request:
-                                logger.warning(
-                                    "Maximum consecutive function call errors reached (%d). "
-                                    "Stopping further function calls for this request.",
-                                    config.max_consecutive_errors_per_request,
-                                )
-                                break
-                    _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+            for attempt_idx in range(
+                self.function_invocation_configuration["max_iterations"]
+                if self.function_invocation_configuration["enabled"]
+                else 0
+            ):
+                approval_result = await _process_function_requests(
+                    response=None,
+                    prepped_messages=prepped_messages,
+                    tool_options=options,
+                    attempt_idx=attempt_idx,
+                    fcc_messages=None,
+                    errors_in_a_row=errors_in_a_row,
+                    max_errors=max_errors,
+                    execute_function_calls=execute_function_calls,
+                )
+                errors_in_a_row = approval_result["errors_in_a_row"]
+                if approval_result["action"] == "stop":
+                    return
 
-                # Call the underlying function - streaming
-                filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("thread", "tools", "tool_choice")}
-
-                all_updates: list["ChatResponseUpdate"] = []
-                async for update in func(
-                    self,
-                    messages=prepped_messages,
-                    stream=True,
-                    options=options,
-                    **filtered_kwargs,
-                ):
+                all_updates: list[ChatResponseUpdate] = []
+                stream = await _ensure_response_stream(
+                    super_get_response(
+                        messages=prepped_messages,
+                        stream=True,
+                        options=options,
+                        **filtered_kwargs,
+                    )
+                )
+                # pick up any finalizers from the previous stream
+                stream_finalizers = _get_finalizers_from_stream(stream)
+                async for update in stream:
                     all_updates.append(update)
                     yield update
-
-                # efficient check for FunctionCallContent in the updates
-                # if there is at least one, this stops and continuous
-                # if there are no FCC's then it returns
 
                 if not any(
                     item.type in ("function_call", "function_approval_request")
@@ -2156,170 +2256,62 @@ def _function_calling_get_response(
                     for item in upd.contents
                 ):
                     return
-                response: ChatResponse = ChatResponse.from_chat_response_updates(all_updates)
 
-                # Now combining the updates to create the full response.
-                # Depending on the prompt, the message may contain both function call
-                # content and others
-
-                response: "ChatResponse" = ChatResponse.from_updates(all_updates)
-                # get the function calls (excluding ones that already have results)
-                function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
-                function_calls = [
-                    it
-                    for it in response.messages[0].contents
-                    if it.type == "function_call" and it.call_id not in function_results
-                ]
-
+                # Build a response snapshot from raw updates without invoking stream finalizers.
+                response = ChatResponse.from_chat_response_updates(all_updates)
                 if response.conversation_id is not None:
                     _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
-                # Execute function calls if any
-                tools = _extract_tools(options)
-                fc_count = len(function_calls) if function_calls else 0
-                logger.debug(
-                    "Streaming: tools extracted=%s, function_calls=%d",
-                    tools is not None,
-                    fc_count,
+                result = await _process_function_requests(
+                    response=response,
+                    prepped_messages=None,
+                    tool_options=options,
+                    attempt_idx=attempt_idx,
+                    fcc_messages=fcc_messages,
+                    errors_in_a_row=errors_in_a_row,
+                    max_errors=max_errors,
+                    execute_function_calls=execute_function_calls,
                 )
-                if tools:
-                    for t in tools if isinstance(tools, list) else [tools]:
-                        t_name = getattr(t, "name", "unknown")
-                        t_approval = getattr(t, "approval_mode", None)
-                        logger.debug("  Tool %s: approval_mode=%s", t_name, t_approval)
-                if function_calls and tools:
-                    function_call_results, should_terminate = await _try_execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=function_calls,
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                        config=config,
+                errors_in_a_row = result["errors_in_a_row"]
+                if role := result["update_role"]:
+                    yield ChatResponseUpdate(
+                        contents=result["function_call_results"] or [],
+                        role=role,
                     )
+                if result["action"] != "continue":
+                    return
 
-                    # Handle approval requests and declaration only
-                    if any(
-                        fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results
-                    ):
-                        if response.messages and response.messages[0].role.value == "assistant":
-                            response.messages[0].contents.extend(function_call_results)
-                        else:
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
-                            response.messages.append(result_message)
-                        yield ChatResponseUpdate(contents=function_call_results, role="assistant")
-                        return
+                if response.conversation_id is not None:
+                    prepped_messages.clear()
+                    prepped_messages.extend(response.messages)
+                else:
+                    prepped_messages.extend(response.messages)
+                continue
 
-                    # Handle termination
-                    if should_terminate:
-                        result_message = ChatMessage(role="tool", contents=function_call_results)
-                        response.messages.append(result_message)
-                        if fcc_messages:
-                            for msg in reversed(fcc_messages):
-                                response.messages.insert(0, msg)
-                        yield ChatResponseUpdate(contents=function_call_results, role="tool")
-                        return
-
-                    if any(fcr.exception is not None for fcr in function_call_results if fcr.type == "function_result"):
-                        errors_in_a_row += 1
-                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
-                            logger.warning(
-                                "Maximum consecutive function call errors reached (%d). "
-                                "Stopping further function calls for this request.",
-                                config.max_consecutive_errors_per_request,
-                            )
-                            break
-                    else:
-                        errors_in_a_row = 0
-
-                    # Add function results to messages
-                    result_message = ChatMessage(role="tool", contents=function_call_results)
-                    yield ChatResponseUpdate(contents=function_call_results, role="tool")
-                    response.messages.append(result_message)
-                    fcc_messages.extend(response.messages)
-
-                    if response.conversation_id is not None:
-                        prepped_messages.clear()
-                        prepped_messages.append(result_message)
-                    else:
-                        prepped_messages.extend(response.messages)
-                    continue
-
-                # No more function calls, exit loop
-                if fcc_messages:
-                    for msg in reversed(fcc_messages):
-                        response.messages.insert(0, msg)
-                return
-
-            # After loop completion or break, handle final response
             if response is not None:
                 return
 
-            # Failsafe - disable function calling
             if options is None:
                 options = {}
             options["tool_choice"] = "none"
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
-
-            async for update in func(
-                self,
-                messages=prepped_messages,
-                stream=True,
-                options=options,
-                **filtered_kwargs,
-            ):
+            stream = await _ensure_response_stream(
+                super_get_response(
+                    messages=prepped_messages,
+                    stream=True,
+                    options=options,
+                    **filtered_kwargs,
+                )
+            )
+            async for update in stream:
                 yield update
 
-        return function_invocation_wrapper  # type: ignore
+        async def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            result = ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+            for finalizer in stream_finalizers:
+                result = finalizer(result)
+                if isinstance(result, Awaitable):
+                    result = await result
+            return result
 
-    return decorator(func)
-
-
-def use_function_invocation(
-    chat_client: type[TChatClient],
-) -> type[TChatClient]:
-    """Class decorator that enables tool calling for a chat client.
-
-    This decorator wraps the unified ``get_response`` method to automatically handle
-    function calls from the model, execute them, and return the results back to the
-    model for further processing.
-
-    Args:
-        chat_client: The chat client class to decorate.
-
-    Returns:
-        The decorated chat client class with function invocation enabled.
-
-    Raises:
-        ChatClientInitializationError: If the chat client does not have the required method.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import use_function_invocation, BaseChatClient
-
-
-            @use_function_invocation
-            class MyCustomClient(BaseChatClient):
-                async def get_response(self, messages, *, stream=False, **kwargs):
-                    # Implementation here
-                    pass
-
-
-            # The client now automatically handles function calls
-            client = MyCustomClient()
-    """
-    if getattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, False):
-        return chat_client
-
-    try:
-        chat_client.get_response = _function_calling_get_response(  # type: ignore
-            func=chat_client.get_response,  # type: ignore
-        )
-    except AttributeError as ex:
-        raise ChatClientInitializationError(
-            f"Chat client {chat_client.__name__} does not have a get_response method, cannot apply function invocation."
-        ) from ex
-
-    setattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, True)
-    return chat_client
+        return ResponseStream(_stream(), finalizer=_finalize)

@@ -774,7 +774,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
     ]
 
     # Set max_iterations to 1 in additional_properties
-    chat_client_base.function_invocation_configuration.max_iterations = 1
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
 
@@ -801,7 +801,7 @@ async def test_function_invocation_config_enabled_false(chat_client_base: ChatCl
     ]
 
     # Disable function invocation
-    chat_client_base.function_invocation_configuration.enabled = False
+    chat_client_base.function_invocation_configuration["enabled"] = False
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
 
@@ -857,7 +857,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
     ]
 
     # Set max_consecutive_errors to 2
-    chat_client_base.function_invocation_configuration.max_consecutive_errors_per_request = 2
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
 
@@ -902,7 +902,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_
     ]
 
     # Set terminate_on_unknown_calls to False (default)
-    chat_client_base.function_invocation_configuration.terminate_on_unknown_calls = False
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [known_func]})
 
@@ -936,7 +936,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     ]
 
     # Set terminate_on_unknown_calls to True
-    chat_client_base.function_invocation_configuration.terminate_on_unknown_calls = True
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
@@ -975,7 +975,7 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Cha
     ]
 
     # Add hidden_func to additional_tools
-    chat_client_base.function_invocation_configuration.additional_tools = [hidden_func]
+    chat_client_base.function_invocation_configuration["additional_tools"] = [hidden_func]
 
     # Only pass visible_func in the tools parameter
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [visible_func]})
@@ -1014,7 +1014,7 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
 
@@ -1048,7 +1048,7 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
 
@@ -1065,37 +1065,37 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
 
 async def test_function_invocation_config_validation_max_iterations():
     """Test that max_iterations validation works correctly."""
-    from agent_framework import FunctionInvocationConfiguration
+    from agent_framework import normalize_function_invocation_configuration
 
     # Valid values
-    config = FunctionInvocationConfiguration(max_iterations=1)
-    assert config.max_iterations == 1
+    config = normalize_function_invocation_configuration({"max_iterations": 1})
+    assert config["max_iterations"] == 1
 
-    config = FunctionInvocationConfiguration(max_iterations=100)
-    assert config.max_iterations == 100
+    config = normalize_function_invocation_configuration({"max_iterations": 100})
+    assert config["max_iterations"] == 100
 
     # Invalid value (less than 1)
     with pytest.raises(ValueError, match="max_iterations must be at least 1"):
-        FunctionInvocationConfiguration(max_iterations=0)
+        normalize_function_invocation_configuration({"max_iterations": 0})
 
     with pytest.raises(ValueError, match="max_iterations must be at least 1"):
-        FunctionInvocationConfiguration(max_iterations=-1)
+        normalize_function_invocation_configuration({"max_iterations": -1})
 
 
 async def test_function_invocation_config_validation_max_consecutive_errors():
     """Test that max_consecutive_errors_per_request validation works correctly."""
-    from agent_framework import FunctionInvocationConfiguration
+    from agent_framework import normalize_function_invocation_configuration
 
     # Valid values
-    config = FunctionInvocationConfiguration(max_consecutive_errors_per_request=0)
-    assert config.max_consecutive_errors_per_request == 0
+    config = normalize_function_invocation_configuration({"max_consecutive_errors_per_request": 0})
+    assert config["max_consecutive_errors_per_request"] == 0
 
-    config = FunctionInvocationConfiguration(max_consecutive_errors_per_request=5)
-    assert config.max_consecutive_errors_per_request == 5
+    config = normalize_function_invocation_configuration({"max_consecutive_errors_per_request": 5})
+    assert config["max_consecutive_errors_per_request"] == 5
 
     # Invalid value (less than 0)
     with pytest.raises(ValueError, match="max_consecutive_errors_per_request must be 0 or more"):
-        FunctionInvocationConfiguration(max_consecutive_errors_per_request=-1)
+        normalize_function_invocation_configuration({"max_consecutive_errors_per_request": -1})
 
 
 async def test_argument_validation_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
@@ -1118,7 +1118,7 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [typed_func]})
 
@@ -1152,7 +1152,7 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [typed_func]})
 
@@ -1274,7 +1274,7 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
     # Get approval request
     response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
@@ -1337,7 +1337,7 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     # Get approval request
     response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
@@ -1400,7 +1400,7 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Ch
     ]
 
     # Set include_detailed_errors to True to see validation details
-    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     # Get approval request
     response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [typed_func]})
@@ -1813,7 +1813,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: ChatClientProtoc
     ]
 
     # Set max_iterations to 1 in additional_properties
-    chat_client_base.function_invocation_configuration.max_iterations = 1
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -1843,7 +1843,7 @@ async def test_streaming_function_invocation_config_enabled_false(chat_client_ba
     ]
 
     # Disable function invocation
-    chat_client_base.function_invocation_configuration.enabled = False
+    chat_client_base.function_invocation_configuration["enabled"] = False
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -1894,7 +1894,7 @@ async def test_streaming_function_invocation_config_max_consecutive_errors(chat_
     ]
 
     # Set max_consecutive_errors to 2
-    chat_client_base.function_invocation_configuration.max_consecutive_errors_per_request = 2
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -1942,7 +1942,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_f
     ]
 
     # Set terminate_on_unknown_calls to False (default)
-    chat_client_base.function_invocation_configuration.terminate_on_unknown_calls = False
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -1985,7 +1985,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
     ]
 
     # Set terminate_on_unknown_calls to True
-    chat_client_base.function_invocation_configuration.terminate_on_unknown_calls = True
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
@@ -2015,7 +2015,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -2055,7 +2055,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -2093,7 +2093,7 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     updates = []
     async for update in chat_client_base.get_response(
@@ -2131,7 +2131,7 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
     updates = []
     async for update in chat_client_base.get_response(

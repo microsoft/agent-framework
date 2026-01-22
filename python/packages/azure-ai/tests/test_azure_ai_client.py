@@ -1299,7 +1299,7 @@ async def client() -> AsyncGenerator[AzureAIClient, None]:
         )
         try:
             assert client.function_invocation_configuration
-            client.function_invocation_configuration.max_iterations = 1
+            client.function_invocation_configuration["max_iterations"] = 1
             yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)

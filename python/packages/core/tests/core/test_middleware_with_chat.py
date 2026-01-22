@@ -9,13 +9,13 @@ from agent_framework import (
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
+    ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
+    FunctionInvokingMixin,
     FunctionTool,
     chat_middleware,
     function_middleware,
-    use_chat_middleware,
-    use_function_invocation,
 )
 
 from .conftest import MockBaseChatClient
@@ -229,6 +229,14 @@ class TestChatMiddleware:
             execution_order.append("streaming_before")
             # Verify it's a streaming context
             assert context.is_streaming is True
+
+            def upper_case_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
+                for content in update.contents:
+                    if content.type == "text":
+                        content.text = content.text.upper()
+                return update
+
+            context.stream_update_hooks.append(upper_case_update)
             await next(context)
             execution_order.append("streaming_after")
 
@@ -243,6 +251,7 @@ class TestChatMiddleware:
 
         # Verify we got updates
         assert len(updates) > 0
+        assert all(update.text == update.text.upper() for update in updates)
 
         # Verify middleware executed
         assert execution_order == ["streaming_before", "streaming_after"]
@@ -345,7 +354,7 @@ class TestChatMiddleware:
         )
 
         # Create function-invocation enabled chat client
-        chat_client = use_chat_middleware(use_function_invocation(MockBaseChatClient))()
+        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
 
         # Set function middleware directly on the chat client
         chat_client.middleware = [test_function_middleware]
@@ -409,7 +418,7 @@ class TestChatMiddleware:
         )
 
         # Create function-invocation enabled chat client
-        chat_client = use_function_invocation(MockBaseChatClient)()
+        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
 
         # Prepare responses that will trigger function invocation
         function_call_response = ChatResponse(

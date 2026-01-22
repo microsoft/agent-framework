@@ -16,10 +16,9 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BaseChatClient
+from .._clients import FunctionInvokingChatClient
 from .._logging import get_logger
-from .._middleware import use_chat_middleware
-from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -34,7 +33,6 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -124,7 +122,11 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
+class OpenAIBaseChatClient(
+    OpenAIBase,
+    FunctionInvokingChatClient[TOpenAIChatOptions],
+    Generic[TOpenAIChatOptions],
+):
     """OpenAI Chat completion class."""
 
     @override
@@ -542,10 +544,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 # region Public client
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
+class OpenAIChatClient(
+    OpenAIConfigMixin,
+    OpenAIBaseChatClient[TOpenAIChatOptions],
+    Generic[TOpenAIChatOptions],
+):
     """OpenAI Chat completion class."""
 
     def __init__(

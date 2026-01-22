@@ -2206,7 +2206,7 @@ async def test_integration_options(
     """
     openai_responses_client = OpenAIResponsesClient()
     # to ensure toolmode required does not endlessly loop
-    openai_responses_client.function_invocation_configuration.max_iterations = 1
+    openai_responses_client.function_invocation_configuration["max_iterations"] = 1
 
     for streaming in [False, True]:
         # Prepare test message

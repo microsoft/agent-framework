@@ -7,15 +7,13 @@ from collections.abc import AsyncIterable, MutableSequence
 from typing import Any, ClassVar, Generic
 
 from agent_framework import (
-    BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    use_chat_middleware,
-    use_function_invocation,
+    Role,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import FunctionInvokingChatClient, TOptions_co
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -30,9 +28,7 @@ showing integration with ChatAgent and both streaming and non-streaming response
 """
 
 
-@use_function_invocation
-@use_chat_middleware
-class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
+class EchoingChatClient(FunctionInvokingChatClient[TOptions_co], Generic[TOptions_co]):
     """A custom chat client that echoes messages back with modifications.
 
     This demonstrates how to implement a custom chat client by extending BaseChatClient
@@ -56,9 +52,10 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         self,
         *,
         messages: MutableSequence[ChatMessage],
+        stream: bool = False,
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         """Echo back the user's message with a prefix."""
         if not messages:
             response_text = "No messages to echo!"
@@ -66,7 +63,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             # Echo the last user message
             last_user_message = None
             for message in reversed(messages):
-                if message.role == "user":
+                if message.role == Role.USER:
                     last_user_message = message
                     break
 
@@ -75,38 +72,29 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             else:
                 response_text = f"{self.prefix} [No text message found]"
 
-        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(response_text)])
 
-        return ChatResponse(
+        response = ChatResponse(
             messages=[response_message],
             model_id="echo-model-v1",
             response_id=f"echo-resp-{random.randint(1000, 9999)}",
         )
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Stream back the echoed message character by character."""
-        # Get the complete response first
-        response = await self._inner_get_response(messages=messages, options=options, **kwargs)
+        if not stream:
+            return response
 
-        if response.messages:
-            response_text = response.messages[0].text or ""
-
-            # Stream character by character
-            for char in response_text:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            response_text_local = response_message.text or ""
+            for char in response_text_local:
                 yield ChatResponseUpdate(
-                    contents=[Content.from_text(text=char)],
-                    role="assistant",
+                    contents=[Content.from_text(char)],
+                    role=Role.ASSISTANT,
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
                     model_id="echo-model-v1",
                 )
                 await asyncio.sleep(0.05)
+
+        return _stream()
 
 
 async def main() -> None:

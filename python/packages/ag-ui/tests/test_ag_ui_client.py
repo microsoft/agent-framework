@@ -220,7 +220,7 @@ class TestAGUIChatClient:
         """Test that client tool metadata is sent to server.
 
         Client tool metadata (name, description, schema) is sent to server for planning.
-        When server requests a client function, @use_function_invocation decorator
+        When server requests a client function, function invocation mixin
         intercepts and executes it locally. This matches .NET AG-UI implementation.
         """
         from agent_framework import tool

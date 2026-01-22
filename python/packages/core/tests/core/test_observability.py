@@ -14,27 +14,22 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
     AgentResponse,
-    AgentResponseUpdate,
-    AgentThread,
     BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Content,
+    Role,
     UsageDetails,
     prepend_agent_framework_to_user_agent,
     tool,
 )
-from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
 from agent_framework.observability import (
-    OPEN_TELEMETRY_AGENT_MARKER,
-    OPEN_TELEMETRY_CHAT_CLIENT_MARKER,
     ROLE_EVENT_MAP,
+    AgentTelemetryMixin,
     ChatMessageListTimestampFilter,
+    ChatTelemetryMixin,
     OtelAttr,
     get_function_span,
-    use_agent_instrumentation,
-    use_instrumentation,
 )
 
 # region Test constants
@@ -157,62 +152,11 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
 
 
-# region Test use_instrumentation decorator
-
-
-def test_decorator_with_valid_class():
-    """Test that decorator works with a valid BaseChatClient-like class."""
-
-    # Create a mock class with the required methods
-    class MockChatClient:
-        async def get_response(self, messages, **kwargs):
-            return Mock()
-
-        async def get_streaming_response(self, messages, **kwargs):
-            async def gen():
-                yield Mock()
-
-            return gen()
-
-    # Apply the decorator
-    decorated_class = use_instrumentation(MockChatClient)
-    assert hasattr(decorated_class, OPEN_TELEMETRY_CHAT_CLIENT_MARKER)
-
-
-def test_decorator_with_missing_methods():
-    """Test that decorator handles classes missing required methods gracefully."""
-
-    class MockChatClient:
-        OTEL_PROVIDER_NAME = "test_provider"
-
-    # Apply the decorator - should not raise an error
-    with pytest.raises(ChatClientInitializationError):
-        use_instrumentation(MockChatClient)
-
-
-def test_decorator_with_partial_methods():
-    """Test decorator with unified get_response() method (no longer requires separate streaming method)."""
-
-    class MockChatClient:
-        OTEL_PROVIDER_NAME = "test_provider"
-
-        async def get_response(self, messages, *, stream=False, **kwargs):
-            """Unified get_response supporting both streaming and non-streaming."""
-            return Mock()
-
-    # Should no longer raise an error with unified API
-    decorated_class = use_instrumentation(MockChatClient)
-    assert decorated_class is not None
-
-
-# region Test telemetry decorator with mock client
-
-
 @pytest.fixture
 def mock_chat_client():
     """Create a mock chat client for testing."""
 
-    class MockChatClient(BaseChatClient):
+    class MockChatClient(ChatTelemetryMixin, BaseChatClient):
         def service_url(self):
             return "https://test.example.com"
 
@@ -227,7 +171,7 @@ def mock_chat_client():
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             return ChatResponse(
-                messages=[ChatMessage("assistant", ["Test response"])],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
                 usage_details=UsageDetails(input_token_count=10, output_token_count=20),
                 finish_reason=None,
             )
@@ -235,8 +179,8 @@ def mock_chat_client():
         async def _get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
-            yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
-            yield ChatResponseUpdate(contents=[Content.from_text(text=" world")], role="assistant")
+            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
 
     return MockChatClient
 
@@ -244,9 +188,9 @@ def mock_chat_client():
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_chat_client_observability(mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test that when diagnostics are enabled, telemetry is applied."""
-    client = use_instrumentation(mock_chat_client)()
+    client = mock_chat_client()
 
-    messages = [ChatMessage("user", ["Test message"])]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
     assert response is not None
@@ -267,14 +211,16 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 async def test_chat_client_streaming_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test streaming telemetry through the use_instrumentation decorator."""
-    client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage("user", ["Test"])]
+    """Test streaming telemetry through the chat telemetry mixin."""
+    client = mock_chat_client()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    async for update in client.get_response(stream=True, messages=messages, model_id="Test"):
+    stream = client.get_response(stream=True, messages=messages, model_id="Test")
+    async for update in stream:
         updates.append(update)
+    await stream.get_final_response()
 
     # Verify we got the expected updates, this shouldn't be dependent on otel
     assert len(updates) == 2
@@ -296,9 +242,9 @@ async def test_chat_client_observability_with_instructions(
     """Test that system_instructions from options are captured in LLM span."""
     import json
 
-    client = use_instrumentation(mock_chat_client)()
+    client = mock_chat_client()
 
-    messages = [ChatMessage("user", ["Test message"])]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -326,14 +272,16 @@ async def test_chat_client_streaming_observability_with_instructions(
     """Test streaming telemetry captures system_instructions from options."""
     import json
 
-    client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage("user", ["Test"])]
+    client = mock_chat_client()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
 
     updates = []
-    async for update in client.get_streaming_response(messages=messages, options=options):
+    stream = client.get_response(stream=True, messages=messages, options=options)
+    async for update in stream:
         updates.append(update)
+    await stream.get_final_response()
 
     assert len(updates) == 2
     spans = span_exporter.get_finished_spans()
@@ -352,9 +300,9 @@ async def test_chat_client_observability_without_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
     """Test that system_instructions attribute is not set when instructions are not provided."""
-    client = use_instrumentation(mock_chat_client)()
+    client = mock_chat_client()
 
-    messages = [ChatMessage("user", ["Test message"])]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     options = {"model_id": "Test"}  # No instructions
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -373,9 +321,9 @@ async def test_chat_client_observability_with_empty_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
     """Test that system_instructions attribute is not set when instructions is an empty string."""
-    client = use_instrumentation(mock_chat_client)()
+    client = mock_chat_client()
 
-    messages = [ChatMessage("user", ["Test message"])]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     options = {"model_id": "Test", "instructions": ""}  # Empty string
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -396,9 +344,9 @@ async def test_chat_client_observability_with_list_instructions(
     """Test that list-type instructions are correctly captured."""
     import json
 
-    client = use_instrumentation(mock_chat_client)()
+    client = mock_chat_client()
 
-    messages = [ChatMessage("user", ["Test message"])]
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
     options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -418,8 +366,8 @@ async def test_chat_client_observability_with_list_instructions(
 
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
-    client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage("user", ["Test"])]
+    client = mock_chat_client()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     response = await client.get_response(messages=messages)
 
@@ -437,13 +385,15 @@ async def test_chat_client_streaming_without_model_id_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter
 ):
     """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
-    client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage("user", ["Test"])]
+    client = mock_chat_client()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    async for update in client.get_response(stream=True, messages=messages):
+    stream = client.get_response(stream=True, messages=messages)
+    async for update in stream:
         updates.append(update)
+    await stream.get_final_response()
 
     # Verify we got the expected updates, this shouldn't be dependent on otel
     assert len(updates) == 2
@@ -465,78 +415,11 @@ def test_prepend_user_agent_with_none_value():
     assert AGENT_FRAMEWORK_USER_AGENT in str(result["User-Agent"])
 
 
-# region Test use_agent_instrumentation decorator
-
-
-def test_agent_decorator_with_valid_class():
-    """Test that agent decorator works with a valid ChatAgent-like class."""
-
-    # Create a mock class with the required methods
-    class MockChatClientAgent:
-        AGENT_PROVIDER_NAME = "test_agent_system"
-
-        def __init__(self):
-            self.id = "test_agent_id"
-            self.name = "test_agent"
-            self.description = "Test agent description"
-
-        async def run(self, messages=None, *, thread=None, **kwargs):
-            return Mock()
-
-        async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            async def gen():
-                yield Mock()
-
-            return gen()
-
-        def get_new_thread(self) -> AgentThread:
-            return AgentThread()
-
-    # Apply the decorator
-    decorated_class = use_agent_instrumentation(MockChatClientAgent)
-
-    assert hasattr(decorated_class, OPEN_TELEMETRY_AGENT_MARKER)
-
-
-def test_agent_decorator_with_missing_methods():
-    """Test that agent decorator handles classes missing required methods gracefully."""
-
-    class MockAgent:
-        AGENT_PROVIDER_NAME = "test_agent_system"
-
-    # Apply the decorator - should not raise an error
-    with pytest.raises(AgentInitializationError):
-        use_agent_instrumentation(MockAgent)
-
-
-def test_agent_decorator_with_partial_methods():
-    """Test agent decorator with unified run() method (no longer requires separate run_stream)."""
-    from agent_framework.observability import use_agent_instrumentation
-
-    class MockAgent:
-        AGENT_PROVIDER_NAME = "test_agent_system"
-
-        def __init__(self):
-            self.id = "test_agent_id"
-            self.name = "test_agent"
-
-        def run(self, messages=None, *, thread=None, stream=False, **kwargs):
-            """Unified run method supporting both streaming and non-streaming."""
-            return Mock()
-
-    # Should no longer raise an error with unified API
-    decorated_class = use_agent_instrumentation(MockAgent)
-    assert decorated_class is not None
-
-
-# region Test agent telemetry decorator with mock agent
-
-
 @pytest.fixture
 def mock_chat_agent():
     """Create a mock chat client agent for testing."""
 
-    class MockChatClientAgent:
+    class _MockChatClientAgent:
         AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
@@ -552,17 +435,26 @@ def mock_chat_agent():
 
         async def _run_impl(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
-                messages=[ChatMessage("assistant", ["Agent response"])],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
                 raw_representation=Mock(finish_reason=Mock(value="stop")),
             )
 
         async def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
-            from agent_framework import AgentResponseUpdate
+            from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
 
-            yield AgentResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
-            yield AgentResponseUpdate(contents=[Content.from_text(text=" from agent")], role="assistant")
+            async def _stream():
+                yield AgentResponseUpdate(text="Hello", role=Role.ASSISTANT)
+                yield AgentResponseUpdate(text=" from agent", role=Role.ASSISTANT)
+
+            return ResponseStream(
+                _stream(),
+                finalizer=AgentResponse.from_agent_run_response_updates,
+            )
+
+    class MockChatClientAgent(AgentTelemetryMixin, _MockChatClientAgent):
+        pass
 
     return MockChatClientAgent
 
@@ -573,7 +465,7 @@ async def test_agent_instrumentation_enabled(
 ):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
-    agent = use_agent_instrumentation(mock_chat_agent)()
+    agent = mock_chat_agent()
 
     span_exporter.clear()
     response = await agent.run("Test message")
@@ -594,15 +486,17 @@ async def test_agent_instrumentation_enabled(
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
+async def test_agent_streaming_response_with_diagnostics_enabled(
     mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test agent streaming telemetry through the use_agent_instrumentation decorator."""
-    agent = use_agent_instrumentation(mock_chat_agent)()
+    """Test agent streaming telemetry through the agent telemetry mixin."""
+    agent = mock_chat_agent()
     span_exporter.clear()
     updates = []
-    async for update in agent.run("Test message", stream=True):
+    stream = agent.run("Test message", stream=True)
+    async for update in stream:
         updates.append(update)
+    await stream.get_final_response()
 
     # Verify we got the expected updates
     assert len(updates) == 2
@@ -1355,7 +1249,7 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
             raise ValueError("Test error")
 
     client = use_instrumentation(FailingChatClient)()
-    messages = [ChatMessage("user", ["Test"])]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Test error"):
@@ -1373,11 +1267,11 @@ async def test_chat_client_streaming_observability_exception(mock_chat_client, s
 
     class FailingStreamingChatClient(mock_chat_client):
         async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
-            yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
             raise ValueError("Streaming error")
 
     client = use_instrumentation(FailingStreamingChatClient)()
-    messages = [ChatMessage("user", ["Test"])]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Streaming error"):
@@ -1448,11 +1342,12 @@ def test_get_response_attributes_with_finish_reason():
     """Test _get_response_attributes includes finish_reason."""
     from unittest.mock import Mock
 
+    from agent_framework import FinishReason
     from agent_framework.observability import OtelAttr, _get_response_attributes
 
     response = Mock()
     response.response_id = None
-    response.finish_reason = "stop"
+    response.finish_reason = FinishReason.STOP
     response.raw_representation = None
     response.usage_details = None
 
@@ -1624,10 +1519,11 @@ def test_get_response_attributes_finish_reason_from_raw():
     """Test _get_response_attributes gets finish_reason from raw_representation."""
     from unittest.mock import Mock
 
+    from agent_framework import FinishReason
     from agent_framework.observability import OtelAttr, _get_response_attributes
 
     raw_rep = Mock()
-    raw_rep.finish_reason = "length"
+    raw_rep.finish_reason = FinishReason.LENGTH
 
     response = Mock()
     response.response_id = None
@@ -1683,7 +1579,8 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             **kwargs,
         ):
             return AgentResponse(
-                messages=[ChatMessage("assistant", ["Test response"])],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
+                thread=thread,
             )
 
         async def run_stream(
@@ -1693,8 +1590,9 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             thread=None,
             **kwargs,
         ):
+            from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(contents=[Content.from_text(text="Test")], role="assistant")
+            yield AgentResponseUpdate(text="Test", role=Role.ASSISTANT)
 
     decorated_agent = use_agent_instrumentation(MockAgent)
     agent = decorated_agent()
@@ -1710,6 +1608,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent instrumentation captures exceptions."""
+    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class FailingAgent(AgentProtocol):
@@ -1742,7 +1641,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             # yield before raise to make this an async generator
-            yield AgentResponseUpdate(contents=[Content.from_text(text="")], role="assistant")
+            yield AgentResponseUpdate(text="", role=Role.ASSISTANT)
             raise RuntimeError("Agent failed")
 
     decorated_agent = use_agent_instrumentation(FailingAgent)
@@ -1763,6 +1662,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent streaming instrumentation."""
+    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class StreamingAgent(AgentProtocol):
@@ -1792,12 +1692,13 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
-                messages=[ChatMessage("assistant", ["Test"])],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Test")],
+                thread=thread,
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(contents=[Content.from_text(text="Hello ")], role="assistant")
-            yield AgentResponseUpdate(contents=[Content.from_text(text="World")], role="assistant")
+            yield AgentResponseUpdate(text="Hello ", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="World", role=Role.ASSISTANT)
 
     decorated_agent = use_agent_instrumentation(StreamingAgent)
     agent = decorated_agent()
@@ -1846,22 +1747,24 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     """Test that finish_reason is captured in output messages."""
     import json
 
+    from agent_framework import FinishReason
+
     class ClientWithFinishReason(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
             return ChatResponse(
-                messages=[ChatMessage("assistant", ["Done"])],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Done")],
                 usage_details=UsageDetails(input_token_count=5, output_token_count=10),
-                finish_reason="stop",
+                finish_reason=FinishReason.STOP,
             )
 
     client = use_instrumentation(ClientWithFinishReason)()
-    messages = [ChatMessage("user", ["Test"])]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
 
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
 
     assert response is not None
-    assert response.finish_reason == "stop"
+    assert response.finish_reason == FinishReason.STOP
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -1877,6 +1780,7 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent streaming captures exceptions."""
+    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class FailingStreamingAgent(AgentProtocol):
@@ -1905,10 +1809,10 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
             return self._default_options
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[])
+            return AgentResponse(messages=[], thread=thread)
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(contents=[Content.from_text(text="Starting")], role="assistant")
+            yield AgentResponseUpdate(text="Starting", role=Role.ASSISTANT)
             raise RuntimeError("Stream failed")
 
     decorated_agent = use_agent_instrumentation(FailingStreamingAgent)
@@ -1931,7 +1835,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
 async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test that no spans are created when instrumentation is disabled."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage("user", ["Test"])]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
 
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
@@ -1946,7 +1850,7 @@ async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemo
 async def test_chat_client_streaming_when_disabled(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test streaming creates no spans when instrumentation is disabled."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage("user", ["Test"])]
+    messages = [ChatMessage(role=Role.USER, text="Test")]
 
     span_exporter.clear()
     updates = []
@@ -1989,11 +1893,12 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
             return self._default_options
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[])
+            return AgentResponse(messages=[], thread=thread)
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
+            from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(contents=[Content.from_text(text="test")], role="assistant")
+            yield AgentResponseUpdate(text="test", role=Role.ASSISTANT)
 
     decorated = use_agent_instrumentation(TestAgent)
     agent = decorated()
@@ -2008,6 +1913,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter):
     """Test agent streaming creates no spans when disabled."""
+    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class TestAgent(AgentProtocol):
@@ -2036,10 +1942,10 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
             return self._default_options
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[])
+            return AgentResponse(messages=[], thread=thread)
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(contents=[Content.from_text(text="test")], role="assistant")
+            yield AgentResponseUpdate(text="test", role=Role.ASSISTANT)
 
     decorated = use_agent_instrumentation(TestAgent)
     agent = decorated()
