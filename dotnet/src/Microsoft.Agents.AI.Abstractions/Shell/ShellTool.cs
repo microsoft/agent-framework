@@ -29,6 +29,8 @@ namespace Microsoft.Agents.AI;
 public class ShellTool : AITool
 {
     private readonly ShellExecutor _executor;
+    private readonly IReadOnlyList<Regex>? _compiledAllowedPatterns;
+    private readonly IReadOnlyList<Regex>? _compiledDeniedPatterns;
 
     private static readonly string[] s_privilegeEscalationCommands =
     [
@@ -76,6 +78,10 @@ public class ShellTool : AITool
     {
         this._executor = Throw.IfNull(executor);
         this.Options = options ?? new ShellToolOptions();
+
+        // Compile patterns once at construction time
+        this._compiledAllowedPatterns = CompilePatterns(this.Options.AllowedCommands);
+        this._compiledDeniedPatterns = CompilePatterns(this.Options.DeniedCommands);
     }
 
     /// <summary>
@@ -141,9 +147,9 @@ public class ShellTool : AITool
     private void ValidateCommand(string command)
     {
         // 1. Check denylist first (priority over allowlist)
-        if (this.Options.CompiledDeniedPatterns is { Count: > 0 })
+        if (this._compiledDeniedPatterns is { Count: > 0 })
         {
-            foreach (var pattern in this.Options.CompiledDeniedPatterns)
+            foreach (var pattern in this._compiledDeniedPatterns)
             {
                 if (pattern.IsMatch(command))
                 {
@@ -184,9 +190,9 @@ public class ShellTool : AITool
         this.ValidatePathAccess(command);
 
         // 6. Check allowlist (if configured)
-        if (this.Options.CompiledAllowedPatterns is { Count: > 0 })
+        if (this._compiledAllowedPatterns is { Count: > 0 })
         {
-            bool allowed = this.Options.CompiledAllowedPatterns
+            bool allowed = this._compiledAllowedPatterns
                 .Any(p => p.IsMatch(command));
             if (!allowed)
             {
@@ -506,5 +512,37 @@ public class ShellTool : AITool
         // Path is within basePath if it equals basePath or starts with basePath/
         return string.Equals(path, basePath, StringComparison.OrdinalIgnoreCase) ||
                path.StartsWith(basePathWithSep, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<Regex>? CompilePatterns(IList<string>? patterns)
+    {
+        if (patterns is null || patterns.Count == 0)
+        {
+            return null;
+        }
+
+        var compiled = new List<Regex>(patterns.Count);
+        foreach (var pattern in patterns)
+        {
+            // Try-catch is used here because there is no way to validate a regex pattern
+            // without attempting to compile it.
+            try
+            {
+                compiled.Add(new Regex(
+                    pattern,
+                    RegexOptions.Compiled | RegexOptions.IgnoreCase,
+                    TimeSpan.FromSeconds(1)));
+            }
+            catch (ArgumentException)
+            {
+                // Invalid regex - treat as literal string match
+                compiled.Add(new Regex(
+                    Regex.Escape(pattern),
+                    RegexOptions.Compiled | RegexOptions.IgnoreCase,
+                    TimeSpan.FromSeconds(1)));
+            }
+        }
+
+        return compiled;
     }
 }

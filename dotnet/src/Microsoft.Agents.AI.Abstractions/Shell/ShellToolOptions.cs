@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.AI;
 
@@ -43,15 +41,7 @@ public class ShellToolOptions
     /// Invalid regex patterns are automatically treated as literal strings.
     /// </para>
     /// </remarks>
-    public IList<string>? AllowedCommands
-    {
-        get;
-        set
-        {
-            field = value;
-            this.CompiledAllowedPatterns = CompilePatterns(value);
-        }
-    }
+    public IList<string>? AllowedCommands { get; set; }
 
     /// <summary>
     /// Gets or sets the denylist of blocked command patterns.
@@ -66,15 +56,7 @@ public class ShellToolOptions
     /// Invalid regex patterns are automatically treated as literal strings.
     /// </para>
     /// </remarks>
-    public IList<string>? DeniedCommands
-    {
-        get;
-        set
-        {
-            field = value;
-            this.CompiledDeniedPatterns = CompilePatterns(value);
-        }
-    }
+    public IList<string>? DeniedCommands { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether privilege escalation commands are blocked.
@@ -142,46 +124,4 @@ public class ShellToolOptions
     /// When null, auto-detects based on OS (cmd.exe on Windows, /bin/sh on Unix).
     /// </summary>
     public string? Shell { get; set; }
-
-    /// <summary>
-    /// Gets the compiled allowlist patterns for internal use.
-    /// </summary>
-    internal IReadOnlyList<Regex>? CompiledAllowedPatterns { get; private set; }
-
-    /// <summary>
-    /// Gets the compiled denylist patterns for internal use.
-    /// </summary>
-    internal IReadOnlyList<Regex>? CompiledDeniedPatterns { get; private set; }
-
-    private static List<Regex>? CompilePatterns(IList<string>? patterns)
-    {
-        if (patterns is null || patterns.Count == 0)
-        {
-            return null;
-        }
-
-        var compiled = new List<Regex>(patterns.Count);
-        foreach (var pattern in patterns)
-        {
-            // Try-catch is used here because there is no way to validate a regex pattern
-            // without attempting to compile it.
-            try
-            {
-                compiled.Add(new Regex(
-                    pattern,
-                    RegexOptions.Compiled | RegexOptions.IgnoreCase,
-                    TimeSpan.FromSeconds(1)));
-            }
-            catch (ArgumentException)
-            {
-                // Treat as literal string match
-                compiled.Add(new Regex(
-                    Regex.Escape(pattern),
-                    RegexOptions.Compiled | RegexOptions.IgnoreCase,
-                    TimeSpan.FromSeconds(1)));
-            }
-        }
-
-        return compiled;
-    }
 }
