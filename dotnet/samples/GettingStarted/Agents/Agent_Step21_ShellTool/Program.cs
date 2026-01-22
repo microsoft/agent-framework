@@ -5,20 +5,21 @@
 //
 // SECURITY NOTE: The ShellTool executes real shell commands on your system.
 // Always configure appropriate security restrictions before use.
+// The safest approach is to run shell commands in isolated environments (containers, VMs, sandboxes)
+// with restricted permissions and network access.
 
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
+using OpenAI;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var modelName = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
-// Get a temporary working directory for the shell tool
-var workingDirectory = Path.Combine(Path.GetTempPath(), "shell-tool-sample");
+// Get working directory (from environment variable or use temp folder)
+var workingDirectory = Environment.GetEnvironmentVariable("SHELL_WORKING_DIR")
+    ?? Path.Combine(Path.GetTempPath(), "shell-tool-sample");
 Directory.CreateDirectory(workingDirectory);
 
 Console.WriteLine($"Working directory: {workingDirectory}");
@@ -66,10 +67,9 @@ var shellFunction = new ApprovalRequiredAIFunction(shellTool.AsAIFunction());
 var operatingSystem = OperatingSystem.IsWindows() ? "Windows" : "Unix/Linux";
 
 // Create the chat client and agent with the shell tool.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(modelName)
+    .AsIChatClient()
     .AsAIAgent(
         instructions: $"""
             You are a helpful assistant with access to a shell tool.
