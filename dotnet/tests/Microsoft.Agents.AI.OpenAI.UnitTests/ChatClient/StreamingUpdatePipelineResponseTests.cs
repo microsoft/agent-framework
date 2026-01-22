@@ -77,7 +77,7 @@ public sealed class StreamingUpdatePipelineResponseTests
         // Act
         response.ContentStream = testStream;
 
-        // Assert - should remain null
+        // Assert
         Assert.Null(response.ContentStream);
 
         testStream.Dispose();
@@ -142,7 +142,7 @@ public sealed class StreamingUpdatePipelineResponseTests
         IAsyncEnumerable<AgentResponseUpdate> updates = CreateTestUpdatesAsync();
         PipelineResponse response = new StreamingUpdatePipelineResponse(updates);
 
-        // Act & Assert - should not throw
+        // Act & Assert
         response.Dispose();
     }
 

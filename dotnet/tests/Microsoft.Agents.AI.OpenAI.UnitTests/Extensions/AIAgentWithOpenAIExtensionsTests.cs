@@ -369,9 +369,6 @@ public sealed class AIAgentWithOpenAIExtensionsTests
                 options,
                 cancellationToken
             );
-
-        // The updates are filtered based on raw representation, so we just need to verify the method was called
-        Assert.True(true, "Method was called successfully");
     }
 
     #endregion

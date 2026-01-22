@@ -778,7 +778,6 @@ public sealed class OpenAIAssistantClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
-        // The override instructions should be used
         Assert.Equal("Override Instructions", agent.Instructions);
     }
 

@@ -116,7 +116,7 @@ public sealed class AsyncStreamingResponseUpdateCollectionResultTests
             results.Add(update);
         }
 
-        // Assert - should be empty since updates don't have StreamingResponseUpdate as RawRepresentation
+        // Assert
         Assert.Empty(results);
     }
 
@@ -138,7 +138,7 @@ public sealed class AsyncStreamingResponseUpdateCollectionResultTests
             results.Add(update);
         }
 
-        // Assert - should be empty since the ChatResponseUpdate doesn't have StreamingResponseUpdate as RawRepresentation
+        // Assert
         Assert.Empty(results);
     }
 
