@@ -17,7 +17,6 @@ internal static class BuiltInFunctions
 {
     internal const string HttpPrefix = "http-";
     internal const string McpToolPrefix = "mcptool-";
-    internal const string WorkflowMcpToolPrefix = "mcptool-workflow-";
 
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";

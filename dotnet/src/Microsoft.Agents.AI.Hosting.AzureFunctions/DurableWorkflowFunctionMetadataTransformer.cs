@@ -154,7 +154,7 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
     {
         return new DefaultFunctionMetadata
         {
-            Name = $"{BuiltInFunctions.WorkflowMcpToolPrefix}{workflowName}",
+            Name = $"{BuiltInFunctions.McpToolPrefix}{workflowName}",
             Language = "dotnet-isolated",
             RawBindings =
             [
