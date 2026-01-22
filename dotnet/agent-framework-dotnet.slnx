@@ -229,6 +229,7 @@
   <Folder Name="/Samples/GettingStarted/Workflows/Agents/">
     <Project Path="samples/GettingStarted/Workflows/Agents/CustomAgentExecutors/CustomAgentExecutors.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Agents/FoundryAgent/FoundryAgent.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Agents/GroupChatToolApproval/GroupChatToolApproval.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Checkpoint/">
