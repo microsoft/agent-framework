@@ -3132,11 +3132,11 @@ public sealed class AzureAIProjectChatClientExtensionsCoverageTests
     /// </summary>
 #pragma warning disable CA1812 // Avoid uninstantiated internal classes - used via reflection by AIJsonUtilities
     private sealed class TestSchema
-#pragma warning restore CA1812
     {
         public string? Name { get; set; }
         public int Value { get; set; }
     }
+#pragma warning restore CA1812
 
     /// <summary>
     /// Test AIContextProvider for options preservation tests.
