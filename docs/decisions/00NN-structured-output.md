@@ -33,9 +33,9 @@ Specify the SO type schema via the `ChatClientAgent{Run}Options.ChatOptions.Resp
 
 	Console.WriteLine($"Name: {personInfo.Name}");
 	Console.WriteLine($"Age: {personInfo.Age}");
-    Console.WriteLine($"Occupation: {personInfo.Occupation}");
+	Console.WriteLine($"Occupation: {personInfo.Occupation}");
 
-    // Alternatively, SO type can be provided at agent invocation time
+	// Alternatively, SO type can be provided at agent invocation time
 	response = await agent.RunAsync("...", new ChatClientAgentRunOptions()
 	{
 		ChatOptions = new() { ResponseFormat = ChatResponseFormat.ForJsonSchema<PersonInfo>() }
@@ -45,7 +45,7 @@ Specify the SO type schema via the `ChatClientAgent{Run}Options.ChatOptions.Resp
 
 	Console.WriteLine($"Name: {personInfo.Name}");
 	Console.WriteLine($"Age: {personInfo.Age}");
-    Console.WriteLine($"Occupation: {personInfo.Occupation}");
+	Console.WriteLine($"Occupation: {personInfo.Occupation}");
 	```
 
 **Approach 2: Generic RunAsync<T>**
@@ -126,7 +126,7 @@ ChatClientAgentRunOptions options = new()
 
 AgentResponse response = await agent.RunAsync("What is most efficient and reliable car in 2026?", options: options);
 
-JsonElement carInfo = response.Deserialize<object>();
+JsonElement carInfo = response.Deserialize<JsonElement>();
 ```
 
 The `ChatClientAgent` already implements this solution using the following components:
