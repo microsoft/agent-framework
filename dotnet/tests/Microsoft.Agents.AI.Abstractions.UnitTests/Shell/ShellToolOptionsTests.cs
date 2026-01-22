@@ -1,7 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
-
-using System.Collections.Generic;
-using Microsoft.Agents.AI;
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -36,7 +33,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { "^git\\s", "^npm\\s", "^dotnet\\s" }
+            AllowedCommands = ["^git\\s", "^npm\\s", "^dotnet\\s"]
         };
 
         // Assert
@@ -50,7 +47,7 @@ public class ShellToolOptionsTests
         // Arrange - "[" is an invalid regex pattern
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { "[invalid" }
+            AllowedCommands = ["[invalid"]
         };
 
         // Assert - Should not throw, should treat as literal
@@ -68,7 +65,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            DeniedCommands = new List<string> { @"rm\s+-rf", "chmod", "chown" }
+            DeniedCommands = [@"rm\s+-rf", "chmod", "chown"]
         };
 
         // Assert
@@ -82,7 +79,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { "^GIT" }
+            AllowedCommands = ["^GIT"]
         };
 
         // Assert
@@ -98,7 +95,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string>()
+            AllowedCommands = []
         };
 
         // Assert
@@ -124,7 +121,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { "^git" }
+            AllowedCommands = ["^git"]
         };
 
         // Assert initial state
@@ -132,7 +129,7 @@ public class ShellToolOptionsTests
         Assert.Single(options.CompiledAllowedPatterns);
 
         // Act - Update the list
-        options.AllowedCommands = new List<string> { "^npm", "^yarn" };
+        options.AllowedCommands = ["^npm", "^yarn"];
 
         // Assert - Patterns should be updated
         Assert.NotNull(options.CompiledAllowedPatterns);
@@ -171,7 +168,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            BlockedPaths = new List<string> { "/etc", "/var/log" }
+            BlockedPaths = ["/etc", "/var/log"]
         };
 
         // Assert
@@ -187,7 +184,7 @@ public class ShellToolOptionsTests
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedPaths = new List<string> { "/tmp", "/home/user" }
+            AllowedPaths = ["/tmp", "/home/user"]
         };
 
         // Assert

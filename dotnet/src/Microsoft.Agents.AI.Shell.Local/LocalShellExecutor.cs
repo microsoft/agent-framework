@@ -79,7 +79,7 @@ public class LocalShellExecutor : ShellExecutor
                         if (stdout.Length + e.Data.Length + 1 > options.MaxOutputLength)
                         {
                             int remainingLength = options.MaxOutputLength - stdout.Length;
-                            stdout.Append(e.Data.Substring(0, remainingLength));
+                            stdout.Append(e.Data, 0, remainingLength);
                             stdoutTruncated = true;
                         }
                         else
@@ -106,7 +106,7 @@ public class LocalShellExecutor : ShellExecutor
                         if (stderr.Length + e.Data.Length + 1 > options.MaxOutputLength)
                         {
                             int remainingLength = options.MaxOutputLength - stderr.Length;
-                            stderr.Append(e.Data.Substring(0, remainingLength));
+                            stderr.Append(e.Data, 0, remainingLength);
                             stderrTruncated = true;
                         }
                         else

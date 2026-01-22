@@ -405,7 +405,7 @@ public class ShellTool : AITool
         }
 
         // Extract paths from the command
-        foreach (var path in ExtractPaths(command))
+        foreach (var path in this.ExtractPaths(command))
         {
             var normalizedPath = NormalizePath(path);
 
@@ -455,7 +455,7 @@ public class ShellTool : AITool
             }
 
             // Check if token looks like a path (contains separators or starts with .)
-            if (token.IndexOf('/') >= 0 || token.IndexOf('\\') >= 0 ||
+            if (token.Contains('/') || token.Contains('\\') ||
                 token.StartsWith(".", StringComparison.Ordinal))
             {
                 // Resolve relative paths against working directory

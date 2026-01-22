@@ -1,10 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI;
 using Moq;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
@@ -40,16 +39,16 @@ public class ShellToolTests
 
     public ShellToolTests()
     {
-        _executorMock = new Mock<ShellExecutor>();
-        _executorMock
+        this._executorMock = new Mock<ShellExecutor>();
+        this._executorMock
             .Setup(e => e.ExecuteAsync(
                 It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<ShellToolOptions>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ShellExecutorOutput>
-            {
+            .ReturnsAsync(
+            [
                 new() { Command = "test", StandardOutput = "output", ExitCode = 0 }
-            });
+            ]);
     }
 
     [Fact]
@@ -63,7 +62,7 @@ public class ShellToolTests
     public void Name_WhenAccessed_ReturnsShell()
     {
         // Arrange
-        var tool = new ShellTool(_executorMock.Object);
+        var tool = new ShellTool(this._executorMock.Object);
 
         // Assert
         Assert.Equal("shell", tool.Name);
@@ -73,17 +72,17 @@ public class ShellToolTests
     public void Description_WhenAccessed_ReturnsNonEmptyString()
     {
         // Arrange
-        var tool = new ShellTool(_executorMock.Object);
+        var tool = new ShellTool(this._executorMock.Object);
 
         // Assert
         Assert.False(string.IsNullOrWhiteSpace(tool.Description));
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithNullCallContent_ThrowsArgumentNullException()
+    public async Task ExecuteAsync_WithNullCallContent_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
-        var tool = new ShellTool(_executorMock.Object);
+        var tool = new ShellTool(this._executorMock.Object);
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -91,14 +90,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCommandMatchingDenylist_ThrowsInvalidOperationException()
+    public async Task ExecuteAsync_WithCommandMatchingDenylist_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            DeniedCommands = new List<string> { @"rm\s+-rf" }
+            DeniedCommands = [@"rm\s+-rf"]
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_rmRfCommand);
 
         // Act & Assert
@@ -108,14 +107,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCommandNotMatchingAllowlist_ThrowsInvalidOperationException()
+    public async Task ExecuteAsync_WithCommandNotMatchingAllowlist_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { "^git\\s", "^npm\\s" }
+            AllowedCommands = ["^git\\s", "^npm\\s"]
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_curlCommand);
 
         // Act & Assert
@@ -125,14 +124,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCommandMatchingAllowlist_ReturnsResult()
+    public async Task ExecuteAsync_WithCommandMatchingAllowlist_ReturnsResultAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { "^git\\s" }
+            AllowedCommands = ["^git\\s"]
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_gitStatusCommand);
 
         // Act
@@ -144,15 +143,15 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCommandMatchingBothLists_PrioritizesDenylist()
+    public async Task ExecuteAsync_WithCommandMatchingBothLists_PrioritizesDenylistAsync()
     {
         // Arrange - Command matches both allowlist and denylist
         var options = new ShellToolOptions
         {
-            AllowedCommands = new List<string> { ".*" }, // Allow everything
-            DeniedCommands = new List<string> { "rm" }   // But deny rm
+            AllowedCommands = [".*"], // Allow everything
+            DeniedCommands = ["rm"]   // But deny rm
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_rmFileCommand);
 
         // Act & Assert - Denylist should win
@@ -169,11 +168,11 @@ public class ShellToolTests
     [InlineData("runas /user:admin cmd")]
     [InlineData("doas command")]
     [InlineData("pkexec command")]
-    public async Task ExecuteAsync_WithPrivilegeEscalationCommand_ThrowsInvalidOperationException(string command)
+    public async Task ExecuteAsync_WithPrivilegeEscalationCommand_ThrowsInvalidOperationExceptionAsync(string command)
     {
         // Arrange
-        var tool = new ShellTool(_executorMock.Object);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -182,14 +181,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithPrivilegeEscalationDisabled_AllowsSudoCommands()
+    public async Task ExecuteAsync_WithPrivilegeEscalationDisabled_AllowsSudoCommandsAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockPrivilegeEscalation = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_sudoAptInstallCommand);
 
         // Act
@@ -203,11 +202,11 @@ public class ShellToolTests
     [InlineData("sudoku game")]
     [InlineData("resume.txt")]
     [InlineData("dosomething")]
-    public async Task ExecuteAsync_WithSimilarButSafeCommands_ReturnsResult(string command)
+    public async Task ExecuteAsync_WithSimilarButSafeCommands_ReturnsResultAsync(string command)
     {
         // Arrange
-        var tool = new ShellTool(_executorMock.Object);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act
         var result = await tool.ExecuteAsync(callContent);
@@ -217,21 +216,21 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithValidCommand_ReturnsCorrectOutput()
+    public async Task ExecuteAsync_WithValidCommand_ReturnsCorrectOutputAsync()
     {
         // Arrange
         var expectedOutput = new List<ShellExecutorOutput>
         {
             new() { Command = "echo hello", StandardOutput = "hello\n", ExitCode = 0 }
         };
-        _executorMock
+        this._executorMock
             .Setup(e => e.ExecuteAsync(
                 It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<ShellToolOptions>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedOutput);
 
-        var tool = new ShellTool(_executorMock.Object);
+        var tool = new ShellTool(this._executorMock.Object);
         var callContent = new ShellCallContent("call-1", s_echoHelloCommand);
 
         // Act
@@ -246,14 +245,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithMultipleCommands_ValidatesAllBeforeExecution()
+    public async Task ExecuteAsync_WithMultipleCommands_ValidatesAllBeforeExecutionAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            DeniedCommands = new List<string> { "dangerous" }
+            DeniedCommands = ["dangerous"]
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_mixedCommands);
 
         // Act & Assert - Should fail on second command before executing any
@@ -261,7 +260,7 @@ public class ShellToolTests
             tool.ExecuteAsync(callContent));
 
         // Verify executor was never called
-        _executorMock.Verify(
+        this._executorMock.Verify(
             e => e.ExecuteAsync(
                 It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<ShellToolOptions>(),
@@ -278,11 +277,11 @@ public class ShellToolTests
     [InlineData("test || echo failure")]
     [InlineData("echo $(whoami)")]
     [InlineData("echo `whoami`")]
-    public async Task ExecuteAsync_WithCommandChaining_ThrowsInvalidOperationException(string command)
+    public async Task ExecuteAsync_WithCommandChaining_ThrowsInvalidOperationExceptionAsync(string command)
     {
         // Arrange
-        var tool = new ShellTool(_executorMock.Object);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -295,15 +294,15 @@ public class ShellToolTests
     [InlineData("echo 'pipe | in single quotes'")]
     [InlineData("echo \"ampersand && in quotes\"")]
     [InlineData("echo \"dollar $(in quotes)\"")]
-    public async Task ExecuteAsync_WithOperatorsInQuotes_ReturnsResult(string command)
+    public async Task ExecuteAsync_WithOperatorsInQuotes_ReturnsResultAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockDangerousPatterns = false // Allow dangerous patterns for this test
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act
         var result = await tool.ExecuteAsync(callContent);
@@ -313,7 +312,7 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCommandChainingDisabled_AllowsChainingOperators()
+    public async Task ExecuteAsync_WithCommandChainingDisabled_AllowsChainingOperatorsAsync()
     {
         // Arrange
         var options = new ShellToolOptions
@@ -321,7 +320,7 @@ public class ShellToolTests
             BlockCommandChaining = false,
             BlockDangerousPatterns = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_echoHelloEchoWorldCommand);
 
         // Act
@@ -346,15 +345,15 @@ public class ShellToolTests
     [InlineData("> /dev/sda")]
     [InlineData("chmod 777 /")]
     [InlineData("chmod -R 777 /")]
-    public async Task ExecuteAsync_WithDangerousPattern_ThrowsInvalidOperationException(string command)
+    public async Task ExecuteAsync_WithDangerousPattern_ThrowsInvalidOperationExceptionAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false // Disable chaining detection for these tests
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -363,7 +362,7 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithDangerousPatternsDisabled_AllowsDangerousCommands()
+    public async Task ExecuteAsync_WithDangerousPatternsDisabled_AllowsDangerousCommandsAsync()
     {
         // Arrange
         var options = new ShellToolOptions
@@ -371,7 +370,7 @@ public class ShellToolTests
             BlockDangerousPatterns = false,
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_rmRfSlashCommand);
 
         // Act
@@ -389,15 +388,15 @@ public class ShellToolTests
     [InlineData("/usr/bin/sudo apt install")]
     [InlineData("\"/usr/bin/sudo\" command")]
     [InlineData("C:\\Windows\\System32\\runas.exe /user:admin cmd")]
-    public async Task ExecuteAsync_WithPrivilegeEscalationInPath_ThrowsInvalidOperationException(string command)
+    public async Task ExecuteAsync_WithPrivilegeEscalationInPath_ThrowsInvalidOperationExceptionAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -408,15 +407,15 @@ public class ShellToolTests
     [Theory]
     [InlineData("/usr/bin/mysudo command")]  // "mysudo" is not "sudo"
     [InlineData("sudo-like command")]         // Not the sudo command
-    public async Task ExecuteAsync_WithSimilarToPrivilegeEscalation_ReturnsResult(string command)
+    public async Task ExecuteAsync_WithSimilarToPrivilegeEscalation_ReturnsResultAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act
         var result = await tool.ExecuteAsync(callContent);
@@ -436,15 +435,15 @@ public class ShellToolTests
     [InlineData("/usr/bin/bash -c \"doas command\"")]
     [InlineData("zsh -c \"pkexec command\"")]
     [InlineData("dash -c 'su -'")]
-    public async Task ExecuteAsync_WithShellWrapperContainingPrivilegeEscalation_ThrowsInvalidOperationException(string command)
+    public async Task ExecuteAsync_WithShellWrapperContainingPrivilegeEscalation_ThrowsInvalidOperationExceptionAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false // Disable chaining to test privilege escalation detection
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -456,15 +455,15 @@ public class ShellToolTests
     [InlineData("sh -c \"echo hello\"")]
     [InlineData("bash -c \"ls -la\"")]
     [InlineData("/bin/sh -c \"cat file.txt\"")]
-    public async Task ExecuteAsync_WithShellWrapperContainingSafeCommand_ReturnsResult(string command)
+    public async Task ExecuteAsync_WithShellWrapperContainingSafeCommand_ReturnsResultAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false // Disable chaining to test shell wrappers
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act
         var result = await tool.ExecuteAsync(callContent);
@@ -474,14 +473,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithNestedShellWrapperContainingPrivilegeEscalation_ThrowsInvalidOperationException()
+    public async Task ExecuteAsync_WithNestedShellWrapperContainingPrivilegeEscalation_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange - Nested shell wrapper with privilege escalation
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_nestedShellWrapperSudoCommand);
 
         // Act & Assert
@@ -495,15 +494,15 @@ public class ShellToolTests
     #region Path-Based Access Control Tests
 
     [Fact]
-    public async Task ExecuteAsync_WithBlockedPath_ThrowsInvalidOperationException()
+    public async Task ExecuteAsync_WithBlockedPath_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            BlockedPaths = new List<string> { "/etc" },
+            BlockedPaths = ["/etc"],
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_catEtcPasswdCommand);
 
         // Act & Assert
@@ -513,15 +512,15 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithAllowedPath_ReturnsResult()
+    public async Task ExecuteAsync_WithAllowedPath_ReturnsResultAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedPaths = new List<string> { "/tmp" },
+            AllowedPaths = ["/tmp"],
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_catTmpFileCommand);
 
         // Act
@@ -532,15 +531,15 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithPathNotInAllowedList_ThrowsInvalidOperationException()
+    public async Task ExecuteAsync_WithPathNotInAllowedList_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            AllowedPaths = new List<string> { "/tmp" },
+            AllowedPaths = ["/tmp"],
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_catHomeUserFileCommand);
 
         // Act & Assert
@@ -550,16 +549,16 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithBlockedPathTakesPriorityOverAllowed_ThrowsInvalidOperationException()
+    public async Task ExecuteAsync_WithBlockedPathTakesPriorityOverAllowed_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
-            BlockedPaths = new List<string> { "/tmp/secret" },
-            AllowedPaths = new List<string> { "/tmp" },
+            BlockedPaths = ["/tmp/secret"],
+            AllowedPaths = ["/tmp"],
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_catTmpSecretFileCommand);
 
         // Act & Assert
@@ -569,14 +568,14 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithNoPathRestrictions_ReturnsResult()
+    public async Task ExecuteAsync_WithNoPathRestrictions_ReturnsResultAsync()
     {
         // Arrange
         var options = new ShellToolOptions
         {
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
+        var tool = new ShellTool(this._executorMock.Object, options);
         var callContent = new ShellCallContent("call-1", s_catAnyPathFileCommand);
 
         // Act
@@ -590,17 +589,17 @@ public class ShellToolTests
     [InlineData("cat ../../../etc/passwd")]
     [InlineData("cat ./../../etc/passwd")]
     [InlineData("ls ../secret")]
-    public async Task ExecuteAsync_WithRelativePathTraversal_ThrowsInvalidOperationException(string command)
+    public async Task ExecuteAsync_WithRelativePathTraversal_ThrowsInvalidOperationExceptionAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             WorkingDirectory = "/tmp/safe",
-            AllowedPaths = new List<string> { "/tmp/safe" },
+            AllowedPaths = ["/tmp/safe"],
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -612,17 +611,17 @@ public class ShellToolTests
     [InlineData("cat ./file.txt")]
     [InlineData("ls ./subdir")]
     [InlineData("cat subdir/file.txt")]
-    public async Task ExecuteAsync_WithRelativePathWithinAllowed_ReturnsResult(string command)
+    public async Task ExecuteAsync_WithRelativePathWithinAllowed_ReturnsResultAsync(string command)
     {
         // Arrange
         var options = new ShellToolOptions
         {
             WorkingDirectory = "/tmp/safe",
-            AllowedPaths = new List<string> { "/tmp/safe" },
+            AllowedPaths = ["/tmp/safe"],
             BlockCommandChaining = false
         };
-        var tool = new ShellTool(_executorMock.Object, options);
-        var callContent = new ShellCallContent("call-1", new[] { command });
+        var tool = new ShellTool(this._executorMock.Object, options);
+        var callContent = new ShellCallContent("call-1", [command]);
 
         // Act
         var result = await tool.ExecuteAsync(callContent);

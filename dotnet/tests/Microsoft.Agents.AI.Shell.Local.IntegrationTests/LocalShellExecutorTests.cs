@@ -1,11 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.AI.Shell.Local.IntegrationTests;
 
@@ -22,8 +21,8 @@ public class LocalShellExecutorTests
 
     public LocalShellExecutorTests()
     {
-        _executor = new LocalShellExecutor();
-        _options = new ShellToolOptions
+        this._executor = new LocalShellExecutor();
+        this._options = new ShellToolOptions
         {
             TimeoutInMilliseconds = 30000,
             MaxOutputLength = 51200
@@ -31,7 +30,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithSimpleEchoCommand_ReturnsExpectedOutput()
+    public async Task ExecuteAsync_WithSimpleEchoCommand_ReturnsExpectedOutputAsync()
     {
         // Arrange
         string command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -39,7 +38,7 @@ public class LocalShellExecutorTests
             : "echo hello";
 
         // Act
-        var results = await _executor.ExecuteAsync(new[] { command }, _options);
+        var results = await this._executor.ExecuteAsync([command], this._options);
 
         // Assert
         Assert.Single(results);
@@ -50,7 +49,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithNonZeroExitCode_CapturesExitCode()
+    public async Task ExecuteAsync_WithNonZeroExitCode_CapturesExitCodeAsync()
     {
         // Arrange
         string command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -58,7 +57,7 @@ public class LocalShellExecutorTests
             : "exit 42";
 
         // Act
-        var results = await _executor.ExecuteAsync(new[] { command }, _options);
+        var results = await this._executor.ExecuteAsync([command], this._options);
 
         // Assert
         Assert.Single(results);
@@ -66,7 +65,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithStderrOutput_CapturesStandardError()
+    public async Task ExecuteAsync_WithStderrOutput_CapturesStandardErrorAsync()
     {
         // Arrange
         string command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -74,7 +73,7 @@ public class LocalShellExecutorTests
             : "echo error message >&2";
 
         // Act
-        var results = await _executor.ExecuteAsync(new[] { command }, _options);
+        var results = await this._executor.ExecuteAsync([command], this._options);
 
         // Assert
         Assert.Single(results);
@@ -82,7 +81,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithMultipleCommands_ExecutesAllInSequence()
+    public async Task ExecuteAsync_WithMultipleCommands_ExecutesAllInSequenceAsync()
     {
         // Arrange
         string[] commands = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -90,7 +89,7 @@ public class LocalShellExecutorTests
             : ["echo first", "echo second", "echo third"];
 
         // Act
-        var results = await _executor.ExecuteAsync(commands, _options);
+        var results = await this._executor.ExecuteAsync(commands, this._options);
 
         // Assert
         Assert.Equal(3, results.Count);
@@ -100,7 +99,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCustomWorkingDirectory_UsesSpecifiedDirectory()
+    public async Task ExecuteAsync_WithCustomWorkingDirectory_UsesSpecifiedDirectoryAsync()
     {
         // Arrange
         string tempDir = Path.GetTempPath();
@@ -116,7 +115,7 @@ public class LocalShellExecutorTests
             : "pwd";
 
         // Act
-        var results = await _executor.ExecuteAsync(new[] { command }, options);
+        var results = await this._executor.ExecuteAsync([command], options);
 
         // Assert
         Assert.Single(results);
@@ -127,7 +126,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithShortTimeout_TimesOutLongRunningCommand()
+    public async Task ExecuteAsync_WithShortTimeout_TimesOutLongRunningCommandAsync()
     {
         // Arrange
         var options = new ShellToolOptions
@@ -142,7 +141,7 @@ public class LocalShellExecutorTests
             : "sleep 10";
 
         // Act
-        var results = await _executor.ExecuteAsync(new[] { command }, options);
+        var results = await this._executor.ExecuteAsync([command], options);
 
         // Assert
         Assert.Single(results);
@@ -151,7 +150,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithSmallMaxOutputLength_TruncatesLargeOutput()
+    public async Task ExecuteAsync_WithSmallMaxOutputLength_TruncatesLargeOutputAsync()
     {
         // Arrange
         var options = new ShellToolOptions
@@ -166,7 +165,7 @@ public class LocalShellExecutorTests
             : "for i in $(seq 1 1000); do echo Line $i; done";
 
         // Act
-        var results = await _executor.ExecuteAsync(new[] { command }, options);
+        var results = await this._executor.ExecuteAsync([command], options);
 
         // Assert
         Assert.Single(results);
@@ -175,10 +174,10 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithNonExistentCommand_ReturnsErrorOrNonZeroExitCode()
+    public async Task ExecuteAsync_WithNonExistentCommand_ReturnsErrorOrNonZeroExitCodeAsync()
     {
         // Act
-        var results = await _executor.ExecuteAsync(s_nonExistentCommand, _options);
+        var results = await this._executor.ExecuteAsync(s_nonExistentCommand, this._options);
 
         // Assert
         Assert.Single(results);
@@ -190,7 +189,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCustomShell_UsesSpecifiedShell()
+    public async Task ExecuteAsync_WithCustomShell_UsesSpecifiedShellAsync()
     {
         // Skip on non-Windows for this specific test
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -207,7 +206,7 @@ public class LocalShellExecutorTests
         };
 
         // Act
-        var results = await _executor.ExecuteAsync(s_powershellCommand, options);
+        var results = await this._executor.ExecuteAsync(s_powershellCommand, options);
 
         // Assert
         Assert.Single(results);
@@ -215,7 +214,7 @@ public class LocalShellExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithCancellationToken_ThrowsOperationCanceledException()
+    public async Task ExecuteAsync_WithCancellationToken_ThrowsOperationCanceledExceptionAsync()
     {
         // Arrange
         using var cts = new CancellationTokenSource();
@@ -230,14 +229,14 @@ public class LocalShellExecutorTests
 
         // Act & Assert - TaskCanceledException derives from OperationCanceledException
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            _executor.ExecuteAsync(new[] { command }, _options, cts.Token));
+            this._executor.ExecuteAsync([command], this._options, cts.Token));
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithEmptyCommandList_ReturnsEmptyList()
+    public async Task ExecuteAsync_WithEmptyCommandList_ReturnsEmptyListAsync()
     {
         // Act
-        var results = await _executor.ExecuteAsync(Array.Empty<string>(), _options);
+        var results = await this._executor.ExecuteAsync([], this._options);
 
         // Assert
         Assert.Empty(results);
