@@ -45,11 +45,12 @@ public static class Program
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-        // 2. Create specialized agents
+        // 1. Create AI client
         IChatClient client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
             .GetChatClient(deploymentName)
             .AsIChatClient();
 
+        // 2. Create specialized agents with their tools
         ChatClientAgent qaEngineer = new(
             client,
             "You are a QA engineer responsible for running tests before deployment. Run the appropriate test suites and report results clearly.",
@@ -188,7 +189,7 @@ public static class Program
         }
     }
 
-    // 1. Define tools for different agents
+    // Tool definitions - These are called by the agents during workflow execution
     [Description("Run automated tests for the application.")]
     private static string RunTests([Description("Name of the test suite to run")] string testSuite)
         => $"Test suite '{testSuite}' completed: 47 passed, 0 failed, 0 skipped";
