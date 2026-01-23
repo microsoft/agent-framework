@@ -210,7 +210,7 @@ public abstract class Executor : IIdentified
         // TODO: Once burden of annotating yield/output messages becomes easier for the non-Auto case,
         // we should (1) start checking for validity on output/send side, and (2) add the Yield/Send
         // types to the ProtocolDescriptor.
-        return new(this.InputTypes);
+        return new(this.InputTypes, this.Router.HasCatchAll);
     }
 
     /// <summary>

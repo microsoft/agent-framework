@@ -19,15 +19,17 @@ internal sealed class WorkflowThread : AgentThread
     private readonly Workflow _workflow;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
     private readonly bool _includeExceptionDetails;
+    private readonly bool _includeWorkflowOutputsInResponse;
 
     private readonly CheckpointManager _checkpointManager;
     private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false)
+    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
+        this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
         // If the user provided an external checkpoint manager, use that, otherwise rely on an in-memory one.
         // TODO: Implement persist-only-last functionality for in-memory checkpoint manager, to avoid unbounded
@@ -38,10 +40,12 @@ internal sealed class WorkflowThread : AgentThread
         this.MessageStore = new WorkflowMessageStore();
     }
 
-    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
+        this._includeExceptionDetails = includeExceptionDetails;
+        this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         ThreadState threadState = marshaller.Marshal<ThreadState>(serializedThread);
@@ -101,6 +105,23 @@ internal sealed class WorkflowThread : AgentThread
         return update;
     }
 
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message)
+    {
+        Throw.IfNull(message);
+
+        AgentResponseUpdate update = new(message.Role, message.Contents)
+        {
+            CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
+            MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
+            ResponseId = responseId,
+            RawRepresentation = raw
+        };
+
+        this.MessageStore.AddMessages(update.ToChatMessage());
+
+        return update;
+    }
+
     private async ValueTask<Checkpointed<StreamingRun>> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the thread,
@@ -112,7 +133,6 @@ internal sealed class WorkflowThread : AgentThread
                             .ResumeStreamAsync(this._workflow,
                                                this.LastCheckpoint,
                                                this._checkpointManager,
-                                               this.RunId,
                                                cancellationToken)
                             .ConfigureAwait(false);
 
@@ -183,6 +203,25 @@ internal sealed class WorkflowThread : AgentThread
                     case SuperStepCompletedEvent stepCompleted:
                         this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
                         goto default;
+
+                    case WorkflowOutputEvent output:
+                        IEnumerable<ChatMessage>? updateMessages = output.Data switch
+                        {
+                            IEnumerable<ChatMessage> chatMessages => chatMessages,
+                            ChatMessage chatMessage => [chatMessage],
+                            _ => null
+                        };
+
+                        if (!this._includeWorkflowOutputsInResponse || updateMessages == null)
+                        {
+                            goto default;
+                        }
+
+                        foreach (ChatMessage message in updateMessages)
+                        {
+                            yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                        }
+                        break;
 
                     default:
                         // Emit all other workflow events for observability (DevUI, logging, etc.)
