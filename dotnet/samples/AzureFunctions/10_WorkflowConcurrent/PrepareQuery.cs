@@ -4,7 +4,7 @@ using Microsoft.Agents.AI.Workflows;
 
 namespace SingleAgent;
 
-internal sealed class ConcurrentStartExecutor() : Executor<string, string>("ConcurrentStartExecutor")
+internal sealed class PrepareQuery() : Executor<string, string>("PrepareQuery")
 {
     public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -19,19 +19,11 @@ internal sealed class ConcurrentStartExecutor() : Executor<string, string>("Conc
     }
 }
 
-internal sealed class ResultAggregationExecutor() : Executor<string[], string>("ResultAggregationExecutor")
+internal sealed class ResultAggregator() : Executor<string[], string>("ResultAggregator")
 {
-    /// <summary>
-    /// Handles incoming messages from the agents and aggregates their responses.
-    /// </summary>
-    /// <param name="message">The messages from the parallel agents.</param>
-    /// <param name="context">Workflow context for accessing workflow services and adding events.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
-    /// The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
     public override ValueTask<string> HandleAsync(string[] message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        // Aggregate all responses from parallel executors
+        // Aggregate all responses from parallel executors.
         string aggregatedResponse = string.Join("\n---\n", message);
         return ValueTask.FromResult($"Aggregated {message.Length} responses:\n{aggregatedResponse}");
     }

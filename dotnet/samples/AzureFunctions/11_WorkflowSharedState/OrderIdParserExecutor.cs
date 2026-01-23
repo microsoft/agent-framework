@@ -69,7 +69,6 @@ internal sealed class EmailSenderExecutor() : Executor<Order, string>("EmailSend
             SharedStateConstants.MessageScope,
             cancellationToken);
 
-        // Combine with the input message
         return storedMessage is not null
             ? $"From state: [{storedMessage}] | Input: [{message.Id}]"
             : $"No state found | Input: [{message.Id}]";

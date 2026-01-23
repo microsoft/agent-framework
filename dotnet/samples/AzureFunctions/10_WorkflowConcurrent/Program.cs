@@ -27,8 +27,8 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
 AIAgent physicist = client.GetChatClient(deploymentName).CreateAIAgent("You are an expert in physics. You answer questions from a physics perspective.", "Physicist");
 AIAgent chemist = client.GetChatClient(deploymentName).CreateAIAgent("You are an expert in chemistry. You answer questions from a chemistry perspective.", "Chemist");
 
-var startExecutor = new ConcurrentStartExecutor();
-var aggregationExecutor = new ResultAggregationExecutor();
+var startExecutor = new PrepareQuery();
+var aggregationExecutor = new ResultAggregator();
 
 var workflow = new WorkflowBuilder(startExecutor)
     .WithName("ExpertReview")
