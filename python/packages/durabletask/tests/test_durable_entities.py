@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, ErrorContent, Role
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content, Role
 from pydantic import BaseModel
 
 from agent_framework_durabletask import (
@@ -456,7 +456,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert isinstance(content, Content)
         assert "Agent failed" in (content.message or "")
         assert content.error_code == "Exception"
 
@@ -472,7 +472,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert isinstance(content, Content)
         assert content.error_code == "ValueError"
         assert "Invalid input" in str(content.message)
 
@@ -488,7 +488,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert isinstance(content, Content)
         assert content.error_code == "TimeoutError"
 
     async def test_run_agent_preserves_message_on_error(self) -> None:
@@ -506,7 +506,7 @@ class TestErrorHandling:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert isinstance(content, Content)
 
 
 class TestConversationHistory:

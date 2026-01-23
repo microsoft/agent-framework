@@ -30,9 +30,10 @@ All classes support bidirectional conversion between:
 from __future__ import annotations
 
 import json
+from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from agent_framework import (
     AgentResponse,
@@ -261,7 +262,7 @@ class DurableAgentStateContent:
         """Convert this durable state content back to an agent framework content object.
 
         Returns:
-            An agent framework content object (TextContent, FunctionCallContent, etc.)
+            An agent framework content object (Content of type `text`, `function_call`, etc.)
 
         Raises:
             NotImplementedError: Must be implemented by subclasses
@@ -272,38 +273,42 @@ class DurableAgentStateContent:
     def from_ai_content(content: Any) -> DurableAgentStateContent:
         """Create a durable state content object from an agent framework content object.
 
-        This factory method maps agent framework content types (TextContent, FunctionCallContent,
-        etc.) to their corresponding durable state representations. Unknown content types are
-        wrapped in DurableAgentStateUnknownContent.
+        This factory method maps agent framework content types to their corresponding durable state representations.
+        Unknown content types are wrapped in DurableAgentStateUnknownContent.
 
         Args:
-            content: An agent framework content object (TextContent, FunctionCallContent, etc.)
+            content: An agent framework content object (Content of type `text`, `function_call`, etc.)
 
         Returns:
             The corresponding DurableAgentStateContent subclass instance
         """
         # Map AI content type to appropriate DurableAgentStateContent subclass
-        if isinstance(content, Content) and content.type == "data":
-            return DurableAgentStateDataContent.from_data_content(content)
-        if isinstance(content, Content) and content.type == "error":
-            return DurableAgentStateErrorContent.from_error_content(content)
-        if isinstance(content, Content) and content.type == "function_call":
-            return DurableAgentStateFunctionCallContent.from_function_call_content(content)
-        if isinstance(content, Content) and content.type == "function_result":
-            return DurableAgentStateFunctionResultContent.from_function_result_content(content)
-        if isinstance(content, Content) and content.type == "hosted_file":
-            return DurableAgentStateHostedFileContent.from_hosted_file_content(content)
-        if isinstance(content, Content) and content.type == "hosted_vector_store":
-            return DurableAgentStateHostedVectorStoreContent.from_hosted_vector_store_content(content)
-        if isinstance(content, Content) and content.type == "text":
-            return DurableAgentStateTextContent.from_text_content(content)
-        if isinstance(content, Content) and content.type == "text_reasoning":
-            return DurableAgentStateTextReasoningContent.from_text_reasoning_content(content)
-        if isinstance(content, Content) and content.type == "uri":
-            return DurableAgentStateUriContent.from_uri_content(content)
-        if isinstance(content, Content) and content.type == "usage":
-            return DurableAgentStateUsageContent.from_usage_content(content)
-        return DurableAgentStateUnknownContent.from_unknown_content(content)
+        if not isinstance(content, Content):
+            return DurableAgentStateUnknownContent.from_unknown_content(content)
+
+        match content.type:
+            case "data":
+                return DurableAgentStateDataContent.from_data_content(content)
+            case "error":
+                return DurableAgentStateErrorContent.from_error_content(content)
+            case "function_call":
+                return DurableAgentStateFunctionCallContent.from_function_call_content(content)
+            case "function_result":
+                return DurableAgentStateFunctionResultContent.from_function_result_content(content)
+            case "hosted_file":
+                return DurableAgentStateHostedFileContent.from_hosted_file_content(content)
+            case "hosted_vector_store":
+                return DurableAgentStateHostedVectorStoreContent.from_hosted_vector_store_content(content)
+            case "text":
+                return DurableAgentStateTextContent.from_text_content(content)
+            case "reasoning":
+                return DurableAgentStateTextReasoningContent.from_text_reasoning_content(content)
+            case "uri":
+                return DurableAgentStateUriContent.from_uri_content(content)
+            case "usage":
+                return DurableAgentStateUsageContent.from_usage_content(content)
+            case _:
+                return DurableAgentStateUnknownContent.from_unknown_content(content)
 
 
 # Core state classes
@@ -871,7 +876,9 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
 
     @staticmethod
     def from_data_content(content: Content) -> DurableAgentStateDataContent:
-        return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)  # type: ignore[arg-type]
+        if content.uri is None:
+            raise ValueError("uri is required for data content")
+        return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)
 
     def to_ai_content(self) -> Content:
         return Content.from_uri(uri=self.uri, media_type=self.media_type)
@@ -952,6 +959,10 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
 
     @staticmethod
     def from_function_call_content(content: Content) -> DurableAgentStateFunctionCallContent:
+        if content.call_id is None:
+            raise ValueError("call_id is required for function call content")
+        if content.name is None:
+            raise ValueError("name is required for function call content")
         # Ensure arguments is a dict; parse string if needed
         arguments: dict[str, Any] = {}
         if content.arguments:
@@ -1000,7 +1011,9 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
 
     @staticmethod
     def from_function_result_content(content: Content) -> DurableAgentStateFunctionResultContent:
-        return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)  # type: ignore[arg-type]
+        if content.call_id is None:
+            raise ValueError("call_id is required for function result content")
+        return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)
 
     def to_ai_content(self) -> Content:
         return Content.from_function_result(call_id=self.call_id, result=self.result)
@@ -1028,7 +1041,9 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
 
     @staticmethod
     def from_hosted_file_content(content: Content) -> DurableAgentStateHostedFileContent:
-        return DurableAgentStateHostedFileContent(file_id=content.file_id)  # type: ignore[arg-type]
+        if content.file_id is None:
+            raise ValueError("file_id is required for hosted file content")
+        return DurableAgentStateHostedFileContent(file_id=content.file_id)
 
     def to_ai_content(self) -> Content:
         return Content.from_hosted_file(file_id=self.file_id)
@@ -1062,7 +1077,9 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
     def from_hosted_vector_store_content(
         content: Content,
     ) -> DurableAgentStateHostedVectorStoreContent:
-        return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)  # type: ignore[arg-type]
+        if content.vector_store_id is None:
+            raise ValueError("vector_store_id is required for hosted vector store content")
+        return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)
 
     def to_ai_content(self) -> Content:
         return Content.from_hosted_vector_store(vector_store_id=self.vector_store_id)
@@ -1149,7 +1166,11 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
 
     @staticmethod
     def from_uri_content(content: Content) -> DurableAgentStateUriContent:
-        return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)  # type: ignore[arg-type]
+        if content.uri is None:
+            raise ValueError("uri is required for uri content")
+        if content.media_type is None:
+            raise ValueError("media_type is required for uri content")
+        return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)
 
     def to_ai_content(self) -> Content:
         return Content.from_uri(uri=self.uri, media_type=self.media_type)
@@ -1168,6 +1189,14 @@ class DurableAgentStateUsage:
         total_token_count: Total number of tokens consumed (input + output)
         extensionData: Optional additional metadata
     """
+
+    # UsageDetails field name constants (snake_case keys from agent_framework.UsageDetails)
+    _INPUT_TOKEN_COUNT = "input_token_count"  # noqa: S105  # nosec B105
+    _OUTPUT_TOKEN_COUNT = "output_token_count"  # noqa: S105  # nosec B105
+    _TOTAL_TOKEN_COUNT = "total_token_count"  # noqa: S105  # nosec B105
+
+    # Standard fields in UsageDetails that are mapped to dedicated attributes
+    _STANDARD_USAGE_FIELDS: ClassVar[set[str]] = {_INPUT_TOKEN_COUNT, _OUTPUT_TOKEN_COUNT, _TOTAL_TOKEN_COUNT}
 
     input_token_count: int | None = None
     output_token_count: int | None = None
@@ -1206,22 +1235,31 @@ class DurableAgentStateUsage:
         )
 
     @staticmethod
-    def from_usage(usage: UsageDetails | dict[str, int] | None) -> DurableAgentStateUsage | None:
+    def from_usage(usage: UsageDetails | MutableMapping[str, int] | None) -> DurableAgentStateUsage | None:
         if usage is None:
             return None
+
+        # Collect all non-standard fields into extension_data
+        extension_data: dict[str, Any] = {
+            k: v for k, v in usage.items() if k not in DurableAgentStateUsage._STANDARD_USAGE_FIELDS
+        }
+
         return DurableAgentStateUsage(
-            input_token_count=usage.get("input_token_count"),
-            output_token_count=usage.get("output_token_count"),
-            total_token_count=usage.get("total_token_count"),
+            input_token_count=usage.get(DurableAgentStateUsage._INPUT_TOKEN_COUNT),
+            output_token_count=usage.get(DurableAgentStateUsage._OUTPUT_TOKEN_COUNT),
+            total_token_count=usage.get(DurableAgentStateUsage._TOTAL_TOKEN_COUNT),
+            extensionData=extension_data if extension_data else None,
         )
 
     def to_usage_details(self) -> UsageDetails:
         # Convert back to AI SDK UsageDetails
-        return {
-            "input_token_count": self.input_token_count,
-            "output_token_count": self.output_token_count,
-            "total_token_count": self.total_token_count,
-        }
+
+        return UsageDetails(
+            input_token_count=self.input_token_count,
+            output_token_count=self.output_token_count,
+            total_token_count=self.total_token_count,
+            **self.extensionData if self.extensionData else {},
+        )
 
 
 class DurableAgentStateUsageContent(DurableAgentStateContent):
