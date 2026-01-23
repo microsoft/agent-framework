@@ -9,11 +9,14 @@ from agent_framework_azure_ai import (
     AzureAISettings,
 )
 from agent_framework_azure_ai_search import AzureAISearchContextProvider, AzureAISearchSettings
-from agent_framework_azurefunctions import (
+from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_durabletask import (
     AgentCallbackContext,
-    AgentFunctionApp,
     AgentResponseCallbackProtocol,
     DurableAIAgent,
+    DurableAIAgentClient,
+    DurableAIAgentOrchestrationContext,
+    DurableAIAgentWorker,
 )
 
 from agent_framework.azure._assistants_client import AzureOpenAIAssistantsClient
@@ -39,5 +42,8 @@ __all__ = [
     "AzureOpenAIResponsesClient",
     "AzureOpenAISettings",
     "DurableAIAgent",
+    "DurableAIAgentClient",
+    "DurableAIAgentOrchestrationContext",
+    "DurableAIAgentWorker",
     "get_entra_auth_token",
 ]

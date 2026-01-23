@@ -691,7 +691,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
             correlation_id=correlation_id,
             created_at=_parse_created_at(response.created_at),
             messages=[DurableAgentStateMessage.from_chat_message(m) for m in response.messages],
-            usage=DurableAgentStateUsage.from_usage(response.usage_details),  # type: ignore[arg-type]
+            usage=DurableAgentStateUsage.from_usage(response.usage_details),
         )
 
     @staticmethod
@@ -975,7 +975,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
                 except json.JSONDecodeError:
                     arguments = {}
 
-        return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)  # type: ignore[arg-type]
+        return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
 
     def to_ai_content(self) -> Content:
         return Content.from_function_call(call_id=self.call_id, name=self.name, arguments=self.arguments)
