@@ -4,7 +4,7 @@
 
 import copy
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from ag_ui.encoder import EventEncoder
@@ -56,8 +56,8 @@ def add_agent_framework_fastapi_endpoint(
     else:
         wrapped_agent = agent
 
-    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies)  # type: ignore[arg-type]
-    async def agent_endpoint(request_body: AGUIRequest):  # type: ignore[misc]
+    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
+    async def agent_endpoint(request_body: AGUIRequest) -> StreamingResponse | dict[str, str]:
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
@@ -77,17 +77,19 @@ def add_agent_framework_fastapi_endpoint(
             )
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
-            async def event_generator():
+            async def event_generator() -> AsyncGenerator[str, None]:
                 encoder = EventEncoder()
                 event_count = 0
                 async for event in wrapped_agent.run_agent(input_data):
                     event_count += 1
-                    logger.debug(f"[{path}] Event {event_count}: {type(event).__name__}")
-
-                    # Log event payload for debugging
-                    if hasattr(event, "model_dump"):
-                        event_data = event.model_dump(exclude_none=True)
-                        logger.debug(f"[{path}] Event payload: {event_data}")
+                    event_type_name = getattr(event, "type", type(event).__name__)
+                    # Log important events at INFO level
+                    if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):
+                        if hasattr(event, "model_dump"):
+                            event_data = event.model_dump(exclude_none=True)
+                            logger.info(f"[{path}] Event {event_count}: {event_type_name} - {event_data}")
+                        else:
+                            logger.info(f"[{path}] Event {event_count}: {event_type_name}")
 
                     encoded = encoder.encode(event)
                     logger.debug(

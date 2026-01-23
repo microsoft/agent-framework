@@ -9,6 +9,7 @@ from agent_framework import (
     Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
@@ -29,6 +30,8 @@ from azure.ai.projects.models import (
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     FunctionTool,
+    ImageGenTool,
+    ImageGenToolInputImageMask,
     MCPTool,
     ResponseTextFormatConfigurationJsonObject,
     ResponseTextFormatConfigurationJsonSchema,
@@ -480,6 +483,31 @@ def to_azure_ai_tools(
                                 timezone=location.get("timezone"),
                             )
                     azure_tools.append(ws_tool)
+                case HostedImageGenerationTool():
+                    opts = tool.options or {}
+                    addl = tool.additional_properties or {}
+                    # Azure ImageGenTool requires the constant model "gpt-image-1"
+                    ig_tool: ImageGenTool = ImageGenTool(
+                        model=opts.get("model_id", "gpt-image-1"),  # type: ignore
+                        size=cast(
+                            Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None, opts.get("image_size")
+                        ),
+                        output_format=cast(Literal["png", "webp", "jpeg"] | None, opts.get("media_type")),
+                        input_image_mask=(
+                            ImageGenToolInputImageMask(
+                                image_url=addl.get("input_image_mask", {}).get("image_url"),
+                                file_id=addl.get("input_image_mask", {}).get("file_id"),
+                            )
+                            if isinstance(addl.get("input_image_mask"), dict)
+                            else None
+                        ),
+                        quality=cast(Literal["low", "medium", "high", "auto"] | None, addl.get("quality")),
+                        background=cast(Literal["transparent", "opaque", "auto"] | None, addl.get("background")),
+                        output_compression=cast(int | None, addl.get("output_compression")),
+                        moderation=cast(Literal["auto", "low"] | None, addl.get("moderation")),
+                        partial_images=opts.get("streaming_count"),
+                    )
+                    azure_tools.append(ig_tool)
                 case _:
                     logger.debug("Unsupported tool passed (type: %s)", type(tool))
         else:
