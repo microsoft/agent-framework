@@ -17,11 +17,10 @@ import logging
 import os
 from typing import Annotated, Any
 
-from dotenv import load_dotenv
-
 from agent_framework import ChatAgent, ai_function
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -31,6 +30,7 @@ logging.basicConfig(
     force=True,
 )
 logger = logging.getLogger(__name__)
+
 
 @ai_function
 def load_math_tools(
@@ -49,6 +49,13 @@ def load_math_tools(
         return "Error: Cannot access tools list for dynamic tool loading"
 
     if operation == "advanced":
+        # Check if advanced tools are already loaded
+        existing_tool_names = {getattr(tool, "__name__", None) for tool in tools_list if tool is not None}
+        advanced_tool_names = {"calculate_factorial", "calculate_fibonacci"}
+
+        if advanced_tool_names.issubset(existing_tool_names):
+            return "Advanced math tools (factorial and fibonacci) are already loaded"
+
         # Define advanced math tools that will be added dynamically
         @ai_function
         def calculate_factorial(n: Annotated[int, "The number to calculate factorial for"]) -> str:
@@ -100,7 +107,7 @@ async def main() -> None:
         ),
         name="MathAgent",
         tools=[add, load_math_tools],
-    )   
+    )
 
     print("=" * 80)
     print("Using basic tools and dynamically loading and using advanced tools")
@@ -114,6 +121,7 @@ async def main() -> None:
 
     response = await agent.run("Calculate sum of 5 and 29 and the factorial of 5 and the 10th Fibonacci number")
     print(f"Response: {response.text}\n")
+
 
 """
 Expected Output:

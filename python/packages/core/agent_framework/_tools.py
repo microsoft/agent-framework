@@ -1898,8 +1898,10 @@ def _handle_function_calls_response(
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Content] = []
                     if approved_responses:
+                        # Pass tools list to allow tools to dynamically add more tools
+                        custom_args_with_tools = {**kwargs, "tools": tools}
                         results, _ = await _try_execute_function_calls(
-                            custom_args=kwargs,
+                            custom_args=custom_args_with_tools,
                             attempt_idx=attempt_idx,
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
@@ -2093,8 +2095,10 @@ def _handle_function_calls_streaming_response(
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Content] = []
                     if approved_responses:
+                        # Pass tools list to allow tools to dynamically add more tools
+                        custom_args_with_tools = {**kwargs, "tools": tools}
                         results, _ = await _try_execute_function_calls(
-                            custom_args=kwargs,
+                            custom_args=custom_args_with_tools,
                             attempt_idx=attempt_idx,
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore

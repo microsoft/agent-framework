@@ -56,10 +56,11 @@ class TestKwargsPropagationToAIFunction:
 
         # Call with custom kwargs that should propagate to the tool
         # Note: tools are passed in options dict, custom kwargs are passed separately
+        tools_list = [capture_kwargs_tool]
         result = await wrapped(
             mock_client,
             messages=[],
-            options={"tools": [capture_kwargs_tool]},
+            options={"tools": tools_list},
             user_id="user-123",
             session_token="secret-token",
             custom_data={"key": "value"},
@@ -72,9 +73,10 @@ class TestKwargsPropagationToAIFunction:
         assert captured_kwargs["session_token"] == "secret-token"
         assert "custom_data" in captured_kwargs
         assert captured_kwargs["custom_data"] == {"key": "value"}
-        # Verify tools list is also present in kwargs
+        # Verify tools list is also present in kwargs and is the SAME object (identity check)
         assert "tools" in captured_kwargs, f"Expected 'tools' in captured kwargs: {captured_kwargs}"
         assert isinstance(captured_kwargs["tools"], list)
+        assert captured_kwargs["tools"] is tools_list, "tools should be the same list object for mutation"
         # Verify result
         assert result.messages[-1].text == "Done!"
 
@@ -157,10 +159,11 @@ class TestKwargsPropagationToAIFunction:
         wrapped = _handle_function_calls_response(mock_get_response)
 
         # Call with kwargs
+        tools_list = [tracking_tool]
         result = await wrapped(
             mock_client,
             messages=[],
-            options={"tools": [tracking_tool]},
+            options={"tools": tools_list},
             request_id="req-001",
             trace_context={"trace_id": "abc"},
         )
@@ -170,6 +173,9 @@ class TestKwargsPropagationToAIFunction:
         for kwargs in invocation_kwargs:
             assert kwargs.get("request_id") == "req-001"
             assert kwargs.get("trace_context") == {"trace_id": "abc"}
+            # Verify tools list is present and is the SAME object (identity check)
+            assert "tools" in kwargs, f"Expected 'tools' in captured kwargs: {kwargs}"
+            assert kwargs["tools"] is tools_list, "tools should be the same list object for mutation"
         assert result.messages[-1].text == "All done!"
 
     async def test_streaming_response_kwargs_propagation(self) -> None:
@@ -211,10 +217,11 @@ class TestKwargsPropagationToAIFunction:
 
         # Collect streaming updates
         updates: list[ChatResponseUpdate] = []
+        tools_list = [streaming_capture_tool]
         async for update in wrapped(
             mock_client,
             messages=[],
-            options={"tools": [streaming_capture_tool]},
+            options={"tools": tools_list},
             streaming_session="session-xyz",
             correlation_id="corr-123",
         ):
@@ -224,3 +231,7 @@ class TestKwargsPropagationToAIFunction:
         assert "streaming_session" in captured_kwargs, f"Expected 'streaming_session' in {captured_kwargs}"
         assert captured_kwargs["streaming_session"] == "session-xyz"
         assert captured_kwargs["correlation_id"] == "corr-123"
+        # Verify tools list is also present in kwargs and is the SAME object (identity check)
+        assert "tools" in captured_kwargs, f"Expected 'tools' in captured kwargs: {captured_kwargs}"
+        assert isinstance(captured_kwargs["tools"], list)
+        assert captured_kwargs["tools"] is tools_list, "tools should be the same list object for mutation"

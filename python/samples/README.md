@@ -282,6 +282,7 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | [`getting_started/tools/ai_function_declaration_only.py`](./getting_started/tools/ai_function_declaration_only.py) | Function declarations without implementations for testing agent reasoning |
 | [`getting_started/tools/ai_function_from_dict_with_dependency_injection.py`](./getting_started/tools/ai_function_from_dict_with_dependency_injection.py) | Creating AI functions from dictionary definitions using dependency injection |
 | [`getting_started/tools/ai_function_recover_from_failures.py`](./getting_started/tools/ai_function_recover_from_failures.py) | Graceful error handling when tools raise exceptions |
+| [`getting_started/tools/dynamic_tool_loading.py`](./getting_started/tools/dynamic_tool_loading.py) | Dynamic tool loading during agent execution - tools that add new tools at runtime |
 | [`getting_started/tools/ai_function_with_approval.py`](./getting_started/tools/ai_function_with_approval.py) | User approval workflows for function calls without threads |
 | [`getting_started/tools/ai_function_with_approval_and_threads.py`](./getting_started/tools/ai_function_with_approval_and_threads.py) | Tool approval workflows using threads for conversation history management |
 | [`getting_started/tools/ai_function_with_max_exceptions.py`](./getting_started/tools/ai_function_with_max_exceptions.py) | Limiting tool failure exceptions using max_invocation_exceptions |
