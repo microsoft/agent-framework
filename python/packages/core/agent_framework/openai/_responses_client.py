@@ -1609,12 +1609,15 @@ class OpenAIResponsesClient(
         # Handle backward compatibility
         if async_client is not None and client is None:
             client = async_client
+        chat_model_id = kwargs.pop("chat_model_id", None)
+        if model_id is None and chat_model_id is not None:
+            model_id = chat_model_id
         deployment_name = kwargs.get("deployment_name")
         if model_id is None and deployment_name:
             model_id = deployment_name
             if backend is None:
                 backend = "azure"
-        if backend == "azure" and azure_api_key is None and isinstance(api_key, str):
+        if deployment_name and backend == "azure" and azure_api_key is None and isinstance(api_key, str):
             azure_api_key = api_key
             api_key = None
 
