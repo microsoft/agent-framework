@@ -328,7 +328,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     raw_representation=parsed_response.raw_representation,
                 )
 
-            return ResponseStream(_stream(), finalizer=ChatResponse.from_chat_response_updates)
+            return self._build_response_stream(_stream())
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:

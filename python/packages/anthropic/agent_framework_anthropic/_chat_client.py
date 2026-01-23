@@ -350,12 +350,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     if parsed_chunk:
                         yield parsed_chunk
 
-            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                response_format = options.get("response_format")
-                output_format_type = response_format if isinstance(response_format, type) else None
-                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
-
-            return ResponseStream(_stream(), finalizer=_finalize)
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
