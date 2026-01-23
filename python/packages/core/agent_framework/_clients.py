@@ -3,6 +3,7 @@
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
+    AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
@@ -295,6 +296,28 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             The validated and normalized options dict.
         """
         return await validate_chat_options(options)
+
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse:
+        """Finalize response updates into a single ChatResponse."""
+        output_format_type = response_format if isinstance(response_format, type) else None
+        return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+    def _build_response_stream(
+        self,
+        stream: AsyncIterable[ChatResponseUpdate] | Awaitable[AsyncIterable[ChatResponseUpdate]],
+        *,
+        response_format: Any | None = None,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Create a ResponseStream with the standard finalizer."""
+        return ResponseStream(
+            stream,
+            finalizer=lambda updates: self._finalize_response_updates(updates, response_format=response_format),
+        )
 
     # region Internal method to be implemented by derived classes
 
