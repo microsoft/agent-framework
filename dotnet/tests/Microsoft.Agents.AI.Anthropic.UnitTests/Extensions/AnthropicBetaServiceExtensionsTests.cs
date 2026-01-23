@@ -209,6 +209,12 @@ public sealed class AnthropicBetaServiceExtensionsTests
         Assert.Equal("Test Agent", agent.Name);
         // When tools are provided, ChatOptions is created but instructions remain null
         Assert.Null(agent.Instructions);
+
+        // Verify that tools are registered in the FunctionInvokingChatClient
+        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.NotNull(functionInvokingClient.AdditionalTools);
+        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -231,6 +237,11 @@ public sealed class AnthropicBetaServiceExtensionsTests
         Assert.Equal("Test Agent", agent.Name);
         // MaxTokens is applied at the chat client level, agent is created successfully
         Assert.NotNull(agent.ChatClient);
+
+        // Verify that the AnthropicChatClient is available and configured
+        var anthropicChatClient = agent.GetService<AnthropicChatClient>();
+        Assert.NotNull(anthropicChatClient);
+        Assert.Equal(8192, anthropicChatClient.DefaultMaxOutputTokens);
     }
 
     /// <summary>
@@ -254,6 +265,12 @@ public sealed class AnthropicBetaServiceExtensionsTests
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
         Assert.Equal("Test instructions", agent.Instructions);
+
+        // Verify that tools are registered in the FunctionInvokingChatClient
+        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.NotNull(functionInvokingClient.AdditionalTools);
+        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -277,6 +294,11 @@ public sealed class AnthropicBetaServiceExtensionsTests
         Assert.Equal("Test Agent", agent.Name);
         // With empty tools and no instructions, agent instructions remain null
         Assert.Null(agent.Instructions);
+
+        // Verify that FunctionInvokingChatClient has no additional tools assigned
+        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.True(functionInvokingClient.AdditionalTools is null or { Count: 0 });
     }
 
     /// <summary>
