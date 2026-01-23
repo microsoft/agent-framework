@@ -8,7 +8,7 @@ from collections.abc import (
     MutableSequence,
     Sequence,
 )
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, overload
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -812,9 +812,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
         # execute
-        message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+        message = await cast(Any, self.anthropic_client.beta.messages).create(**run_options, stream=False)
         # process
-        return self._process_message(message, options)
+        return self._process_message(cast(BetaMessage, message), options)
 
     @override
     async def _inner_get_streaming_response(
@@ -827,7 +827,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
         # execute and process
-        async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+        stream = await cast(Any, self.anthropic_client.beta.messages).create(**run_options, stream=True)
+        async for chunk in cast(AsyncIterable[BetaRawMessageStreamEvent], stream):
             parsed_chunk = self._process_stream_event(chunk)
             if parsed_chunk:
                 yield parsed_chunk

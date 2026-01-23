@@ -1614,7 +1614,7 @@ class OpenAIResponsesClient(
         settings = OpenAISettings(
             backend=backend,
             responses_model_id=model_id,
-            api_key=api_key if isinstance(api_key, str) or api_key is None else None,
+            api_key=api_key,
             org_id=org_id,
             base_url=base_url,
             azure_api_key=azure_api_key,

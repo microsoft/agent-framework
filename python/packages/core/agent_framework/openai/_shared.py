@@ -203,6 +203,8 @@ class OpenAISettings(AFSettings):
         self._callable_api_key: Callable[[], str | Awaitable[str]] | None = None
         if callable(api_key):
             self._callable_api_key = api_key
+            if backend is None:
+                backend = "openai"
             api_key = None  # Don't pass callable to parent
 
         self._ad_token = ad_token
