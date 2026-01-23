@@ -38,7 +38,6 @@ You can customize the agent by providing additional configuration:
 ```csharp
 using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.GithubCopilot;
 
 // Create a Copilot client with custom options
 await using CopilotClient copilotClient = new(new CopilotClientOptions
@@ -57,10 +56,10 @@ var sessionConfig = new SessionConfig
     Streaming = false
 };
 
-// Create an agent with custom configuration
-AIAgent agent = new GithubCopilotAgent(
-    copilotClient,
+// Create an agent with custom configuration using the extension method
+AIAgent agent = copilotClient.AsAIAgent(
     sessionConfig,
+    ownsClient: true,
     id: "my-copilot-agent",
     name: "My Copilot Assistant",
     description: "A helpful AI assistant powered by GitHub Copilot"

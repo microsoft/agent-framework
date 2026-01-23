@@ -4,14 +4,13 @@
 
 using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.GithubCopilot;
 
 // Create and start a Copilot client
 await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = true });
 await copilotClient.StartAsync();
 
-// Create an instance of the AIAgent using the Copilot client
-AIAgent agent = new GithubCopilotAgent(copilotClient);
+// Create an instance of the AIAgent using the extension method
+AIAgent agent = copilotClient.AsAIAgent(ownsClient: true);
 
 // Ask Copilot to write code for us - demonstrate its code generation capabilities
 AgentResponse response = await agent.RunAsync("Write a small .NET 10 C# hello world single file application");
