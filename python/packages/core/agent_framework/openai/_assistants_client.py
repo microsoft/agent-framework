@@ -8,7 +8,7 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
+    Sequence,
 )
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
@@ -338,8 +338,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -596,8 +596,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
         from .._types import validate_tool_mode

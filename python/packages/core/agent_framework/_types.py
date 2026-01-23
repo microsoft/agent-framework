@@ -3091,7 +3091,7 @@ else:
 # region Chat Options Utility Functions
 
 
-async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
+async def validate_chat_options(options: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and normalize chat options dictionary.
 
     Validates numeric constraints and converts types as needed.
@@ -3290,8 +3290,8 @@ def validate_tool_mode(
 
 
 def merge_chat_options(
-    base: dict[str, Any] | None,
-    override: dict[str, Any] | None,
+    base: Mapping[str, Any] | None,
+    override: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """Merge two chat options dictionaries.
 

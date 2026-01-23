@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -373,8 +373,8 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
     @override
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
@@ -462,13 +462,11 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         return transformed
 
     @override
-    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
-    def _prepare_messages_for_azure_ai(
-        self, messages: MutableSequence[ChatMessage]
-    ) -> tuple[list[ChatMessage], str | None]:
+    def _prepare_messages_for_azure_ai(self, messages: Sequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[ChatMessage] = []
         instructions_list: list[str] = []

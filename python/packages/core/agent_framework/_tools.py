@@ -2105,8 +2105,10 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
 
         super_get_response = super().get_response  # type: ignore[misc]
         function_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
-        max_errors = self.function_invocation_configuration["max_consecutive_errors_per_request"]
-        additional_function_arguments = (options or {}).get("additional_function_arguments") or {}
+        max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
+        additional_function_arguments: dict[str, Any] = {}
+        if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
+            additional_function_arguments = cast(dict[str, Any], additional_opts)
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
@@ -2133,7 +2135,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
                     approval_result = await _process_function_requests(
                         response=None,
                         prepped_messages=prepped_messages,
-                        tool_options=options,
+                        tool_options=options,  # type: ignore[arg-type]
                         attempt_idx=attempt_idx,
                         fcc_messages=None,
                         errors_in_a_row=errors_in_a_row,
@@ -2159,7 +2161,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
                     result = await _process_function_requests(
                         response=response,
                         prepped_messages=None,
-                        tool_options=options,
+                        tool_options=options,  # type: ignore[arg-type]
                         attempt_idx=attempt_idx,
                         fcc_messages=fcc_messages,
                         errors_in_a_row=errors_in_a_row,
@@ -2182,9 +2184,8 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
                 if response is not None:
                     return response
 
-                if options is None:
-                    options = {}
-                options["tool_choice"] = "none"
+                options = options or {}  # type: ignore[assignment]
+                options["tool_choice"] = "none"  # type: ignore[index, assignment]
                 response = await super_get_response(
                     messages=prepped_messages,
                     stream=False,
@@ -2198,7 +2199,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
 
             return _get_response()
 
-        response_format = options.get("response_format") if options else None
+        response_format = options.get("response_format") if options else None  # type: ignore[attr-defined]
         output_format_type = response_format if isinstance(response_format, type) else None
         stream_finalizers: list[Callable[[ChatResponse], Any]] = []
 
@@ -2287,9 +2288,8 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
             if response is not None:
                 return
 
-            if options is None:
-                options = {}
-            options["tool_choice"] = "none"
+            options = options or {}  # type: ignore[assignment]
+            options["tool_choice"] = "none"  # type: ignore[index, assignment]
             stream = await _ensure_response_stream(
                 super_get_response(
                     messages=prepped_messages,

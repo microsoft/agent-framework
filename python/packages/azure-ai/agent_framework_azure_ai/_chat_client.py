@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
@@ -344,8 +344,8 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -890,7 +890,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
+        messages: Sequence[ChatMessage],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
@@ -1070,7 +1070,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         return mcp_resources
 
     def _prepare_messages(
-        self, messages: MutableSequence[ChatMessage]
+        self, messages: Sequence[ChatMessage]
     ) -> tuple[
         list[ThreadMessageOptions] | None,
         list[str],
