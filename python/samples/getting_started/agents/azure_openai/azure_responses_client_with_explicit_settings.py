@@ -39,7 +39,9 @@ async def main() -> None:
         tools=get_weather,
     )
 
-    result = await agent.run("What's the weather like in New York?")
+    query = "What's the weather like in New York?"
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Result: {result}\n")
 
 

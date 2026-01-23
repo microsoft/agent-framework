@@ -87,7 +87,6 @@ agent = ChatAgent(
     chat_client=AzureOpenAIResponsesClient(
         deployment_name=_deployment_name,
         endpoint=_endpoint,
-        api_version="2025-03-01-preview",  # Required for Responses API
     ),
     tools=[summarize_document, extract_key_points],
 )

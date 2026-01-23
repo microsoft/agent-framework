@@ -36,8 +36,9 @@ Set the following environment variables before running the examples:
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses model deployment
 
 Optionally for Azure OpenAI:
-- `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-10-21`)
 - `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using `AzureCliCredential`)
+
+> **Note:** For Chat and Responses clients, the v1 API is used which does not require an `api_version` parameter.
 
 **Note:** You can also provide configuration directly in code instead of using environment variables:
 ```python

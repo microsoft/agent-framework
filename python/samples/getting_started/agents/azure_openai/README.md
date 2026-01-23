@@ -35,7 +35,7 @@ Make sure to set the following environment variables before running the examples
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI Responses deployment
 
 Optionally, you can set:
-- `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-02-15-preview`)
+- `AZURE_OPENAI_API_VERSION`: The API version to use for Assistants client (default is `2024-05-01-preview`). Not needed for Chat or Responses clients.
 - `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using `AzureCliCredential`)
 - `AZURE_OPENAI_BASE_URL`: Your Azure OpenAI base URL (if different from the endpoint)
 

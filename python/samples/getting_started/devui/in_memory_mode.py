@@ -66,9 +66,8 @@ def main():
     # Create Azure OpenAI chat client
     chat_client = AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-        model_id=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o"),
+        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        deployment_name=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o"),
     )
 
     # Create agents

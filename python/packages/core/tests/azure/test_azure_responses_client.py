@@ -119,6 +119,22 @@ def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) ->
         )
 
 
+def test_check_model_presence_sets_model(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that _check_model_presence sets model from deployment_name."""
+    client = AzureOpenAIResponsesClient()
+    options: dict[str, Any] = {}
+    client._check_model_presence(options)  # type: ignore
+    assert options["model"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+
+
+def test_check_model_presence_preserves_existing_model(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that _check_model_presence does not override an existing model."""
+    client = AzureOpenAIResponsesClient()
+    options: dict[str, Any] = {"model": "custom-model"}
+    client._check_model_presence(options)  # type: ignore
+    assert options["model"] == "custom-model"
+
+
 def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 

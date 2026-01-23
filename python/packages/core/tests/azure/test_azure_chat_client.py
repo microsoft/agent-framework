@@ -8,7 +8,7 @@ import openai
 import pytest
 from azure.identity import AzureCliCredential
 from httpx import Request, Response
-from openai import AsyncAzureOpenAI, AsyncStream
+from openai import AsyncOpenAI, AsyncStream
 from openai.resources.chat.completions import AsyncCompletions as AsyncChatCompletions
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion import Choice
@@ -51,18 +51,18 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     azure_chat_client = AzureOpenAIChatClient()
 
     assert azure_chat_client.client is not None
-    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert isinstance(azure_chat_client.client, AsyncOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(azure_chat_client, BaseChatClient)
 
 
 def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization with client
-    client = MagicMock(spec=AsyncAzureOpenAI)
+    client = MagicMock(spec=AsyncOpenAI)
     azure_chat_client = AzureOpenAIChatClient(async_client=client)
 
     assert azure_chat_client.client is not None
-    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert isinstance(azure_chat_client.client, AsyncOpenAI)
 
 
 def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -74,7 +74,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     )
 
     assert azure_chat_client.client is not None
-    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert isinstance(azure_chat_client.client, AsyncOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(azure_chat_client, BaseChatClient)
     for key, value in default_headers.items():
@@ -87,7 +87,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     azure_chat_client = AzureOpenAIChatClient()
 
     assert azure_chat_client.client is not None
-    assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
+    assert isinstance(azure_chat_client.client, AsyncOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(azure_chat_client, BaseChatClient)
 
@@ -122,7 +122,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         "endpoint": azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"],
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
-        "api_version": azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"],
         "default_headers": default_headers,
         "env_file_path": "test.env",
     }
@@ -132,7 +131,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert dumped_settings["model_id"] == settings["deployment_name"]
     assert str(settings["endpoint"]) in str(dumped_settings["endpoint"])
     assert str(settings["deployment_name"]) == str(dumped_settings["deployment_name"])
-    assert settings["api_version"] == dumped_settings["api_version"]
+    # Note: api_version is no longer used - v1 API doesn't require it
     assert "api_key" not in dumped_settings
 
     # Assert that the default header we added is present in the dumped_settings default headers

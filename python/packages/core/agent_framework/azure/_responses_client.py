@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, Generic, TypedDict
-from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from agent_framework import use_chat_middleware, use_function_invocation
@@ -59,13 +58,12 @@ class AzureOpenAIResponsesClient(
         deployment_name: str | None = None,
         endpoint: str | None = None,
         base_url: str | None = None,
-        api_version: str | None = None,
         ad_token: str | None = None,
-        ad_token_provider: AsyncAzureADTokenProvider | None = None,
+        ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
         credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
-        async_client: AsyncAzureOpenAI | None = None,
+        async_client: AsyncOpenAI | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
@@ -83,11 +81,9 @@ class AzureOpenAIResponsesClient(
                 in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
             base_url: The deployment base URL. If provided will override the value
-                in the env vars or .env file. Currently, the base_url must end with "/openai/v1/".
+                in the env vars or .env file. For standard Azure endpoints, /openai/v1/ is
+                appended automatically.
                 Can also be set via environment variable AZURE_OPENAI_BASE_URL.
-            api_version: The deployment API version. If provided will override the value
-                in the env vars or .env file. Currently, the api_version must be "preview".
-                Can also be set via environment variable AZURE_OPENAI_API_VERSION.
             ad_token: The Azure Active Directory token.
             ad_token_provider: The Azure Active Directory token provider.
             token_endpoint: The token endpoint to request an Azure token.
@@ -142,22 +138,10 @@ class AzureOpenAIResponsesClient(
                 base_url=base_url,  # type: ignore
                 endpoint=endpoint,  # type: ignore
                 responses_deployment_name=deployment_name,
-                api_version=api_version,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
                 token_endpoint=token_endpoint,
-                default_api_version="preview",
             )
-            # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
-            # while this feature is in preview.
-            # But we should only do this if we're on azure. Private deployments may not need this.
-            if (
-                not azure_openai_settings.base_url
-                and azure_openai_settings.endpoint
-                and azure_openai_settings.endpoint.host
-                and azure_openai_settings.endpoint.host.endswith(".openai.azure.com")
-            ):
-                azure_openai_settings.base_url = urljoin(str(azure_openai_settings.endpoint), "/openai/v1/")  # type: ignore
         except ValidationError as exc:
             raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
 
@@ -171,7 +155,6 @@ class AzureOpenAIResponsesClient(
             deployment_name=azure_openai_settings.responses_deployment_name,
             endpoint=azure_openai_settings.endpoint,
             base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
             api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
@@ -183,8 +166,8 @@ class AzureOpenAIResponsesClient(
         )
 
     @override
-    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
-        if not run_options.get("model"):
+    def _check_model_presence(self, options: dict[str, Any]) -> None:
+        if not options.get("model"):
             if not self.model_id:
                 raise ValueError("deployment_name must be a non-empty string")
-            run_options["model"] = self.model_id
+            options["model"] = self.model_id

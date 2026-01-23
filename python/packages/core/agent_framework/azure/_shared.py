@@ -5,9 +5,10 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Final
+from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from pydantic import SecretStr, model_validator
 
 from .._pydantic import AFBaseSettings, HTTPsUrl
@@ -142,6 +143,29 @@ class AzureOpenAISettings(AFBaseSettings):
         return self
 
 
+def _construct_v1_base_url(endpoint: HTTPsUrl | None, base_url: HTTPsUrl | None) -> str | None:
+    """Construct the v1 API base URL from endpoint if not explicitly provided.
+
+    For standard Azure OpenAI endpoints, automatically appends /openai/v1/ path.
+    Custom/private deployments can provide their own base_url.
+
+    Args:
+        endpoint: The Azure OpenAI endpoint URL.
+        base_url: Explicit base URL if provided by user.
+
+    Returns:
+        The base URL to use, or None if neither endpoint nor base_url is valid.
+    """
+    if base_url:
+        return str(base_url)
+
+    # Standard Azure OpenAI endpoints
+    if endpoint and endpoint.host and endpoint.host.endswith((".openai.azure.com", ".services.ai.azure.com")):
+        return urljoin(str(endpoint), "/openai/v1/")
+
+    return None
+
+
 class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
@@ -153,31 +177,27 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         deployment_name: str,
         endpoint: HTTPsUrl | None = None,
         base_url: HTTPsUrl | None = None,
-        api_version: str = DEFAULT_AZURE_API_VERSION,
         api_key: str | None = None,
         ad_token: str | None = None,
         ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
         credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
-        client: AsyncAzureOpenAI | None = None,
+        client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Internal class for configuring a connection to an Azure OpenAI service.
 
-        The `validate_call` decorator is used with a configuration that allows arbitrary types.
-        This is necessary for types like `HTTPsUrl` and `OpenAIModelTypes`.
-
         Args:
             deployment_name: Name of the deployment.
             endpoint: The specific endpoint URL for the deployment.
-            base_url: The base URL for Azure services.
-            api_version: Azure API version. Defaults to the defined DEFAULT_AZURE_API_VERSION.
-            api_key: API key for Azure services.
+            base_url: The base URL for Azure services. If not provided and endpoint is a
+                standard Azure OpenAI endpoint, /openai/v1/ will be appended automatically.
+            api_key: API key for Azure services. Can also be a token provider callable.
             ad_token: Azure AD token for authentication.
             ad_token_provider: A callable or coroutine function providing Azure AD tokens.
-            token_endpoint: Azure AD token endpoint use to get the token.
+            token_endpoint: Azure AD token endpoint used to get the token.
             credential: Azure credential for authentication.
             default_headers: Default headers for HTTP requests.
             client: An existing client to use.
@@ -191,7 +211,11 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         if APP_INFO:
             merged_headers.update(APP_INFO)
             merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
+
         if not client:
+            # Construct v1 base URL from endpoint if not explicitly provided
+            v1_base_url = _construct_v1_base_url(endpoint, base_url)
+
             # If the client is None, the api_key is none, the ad_token is none, and the ad_token_provider is none,
             # then we will attempt to get the ad_token using the default endpoint specified in the Azure OpenAI
             # settings.
@@ -203,35 +227,34 @@ class AzureOpenAIConfigMixin(OpenAIBase):
                     "Please provide either api_key, ad_token or ad_token_provider or a client."
                 )
 
-            if not endpoint and not base_url:
-                raise ServiceInitializationError("Please provide an endpoint or a base_url")
+            if not v1_base_url:
+                raise ServiceInitializationError(
+                    "Please provide an endpoint or a base_url. "
+                    "For standard Azure OpenAI endpoints, the v1 API path will be appended automatically."
+                )
+
+            # Determine the effective api_key for AsyncOpenAI
+            effective_api_key: str | Callable[[], str | Awaitable[str]] | None = None
+            if api_key:
+                effective_api_key = api_key
+            elif ad_token_provider:
+                effective_api_key = ad_token_provider
+            elif ad_token:
+                effective_api_key = ad_token
 
             args: dict[str, Any] = {
+                "base_url": v1_base_url,
+                "api_key": effective_api_key,
                 "default_headers": merged_headers,
             }
-            if api_version:
-                args["api_version"] = api_version
-            if ad_token:
-                args["azure_ad_token"] = ad_token
-            if ad_token_provider:
-                args["azure_ad_token_provider"] = ad_token_provider
-            if api_key:
-                args["api_key"] = api_key
-            if base_url:
-                args["base_url"] = str(base_url)
-            if endpoint and not base_url:
-                args["azure_endpoint"] = str(endpoint)
-            if deployment_name:
-                args["azure_deployment"] = deployment_name
             if "websocket_base_url" in kwargs:
                 args["websocket_base_url"] = kwargs.pop("websocket_base_url")
 
-            client = AsyncAzureOpenAI(**args)
+            client = AsyncOpenAI(**args)
 
         # Store configuration as instance attributes for serialization
-        self.endpoint = str(endpoint)
-        self.base_url = str(base_url)
-        self.api_version = api_version
+        self.endpoint = str(endpoint) if endpoint else None
+        self.base_url = str(base_url) if base_url else None
         self.deployment_name = deployment_name
         self.instruction_role = instruction_role
         # Store default_headers but filter out USER_AGENT_KEY for serialization

@@ -23,7 +23,6 @@ MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")  # ex
 # Environment variables for Azure OpenAI Responses authentication
 # AZURE_OPENAI_ENDPOINT="<your-azure openai-endpoint>"
 # AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="<your-deployment-name>"
-# AZURE_OPENAI_API_VERSION="<your-api-version>"  # e.g. "2025-03-01-preview"
 
 
 async def main():
@@ -32,7 +31,7 @@ async def main():
     credential = AzureCliCredential()
 
     # Build an agent backed by Azure OpenAI Responses
-    # (endpoint/deployment/api_version can also come from env vars above)
+    # (endpoint/deployment can also come from env vars above)
     responses_client = AzureOpenAIResponsesClient(
         credential=credential,
     )
