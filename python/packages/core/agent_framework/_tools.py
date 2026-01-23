@@ -1981,16 +1981,9 @@ async def _process_function_requests(
                             "Stopping further function calls for this request.",
                             max_errors,
                         )
-            return {
-                "action": "stop",
-                "errors_in_a_row": errors_in_a_row,
-                "result_message": None,
-                "update_role": None,
-                "function_call_results": None,
-            }
             _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
             return {
-                "action": "continue",
+                "action": "stop",
                 "errors_in_a_row": errors_in_a_row,
                 "result_message": None,
                 "update_role": None,
@@ -2094,7 +2087,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
             prepare_messages,
         )
 
-        super_get_response = super().get_response
+        super_get_response = super().get_response  # type: ignore[misc]
         function_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
         max_errors = self.function_invocation_configuration["max_consecutive_errors_per_request"]
         additional_function_arguments = (options or {}).get("additional_function_arguments") or {}
@@ -2132,6 +2125,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
                         execute_function_calls=execute_function_calls,
                     )
                     if approval_result["action"] == "stop":
+                        response = ChatResponse(messages=prepped_messages)
                         break
                     errors_in_a_row = approval_result["errors_in_a_row"]
 

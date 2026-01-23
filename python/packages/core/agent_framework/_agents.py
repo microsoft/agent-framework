@@ -226,17 +226,17 @@ class AgentProtocol(Protocol):
     description: str | None
 
     @overload
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: Literal[False] = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse: ...
+    ) -> Awaitable[AgentResponse]: ...
 
     @overload
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -245,14 +245,14 @@ class AgentProtocol(Protocol):
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
         This method can return either a complete response or stream partial updates
@@ -485,7 +485,7 @@ class BaseAgent(SerializationMixin):
             input_text = kwargs.get(arg_name, "")
 
             # Forward runtime context kwargs, excluding arg_name and conversation_id.
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id")}
+            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options")}
 
             if stream_callback is None:
                 # Use non-streaming mode
@@ -875,9 +875,9 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         response = await self.chat_client.get_response(
             messages=ctx["thread_messages"],
             stream=False,
-            options=ctx["chat_options"],  # type: ignore[arg-type]
+            options=ctx["chat_options"],
             **ctx["filtered_kwargs"],
-        )
+        )  # type: ignore[call-overload]
 
         if not response:
             raise AgentRunException("Chat client did not return a response.")
@@ -934,9 +934,9 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             stream = self.chat_client.get_response(
                 messages=ctx["thread_messages"],
                 stream=True,
-                options=ctx["chat_options"],  # type: ignore[arg-type]
+                options=ctx["chat_options"],
                 **ctx["filtered_kwargs"],
-            )
+            )  # type: ignore[call-overload]
             if not isinstance(stream, ResponseStream):
                 raise AgentRunException("Chat client did not return a ResponseStream.")
             return stream
@@ -972,6 +972,13 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 thread=ctx["thread"],
                 input_messages=ctx["input_messages"],
                 kwargs=ctx["finalize_kwargs"],
+            )
+
+            await self._notify_thread_of_new_messages(
+                ctx["thread"],
+                ctx["input_messages"],
+                response.messages,
+                **{k: v for k, v in ctx["finalize_kwargs"].items() if k != "thread"},
             )
 
             return AgentResponse(
@@ -1380,7 +1387,11 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         return self.name or "UnnamedAgent"
 
 
-class ChatAgent(AgentTelemetryMixin, AgentMiddlewareMixin[TOptions_co], _ChatAgentCore[TOptions_co]):
+class ChatAgent(
+    AgentTelemetryMixin["ChatAgent[TOptions_co]"],
+    AgentMiddlewareMixin[TOptions_co],
+    _ChatAgentCore[TOptions_co],
+):
     """A Chat Client Agent with middleware support."""
 
     pass

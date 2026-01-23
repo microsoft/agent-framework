@@ -31,6 +31,7 @@ from agent_framework import (
     StandardMagenticManager,
     Workflow,
     WorkflowCheckpoint,
+    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
     WorkflowOutputEvent,
@@ -747,7 +748,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
         .build()
     )
 
-    with pytest.raises(ValueError, match="Workflow graph has changed"):
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
         async for _ in renamed_workflow.run(
             stream=True,
             checkpoint_id=target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]

@@ -40,7 +40,7 @@ class TestChatMiddleware:
                 execution_order.append("chat_middleware_after")
 
         # Add middleware to chat client
-        chat_client_base.middleware = [LoggingChatMiddleware()]
+        chat_client_base.chat_middleware = [LoggingChatMiddleware()]
 
         # Execute chat client directly
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -65,7 +65,7 @@ class TestChatMiddleware:
             execution_order.append("function_middleware_after")
 
         # Add middleware to chat client
-        chat_client_base.middleware = [logging_chat_middleware]
+        chat_client_base.chat_middleware = [logging_chat_middleware]
 
         # Execute chat client directly
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -93,7 +93,7 @@ class TestChatMiddleware:
             await next(context)
 
         # Add middleware to chat client
-        chat_client_base.middleware = [message_modifier_middleware]
+        chat_client_base.chat_middleware = [message_modifier_middleware]
 
         # Execute chat client
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -120,7 +120,7 @@ class TestChatMiddleware:
             context.terminate = True
 
         # Add middleware to chat client
-        chat_client_base.middleware = [response_override_middleware]
+        chat_client_base.chat_middleware = [response_override_middleware]
 
         # Execute chat client
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -149,7 +149,7 @@ class TestChatMiddleware:
             execution_order.append("second_after")
 
         # Add middleware to chat client (order should be preserved)
-        chat_client_base.middleware = [first_middleware, second_middleware]
+        chat_client_base.chat_middleware = [first_middleware, second_middleware]
 
         # Execute chat client
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -242,7 +242,7 @@ class TestChatMiddleware:
             execution_order.append("streaming_after")
 
         # Add middleware to chat client
-        chat_client_base.middleware = [streaming_middleware]
+        chat_client_base.chat_middleware = [streaming_middleware]
 
         # Execute streaming response
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -307,7 +307,7 @@ class TestChatMiddleware:
             await next(context)
 
         # Add middleware to chat client
-        chat_client_base.middleware = [kwargs_middleware]
+        chat_client_base.chat_middleware = [kwargs_middleware]
 
         # Execute chat client with custom parameters
         messages = [ChatMessage(role=Role.USER, text="test message")]
@@ -329,7 +329,9 @@ class TestChatMiddleware:
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
 
-    async def test_function_middleware_registration_on_chat_client(self) -> None:
+    async def test_function_middleware_registration_on_chat_client(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
         """Test function middleware registered on ChatClient is executed during function calls."""
         execution_order: list[str] = []
 
@@ -358,7 +360,7 @@ class TestChatMiddleware:
         chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
 
         # Set function middleware directly on the chat client
-        chat_client.middleware = [test_function_middleware]
+        chat_client.function_middleware = [test_function_middleware]
 
         # Prepare responses that will trigger function invocation
         function_call_response = ChatResponse(
@@ -380,7 +382,6 @@ class TestChatMiddleware:
         )
 
         chat_client.run_responses = [function_call_response, final_response]
-
         # Execute the chat client directly with tools - this should trigger function invocation and middleware
         messages = [ChatMessage(role=Role.USER, text="What's the weather in San Francisco?")]
         response = await chat_client.get_response(messages, options={"tools": [sample_tool_wrapped]})
@@ -396,7 +397,7 @@ class TestChatMiddleware:
             "function_middleware_after_sample_tool",
         ]
 
-    async def test_run_level_function_middleware(self) -> None:
+    async def test_run_level_function_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
         """Test that function middleware passed to get_response method is also invoked."""
         execution_order: list[str] = []
 
@@ -438,11 +439,7 @@ class TestChatMiddleware:
                 )
             ]
         )
-        final_response = ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, text="The weather information has been retrieved!")]
-        )
-
-        chat_client.run_responses = [function_call_response, final_response]
+        chat_client.run_responses = [function_call_response]
 
         # Execute the chat client directly with run-level middleware and tools
         messages = [ChatMessage(role=Role.USER, text="What's the weather in New York?")]

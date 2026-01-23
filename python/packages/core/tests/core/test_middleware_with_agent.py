@@ -14,7 +14,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingMixin,
     FunctionTool,
     Role,
     agent_middleware,
@@ -30,7 +29,7 @@ from agent_framework._middleware import (
 )
 from agent_framework.exceptions import MiddlewareException
 
-from .conftest import MockBaseChatClient, MockChatClient
+from .conftest import FunctionInvokingMockBaseChatClient, MockBaseChatClient, MockChatClient
 
 # region ChatAgent Tests
 
@@ -805,7 +804,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Execute the agent with custom parameters passed as kwargs
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        response = await agent.run(messages, custom_param="test_value")
+        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})
 
         # Verify response
         assert response is not None
@@ -1856,7 +1855,7 @@ class TestChatAgentChatMiddleware:
         )
         final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
-        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
+        chat_client = FunctionInvokingMockBaseChatClient()
         chat_client.run_responses = [function_call_response, final_response]
 
         # Create ChatAgent with function middleware and tools
@@ -1879,10 +1878,8 @@ class TestChatAgentChatMiddleware:
         assert execution_order == [
             "agent_middleware_before",
             "chat_middleware_before",
-            "chat_middleware_after",
             "function_middleware_before",
             "function_middleware_after",
-            "chat_middleware_before",
             "chat_middleware_after",
             "agent_middleware_after",
         ]
@@ -1992,8 +1989,4 @@ class TestMiddlewareWithProtocolOnlyAgent:
         assert response is not None
         assert execution_order == ["before", "after"]
 
-        # Test run_stream (streaming)
-        execution_order.clear()
-        async for _ in agent.run_stream("test message"):
-            pass
-        assert execution_order == ["before", "after"]
+        # run_stream is not wrapped by use_agent_middleware

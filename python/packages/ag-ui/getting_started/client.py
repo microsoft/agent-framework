@@ -9,7 +9,9 @@ standard chat interface.
 
 import asyncio
 import os
+from typing import cast
 
+from agent_framework import ChatResponse, ChatResponseUpdate, ResponseStream
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -41,7 +43,13 @@ async def main():
                 # Use metadata to maintain conversation continuity
                 metadata = {"thread_id": thread_id} if thread_id else None
 
-                async for update in client.get_streaming_response(message, metadata=metadata):
+                stream = client.get_response(
+                    message,
+                    stream=True,
+                    options={"metadata": metadata} if metadata else None,
+                )
+                stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], stream)
+                async for update in stream:
                     # Extract and display thread ID from first update
                     if not thread_id and update.additional_properties:
                         thread_id = update.additional_properties.get("thread_id")
@@ -51,8 +59,8 @@ async def main():
 
                     # Display text content as it streams
                     for content in update.contents:
-                        if hasattr(content, "text") and content.text:  # type: ignore[attr-defined]
-                            print(f"\033[96m{content.text}\033[0m", end="", flush=True)  # type: ignore[attr-defined]
+                        if content.type == "text" and content.text:
+                            print(f"\033[96m{content.text}\033[0m", end="", flush=True)
 
                     # Display finish reason if present
                     if update.finish_reason:

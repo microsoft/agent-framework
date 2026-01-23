@@ -145,7 +145,7 @@ async def test_workflow_run_stream_not_completed():
         .build()
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(WorkflowConvergenceException):
         async for _ in workflow.run(NumberMessage(data=0), stream=True):
             pass
 

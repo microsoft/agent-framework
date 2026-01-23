@@ -135,7 +135,7 @@ TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
 TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAIChatClient")
 
 
-class AzureOpenAIChatClient(
+class AzureOpenAIChatClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
     OpenAIBaseChatClient[TAzureOpenAIChatOptions],
     Generic[TAzureOpenAIChatOptions],
