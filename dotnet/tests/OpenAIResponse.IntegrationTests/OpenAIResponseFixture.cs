@@ -50,12 +50,12 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        if (typedThread.MessageStore is null)
+        if (typedThread.ChatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedThread.MessageStore.InvokingAsync(new([]))).ToList();
+        return (await typedThread.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)

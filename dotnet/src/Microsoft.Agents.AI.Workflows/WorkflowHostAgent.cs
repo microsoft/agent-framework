@@ -82,7 +82,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
         // For workflow threads, messages are added directly via the internal AddMessages method
         // The MessageStore methods are used for agent invocation scenarios
-        workflowThread.MessageStore.AddMessages(messages);
+        workflowThread.ChatHistoryProvider.AddMessages(messages);
         return workflowThread;
     }
 

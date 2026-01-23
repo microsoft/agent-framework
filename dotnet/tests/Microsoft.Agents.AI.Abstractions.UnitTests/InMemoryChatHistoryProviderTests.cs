@@ -14,24 +14,24 @@ using Moq;
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 /// <summary>
-/// Contains tests for the <see cref="InMemoryChatMessageStore"/> class.
+/// Contains tests for the <see cref="InMemoryChatHistoryProvider"/> class.
 /// </summary>
-public class InMemoryChatMessageStoreTests
+public class InMemoryChatHistoryProviderTests
 {
     [Fact]
     public void Constructor_Throws_ForNullReducer() =>
         // Arrange & Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new InMemoryChatMessageStore(null!));
+        Assert.Throws<ArgumentNullException>(() => new InMemoryChatHistoryProvider(null!));
 
     [Fact]
     public void Constructor_DefaultsToBeforeMessageRetrieval_ForNotProvidedTriggerEvent()
     {
         // Arrange & Act
         var reducerMock = new Mock<IChatReducer>();
-        var store = new InMemoryChatMessageStore(reducerMock.Object);
+        var provider = new InMemoryChatHistoryProvider(reducerMock.Object);
 
         // Assert
-        Assert.Equal(InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval, store.ReducerTriggerEvent);
+        Assert.Equal(InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval, provider.ReducerTriggerEvent);
     }
 
     [Fact]
@@ -39,11 +39,11 @@ public class InMemoryChatMessageStoreTests
     {
         // Arrange & Act
         var reducerMock = new Mock<IChatReducer>();
-        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
+        var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded);
 
         // Assert
-        Assert.Same(reducerMock.Object, store.ChatReducer);
-        Assert.Equal(InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded, store.ReducerTriggerEvent);
+        Assert.Same(reducerMock.Object, provider.ChatReducer);
+        Assert.Equal(InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded, provider.ReducerTriggerEvent);
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class InMemoryChatMessageStoreTests
         {
             new(ChatRole.Assistant, "Hi there!")
         };
-        var messageStoreMessages = new List<ChatMessage>()
+        var providerMessages = new List<ChatMessage>()
         {
             new(ChatRole.System, "original instructions")
         };
@@ -66,44 +66,44 @@ public class InMemoryChatMessageStoreTests
             new(ChatRole.System, "additional context")
         };
 
-        var store = new InMemoryChatMessageStore();
-        store.Add(messageStoreMessages[0]);
-        var context = new ChatMessageStore.InvokedContext(requestMessages, messageStoreMessages)
+        var provider = new InMemoryChatHistoryProvider();
+        provider.Add(providerMessages[0]);
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages, providerMessages)
         {
             AIContextProviderMessages = aiContextProviderMessages,
             ResponseMessages = responseMessages
         };
-        await store.InvokedAsync(context, CancellationToken.None);
+        await provider.InvokedAsync(context, CancellationToken.None);
 
-        Assert.Equal(4, store.Count);
-        Assert.Equal("original instructions", store[0].Text);
-        Assert.Equal("Hello", store[1].Text);
-        Assert.Equal("additional context", store[2].Text);
-        Assert.Equal("Hi there!", store[3].Text);
+        Assert.Equal(4, provider.Count);
+        Assert.Equal("original instructions", provider[0].Text);
+        Assert.Equal("Hello", provider[1].Text);
+        Assert.Equal("additional context", provider[2].Text);
+        Assert.Equal("Hi there!", provider[3].Text);
     }
 
     [Fact]
     public async Task InvokedAsyncWithEmptyDoesNotFailAsync()
     {
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
 
-        var context = new ChatMessageStore.InvokedContext([], []);
-        await store.InvokedAsync(context, CancellationToken.None);
+        var context = new ChatHistoryProvider.InvokedContext([], []);
+        await provider.InvokedAsync(context, CancellationToken.None);
 
-        Assert.Empty(store);
+        Assert.Empty(provider);
     }
 
     [Fact]
     public async Task InvokingAsyncReturnsAllMessagesAsync()
     {
-        var store = new InMemoryChatMessageStore
+        var provider = new InMemoryChatHistoryProvider
         {
             new ChatMessage(ChatRole.User, "Test1"),
             new ChatMessage(ChatRole.Assistant, "Test2")
         };
 
-        var context = new ChatMessageStore.InvokingContext([]);
-        var result = (await store.InvokingAsync(context, CancellationToken.None)).ToList();
+        var context = new ChatHistoryProvider.InvokingContext([]);
+        var result = (await provider.InvokingAsync(context, CancellationToken.None)).ToList();
 
         Assert.Equal(2, result.Count);
         Assert.Contains(result, m => m.Text == "Test1");
@@ -115,26 +115,26 @@ public class InMemoryChatMessageStoreTests
     {
         var emptyObject = JsonSerializer.Deserialize("{}", TestJsonSerializerContext.Default.JsonElement);
 
-        var newStore = new InMemoryChatMessageStore(emptyObject);
+        var newProvider = new InMemoryChatHistoryProvider(emptyObject);
 
-        Assert.Empty(newStore);
+        Assert.Empty(newProvider);
     }
 
     [Fact]
     public async Task SerializeAndDeserializeConstructorRoundtripsAsync()
     {
-        var store = new InMemoryChatMessageStore
+        var provider = new InMemoryChatHistoryProvider
         {
             new ChatMessage(ChatRole.User, "A"),
             new ChatMessage(ChatRole.Assistant, "B")
         };
 
-        var jsonElement = store.Serialize();
-        var newStore = new InMemoryChatMessageStore(jsonElement);
+        var jsonElement = provider.Serialize();
+        var newProvider = new InMemoryChatHistoryProvider(jsonElement);
 
-        Assert.Equal(2, newStore.Count);
-        Assert.Equal("A", newStore[0].Text);
-        Assert.Equal("B", newStore[1].Text);
+        Assert.Equal(2, newProvider.Count);
+        Assert.Equal("A", newProvider[0].Text);
+        Assert.Equal("B", newProvider[1].Text);
     }
 
     [Fact]
@@ -147,66 +147,66 @@ public class InMemoryChatMessageStoreTests
         };
         options.AddAIContentType<TestAIContent>(typeDiscriminatorId: "testContent");
 
-        var store = new InMemoryChatMessageStore
+        var provider = new InMemoryChatHistoryProvider
         {
             new ChatMessage(ChatRole.User, [new TestAIContent("foo data")]),
         };
 
-        var jsonElement = store.Serialize(options);
-        var newStore = new InMemoryChatMessageStore(jsonElement, options);
+        var jsonElement = provider.Serialize(options);
+        var newProvider = new InMemoryChatHistoryProvider(jsonElement, options);
 
-        Assert.Single(newStore);
-        var actualTestAIContent = Assert.IsType<TestAIContent>(newStore[0].Contents[0]);
+        Assert.Single(newProvider);
+        var actualTestAIContent = Assert.IsType<TestAIContent>(newProvider[0].Contents[0]);
         Assert.Equal("foo data", actualTestAIContent.TestData);
     }
 
     [Fact]
     public async Task SerializeAndDeserializeWorksWithExperimentalContentTypesAsync()
     {
-        var store = new InMemoryChatMessageStore
+        var provider = new InMemoryChatHistoryProvider
         {
             new ChatMessage(ChatRole.User, [new FunctionApprovalRequestContent("call123", new FunctionCallContent("call123", "some_func"))]),
             new ChatMessage(ChatRole.Assistant, [new FunctionApprovalResponseContent("call123", true, new FunctionCallContent("call123", "some_func"))])
         };
 
-        var jsonElement = store.Serialize();
-        var newStore = new InMemoryChatMessageStore(jsonElement);
+        var jsonElement = provider.Serialize();
+        var newProvider = new InMemoryChatHistoryProvider(jsonElement);
 
-        Assert.Equal(2, newStore.Count);
-        Assert.IsType<FunctionApprovalRequestContent>(newStore[0].Contents[0]);
-        Assert.IsType<FunctionApprovalResponseContent>(newStore[1].Contents[0]);
+        Assert.Equal(2, newProvider.Count);
+        Assert.IsType<FunctionApprovalRequestContent>(newProvider[0].Contents[0]);
+        Assert.IsType<FunctionApprovalResponseContent>(newProvider[1].Contents[0]);
     }
 
     [Fact]
-    public async Task InvokedAsyncWithEmptyMessagesDoesNotChangeStoreAsync()
+    public async Task InvokedAsyncWithEmptyMessagesDoesNotChangeProviderAsync()
     {
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var messages = new List<ChatMessage>();
 
-        var context = new ChatMessageStore.InvokedContext(messages, []);
-        await store.InvokedAsync(context, CancellationToken.None);
+        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        await provider.InvokedAsync(context, CancellationToken.None);
 
-        Assert.Empty(store);
+        Assert.Empty(provider);
     }
 
     [Fact]
     public async Task InvokedAsync_WithNullContext_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => store.InvokedAsync(null!, CancellationToken.None).AsTask());
+        await Assert.ThrowsAsync<ArgumentNullException>(() => provider.InvokedAsync(null!, CancellationToken.None).AsTask());
     }
 
     [Fact]
-    public void DeserializeContructor_WithNullSerializedState_CreatesEmptyStore()
+    public void DeserializeContructor_WithNullSerializedState_CreatesEmptyProvider()
     {
         // Act
-        var store = new InMemoryChatMessageStore(new JsonElement());
+        var provider = new InMemoryChatHistoryProvider(new JsonElement());
 
         // Assert
-        Assert.Empty(store);
+        Assert.Empty(provider);
     }
 
     [Fact]
@@ -218,10 +218,10 @@ public class InMemoryChatMessageStoreTests
             TestJsonSerializerContext.Default.IDictionaryStringObject);
 
         // Act
-        var store = new InMemoryChatMessageStore(stateWithEmptyMessages);
+        var provider = new InMemoryChatHistoryProvider(stateWithEmptyMessages);
 
         // Assert
-        Assert.Empty(store);
+        Assert.Empty(provider);
     }
 
     [Fact]
@@ -233,10 +233,10 @@ public class InMemoryChatMessageStoreTests
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
-        var store = new InMemoryChatMessageStore(stateWithNullMessages);
+        var provider = new InMemoryChatHistoryProvider(stateWithNullMessages);
 
         // Assert
-        Assert.Empty(store);
+        Assert.Empty(provider);
     }
 
     [Fact]
@@ -254,159 +254,159 @@ public class InMemoryChatMessageStoreTests
             TestJsonSerializerContext.Default.DictionaryStringObject);
 
         // Act
-        var store = new InMemoryChatMessageStore(serializedState);
+        var provider = new InMemoryChatHistoryProvider(serializedState);
 
         // Assert
-        Assert.Equal(2, store.Count);
-        Assert.Equal("User message", store[0].Text);
-        Assert.Equal("Assistant message", store[1].Text);
+        Assert.Equal(2, provider.Count);
+        Assert.Equal("User message", provider[0].Text);
+        Assert.Equal("Assistant message", provider[1].Text);
     }
 
     [Fact]
     public void IndexerGet_ReturnsCorrectMessage()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
-        store.Add(message1);
-        store.Add(message2);
+        provider.Add(message1);
+        provider.Add(message2);
 
         // Act & Assert
-        Assert.Same(message1, store[0]);
-        Assert.Same(message2, store[1]);
+        Assert.Same(message1, provider[0]);
+        Assert.Same(message2, provider[1]);
     }
 
     [Fact]
     public void IndexerSet_UpdatesMessage()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var originalMessage = new ChatMessage(ChatRole.User, "Original");
         var newMessage = new ChatMessage(ChatRole.User, "Updated");
-        store.Add(originalMessage);
+        provider.Add(originalMessage);
 
         // Act
-        store[0] = newMessage;
+        provider[0] = newMessage;
 
         // Assert
-        Assert.Same(newMessage, store[0]);
-        Assert.Equal("Updated", store[0].Text);
+        Assert.Same(newMessage, provider[0]);
+        Assert.Equal("Updated", provider[0].Text);
     }
 
     [Fact]
     public void IsReadOnly_ReturnsFalse()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
 
         // Act & Assert
-        Assert.False(store.IsReadOnly);
+        Assert.False(provider.IsReadOnly);
     }
 
     [Fact]
     public void IndexOf_ReturnsCorrectIndex()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
         var message3 = new ChatMessage(ChatRole.User, "Third");
-        store.Add(message1);
-        store.Add(message2);
+        provider.Add(message1);
+        provider.Add(message2);
 
         // Act & Assert
-        Assert.Equal(0, store.IndexOf(message1));
-        Assert.Equal(1, store.IndexOf(message2));
-        Assert.Equal(-1, store.IndexOf(message3)); // Not in store
+        Assert.Equal(0, provider.IndexOf(message1));
+        Assert.Equal(1, provider.IndexOf(message2));
+        Assert.Equal(-1, provider.IndexOf(message3)); // Not in provider
     }
 
     [Fact]
     public void Insert_InsertsMessageAtCorrectIndex()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
         var insertMessage = new ChatMessage(ChatRole.User, "Inserted");
-        store.Add(message1);
-        store.Add(message2);
+        provider.Add(message1);
+        provider.Add(message2);
 
         // Act
-        store.Insert(1, insertMessage);
+        provider.Insert(1, insertMessage);
 
         // Assert
-        Assert.Equal(3, store.Count);
-        Assert.Same(message1, store[0]);
-        Assert.Same(insertMessage, store[1]);
-        Assert.Same(message2, store[2]);
+        Assert.Equal(3, provider.Count);
+        Assert.Same(message1, provider[0]);
+        Assert.Same(insertMessage, provider[1]);
+        Assert.Same(message2, provider[2]);
     }
 
     [Fact]
     public void RemoveAt_RemovesMessageAtIndex()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
         var message3 = new ChatMessage(ChatRole.User, "Third");
-        store.Add(message1);
-        store.Add(message2);
-        store.Add(message3);
+        provider.Add(message1);
+        provider.Add(message2);
+        provider.Add(message3);
 
         // Act
-        store.RemoveAt(1);
+        provider.RemoveAt(1);
 
         // Assert
-        Assert.Equal(2, store.Count);
-        Assert.Same(message1, store[0]);
-        Assert.Same(message3, store[1]);
+        Assert.Equal(2, provider.Count);
+        Assert.Same(message1, provider[0]);
+        Assert.Same(message3, provider[1]);
     }
 
     [Fact]
     public void Clear_RemovesAllMessages()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore
+        var provider = new InMemoryChatHistoryProvider
         {
             new ChatMessage(ChatRole.User, "First"),
             new ChatMessage(ChatRole.Assistant, "Second")
         };
 
         // Act
-        store.Clear();
+        provider.Clear();
 
         // Assert
-        Assert.Empty(store);
+        Assert.Empty(provider);
     }
 
     [Fact]
     public void Contains_ReturnsTrueForExistingMessage()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
-        store.Add(message1);
+        provider.Add(message1);
 
         // Act & Assert
-        Assert.Contains(message1, store);
-        Assert.DoesNotContain(message2, store);
+        Assert.Contains(message1, provider);
+        Assert.DoesNotContain(message2, provider);
     }
 
     [Fact]
     public void CopyTo_CopiesMessagesToArray()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
-        store.Add(message1);
-        store.Add(message2);
+        provider.Add(message1);
+        provider.Add(message2);
         var array = new ChatMessage[4];
 
         // Act
-        store.CopyTo(array, 1);
+        provider.CopyTo(array, 1);
 
         // Assert
         Assert.Null(array[0]);
@@ -419,54 +419,54 @@ public class InMemoryChatMessageStoreTests
     public void Remove_RemovesSpecificMessage()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
         var message3 = new ChatMessage(ChatRole.User, "Third");
-        store.Add(message1);
-        store.Add(message2);
-        store.Add(message3);
+        provider.Add(message1);
+        provider.Add(message2);
+        provider.Add(message3);
 
         // Act
-        var removed = store.Remove(message2);
+        var removed = provider.Remove(message2);
 
         // Assert
         Assert.True(removed);
-        Assert.Equal(2, store.Count);
-        Assert.Same(message1, store[0]);
-        Assert.Same(message3, store[1]);
+        Assert.Equal(2, provider.Count);
+        Assert.Same(message1, provider[0]);
+        Assert.Same(message3, provider[1]);
     }
 
     [Fact]
     public void Remove_ReturnsFalseForNonExistentMessage()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
-        store.Add(message1);
+        provider.Add(message1);
 
         // Act
-        var removed = store.Remove(message2);
+        var removed = provider.Remove(message2);
 
         // Assert
         Assert.False(removed);
-        Assert.Single(store);
+        Assert.Single(provider);
     }
 
     [Fact]
     public void GetEnumerator_Generic_ReturnsAllMessages()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
-        store.Add(message1);
-        store.Add(message2);
+        provider.Add(message1);
+        provider.Add(message2);
 
         // Act
         var messages = new List<ChatMessage>();
-        messages.AddRange(store);
+        messages.AddRange(provider);
 
         // Assert
         Assert.Equal(2, messages.Count);
@@ -478,15 +478,15 @@ public class InMemoryChatMessageStoreTests
     public void GetEnumerator_NonGeneric_ReturnsAllMessages()
     {
         // Arrange
-        var store = new InMemoryChatMessageStore();
+        var provider = new InMemoryChatHistoryProvider();
         var message1 = new ChatMessage(ChatRole.User, "First");
         var message2 = new ChatMessage(ChatRole.Assistant, "Second");
-        store.Add(message1);
-        store.Add(message2);
+        provider.Add(message1);
+        provider.Add(message2);
 
         // Act
         var messages = new List<ChatMessage>();
-        var enumerator = ((System.Collections.IEnumerable)store).GetEnumerator();
+        var enumerator = ((System.Collections.IEnumerable)provider).GetEnumerator();
         while (enumerator.MoveNext())
         {
             messages.Add((ChatMessage)enumerator.Current);
@@ -517,15 +517,15 @@ public class InMemoryChatMessageStoreTests
             .Setup(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()))
             .ReturnsAsync(reducedMessages);
 
-        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
+        var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded);
 
         // Act
-        var context = new ChatMessageStore.InvokedContext(originalMessages, []);
-        await store.InvokedAsync(context, CancellationToken.None);
+        var context = new ChatHistoryProvider.InvokedContext(originalMessages, []);
+        await provider.InvokedAsync(context, CancellationToken.None);
 
         // Assert
-        Assert.Single(store);
-        Assert.Equal("Reduced", store[0].Text);
+        Assert.Single(provider);
+        Assert.Equal("Reduced", provider[0].Text);
         reducerMock.Verify(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -548,16 +548,16 @@ public class InMemoryChatMessageStoreTests
             .Setup(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()))
             .ReturnsAsync(reducedMessages);
 
-        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
-        // Add messages directly to the store for this test
+        var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
+        // Add messages directly to the provider for this test
         foreach (var msg in originalMessages)
         {
-            store.Add(msg);
+            provider.Add(msg);
         }
 
         // Act
-        var invokingContext = new ChatMessageStore.InvokingContext(Array.Empty<ChatMessage>());
-        var result = (await store.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
+        var invokingContext = new ChatHistoryProvider.InvokingContext(Array.Empty<ChatMessage>());
+        var result = (await provider.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
 
         // Assert
         Assert.Single(result);
@@ -576,15 +576,15 @@ public class InMemoryChatMessageStoreTests
 
         var reducerMock = new Mock<IChatReducer>();
 
-        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
+        var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
 
         // Act
-        var context = new ChatMessageStore.InvokedContext(originalMessages, []);
-        await store.InvokedAsync(context, CancellationToken.None);
+        var context = new ChatHistoryProvider.InvokedContext(originalMessages, []);
+        await provider.InvokedAsync(context, CancellationToken.None);
 
         // Assert
-        Assert.Single(store);
-        Assert.Equal("Hello", store[0].Text);
+        Assert.Single(provider);
+        Assert.Equal("Hello", provider[0].Text);
         reducerMock.Verify(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -599,14 +599,14 @@ public class InMemoryChatMessageStoreTests
 
         var reducerMock = new Mock<IChatReducer>();
 
-        var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded)
+        var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded)
         {
             originalMessages[0]
         };
 
         // Act
-        var invokingContext = new ChatMessageStore.InvokingContext(Array.Empty<ChatMessage>());
-        var result = (await store.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
+        var invokingContext = new ChatHistoryProvider.InvokingContext(Array.Empty<ChatMessage>());
+        var result = (await provider.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
 
         // Assert
         Assert.Single(result);
