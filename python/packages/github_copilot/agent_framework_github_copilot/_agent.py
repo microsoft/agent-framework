@@ -59,16 +59,17 @@ class GithubCopilotOptions(TypedDict, total=False):
     """System message to append to the session."""
 
     cli_path: str
-    """Path to the Copilot CLI executable. Defaults to COPILOT_CLI_PATH env var or 'copilot' in PATH."""
+    """Path to the Copilot CLI executable. Defaults to GITHUB_COPILOT_CLI_PATH environment variable
+    or 'copilot' in PATH."""
 
     model: str
-    """Model to use (e.g., "gpt-5", "claude-sonnet-4")."""
+    """Model to use (e.g., "gpt-5", "claude-sonnet-4"). Defaults to GITHUB_COPILOT_MODEL environment variable."""
 
     timeout: float
-    """Request timeout in seconds."""
+    """Request timeout in seconds. Defaults to GITHUB_COPILOT_TIMEOUT environment variable or 60 seconds."""
 
     log_level: str
-    """CLI log level."""
+    """CLI log level. Defaults to GITHUB_COPILOT_LOG_LEVEL environment variable."""
 
     on_permission_request: PermissionHandlerType
     """Permission request handler.
