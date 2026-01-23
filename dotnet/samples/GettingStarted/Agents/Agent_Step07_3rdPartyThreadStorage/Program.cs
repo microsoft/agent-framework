@@ -31,17 +31,17 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(
-            // Create a new chat message store for this agent that stores the messages in a vector store.
-            // Each thread must get its own copy of the VectorChatMessageStore, since the store
-            // also contains the id that the thread is stored under.
-            new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(
+            // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
+            // Each thread must get its own copy of the VectorChatHistoryProvider, since the provider
+            // also contains the id that the chat history is stored under.
+            new VectorChatHistoryProvider(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
 // Start a new thread for the agent conversation.
 AgentThread thread = await agent.GetNewThreadAsync();
 
-// Run the agent with the thread that stores conversation history in the vector store.
+// Run the agent with the thread that stores chat history in the vector store.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Serialize the thread state, so it can be stored for later use.
@@ -58,30 +58,30 @@ Console.WriteLine(JsonSerializer.Serialize(serializedThread, new JsonSerializerO
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = await agent.DeserializeThreadAsync(serializedThread);
 
-// Run the agent with the thread that stores conversation history in the vector store a second time.
+// Run the agent with the thread that stores chat history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
-// We can access the VectorChatMessageStore via the thread's GetService method if we need to read the key under which threads are stored.
-var messageStore = resumedThread.GetService<VectorChatMessageStore>()!;
-Console.WriteLine($"\nThread is stored in vector store under key: {messageStore.ThreadDbKey}");
+// We can access the VectorChatHistoryProvider via the thread's GetService method if we need to read the key under which chat history is stored.
+var chatHistoryProvider = resumedThread.GetService<VectorChatHistoryProvider>()!;
+Console.WriteLine($"\nThread is stored in vector store under key: {chatHistoryProvider.ThreadDbKey}");
 
 namespace SampleApp
 {
     /// <summary>
-    /// A sample implementation of <see cref="ChatMessageStore"/> that stores chat messages in a vector store.
+    /// A sample implementation of <see cref="ChatHistoryProvider"/> that stores chat history in a vector store.
     /// </summary>
-    internal sealed class VectorChatMessageStore : ChatMessageStore
+    internal sealed class VectorChatHistoryProvider : ChatHistoryProvider
     {
         private readonly VectorStore _vectorStore;
 
-        public VectorChatMessageStore(VectorStore vectorStore, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+        public VectorChatHistoryProvider(VectorStore vectorStore, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
 
-            if (serializedStoreState.ValueKind is JsonValueKind.String)
+            if (serializedState.ValueKind is JsonValueKind.String)
             {
                 // Here we can deserialize the thread id so that we can access the same messages as before the suspension.
-                this.ThreadDbKey = serializedStoreState.Deserialize<string>();
+                this.ThreadDbKey = serializedState.Deserialize<string>();
             }
         }
 

@@ -33,7 +33,6 @@ __all__ = [
     "FinishReason",
     "Role",
     "TextSpanRegion",
-    "TextSpanRegion",
     "ToolMode",
     "UsageDetails",
     "add_usage_details",

@@ -66,7 +66,7 @@ AIAgent agent = azureOpenAIClient
         // Since we are using ChatCompletion which stores chat history locally, we can also add a message removal policy
         // that removes messages produced by the TextSearchProvider before they are added to the chat history, so that
         // we don't bloat chat history with all the search result messages.
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore(ctx.SerializedState, ctx.JsonSerializerOptions)
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider(ctx.SerializedState, ctx.JsonSerializerOptions)
             .WithAIContextProviderMessageRemoval()),
     });
 

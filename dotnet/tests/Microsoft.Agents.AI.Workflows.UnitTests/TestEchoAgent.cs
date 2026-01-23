@@ -26,7 +26,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
 
     private static ChatMessage UpdateThread(ChatMessage message, InMemoryAgentThread? thread = null)
     {
-        thread?.MessageStore.Add(message);
+        thread?.ChatHistoryProvider.Add(message);
 
         return message;
     }
