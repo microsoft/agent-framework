@@ -71,7 +71,8 @@ def weather_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
         instructions=(
             "You are a helpful weather assistant. "
             "Use the get_weather and get_forecast functions to help users with weather information. "
-            "Always provide friendly and informative responses."
+            "Always provide friendly and informative responses. "
+            "First return the weather result, and then return details about the forecast."
         ),
         chat_client=chat_client,
         tools=[get_weather, get_forecast],
