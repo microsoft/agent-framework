@@ -4,10 +4,11 @@ import contextlib
 import json
 import logging
 import os
+import sys
 from collections.abc import Awaitable, Callable, Generator, Mapping, MutableMapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, TypeVar, overload
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
@@ -19,6 +20,11 @@ from pydantic import PrivateAttr
 from . import __version__ as version_info
 from ._logging import get_logger
 from ._pydantic import AFBaseSettings
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
 
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
@@ -36,6 +42,7 @@ if TYPE_CHECKING:  # pragma: no cover
         AgentResponse,
         AgentResponseUpdate,
         ChatMessage,
+        ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
         Content,
@@ -1036,7 +1043,15 @@ def _get_token_usage_histogram() -> "metrics.Histogram":
     )
 
 
-class ChatTelemetryMixin(Generic[TChatClient]):
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    covariant=True,
+)
+
+
+class ChatTelemetryMixin(Generic[TOptions_co]):
     """Mixin that wraps chat client get_response with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
@@ -1049,29 +1064,29 @@ class ChatTelemetryMixin(Generic[TChatClient]):
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        stream: Literal[False] = False,
-        options: "Mapping[str, Any] | None" = None,
+        stream: Literal[False] = ...,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> Awaitable["ChatResponse"]: ...
+    ) -> Awaitable[ChatResponse]: ...
 
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "Mapping[str, Any] | None" = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
 
     def get_response(
         self,
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: bool = False,
-        options: "Mapping[str, Any] | None" = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]":
         """Trace chat responses with OpenTelemetry spans and metrics."""
@@ -1191,7 +1206,7 @@ class ChatTelemetryMixin(Generic[TChatClient]):
         return _get_response()
 
 
-class AgentTelemetryMixin(Generic[TAgent]):
+class AgentTelemetryMixin:
     """Mixin that wraps agent run with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
@@ -1208,11 +1223,8 @@ class AgentTelemetryMixin(Generic[TAgent]):
         *,
         stream: Literal[False] = False,
         thread: "AgentThread | None" = None,
-        tools: (
-            "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | "
-            "list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"
-        ) = None,
-        options: "dict[str, Any] | None" = None,
+        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
+        options: "Mapping[str, Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable["AgentResponse"]: ...
 
@@ -1223,11 +1235,8 @@ class AgentTelemetryMixin(Generic[TAgent]):
         *,
         stream: Literal[True],
         thread: "AgentThread | None" = None,
-        tools: (
-            "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | "
-            "list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"
-        ) = None,
-        options: "dict[str, Any] | None" = None,
+        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
+        options: "Mapping[str, Any] | None" = None,
         **kwargs: Any,
     ) -> "ResponseStream[AgentResponseUpdate, AgentResponse]": ...
 
@@ -1237,11 +1246,8 @@ class AgentTelemetryMixin(Generic[TAgent]):
         *,
         stream: bool = False,
         thread: "AgentThread | None" = None,
-        tools: (
-            "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | "
-            "list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"
-        ) = None,
-        options: "dict[str, Any] | None" = None,
+        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
+        options: "Mapping[str, Any] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]":
         """Trace agent runs with OpenTelemetry spans and metrics."""

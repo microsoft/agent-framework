@@ -15,6 +15,7 @@ from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
+    BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -28,7 +29,6 @@ from agent_framework import (
     UsageDetails,
     get_logger,
 )
-from agent_framework._clients import FunctionInvokingChatClient
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import (
     ServiceInitializationError,
@@ -284,7 +284,7 @@ class OllamaSettings(AFBaseSettings):
 logger = get_logger("agent_framework.ollama")
 
 
-class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions]):
+class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
     """Ollama Chat completion class."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"

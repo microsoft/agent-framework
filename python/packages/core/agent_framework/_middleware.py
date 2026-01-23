@@ -51,6 +51,7 @@ __all__ = [
     "AgentRunContext",
     "ChatContext",
     "ChatMiddleware",
+    "ChatMiddlewareMixin",
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "Middleware",
@@ -1100,6 +1101,26 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         self.function_middleware = middleware_list["function"]
         super().__init__(**kwargs)
 
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: TOptions_co | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: TOptions_co | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
+
     def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
@@ -1161,7 +1182,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         return result  # type: ignore[return-value]
 
 
-class AgentMiddlewareMixin(Generic[TOptions_co]):
+class AgentMiddlewareMixin:
     """Mixin for agents to apply agent middleware around run execution."""
 
     @overload

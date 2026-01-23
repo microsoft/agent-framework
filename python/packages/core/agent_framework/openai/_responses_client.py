@@ -34,7 +34,7 @@ from openai.types.responses.tool_param import (
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
 
-from .._clients import FunctionInvokingChatClient
+from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._tools import (
     FunctionInvocationConfiguration,
@@ -203,7 +203,7 @@ TOpenAIResponsesOptions = TypeVar(
 
 class OpenAIBaseResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    FunctionInvokingChatClient[TOpenAIResponsesOptions],
+    BaseChatClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
     """Base class for all OpenAI Responses based API's."""

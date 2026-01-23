@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Generic, TypedDict
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
+    BaseChatClient,
     ChatAgent,
     ChatMessage,
     ChatMessageStoreProtocol,
@@ -33,7 +34,6 @@ from agent_framework import (
     get_logger,
     prepare_function_call_results,
 )
-from agent_framework._clients import FunctionInvokingChatClient
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
@@ -197,7 +197,7 @@ TAzureAIAgentOptions = TypeVar(
 # endregion
 
 
-class AzureAIAgentClient(FunctionInvokingChatClient[TAzureAIAgentOptions], Generic[TAzureAIAgentOptions]):
+class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIAgentOptions]):
     """Azure AI Agent Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
