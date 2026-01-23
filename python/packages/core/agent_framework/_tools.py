@@ -2070,29 +2070,29 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        stream: Literal[False] = False,
-        options: dict[str, Any] | None = None,
+        stream: Literal[False] = ...,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> Awaitable["ChatResponse"]: ...
+    ) -> Awaitable[ChatResponse]: ...
 
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: dict[str, Any] | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
 
     def get_response(
         self,
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: bool = False,
-        options: dict[str, Any] | None = None,
+        options: TOptions_co | None = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]":
         from ._types import (

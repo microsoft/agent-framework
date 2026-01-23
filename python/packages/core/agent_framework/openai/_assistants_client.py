@@ -10,7 +10,7 @@ from collections.abc import (
     MutableMapping,
     MutableSequence,
 )
-from typing import Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -27,7 +27,7 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import BaseModel, ValidationError
 
-from .._clients import FunctionInvokingChatClient
+from .._clients import BaseChatClient
 from .._tools import (
     FunctionTool,
     HostedCodeInterpreterTool,
@@ -62,6 +62,8 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
+if TYPE_CHECKING:
+    pass
 
 __all__ = [
     "AssistantToolResources",
@@ -199,7 +201,7 @@ TOpenAIAssistantsOptions = TypeVar(
 
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    FunctionInvokingChatClient[TOpenAIAssistantsOptions],
+    BaseChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
 ):
     """OpenAI Assistants client."""

@@ -3,36 +3,54 @@
 import asyncio
 import random
 import sys
-from collections.abc import AsyncIterable, MutableSequence
-from typing import Any, ClassVar, Generic
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     ChatMessage,
+    ChatMiddlewareMixin,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    CoreChatClient,
+    FunctionInvokingMixin,
+    ResponseStream,
     Role,
 )
-from agent_framework._clients import FunctionInvokingChatClient, TOptions_co
+from agent_framework._clients import TOptions_co
+from agent_framework.observability import ChatTelemetryMixin
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
+
 """
 Custom Chat Client Implementation Example
 
-This sample demonstrates implementing a custom chat client by extending BaseChatClient class,
-showing integration with ChatAgent and both streaming and non-streaming responses.
+This sample demonstrates implementing a custom chat client and optionally composing
+middleware, telemetry, and function invocation layers explicitly.
 """
 
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions",
+    covariant=True,
+)
 
-class EchoingChatClient(FunctionInvokingChatClient[TOptions_co], Generic[TOptions_co]):
+
+class EchoingChatClient(CoreChatClient[TOptions_co], Generic[TOptions_co]):
     """A custom chat client that echoes messages back with modifications.
 
-    This demonstrates how to implement a custom chat client by extending BaseChatClient
-    and implementing the required _inner_get_response() and _inner_get_streaming_response() methods.
+    This demonstrates how to implement a custom chat client by extending CoreChatClient
+    and implementing the required _inner_get_response() method.
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "EchoingChatClient"
@@ -48,14 +66,14 @@ class EchoingChatClient(FunctionInvokingChatClient[TOptions_co], Generic[TOption
         self.prefix = prefix
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: Sequence[ChatMessage],
         stream: bool = False,
-        options: dict[str, Any],
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Echo back the user's message with a prefix."""
         if not messages:
             response_text = "No messages to echo!"
@@ -81,7 +99,11 @@ class EchoingChatClient(FunctionInvokingChatClient[TOptions_co], Generic[TOption
         )
 
         if not stream:
-            return response
+
+            async def _get_response() -> ChatResponse:
+                return response
+
+            return _get_response()
 
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             response_text_local = response_message.text or ""
@@ -94,7 +116,19 @@ class EchoingChatClient(FunctionInvokingChatClient[TOptions_co], Generic[TOption
                 )
                 await asyncio.sleep(0.05)
 
-        return _stream()
+        return ResponseStream(_stream(), finalizer=lambda updates: response)
+
+
+class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
+    ChatMiddlewareMixin[TOptions_co],
+    ChatTelemetryMixin[TOptions_co],
+    FunctionInvokingMixin[TOptions_co],
+    EchoingChatClient[TOptions_co],
+    Generic[TOptions_co],
+):
+    """Echoing chat client that explicitly composes middleware, telemetry, and function layers."""
+
+    OTEL_PROVIDER_NAME: ClassVar[str] = "EchoingChatClientWithLayers"
 
 
 async def main() -> None:
@@ -104,7 +138,7 @@ async def main() -> None:
     # Create the custom chat client
     print("--- EchoingChatClient Example ---")
 
-    echo_client = EchoingChatClient(prefix="🔊 Echo:")
+    echo_client = EchoingChatClientWithLayers(prefix="🔊 Echo:")
 
     # Use the chat client directly
     print("Using chat client directly:")
@@ -129,7 +163,7 @@ async def main() -> None:
     query2 = "Stream this message back to me"
     print(f"\nUser: {query2}")
     print("Agent: ", end="", flush=True)
-    async for chunk in echo_agent.run_stream(query2):
+    async for chunk in echo_agent.run(query2, stream=True):
         if chunk.text:
             print(chunk.text, end="", flush=True)
     print()

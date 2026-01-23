@@ -70,7 +70,7 @@ logger = get_logger()
 __all__ = [
     "BaseChatClient",
     "ChatClientProtocol",
-    "FunctionInvokingChatClient",
+    "CoreChatClient",
 ]
 
 
@@ -196,7 +196,7 @@ TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None,
 TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
-class _BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
+class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     """Core base class for chat clients without middleware wrapping.
 
     This abstract base class provides core functionality for chat client implementations,
@@ -313,9 +313,9 @@ class _BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     def _inner_get_response(
         self,
         *,
-        messages: list[ChatMessage],
+        messages: Sequence[ChatMessage],
         stream: bool,
-        options: dict[str, Any],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
@@ -497,21 +497,13 @@ class _BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         )
 
 
-class BaseChatClient(ChatMiddlewareMixin, _BaseChatClient[TOptions_co]):  # type: ignore[misc]
-    """Chat client base class with middleware support."""
-
-    pass
-
-
-class FunctionInvokingChatClient(  # type: ignore[misc,type-var]
-    ChatMiddlewareMixin,
+class BaseChatClient(
+    ChatMiddlewareMixin[TOptions_co],
     ChatTelemetryMixin[TOptions_co],
     FunctionInvokingMixin[TOptions_co],
-    _BaseChatClient[TOptions_co],
+    CoreChatClient[TOptions_co],
+    Generic[TOptions_co],
 ):
-    """Chat client base class with middleware before function invocation."""
+    """Chat client base class with middleware, telemetry, and function invocation support."""
 
     pass
-
-
-BaseChatClient.register(FunctionInvokingChatClient)  # type: ignore[type-abstract]

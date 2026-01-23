@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingChatClient,
     FunctionInvokingMixin,
     ResponseStream,
     Role,
@@ -229,12 +228,6 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         return ResponseStream(_stream(), finalizer=_finalize)
 
 
-class FunctionInvokingMockBaseChatClient(FunctionInvokingChatClient[TOptions_co], MockBaseChatClient[TOptions_co]):
-    """Mock client with function invocation enabled."""
-
-    pass
-
-
 @fixture
 def enable_function_calling(request: Any) -> bool:
     return request.param if hasattr(request, "param") else True
@@ -255,10 +248,11 @@ def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatC
 
 @fixture
 def chat_client_base(enable_function_calling: bool, max_iterations: int) -> MockBaseChatClient:
-    if enable_function_calling:
-        with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-            return FunctionInvokingMockBaseChatClient()
-    return MockBaseChatClient()
+    with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
+        chat_client = MockBaseChatClient()
+    if not enable_function_calling:
+        chat_client.function_invocation_configuration["enabled"] = False
+    return chat_client
 
 
 # region Agents

@@ -29,7 +29,7 @@ from agent_framework._middleware import (
 )
 from agent_framework.exceptions import MiddlewareException
 
-from .conftest import FunctionInvokingMockBaseChatClient, MockBaseChatClient, MockChatClient
+from .conftest import MockBaseChatClient, MockChatClient
 
 # region ChatAgent Tests
 
@@ -1855,7 +1855,7 @@ class TestChatAgentChatMiddleware:
         )
         final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
-        chat_client = FunctionInvokingMockBaseChatClient()
+        chat_client = MockBaseChatClient()
         chat_client.run_responses = [function_call_response, final_response]
 
         # Create ChatAgent with function middleware and tools

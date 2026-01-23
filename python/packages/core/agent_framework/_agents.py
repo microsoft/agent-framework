@@ -1388,9 +1388,10 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
 
 class ChatAgent(
-    AgentTelemetryMixin["ChatAgent[TOptions_co]"],
-    AgentMiddlewareMixin[TOptions_co],
+    AgentTelemetryMixin,
+    AgentMiddlewareMixin,
     _ChatAgentCore[TOptions_co],
+    Generic[TOptions_co],
 ):
     """A Chat Client Agent with middleware support."""
 

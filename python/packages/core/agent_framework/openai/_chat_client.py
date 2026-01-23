@@ -16,7 +16,7 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, ValidationError
 
-from .._clients import FunctionInvokingChatClient
+from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol
 from .._types import (
@@ -127,7 +127,7 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Base Client
 class OpenAIBaseChatClient(  # type: ignore[misc]
     OpenAIBase,
-    FunctionInvokingChatClient[TOpenAIChatOptions],
+    BaseChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
 ):
     """OpenAI Chat completion class."""
