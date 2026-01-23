@@ -14,17 +14,19 @@ SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 
 import asyncio
 
-from agent_framework.github_copilot import GithubCopilotAgent
+from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOptions
 
 
 async def read_only_example() -> None:
     """Example with read-only file permissions."""
     print("=== Read-Only File Access Example ===\n")
 
-    async with GithubCopilotAgent(
+    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
         instructions="You are a helpful assistant that can read files.",
         default_options={"allowed_permissions": ["read"]},
-    ) as agent:
+    )
+
+    async with agent:
         query = "Read the contents of README.md and summarize it"
         print(f"User: {query}")
         result = await agent.run(query)
@@ -35,10 +37,12 @@ async def read_write_example() -> None:
     """Example with both read and write file permissions."""
     print("=== Read and Write File Access Example ===\n")
 
-    async with GithubCopilotAgent(
+    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
         instructions="You are a helpful assistant that can read and write files.",
         default_options={"allowed_permissions": ["read", "write"]},
-    ) as agent:
+    )
+
+    async with agent:
         query = "Create a file called 'hello.txt' with the text 'Hello from Copilot!'"
         print(f"User: {query}")
         result = await agent.run(query)

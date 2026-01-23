@@ -8,7 +8,7 @@ from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, Cha
 from agent_framework.exceptions import ServiceException
 from copilot.generated.session_events import SessionEvent
 
-from agent_framework_github_copilot import GithubCopilotAgent
+from agent_framework_github_copilot import GithubCopilotAgent, GithubCopilotOptions
 
 
 class TestGithubCopilotAgentInit:
@@ -17,22 +17,24 @@ class TestGithubCopilotAgentInit:
     def test_init_with_client(self, mock_client: MagicMock) -> None:
         """Test initialization with pre-configured client."""
         agent = GithubCopilotAgent(client=mock_client)
-        assert agent._client == mock_client
-        assert agent._owns_client is False
+        assert agent._client == mock_client  # type: ignore
+        assert agent._owns_client is False  # type: ignore
         assert agent.id is not None
 
     def test_init_without_client(self) -> None:
         """Test initialization without client creates settings."""
         agent = GithubCopilotAgent()
-        assert agent._client is None
-        assert agent._owns_client is True
-        assert agent._settings is not None
+        assert agent._client is None  # type: ignore
+        assert agent._owns_client is True  # type: ignore
+        assert agent._settings is not None  # type: ignore
 
     def test_init_with_default_options(self) -> None:
         """Test initialization with default_options parameter."""
-        agent = GithubCopilotAgent(default_options={"model": "claude-sonnet-4", "timeout": 120})
-        assert agent._settings.model == "claude-sonnet-4"
-        assert agent._settings.timeout == 120
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"model": "claude-sonnet-4", "timeout": 120}
+        )
+        assert agent._settings.model == "claude-sonnet-4"  # type: ignore
+        assert agent._settings.timeout == 120  # type: ignore
 
     def test_init_with_tools(self) -> None:
         """Test initialization with function tools."""
@@ -41,12 +43,12 @@ class TestGithubCopilotAgentInit:
             return f"Result: {arg}"
 
         agent = GithubCopilotAgent(tools=[my_tool])
-        assert len(agent._tools) == 1
+        assert len(agent._tools) == 1  # type: ignore
 
     def test_init_with_instructions(self) -> None:
         """Test initialization with custom instructions."""
         agent = GithubCopilotAgent(instructions="You are a helpful assistant.")
-        assert agent._instructions == "You are a helpful assistant."
+        assert agent._instructions == "You are a helpful assistant."  # type: ignore
 
 
 class TestGithubCopilotAgentLifecycle:
@@ -64,7 +66,7 @@ class TestGithubCopilotAgentLifecycle:
 
             MockClient.assert_called_once()
             mock_client.start.assert_called_once()
-            assert agent._started is True
+            assert agent._started is True  # type: ignore
 
     async def test_start_uses_existing_client(self, mock_client: MagicMock) -> None:
         """Test that start uses provided client."""
@@ -72,7 +74,7 @@ class TestGithubCopilotAgentLifecycle:
         await agent.start()
 
         mock_client.start.assert_called_once()
-        assert agent._started is True
+        assert agent._started is True  # type: ignore
 
     async def test_start_idempotent(self, mock_client: MagicMock) -> None:
         """Test that calling start multiple times is safe."""
@@ -88,21 +90,21 @@ class TestGithubCopilotAgentLifecycle:
         await agent.start()
 
         mock_client.create_session.return_value = mock_session
-        await agent._get_or_create_session(AgentThread(), [])
+        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
 
         await agent.stop()
 
         mock_session.destroy.assert_called_once()
-        assert agent._started is False
+        assert agent._started is False  # type: ignore
 
     async def test_context_manager(self, mock_client: MagicMock) -> None:
         """Test async context manager usage."""
         async with GithubCopilotAgent(client=mock_client) as agent:
-            assert agent._started is True
+            assert agent._started is True  # type: ignore
 
         # When client is provided externally, agent doesn't own it and won't stop it
         mock_client.stop.assert_not_called()
-        assert agent._started is False
+        assert agent._started is False  # type: ignore
 
 
 class TestGithubCopilotAgentRun:
@@ -195,11 +197,11 @@ class TestGithubCopilotAgentRun:
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GithubCopilotAgent(client=mock_client)
-        assert agent._started is False
+        assert agent._started is False  # type: ignore
 
         await agent.run("Hello")
 
-        assert agent._started is True
+        assert agent._started is True  # type: ignore
         mock_client.start.assert_called_once()
 
 
@@ -224,7 +226,7 @@ class TestGithubCopilotAgentRunStream:
         mock_session.on = mock_on
 
         agent = GithubCopilotAgent(client=mock_client)
-        responses = []
+        responses: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Hello"):
             responses.append(update)
 
@@ -302,10 +304,12 @@ class TestGithubCopilotAgentSessionManagement:
         mock_session: MagicMock,
     ) -> None:
         """Test that session config includes model setting."""
-        agent = GithubCopilotAgent(client=mock_client, default_options={"model": "claude-sonnet-4"})
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            client=mock_client, default_options={"model": "claude-sonnet-4"}
+        )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [])
+        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -320,7 +324,7 @@ class TestGithubCopilotAgentSessionManagement:
         agent = GithubCopilotAgent(client=mock_client, instructions="You are a helpful assistant.")
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [])
+        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -345,7 +349,7 @@ class TestGithubCopilotAgentToolConversion:
         agent = GithubCopilotAgent(client=mock_client, tools=[my_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), agent._tools)
+        await agent._get_or_create_session(AgentThread(), agent._tools)  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]

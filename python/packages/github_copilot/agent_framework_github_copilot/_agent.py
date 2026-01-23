@@ -22,8 +22,15 @@ from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import SessionEvent, SessionEventType
+from copilot.types import (
+    CopilotClientOptions,
+    PermissionRequest,
+    PermissionRequestResult,
+    SessionConfig,
+    ToolInvocation,
+    ToolResult,
+)
 from copilot.types import Tool as CopilotTool
-from copilot.types import ToolInvocation, ToolResult
 from pydantic import ValidationError
 
 from ._settings import GithubCopilotSettings
@@ -37,7 +44,7 @@ else:
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
-PermissionHandlerType = Callable[[dict[str, Any], dict[str, str]], dict[str, Any]]
+PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], PermissionRequestResult]
 """Type for permission request handlers."""
 
 
@@ -170,7 +177,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         self._sessions: dict[str, CopilotSession] = {}
 
         # Parse options
-        opts = dict(default_options) if default_options else {}
+        opts: dict[str, Any] = dict(default_options) if default_options else {}
         cli_path = opts.pop("cli_path", None)
         model = opts.pop("model", None)
         timeout = opts.pop("timeout", None)
@@ -218,13 +225,13 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
             return
 
         if self._client is None:
-            options: dict[str, Any] = {}
+            client_options: CopilotClientOptions = {}
             if self._settings.cli_path:
-                options["cli_path"] = self._settings.cli_path
+                client_options["cli_path"] = self._settings.cli_path
             if self._settings.log_level:
-                options["log_level"] = self._settings.log_level
+                client_options["log_level"] = self._settings.log_level  # type: ignore[typeddict-item]
 
-            self._client = CopilotClient(options if options else None)
+            self._client = CopilotClient(client_options if client_options else None)
 
         try:
             await self._client.start()
@@ -295,7 +302,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if not thread:
             thread = self.get_new_thread()
 
-        opts = dict(options) if options else {}
+        opts: dict[str, Any] = dict(options) if options else {}
         timeout = opts.pop("timeout", None) or self._settings.timeout or DEFAULT_TIMEOUT_SECONDS
 
         merged_tools = self._merge_tools(tools)
@@ -421,13 +428,13 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         allowed_set = set(allowed_permissions)
 
         def handler(
-            request: dict[str, Any],
+            request: PermissionRequest,
             context: dict[str, str],
-        ) -> dict[str, Any]:
+        ) -> PermissionRequestResult:
             kind = request.get("kind")
             if kind in allowed_set:
-                return {"kind": "approved"}
-            return {"kind": "denied-interactively-by-user"}
+                return PermissionRequestResult(kind="approved")
+            return PermissionRequestResult(kind="denied-interactively-by-user")
 
         return handler
 
@@ -460,7 +467,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         for tool in tools:
             if isinstance(tool, AIFunction):
-                copilot_tools.append(self._ai_function_to_copilot_tool(tool))
+                copilot_tools.append(self._ai_function_to_copilot_tool(tool))  # type: ignore
 
         return copilot_tools
 
@@ -520,10 +527,10 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if thread.service_thread_id and thread.service_thread_id in self._sessions:
             return self._sessions[thread.service_thread_id]
 
-        config: dict[str, Any] = {"streaming": streaming}
+        config: SessionConfig = {"streaming": streaming}
 
         if self._settings.model:
-            config["model"] = self._settings.model
+            config["model"] = self._settings.model  # type: ignore[typeddict-item]
 
         if self._instructions:
             config["system_message"] = {"mode": "append", "content": self._instructions}

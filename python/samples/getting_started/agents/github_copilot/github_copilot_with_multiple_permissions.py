@@ -20,17 +20,19 @@ More permissions mean more potential for unintended actions.
 
 import asyncio
 
-from agent_framework.github_copilot import GithubCopilotAgent
+from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOptions
 
 
 async def main() -> None:
     print("=== Github Copilot Agent with Multiple Permissions ===\n")
 
     # Enable shell, read, and write permissions for a development assistant
-    async with GithubCopilotAgent(
+    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
         instructions="You are a helpful development assistant that can read, write files and run commands.",
         default_options={"allowed_permissions": ["shell", "read", "write"]},
-    ) as agent:
+    )
+
+    async with agent:
         # Complex task that requires multiple permissions
         query = "List all Python files, then read the first one and create a summary in summary.txt"
         print(f"User: {query}")
