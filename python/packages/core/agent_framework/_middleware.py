@@ -26,9 +26,9 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import TypeVar
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    pass  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    pass  # type: ignore[import] # pragma: no cover
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -1038,7 +1038,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             def stream_final_handler(ctx: ChatContext) -> ResponseStream["ChatResponseUpdate", "ChatResponse"]:
                 if ctx.terminate:
                     return ctx.result  # type: ignore[return-value]
-                return final_handler(ctx)
+                return final_handler(ctx)  # type: ignore[return-value]
 
             first_handler = self._create_streaming_handler_chain(
                 stream_final_handler, result_container, "result_stream"
@@ -1053,8 +1053,8 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
                 stream.with_update_hook(hook)
             for finalizer in context.stream_finalizers:
                 stream.with_finalizer(finalizer)
-            for hook in context.stream_teardown_hooks:
-                stream.with_teardown(hook)
+            for teardown_hook in context.stream_teardown_hooks:
+                stream.with_teardown(teardown_hook)  # type: ignore[arg-type]
             return stream
 
         async def _run() -> "ChatResponse":
@@ -1072,7 +1072,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
                 return context.result  # type: ignore
             return result_container["result"]  # type: ignore
 
-        return await _run()
+        return await _run()  # type: ignore[return-value]
 
 
 # Covariant for chat client options
@@ -1100,7 +1100,6 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         self.function_middleware = middleware_list["function"]
         super().__init__(**kwargs)
 
-    @override
     def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
@@ -1121,7 +1120,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
             )
 
         if not chat_middleware_list and not self.chat_middleware:
-            return super().get_response(  # type: ignore[misc]
+            return super().get_response(  # type: ignore[misc,no-any-return]
                 messages=messages,
                 stream=stream,
                 options=options,
@@ -1129,9 +1128,10 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
             )
 
         pipeline = ChatMiddlewarePipeline(*chat_middleware_list, *self.chat_middleware)  # type: ignore[arg-type]
+        prepared_messages = prepare_messages(messages)
         context = ChatContext(
             chat_client=self,  # type: ignore[arg-type]
-            messages=messages,
+            messages=prepared_messages,
             options=options,
             is_streaming=stream,
             kwargs=kwargs,
@@ -1140,7 +1140,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         def final_handler(
             ctx: ChatContext,
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-            return super(ChatMiddlewareMixin, self).get_response(  # type: ignore[misc]
+            return super(ChatMiddlewareMixin, self).get_response(  # type: ignore[misc,no-any-return]
                 messages=list(ctx.messages),
                 stream=ctx.is_streaming,
                 options=ctx.options or {},
@@ -1158,7 +1158,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
 
         if stream:
             return ResponseStream.wrap(result)  # type: ignore[arg-type,return-value]
-        return result
+        return result  # type: ignore[return-value]
 
 
 class AgentMiddlewareMixin(Generic[TOptions_co]):
@@ -1398,7 +1398,7 @@ def _middleware_enabled_run_impl(
                     self,  # type: ignore[arg-type]
                     normalized_messages,
                     context,
-                    _execute_stream_handler,
+                    _execute_stream_handler,  # type: ignore[arg-type]
                 )
             )
 
@@ -1418,8 +1418,8 @@ def _middleware_enabled_run_impl(
 
     # No middleware, execute directly
     if stream:
-        return _call_original(normalized_messages, stream=True, thread=thread, **kwargs)
-    return _call_original(normalized_messages, stream=False, thread=thread, **kwargs)
+        return _call_original(normalized_messages, stream=True, thread=thread, **kwargs)  # type: ignore[no-any-return]
+    return _call_original(normalized_messages, stream=False, thread=thread, **kwargs)  # type: ignore[no-any-return]
 
 
 class MiddlewareDict(TypedDict):
@@ -1429,7 +1429,7 @@ class MiddlewareDict(TypedDict):
 
 
 def categorize_middleware(
-    *middleware_sources: Middleware | None,
+    *middleware_sources: Middleware | Sequence[Middleware] | None,
 ) -> MiddlewareDict:
     """Categorize middleware from multiple sources into agent, function, and chat types.
 

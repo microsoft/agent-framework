@@ -19,7 +19,6 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    BaseChatClient,
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
@@ -53,7 +52,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, BaseChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
 
 def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -76,7 +75,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, BaseChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
         assert azure_chat_client.client.default_headers[key] == value
@@ -89,7 +88,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, BaseChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
@@ -624,7 +623,7 @@ async def test_streaming_with_none_delta(
     azure_chat_client = AzureOpenAIChatClient()
 
     results: list[ChatResponseUpdate] = []
-    async for msg in azure_chat_client.get_streaming_response(messages=chat_history):
+    async for msg in azure_chat_client.get_response(messages=chat_history, stream=True):
         results.append(msg)
 
     assert len(results) > 0

@@ -26,6 +26,7 @@ from .._types import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    ResponseStream,
     Role,
     UsageDetails,
     prepare_function_call_results,
@@ -124,7 +125,7 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class OpenAIBaseChatClient(
+class OpenAIBaseChatClient(  # type: ignore[misc]
     OpenAIBase,
     FunctionInvokingChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
@@ -132,49 +133,75 @@ class OpenAIBaseChatClient(
     """OpenAI Chat completion class."""
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
 
-        try:
-            if stream:
-                # Streaming mode
-                options_dict["stream_options"] = {"include_usage": True}
+        if stream:
+            # Streaming mode
+            options_dict["stream_options"] = {"include_usage": True}
 
-                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                client = await self._ensure_client()
+                try:
                     async for chunk in await client.chat.completions.create(stream=True, **options_dict):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
                         yield self._parse_response_update_from_openai(chunk)
+                except BadRequestError as ex:
+                    if ex.code == "content_filter":
+                        raise OpenAIContentFilterException(
+                            f"{type(self)} service encountered a content error: {ex}",
+                            inner_exception=ex,
+                        ) from ex
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                except Exception as ex:
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
 
-                return _stream()
-            # Non-streaming mode
-            return self._parse_response_from_openai(
-                await client.chat.completions.create(stream=False, **options_dict), options
-            )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            client = await self._ensure_client()
+            try:
+                return self._parse_response_from_openai(
+                    await client.chat.completions.create(stream=False, **options_dict), options
+                )
+            except BadRequestError as ex:
+                if ex.code == "content_filter":
+                    raise OpenAIContentFilterException(
+                        f"{type(self)} service encountered a content error: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+            except Exception as ex:
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
+                    inner_exception=ex,
+                ) from ex
+
+        return _get_response()
 
     # region content creation
 
@@ -546,7 +573,7 @@ class OpenAIBaseChatClient(
 # region Public client
 
 
-class OpenAIChatClient(
+class OpenAIChatClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     OpenAIBaseChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],

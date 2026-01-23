@@ -7,6 +7,7 @@ from agent_framework import (
     BaseChatClient,
     ChatClientProtocol,
     ChatMessage,
+    ChatResponse,
     Role,
 )
 
@@ -45,9 +46,14 @@ async def test_base_client_get_response_streaming(chat_client_base: ChatClientPr
 
 async def test_chat_client_instructions_handling(chat_client_base: ChatClientProtocol):
     instructions = "You are a helpful assistant."
+
+    async def fake_inner_get_response(**kwargs):
+        return ChatResponse(messages=[ChatMessage(role="assistant", text="ok")])
+
     with patch.object(
         chat_client_base,
         "_inner_get_response",
+        side_effect=fake_inner_get_response,
     ) as mock_inner_get_response:
         await chat_client_base.get_response("hello", options={"instructions": instructions})
         mock_inner_get_response.assert_called_once()

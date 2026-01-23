@@ -399,7 +399,7 @@ class _BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         return self._inner_get_response(
             messages=prepared_messages,
             stream=stream,
-            options=options,
+            options=options or {},  # type: ignore[arg-type]
             **kwargs,
         )
 
@@ -496,15 +496,15 @@ class _BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         )
 
 
-class BaseChatClient(ChatMiddlewareMixin, _BaseChatClient[TOptions_co]):
+class BaseChatClient(ChatMiddlewareMixin, _BaseChatClient[TOptions_co]):  # type: ignore[misc]
     """Chat client base class with middleware support."""
 
     pass
 
 
-class FunctionInvokingChatClient(
+class FunctionInvokingChatClient(  # type: ignore[misc,type-var]
     ChatMiddlewareMixin,
-    ChatTelemetryMixin,
+    ChatTelemetryMixin[TOptions_co],
     FunctionInvokingMixin[TOptions_co],
     _BaseChatClient[TOptions_co],
 ):

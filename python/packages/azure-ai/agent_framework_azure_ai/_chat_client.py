@@ -5,8 +5,8 @@ import json
 import os
 import re
 import sys
-from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -25,6 +25,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Middleware,
+    ResponseStream,
     Role,
     TextSpanRegion,
     ToolProtocol,
@@ -340,35 +341,53 @@ class AzureAIAgentClient(FunctionInvokingChatClient[TAzureAIAgentOptions], Gener
         await self._close_client_if_needed()
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
-        return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
-            output_format_type=options.get("response_format"),
-        )
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            # Streaming mode - return the async generator directly
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                # prepare
+                run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
+                agent_id = await self._get_agent_id_or_create(run_options)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: Mapping[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
-        agent_id = await self._get_agent_id_or_create(run_options)
+                # execute and process
+                async for update in self._process_stream(
+                    *(await self._create_agent_stream(agent_id, run_options, required_action_results))
+                ):
+                    yield update
 
-        # execute and process
-        async for update in self._process_stream(
-            *(await self._create_agent_stream(agent_id, run_options, required_action_results))
-        ):
-            yield update
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        # Non-streaming mode - collect updates and convert to response
+        async def _get_response() -> ChatResponse:
+            async def _get_streaming() -> AsyncIterable[ChatResponseUpdate]:
+                # prepare
+                run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
+                agent_id = await self._get_agent_id_or_create(run_options)
+
+                # execute and process
+                async for update in self._process_stream(
+                    *(await self._create_agent_stream(agent_id, run_options, required_action_results))
+                ):
+                    yield update
+
+            return await ChatResponse.from_chat_response_generator(
+                updates=_get_streaming(),
+                output_format_type=options.get("response_format"),
+            )
+
+        return _get_response()
 
     async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
         """Determine which agent to use and create if needed.

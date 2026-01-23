@@ -201,7 +201,7 @@ TOpenAIResponsesOptions = TypeVar(
 # region ResponsesClient
 
 
-class OpenAIBaseResponsesClient(
+class OpenAIBaseResponsesClient(  # type: ignore[misc]
     OpenAIBase,
     FunctionInvokingChatClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
@@ -1422,7 +1422,7 @@ class OpenAIBaseResponsesClient(
         return {}
 
 
-class OpenAIResponsesClient(
+class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     OpenAIBaseResponsesClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],

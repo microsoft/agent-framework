@@ -43,7 +43,7 @@ TAzureOpenAIResponsesOptions = TypeVar(
 )
 
 
-class AzureOpenAIResponsesClient(
+class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
     OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
     Generic[TAzureOpenAIResponsesOptions],

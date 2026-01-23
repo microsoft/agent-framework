@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal
+from collections.abc import AsyncIterable, Awaitable, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -17,6 +17,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
+    ResponseStream,
     Role,
     TextSpanRegion,
     UsageDetails,
@@ -330,35 +331,38 @@ class AnthropicClient(FunctionInvokingChatClient[TAnthropicOptions], Generic[TAn
     # region Get response methods
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
-        # execute
-        message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-        # process
-        return self._process_message(message, options)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options = self._prepare_options(messages, options, **kwargs)
-        # execute and process
-        async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-            parsed_chunk = self._process_stream_event(chunk)
-            if parsed_chunk:
-                yield parsed_chunk
+        if stream:
+            # Streaming mode
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                    parsed_chunk = self._process_stream_event(chunk)
+                    if parsed_chunk:
+                        yield parsed_chunk
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            return self._process_message(message, options)
+
+        return _get_response()
 
     # region Prep methods
 
