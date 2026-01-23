@@ -512,3 +512,6 @@ class FunctionInvokingChatClient(  # type: ignore[misc,type-var]
     """Chat client base class with middleware before function invocation."""
 
     pass
+
+
+BaseChatClient.register(FunctionInvokingChatClient)
