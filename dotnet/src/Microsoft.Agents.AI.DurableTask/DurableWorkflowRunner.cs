@@ -187,16 +187,25 @@ public class DurableWorkflowRunner
 
         foreach (WorkflowExecutionLevel level in plan.Levels)
         {
-            if (level.Executors.Count == 1)
+            // Filter executors based on edge conditions from their predecessors
+            List<WorkflowExecutorInfo> eligibleExecutors = GetEligibleExecutors(level.Executors, results, plan, logger);
+
+            if (eligibleExecutors.Count == 0)
             {
-                WorkflowExecutorInfo executorInfo = level.Executors[0];
+                // No eligible executors at this level, continue to next level
+                continue;
+            }
+
+            if (eligibleExecutors.Count == 1)
+            {
+                WorkflowExecutorInfo executorInfo = eligibleExecutors[0];
                 string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
                 results[executorInfo.ExecutorId] = await this.ExecuteExecutorAsync(context, executorInfo, input, logger).ConfigureAwait(true);
             }
             else
             {
                 List<Task<(string Id, string Result)>> tasks = [];
-                foreach (WorkflowExecutorInfo executorInfo in level.Executors)
+                foreach (WorkflowExecutorInfo executorInfo in eligibleExecutors)
                 {
                     string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
                     tasks.Add(this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger));
@@ -210,6 +219,115 @@ public class DurableWorkflowRunner
         }
 
         return GetFinalResult(plan, results);
+    }
+
+    /// <summary>
+    /// Filters executors based on their incoming edge conditions.
+    /// An executor is eligible if all its incoming edges have conditions that evaluate to true,
+    /// or if the edges have no conditions.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    private static List<WorkflowExecutorInfo> GetEligibleExecutors(
+        List<WorkflowExecutorInfo> executors,
+        Dictionary<string, string> results,
+        WorkflowExecutionPlan plan,
+        ILogger logger)
+    {
+        List<WorkflowExecutorInfo> eligible = [];
+
+        foreach (WorkflowExecutorInfo executorInfo in executors)
+        {
+            List<string> predecessors = plan.Predecessors[executorInfo.ExecutorId];
+
+            // Root executor (no predecessors) is always eligible
+            if (predecessors.Count == 0)
+            {
+                eligible.Add(executorInfo);
+                continue;
+            }
+
+            // Check if any predecessor's edge condition allows this executor to run
+            bool isEligible = false;
+            foreach (string predecessorId in predecessors)
+            {
+                // Get the condition for this edge (predecessor -> current executor)
+                if (!plan.EdgeConditions.TryGetValue((predecessorId, executorInfo.ExecutorId), out Func<object?, bool>? condition))
+                {
+                    // No condition registered for this edge, assume it's eligible
+                    isEligible = true;
+                    break;
+                }
+
+                if (condition is null)
+                {
+                    // Edge has no condition, always eligible
+                    isEligible = true;
+                    break;
+                }
+
+                // Evaluate the condition using the predecessor's result
+                if (results.TryGetValue(predecessorId, out string? predecessorResult))
+                {
+                    try
+                    {
+                        // Get the predecessor's output type for proper deserialization
+                        Type? predecessorOutputType = plan.ExecutorOutputTypes.GetValueOrDefault(predecessorId);
+
+                        // Deserialize the predecessor result to the expected type for condition evaluation
+                        object? resultObject = DeserializeForCondition(predecessorResult, predecessorOutputType);
+                        if (condition(resultObject))
+                        {
+                            isEligible = true;
+                            break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to evaluate condition for edge from '{PredecessorId}' to '{ExecutorId}'", predecessorId, executorInfo.ExecutorId);
+                    }
+                }
+            }
+
+            if (isEligible)
+            {
+                eligible.Add(executorInfo);
+            }
+            else
+            {
+                logger.LogExecutorSkipped(executorInfo.ExecutorId);
+            }
+        }
+
+        return eligible;
+    }
+
+    /// <summary>
+    /// Deserializes a JSON string result into an object for condition evaluation.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    private static object? DeserializeForCondition(string json, Type? targetType)
+    {
+        if (string.IsNullOrEmpty(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            if (targetType is null)
+            {
+                return JsonSerializer.Deserialize<object>(json);
+            }
+
+            return JsonSerializer.Deserialize(json, targetType);
+        }
+        catch (JsonException)
+        {
+            // If it's not valid JSON, return the string as-is
+            return json;
+        }
     }
 
     private async Task<(string Id, string Result)> ExecuteExecutorWithIdAsync(

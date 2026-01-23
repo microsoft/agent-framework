@@ -130,4 +130,10 @@ internal static partial class Logs
         Level = LogLevel.Information,
         Message = "Activity executed for executor '{ExecutorId}' with result: {Result}")]
     public static partial void LogActivityExecuted(this ILogger logger, string executorId, string result);
+
+    [LoggerMessage(
+        EventId = 17,
+        Level = LogLevel.Information,
+        Message = "Executor '{ExecutorId}' skipped due to edge condition evaluation")]
+    public static partial void LogExecutorSkipped(this ILogger logger, string executorId);
 }
