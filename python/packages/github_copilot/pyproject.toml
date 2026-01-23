@@ -1,6 +1,6 @@
 [project]
-name = "agent-framework-core"
-description = "Microsoft Agent Framework for building AI Agents with Python. This is the core package that has all the core abstractions and implementations."
+name = "agent-framework-github-copilot"
+description = "Github Copilot integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,39 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    # utilities
-    "typing-extensions",
-    "pydantic>=2,<3",
-    "pydantic-settings>=2,<3",
-    # telemetry
-    "opentelemetry-api>=1.39.0",
-    "opentelemetry-sdk>=1.39.0",
-    "opentelemetry-semantic-conventions-ai>=0.4.13",
-    # connectors and functions
-    "openai>=1.99.0",
-    "azure-identity>=1,<2",
-    "mcp[ws]>=1.24.0,<2",
-    "packaging>=24.1",
-]
-
-[project.optional-dependencies]
-all = [
-    "agent-framework-a2a",
-    "agent-framework-ag-ui",
-    "agent-framework-azure-ai-search",
-    "agent-framework-anthropic",
-    "agent-framework-azure-ai",
-    "agent-framework-azurefunctions",
-    "agent-framework-chatkit",
-    "agent-framework-copilotstudio",
-    "agent-framework-declarative",
-    "agent-framework-devui",
-    "agent-framework-github-copilot",
-    "agent-framework-lab",
-    "agent-framework-mem0",
-    "agent-framework-ollama",
-    "agent-framework-purview",
-    "agent-framework-redis",
+    "agent-framework-core",
+    "github-copilot-sdk>=0.1.0",
 ]
 
 [tool.uv]
@@ -68,33 +37,27 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
-
 [tool.pytest.ini_options]
-testpaths = [
-    'tests',
-    'packages/core/tests',
-    'packages/a2a/tests',
-    'packages/azure-ai/tests',
-    'packages/copilotstudio/tests',
-    'packages/mem0/tests',
-    'packages/runtime/tests'
-]
+testpaths = 'tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = []
+filterwarnings = [
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
+]
 timeout = 120
+
+[tool.ruff]
+extend = "../../pyproject.toml"
 
 [tool.coverage.run]
 omit = [
     "**/__init__.py"
 ]
 
-[tool.ruff]
-extend = "../../pyproject.toml"
-
 [tool.pyright]
 extends = "../../pyproject.toml"
+
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -111,18 +74,15 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework"]
+targets = ["agent_framework_github_copilot"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
-test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
-
-[tool.flit.module]
-name = "agent_framework"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_github_copilot"
+test = "pytest --cov=agent_framework_github_copilot --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
