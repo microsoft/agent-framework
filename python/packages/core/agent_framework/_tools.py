@@ -24,6 +24,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    TypedDict,
     Union,
     cast,
     get_args,
