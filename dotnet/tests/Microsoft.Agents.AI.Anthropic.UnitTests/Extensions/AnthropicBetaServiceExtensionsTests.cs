@@ -221,27 +221,71 @@ public sealed class AnthropicBetaServiceExtensionsTests
     /// Verify that CreateAIAgent with explicit defaultMaxTokens uses the provided value.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithExplicitMaxTokens_UsesProvidedValue()
+    public async Task CreateAIAgent_WithExplicitMaxTokens_UsesProvidedValueAsync()
     {
         // Arrange
-        var chatClient = new TestAnthropicChatClient();
+        int capturedMaxTokens = 0;
+        var handler = new CapturingHttpHandler(request =>
+        {
+            // Parse the request body to capture max_tokens
+            var content = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (content is not null)
+            {
+                var json = System.Text.Json.JsonDocument.Parse(content);
+                if (json.RootElement.TryGetProperty("max_tokens", out var maxTokens))
+                {
+                    capturedMaxTokens = maxTokens.GetInt32();
+                }
+            }
+        });
+
+        var client = new AnthropicClient
+        {
+            HttpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") },
+            APIKey = "test-key"
+        };
 
         // Act
-        var agent = chatClient.Beta.AsAIAgent(
-            model: "test-model",
+        var agent = client.Beta.AsAIAgent(
+            model: "claude-haiku-4-5",
             name: "Test Agent",
             defaultMaxTokens: 8192);
 
-        // Assert
-        Assert.NotNull(agent);
-        Assert.Equal("Test Agent", agent.Name);
-        // MaxTokens is applied at the chat client level, agent is created successfully
-        Assert.NotNull(agent.ChatClient);
+        // Invoke the agent to trigger the request
+        var thread = await agent.GetNewThreadAsync();
+        try
+        {
+            await agent.RunAsync("Test message", thread);
+        }
+        catch
+        {
+            // Expected to fail since we're using a test handler
+        }
 
-        // Verify that the AnthropicChatClient is available and configured
-        var anthropicChatClient = agent.GetService<AnthropicChatClient>();
-        Assert.NotNull(anthropicChatClient);
-        Assert.Equal(8192, anthropicChatClient.DefaultMaxOutputTokens);
+        // Assert
+        Assert.Equal(8192, capturedMaxTokens);
+    }
+
+    /// <summary>
+    /// HTTP handler that captures requests for verification.
+    /// </summary>
+    private sealed class CapturingHttpHandler : HttpMessageHandler
+    {
+        private readonly Action<HttpRequestMessage> _captureRequest;
+
+        public CapturingHttpHandler(Action<HttpRequestMessage> captureRequest)
+        {
+            this._captureRequest = captureRequest;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            this._captureRequest(request);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"error\": \"test\"}")
+            });
+        }
     }
 
     /// <summary>
