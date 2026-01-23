@@ -630,6 +630,56 @@ async def test_streaming_with_none_delta(
     assert any(msg.contents for msg in results)
 
 
+def test_client_uses_custom_base_url_when_provided() -> None:
+    """Test that a custom base_url is used directly when provided."""
+    custom_base_url = "https://custom.example.com/my/path/"
+
+    client = AzureOpenAIChatClient(
+        deployment_name="gpt-4o",
+        base_url=custom_base_url,
+        api_key="test-key",
+    )
+
+    assert client.client is not None
+    assert str(client.client.base_url) == custom_base_url
+
+
+def test_client_constructs_v1_url_for_openai_azure_com_endpoint() -> None:
+    """Test v1 URL construction for .openai.azure.com endpoints."""
+    client = AzureOpenAIChatClient(
+        deployment_name="gpt-4o",
+        endpoint="https://my-resource.openai.azure.com",
+        api_key="test-key",
+    )
+
+    assert client.client is not None
+    assert str(client.client.base_url) == "https://my-resource.openai.azure.com/openai/v1/"
+
+
+def test_client_constructs_v1_url_for_services_ai_azure_com_endpoint() -> None:
+    """Test v1 URL construction for .services.ai.azure.com endpoints."""
+    client = AzureOpenAIChatClient(
+        deployment_name="gpt-4o",
+        endpoint="https://my-resource.services.ai.azure.com",
+        api_key="test-key",
+    )
+
+    assert client.client is not None
+    assert str(client.client.base_url) == "https://my-resource.services.ai.azure.com/openai/v1/"
+
+
+def test_client_raises_error_for_non_standard_endpoint() -> None:
+    """Test that non-standard endpoints raise an error."""
+    with pytest.raises(ServiceInitializationError) as exc_info:
+        AzureOpenAIChatClient(
+            deployment_name="gpt-4o",
+            endpoint="https://api.openai.com",
+            api_key="test-key",
+        )
+
+    assert "Please provide an endpoint or a base_url" in str(exc_info.value)
+
+
 @ai_function
 def get_story_text() -> str:
     """Returns a story about Emily and David."""

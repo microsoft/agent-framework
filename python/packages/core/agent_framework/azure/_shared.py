@@ -230,7 +230,9 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             if not v1_base_url:
                 raise ServiceInitializationError(
                     "Please provide an endpoint or a base_url. "
-                    "For standard Azure OpenAI endpoints, the v1 API path will be appended automatically."
+                    "For standard Azure OpenAI endpoints (*.openai.azure.com and *.services.ai.azure.com), "
+                    "the v1 API path will be appended automatically; for non-standard or private deployments, "
+                    "you must provide a base_url that already includes the desired API path."
                 )
 
             # Determine the effective api_key for AsyncOpenAI
