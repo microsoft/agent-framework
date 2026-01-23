@@ -130,8 +130,8 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
     def __init__(
         self,
-        client: CopilotClient | None = None,
         *,
+        client: CopilotClient | None = None,
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -148,11 +148,9 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
     ) -> None:
         """Initialize the GitHub Copilot Agent.
 
-        Args:
+        Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
                 a new client will be created using the other parameters.
-
-        Keyword Args:
             id: ID of the GithubCopilotAgent.
             name: Name of the GithubCopilotAgent.
             description: Description of the GithubCopilotAgent.
