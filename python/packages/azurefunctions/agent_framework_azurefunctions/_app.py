@@ -109,13 +109,13 @@ class AgentFunctionApp(DFAppBase):
         from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIChatClient(...).create_agent(
+        weather_agent = AzureOpenAIChatClient(...).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIChatClient(...).create_agent(
+        math_agent = AzureOpenAIChatClient(...).as_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],
@@ -616,7 +616,7 @@ class AgentFunctionApp(DFAppBase):
         # Create or parse session ID
         if thread_id and isinstance(thread_id, str) and thread_id.strip():
             try:
-                session_id = AgentSessionId.parse(thread_id)
+                session_id = AgentSessionId.parse(thread_id, agent_name=agent_name)
             except ValueError as e:
                 logger.warning(
                     "Failed to parse AgentSessionId from thread_id '%s': %s. Falling back to new session ID.",

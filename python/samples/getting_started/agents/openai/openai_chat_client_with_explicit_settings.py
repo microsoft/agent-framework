@@ -30,7 +30,7 @@ async def main() -> None:
     agent = OpenAIChatClient(
         model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
         api_key=os.environ["OPENAI_API_KEY"],
-    ).create_agent(
+    ).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

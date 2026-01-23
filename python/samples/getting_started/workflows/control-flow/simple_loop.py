@@ -117,7 +117,7 @@ class ParseJudgeResponse(Executor):
 
 def create_judge_agent() -> ChatAgent:
     """Create a judge agent that evaluates guesses."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
         name="judge_agent",
     )

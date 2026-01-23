@@ -157,7 +157,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 
 def create_spam_detection_agent() -> ChatAgent:
     """Creates a spam detection agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
@@ -170,7 +170,7 @@ def create_spam_detection_agent() -> ChatAgent:
 
 def create_email_assistant_agent() -> ChatAgent:
     """Creates an email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."

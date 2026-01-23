@@ -122,6 +122,20 @@ def test_make_json_safe_model_dump():
     assert result == {"type": "model", "data": "dump"}
 
 
+class ToDictObject:
+    """Object with to_dict method (like SerializationMixin)."""
+
+    def to_dict(self):
+        return {"type": "serialization_mixin", "method": "to_dict"}
+
+
+def test_make_json_safe_to_dict():
+    """Test object with to_dict method (SerializationMixin pattern)."""
+    obj = ToDictObject()
+    result = make_json_safe(obj)
+    assert result == {"type": "serialization_mixin", "method": "to_dict"}
+
+
 class DictObject:
     """Object with dict method."""
 
@@ -201,6 +215,41 @@ def test_make_json_safe_fallback():
     result = make_json_safe(obj)
     # Objects with __dict__ return their __dict__ dict
     assert isinstance(result, dict)
+
+
+def test_make_json_safe_dataclass_with_nested_to_dict_object():
+    """Test dataclass containing a to_dict object (like HandoffAgentUserRequest with AgentResponse).
+
+    This test verifies the fix for the AG-UI JSON serialization error when
+    HandoffAgentUserRequest (a dataclass) contains an AgentResponse (SerializationMixin).
+    """
+
+    class NestedToDictObject:
+        """Simulates SerializationMixin objects like AgentResponse."""
+
+        def __init__(self, contents: list[str]):
+            self.contents = contents
+
+        def to_dict(self):
+            return {"type": "response", "contents": self.contents}
+
+    @dataclass
+    class ContainerDataclass:
+        """Simulates HandoffAgentUserRequest dataclass."""
+
+        response: NestedToDictObject
+
+    obj = ContainerDataclass(response=NestedToDictObject(contents=["hello", "world"]))
+    result = make_json_safe(obj)
+
+    # Verify the nested to_dict object was properly serialized
+    assert result == {"response": {"type": "response", "contents": ["hello", "world"]}}
+
+    # Verify the result is actually JSON serializable
+    import json
+
+    json_str = json.dumps(result)
+    assert json_str is not None
 
 
 def test_convert_tools_to_agui_format_with_ai_function():
@@ -307,3 +356,173 @@ def test_convert_tools_to_agui_format_with_multiple_tools():
     assert len(result) == 2
     assert result[0]["name"] == "tool1"
     assert result[1]["name"] == "tool2"
+
+
+# Additional tests for utils coverage
+
+
+def test_safe_json_parse_with_dict():
+    """Test safe_json_parse with dict input."""
+    from agent_framework_ag_ui._utils import safe_json_parse
+
+    input_dict = {"key": "value"}
+    result = safe_json_parse(input_dict)
+    assert result == input_dict
+
+
+def test_safe_json_parse_with_json_string():
+    """Test safe_json_parse with JSON string."""
+    from agent_framework_ag_ui._utils import safe_json_parse
+
+    result = safe_json_parse('{"key": "value"}')
+    assert result == {"key": "value"}
+
+
+def test_safe_json_parse_with_invalid_json():
+    """Test safe_json_parse with invalid JSON."""
+    from agent_framework_ag_ui._utils import safe_json_parse
+
+    result = safe_json_parse("not json")
+    assert result is None
+
+
+def test_safe_json_parse_with_non_dict_json():
+    """Test safe_json_parse with JSON that parses to non-dict."""
+    from agent_framework_ag_ui._utils import safe_json_parse
+
+    result = safe_json_parse("[1, 2, 3]")
+    assert result is None
+
+
+def test_safe_json_parse_with_none():
+    """Test safe_json_parse with None input."""
+    from agent_framework_ag_ui._utils import safe_json_parse
+
+    result = safe_json_parse(None)
+    assert result is None
+
+
+def test_get_role_value_with_enum():
+    """Test get_role_value with enum role."""
+    from agent_framework import ChatMessage, Content, Role
+
+    from agent_framework_ag_ui._utils import get_role_value
+
+    message = ChatMessage(role=Role.USER, contents=[Content.from_text("test")])
+    result = get_role_value(message)
+    assert result == "user"
+
+
+def test_get_role_value_with_string():
+    """Test get_role_value with string role."""
+    from agent_framework_ag_ui._utils import get_role_value
+
+    class MockMessage:
+        role = "assistant"
+
+    result = get_role_value(MockMessage())
+    assert result == "assistant"
+
+
+def test_get_role_value_with_none():
+    """Test get_role_value with no role."""
+    from agent_framework_ag_ui._utils import get_role_value
+
+    class MockMessage:
+        pass
+
+    result = get_role_value(MockMessage())
+    assert result == ""
+
+
+def test_normalize_agui_role_developer():
+    """Test normalize_agui_role maps developer to system."""
+    from agent_framework_ag_ui._utils import normalize_agui_role
+
+    assert normalize_agui_role("developer") == "system"
+
+
+def test_normalize_agui_role_valid():
+    """Test normalize_agui_role with valid roles."""
+    from agent_framework_ag_ui._utils import normalize_agui_role
+
+    assert normalize_agui_role("user") == "user"
+    assert normalize_agui_role("assistant") == "assistant"
+    assert normalize_agui_role("system") == "system"
+    assert normalize_agui_role("tool") == "tool"
+
+
+def test_normalize_agui_role_invalid():
+    """Test normalize_agui_role with invalid role defaults to user."""
+    from agent_framework_ag_ui._utils import normalize_agui_role
+
+    assert normalize_agui_role("invalid") == "user"
+    assert normalize_agui_role(123) == "user"
+
+
+def test_extract_state_from_tool_args():
+    """Test extract_state_from_tool_args."""
+    from agent_framework_ag_ui._utils import extract_state_from_tool_args
+
+    # Specific key
+    assert extract_state_from_tool_args({"key": "value"}, "key") == "value"
+
+    # Wildcard
+    args = {"a": 1, "b": 2}
+    assert extract_state_from_tool_args(args, "*") == args
+
+    # Missing key
+    assert extract_state_from_tool_args({"other": "value"}, "key") is None
+
+    # None args
+    assert extract_state_from_tool_args(None, "key") is None
+
+
+def test_convert_agui_tools_to_agent_framework():
+    """Test convert_agui_tools_to_agent_framework."""
+    from agent_framework_ag_ui._utils import convert_agui_tools_to_agent_framework
+
+    agui_tools = [
+        {
+            "name": "test_tool",
+            "description": "A test tool",
+            "parameters": {"type": "object", "properties": {"arg": {"type": "string"}}},
+        }
+    ]
+
+    result = convert_agui_tools_to_agent_framework(agui_tools)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].name == "test_tool"
+    assert result[0].description == "A test tool"
+    assert result[0].declaration_only is True
+
+
+def test_convert_agui_tools_to_agent_framework_none():
+    """Test convert_agui_tools_to_agent_framework with None."""
+    from agent_framework_ag_ui._utils import convert_agui_tools_to_agent_framework
+
+    result = convert_agui_tools_to_agent_framework(None)
+    assert result is None
+
+
+def test_convert_agui_tools_to_agent_framework_empty():
+    """Test convert_agui_tools_to_agent_framework with empty list."""
+    from agent_framework_ag_ui._utils import convert_agui_tools_to_agent_framework
+
+    result = convert_agui_tools_to_agent_framework([])
+    assert result is None
+
+
+def test_make_json_safe_unconvertible():
+    """Test make_json_safe with object that has no standard conversion."""
+
+    class NoConversion:
+        __slots__ = ()  # No __dict__
+
+    from agent_framework_ag_ui._utils import make_json_safe
+
+    result = make_json_safe(NoConversion())
+    # Falls back to str()
+    assert isinstance(result, str)

@@ -7,31 +7,19 @@ from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AIFunction,
-    Annotations,
+    Annotation,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
-    Contents,
-    ErrorContent,
+    Content,
     FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedMCPTool,
     HostedWebSearchTool,
-    MCPServerToolCallContent,
-    MCPServerToolResultContent,
     Role,
-    TextContent,
-    TextReasoningContent,
     TextSpanRegion,
-    UsageContent,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
@@ -57,7 +45,7 @@ from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -79,6 +67,7 @@ logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 
 # region Anthropic Chat Options TypedDict
@@ -157,6 +146,7 @@ class AnthropicChatOptions(ChatOptions, total=False):
     frequency_penalty: None  # type: ignore[misc]
     presence_penalty: None  # type: ignore[misc]
     store: None  # type: ignore[misc]
+    conversation_id: None  # type: ignore[misc]
 
 
 TAnthropicOptions = TypeVar(
@@ -353,7 +343,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # execute
         message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
         # process
-        return self._process_message(message)
+        return self._process_message(message, options)
 
     @override
     async def _inner_get_streaming_response(
@@ -396,8 +386,10 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
-        # Start with a copy of options
-        run_options: dict[str, Any] = {k: v for k, v in options.items() if v is not None and k not in {"instructions"}}
+        # Start with a copy of options, excluding keys we handle separately
+        run_options: dict[str, Any] = {
+            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
+        }
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -438,6 +430,13 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
+        # response_format - use native output_format for structured outputs
+        response_format = options.get("response_format")
+        if response_format is not None:
+            run_options["output_format"] = self._prepare_response_format(response_format)
+            # Add the structured outputs beta flag
+            run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
+
         run_options.update(kwargs)
         return run_options
 
@@ -454,6 +453,41 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             *BETA_FLAGS,
             *self.additional_beta_flags,
             *options.get("additional_beta_flags", []),
+        }
+
+    def _prepare_response_format(self, response_format: type[BaseModel] | dict[str, Any]) -> dict[str, Any]:
+        """Prepare the output_format parameter for structured output.
+
+        Args:
+            response_format: Either a Pydantic model class or a dict with the schema specification.
+                If a dict, it can be in OpenAI-style format with "json_schema" key,
+                or direct format with "schema" key, or the raw schema dict itself.
+
+        Returns:
+            A dictionary representing the output_format for Anthropic's structured outputs.
+        """
+        if isinstance(response_format, dict):
+            if "json_schema" in response_format:
+                schema = response_format["json_schema"].get("schema", {})
+            elif "schema" in response_format:
+                schema = response_format["schema"]
+            else:
+                schema = response_format
+
+            if isinstance(schema, dict):
+                schema["additionalProperties"] = False
+
+            return {
+                "type": "json_schema",
+                "schema": schema,
+            }
+
+        schema = response_format.model_json_schema()
+        schema["additionalProperties"] = False
+
+        return {
+            "type": "json_schema",
+            "schema": schema,
         }
 
     def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -480,13 +514,15 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         for content in message.contents:
             match content.type:
                 case "text":
-                    a_content.append({"type": "text", "text": content.text})
+                    # Skip empty text content blocks - Anthropic API rejects them
+                    if content.text:
+                        a_content.append({"type": "text", "text": content.text})
                 case "data":
                     if content.has_top_level_media_type("image"):
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": content.get_data_bytes_as_str(),
+                                "data": content.get_data_bytes_as_str(),  # type: ignore[attr-defined]
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },
@@ -618,11 +654,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
     # region Response Processing Methods
 
-    def _process_message(self, message: BetaMessage) -> ChatResponse:
+    def _process_message(self, message: BetaMessage, options: dict[str, Any]) -> ChatResponse:
         """Process the response from the Anthropic client.
 
         Args:
             message: The message returned by the Anthropic client.
+            options: The options dict used for the request.
 
         Returns:
             A ChatResponse object containing the processed response.
@@ -639,6 +676,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model_id=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
+            response_format=options.get("response_format"),
             raw_representation=message,
         )
 
@@ -653,9 +691,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         """
         match event.type:
             case "message_start":
-                usage_details: list[UsageContent] = []
+                usage_details: list[Content] = []
                 if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
-                    usage_details.append(UsageContent(details=details))
+                    usage_details.append(Content.from_usage(usage_details=details))
 
                 return ChatResponseUpdate(
                     response_id=event.message.id,
@@ -672,7 +710,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             case "message_delta":
                 usage = self._parse_usage_from_anthropic(event.usage)
                 return ChatResponseUpdate(
-                    contents=[UsageContent(details=usage, raw_representation=event.usage)] if usage else [],
+                    contents=[Content.from_usage(usage_details=usage, raw_representation=event.usage)] if usage else [],
                     finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
                     raw_representation=event,
                 )
@@ -702,24 +740,24 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             return None
         usage_details = UsageDetails(output_token_count=usage.output_tokens)
         if usage.input_tokens is not None:
-            usage_details.input_token_count = usage.input_tokens
+            usage_details["input_token_count"] = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details.additional_counts["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
+            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens  # type: ignore[typeddict-unknown-key]
         if usage.cache_read_input_tokens is not None:
-            usage_details.additional_counts["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
+            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens  # type: ignore[typeddict-unknown-key]
         return usage_details
 
     def _parse_contents_from_anthropic(
         self,
         content: Sequence[BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock],
-    ) -> list[Contents]:
+    ) -> list[Content]:
         """Parse contents from the Anthropic message."""
-        contents: list[Contents] = []
+        contents: list[Content] = []
         for content_block in content:
             match content_block.type:
                 case "text" | "text_delta":
                     contents.append(
-                        TextContent(
+                        Content.from_text(
                             text=content_block.text,
                             raw_representation=content_block,
                             annotations=self._parse_citations_from_anthropic(content_block),
@@ -729,7 +767,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     self._last_call_id_name = (content_block.id, content_block.name)
                     if content_block.type == "mcp_tool_use":
                         contents.append(
-                            MCPServerToolCallContent(
+                            Content.from_mcp_server_tool_call(
                                 call_id=content_block.id,
                                 tool_name=content_block.name,
                                 server_name=None,
@@ -739,10 +777,10 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         )
                     elif "code_execution" in (content_block.name or ""):
                         contents.append(
-                            CodeInterpreterToolCallContent(
+                            Content.from_code_interpreter_tool_call(
                                 call_id=content_block.id,
                                 inputs=[
-                                    TextContent(
+                                    Content.from_text(
                                         text=str(content_block.input),
                                         raw_representation=content_block,
                                     )
@@ -752,7 +790,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         )
                     else:
                         contents.append(
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id=content_block.id,
                                 name=content_block.name,
                                 arguments=content_block.input,
@@ -760,14 +798,14 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             )
                         )
                 case "mcp_tool_result":
-                    call_id, name = self._last_call_id_name or (None, None)
-                    parsed_output: list[Contents] | None = None
+                    call_id, _ = self._last_call_id_name or (None, None)
+                    parsed_output: list[Content] | None = None
                     if content_block.content:
                         if isinstance(content_block.content, list):
                             parsed_output = self._parse_contents_from_anthropic(content_block.content)
                         elif isinstance(content_block.content, (str, bytes)):
                             parsed_output = [
-                                TextContent(
+                                Content.from_text(
                                     text=str(content_block.content),
                                     raw_representation=content_block,
                                 )
@@ -775,28 +813,27 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         else:
                             parsed_output = self._parse_contents_from_anthropic([content_block.content])
                     contents.append(
-                        MCPServerToolResultContent(
+                        Content.from_mcp_server_tool_result(
                             call_id=content_block.tool_use_id,
                             output=parsed_output,
                             raw_representation=content_block,
                         )
                     )
                 case "web_search_tool_result" | "web_fetch_tool_result":
-                    call_id, name = self._last_call_id_name or (None, None)
+                    call_id, _ = self._last_call_id_name or (None, None)
                     contents.append(
-                        FunctionResultContent(
+                        Content.from_function_result(
                             call_id=content_block.tool_use_id,
-                            name=name if name and call_id == content_block.tool_use_id else "web_tool",
                             result=content_block.content,
                             raw_representation=content_block,
                         )
                     )
                 case "code_execution_tool_result":
-                    code_outputs: list[Contents] = []
+                    code_outputs: list[Content] = []
                     if content_block.content:
                         if isinstance(content_block.content, BetaCodeExecutionToolResultError):
                             code_outputs.append(
-                                ErrorContent(
+                                Content.from_error(
                                     message=content_block.content.error_code,
                                     raw_representation=content_block.content,
                                 )
@@ -804,41 +841,41 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         else:
                             if content_block.content.stdout:
                                 code_outputs.append(
-                                    TextContent(
+                                    Content.from_text(
                                         text=content_block.content.stdout,
                                         raw_representation=content_block.content,
                                     )
                                 )
                             if content_block.content.stderr:
                                 code_outputs.append(
-                                    ErrorContent(
+                                    Content.from_error(
                                         message=content_block.content.stderr,
                                         raw_representation=content_block.content,
                                     )
                                 )
                             for code_file_content in content_block.content.content:
                                 code_outputs.append(
-                                    HostedFileContent(
+                                    Content.from_hosted_file(
                                         file_id=code_file_content.file_id,
                                         raw_representation=code_file_content,
                                     )
                                 )
                     contents.append(
-                        CodeInterpreterToolResultContent(
+                        Content.from_code_interpreter_tool_result(
                             call_id=content_block.tool_use_id,
                             raw_representation=content_block,
                             outputs=code_outputs,
                         )
                     )
                 case "bash_code_execution_tool_result":
-                    bash_outputs: list[Contents] = []
+                    bash_outputs: list[Content] = []
                     if content_block.content:
                         if isinstance(
                             content_block.content,
                             BetaBashCodeExecutionToolResultError,
                         ):
                             bash_outputs.append(
-                                ErrorContent(
+                                Content.from_error(
                                     message=content_block.content.error_code,
                                     raw_representation=content_block.content,
                                 )
@@ -846,39 +883,38 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         else:
                             if content_block.content.stdout:
                                 bash_outputs.append(
-                                    TextContent(
+                                    Content.from_text(
                                         text=content_block.content.stdout,
                                         raw_representation=content_block.content,
                                     )
                                 )
                             if content_block.content.stderr:
                                 bash_outputs.append(
-                                    ErrorContent(
+                                    Content.from_error(
                                         message=content_block.content.stderr,
                                         raw_representation=content_block.content,
                                     )
                                 )
                             for bash_file_content in content_block.content.content:
                                 contents.append(
-                                    HostedFileContent(
+                                    Content.from_hosted_file(
                                         file_id=bash_file_content.file_id,
                                         raw_representation=bash_file_content,
                                     )
                                 )
                     contents.append(
-                        FunctionResultContent(
+                        Content.from_function_result(
                             call_id=content_block.tool_use_id,
-                            name=content_block.type,
                             result=bash_outputs,
                             raw_representation=content_block,
                         )
                     )
                 case "text_editor_code_execution_tool_result":
-                    text_editor_outputs: list[Contents] = []
+                    text_editor_outputs: list[Content] = []
                     match content_block.content.type:
                         case "text_editor_code_execution_tool_result_error":
                             text_editor_outputs.append(
-                                ErrorContent(
+                                Content.from_error(
                                     message=content_block.content.error_code
                                     and getattr(content_block.content, "error_message", ""),
                                     raw_representation=content_block.content,
@@ -887,10 +923,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         case "text_editor_code_execution_view_result":
                             annotations = (
                                 [
-                                    CitationAnnotation(
+                                    Annotation(
+                                        type="citation",
                                         raw_representation=content_block.content,
                                         annotated_regions=[
                                             TextSpanRegion(
+                                                type="text_span",
                                                 start_index=content_block.content.start_line,
                                                 end_index=content_block.content.start_line
                                                 + (content_block.content.num_lines or 0),
@@ -903,7 +941,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                 else None
                             )
                             text_editor_outputs.append(
-                                TextContent(
+                                Content.from_text(
                                     text=content_block.content.content,
                                     annotations=annotations,
                                     raw_representation=content_block.content,
@@ -911,10 +949,12 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             )
                         case "text_editor_code_execution_str_replace_result":
                             old_annotation = (
-                                CitationAnnotation(
+                                Annotation(
+                                    type="citation",
                                     raw_representation=content_block.content,
                                     annotated_regions=[
                                         TextSpanRegion(
+                                            type="text_span",
                                             start_index=content_block.content.old_start or 0,
                                             end_index=(
                                                 (content_block.content.old_start or 0)
@@ -928,13 +968,15 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                                 else None
                             )
                             new_annotation = (
-                                CitationAnnotation(
+                                Annotation(
+                                    type="citation",
                                     raw_representation=content_block.content,
-                                    snippet="\n".join(content_block.content.lines)
+                                    snippet="\n".join(content_block.content.lines)  # type: ignore[typeddict-item]
                                     if content_block.content.lines
                                     else None,
                                     annotated_regions=[
                                         TextSpanRegion(
+                                            type="text_span",
                                             start_index=content_block.content.new_start or 0,
                                             end_index=(
                                                 (content_block.content.new_start or 0)
@@ -950,7 +992,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             annotations = [ann for ann in [old_annotation, new_annotation] if ann is not None]
 
                             text_editor_outputs.append(
-                                TextContent(
+                                Content.from_text(
                                     text=(
                                         "\n".join(content_block.content.lines) if content_block.content.lines else ""
                                     ),
@@ -960,15 +1002,14 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             )
                         case "text_editor_code_execution_create_result":
                             text_editor_outputs.append(
-                                TextContent(
+                                Content.from_text(
                                     text=f"File update: {content_block.content.is_file_update}",
                                     raw_representation=content_block.content,
                                 )
                             )
                     contents.append(
-                        FunctionResultContent(
+                        Content.from_function_result(
                             call_id=content_block.tool_use_id,
-                            name=content_block.type,
                             result=text_editor_outputs,
                             raw_representation=content_block,
                         )
@@ -979,9 +1020,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     # since it triggers on `if content.name:`. The initial tool_use event already
                     # provides the name, so deltas should only carry incremental arguments.
                     # This matches OpenAI's behavior where streaming chunks have name="".
-                    call_id, _ = self._last_call_id_name if self._last_call_id_name else ("", "")
+                    call_id, _name = self._last_call_id_name if self._last_call_id_name else ("", "")
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=call_id,
                             name="",
                             arguments=content_block.partial_json,
@@ -990,7 +1031,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                     )
                 case "thinking" | "thinking_delta":
                     contents.append(
-                        TextReasoningContent(
+                        Content.from_text_reasoning(
                             text=content_block.thinking,
                             raw_representation=content_block,
                         )
@@ -1001,65 +1042,65 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
     def _parse_citations_from_anthropic(
         self, content_block: BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock
-    ) -> list[Annotations] | None:
-        content_citations = getattr(content_block, "citations", None)
-        if not content_citations:
+    ) -> list[Annotation] | None:
+        content_blocks = getattr(content_block, "citations", None)
+        if not content_blocks:
             return None
-        annotations: list[Annotations] = []
-        for citation in content_citations:
-            cit = CitationAnnotation(raw_representation=citation)
+        annotations: list[Annotation] = []
+        for citation in content_blocks:
+            cit = Annotation(type="citation", raw_representation=citation)
             match citation.type:
                 case "char_location":
-                    cit.title = citation.title
-                    cit.snippet = citation.cited_text
+                    cit["title"] = citation.title
+                    cit["snippet"] = citation.cited_text
                     if citation.file_id:
-                        cit.file_id = citation.file_id
-                    if not cit.annotated_regions:
-                        cit.annotated_regions = []
-                    cit.annotated_regions.append(
+                        cit["file_id"] = citation.file_id
+                    cit.setdefault("annotated_regions", [])
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
+                            type="text_span",
                             start_index=citation.start_char_index,
                             end_index=citation.end_char_index,
                         )
                     )
                 case "page_location":
-                    cit.title = citation.document_title
-                    cit.snippet = citation.cited_text
+                    cit["title"] = citation.document_title
+                    cit["snippet"] = citation.cited_text
                     if citation.file_id:
-                        cit.file_id = citation.file_id
-                    if not cit.annotated_regions:
-                        cit.annotated_regions = []
-                    cit.annotated_regions.append(
+                        cit["file_id"] = citation.file_id
+                    cit.setdefault("annotated_regions", [])
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
+                            type="text_span",
                             start_index=citation.start_page_number,
                             end_index=citation.end_page_number,
                         )
                     )
                 case "content_block_location":
-                    cit.title = citation.document_title
-                    cit.snippet = citation.cited_text
+                    cit["title"] = citation.document_title
+                    cit["snippet"] = citation.cited_text
                     if citation.file_id:
-                        cit.file_id = citation.file_id
-                    if not cit.annotated_regions:
-                        cit.annotated_regions = []
-                    cit.annotated_regions.append(
+                        cit["file_id"] = citation.file_id
+                    cit.setdefault("annotated_regions", [])
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
+                            type="text_span",
                             start_index=citation.start_block_index,
                             end_index=citation.end_block_index,
                         )
                     )
                 case "web_search_result_location":
-                    cit.title = citation.title
-                    cit.snippet = citation.cited_text
-                    cit.url = citation.url
+                    cit["title"] = citation.title
+                    cit["snippet"] = citation.cited_text
+                    cit["url"] = citation.url
                 case "search_result_location":
-                    cit.title = citation.title
-                    cit.snippet = citation.cited_text
-                    cit.url = citation.source
-                    if not cit.annotated_regions:
-                        cit.annotated_regions = []
-                    cit.annotated_regions.append(
+                    cit["title"] = citation.title
+                    cit["snippet"] = citation.cited_text
+                    cit["url"] = citation.source
+                    cit.setdefault("annotated_regions", [])
+                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
                         TextSpanRegion(
+                            type="text_span",
                             start_index=citation.start_block_index,
                             end_index=citation.end_block_index,
                         )

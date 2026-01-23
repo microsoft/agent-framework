@@ -15,10 +15,10 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { JSONSchemaProperty } from "@/types";
 
 // ============================================================================
-// Field Type Detection (from WorkflowInputForm)
+// Field Type Detection Helpers (exported for reuse)
 // ============================================================================
 
-function isShortField(fieldName: string): boolean {
+export function isShortField(fieldName: string): boolean {
   const shortFieldNames = [
     "name",
     "title",
@@ -37,7 +37,51 @@ function isShortField(fieldName: string): boolean {
   return shortFieldNames.includes(fieldName.toLowerCase());
 }
 
-function shouldFieldBeTextarea(
+// Helper: Resolve anyOf/oneOf union types to get the primary type
+// Pydantic generates these for Optional[T] as: anyOf: [{type: T}, {type: "null"}]
+export function resolveSchemaType(schema: JSONSchemaProperty): JSONSchemaProperty {
+  // If schema has a direct type, return as-is
+  if (schema.type) {
+    return schema;
+  }
+
+  // Handle anyOf (common for Optional[T])
+  if (schema.anyOf && schema.anyOf.length > 0) {
+    // Filter out null type and get the first non-null type
+    const nonNullTypes = schema.anyOf.filter(
+      (s) => s.type !== "null" && s.type !== undefined
+    );
+    if (nonNullTypes.length > 0) {
+      // Merge the resolved type with original schema's metadata (default, description, etc.)
+      return {
+        ...nonNullTypes[0],
+        default: schema.default ?? nonNullTypes[0].default,
+        description: schema.description ?? nonNullTypes[0].description,
+        title: schema.title ?? nonNullTypes[0].title,
+      };
+    }
+  }
+
+  // Handle oneOf similarly
+  if (schema.oneOf && schema.oneOf.length > 0) {
+    const nonNullTypes = schema.oneOf.filter(
+      (s) => s.type !== "null" && s.type !== undefined
+    );
+    if (nonNullTypes.length > 0) {
+      return {
+        ...nonNullTypes[0],
+        default: schema.default ?? nonNullTypes[0].default,
+        description: schema.description ?? nonNullTypes[0].description,
+        title: schema.title ?? nonNullTypes[0].title,
+      };
+    }
+  }
+
+  // Fallback: return original schema (will render as JSON textarea)
+  return schema;
+}
+
+export function shouldFieldBeTextarea(
   fieldName: string,
   schema: JSONSchemaProperty
 ): boolean {
@@ -48,7 +92,7 @@ function shouldFieldBeTextarea(
   );
 }
 
-function getFieldColumnSpan(
+export function getFieldColumnSpan(
   fieldName: string,
   schema: JSONSchemaProperty
 ): string {
@@ -71,10 +115,10 @@ function getFieldColumnSpan(
 }
 
 // ============================================================================
-// ChatMessage Pattern Detection (from WorkflowInputForm)
+// ChatMessage Pattern Detection (exported for reuse)
 // ============================================================================
 
-function detectChatMessagePattern(
+export function detectChatMessagePattern(
   schema: JSONSchemaProperty,
   requiredFields: string[]
 ): boolean {
@@ -93,7 +137,7 @@ function detectChatMessagePattern(
 }
 
 // ============================================================================
-// Form Field Component (from WorkflowInputForm)
+// Form Field Component (internal - used by SchemaFormRenderer)
 // ============================================================================
 
 interface FormFieldProps {
@@ -107,12 +151,14 @@ interface FormFieldProps {
 
 function FormField({
   name,
-  schema,
+  schema: rawSchema,
   value,
   onChange,
   isRequired = false,
   isReadOnly = false,
 }: FormFieldProps) {
+  // Resolve anyOf/oneOf union types (e.g., Optional[int] → int)
+  const schema = resolveSchemaType(rawSchema);
   const { type, description, enum: enumValues, default: defaultValue } = schema;
   const isTextarea = shouldFieldBeTextarea(name, schema);
 
@@ -356,9 +402,10 @@ export interface SchemaFormRendererProps {
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
   disabled?: boolean;
-  readOnlyFields?: string[]; // NEW: Fields to display but not edit (for HIL)
-  hideFields?: string[]; // NEW: Fields to completely hide
-  showCollapsedByDefault?: boolean; // NEW: Control initial collapsed state
+  readOnlyFields?: string[]; // Fields to display but not edit (for HIL)
+  hideFields?: string[]; // Fields to completely hide
+  showCollapsedByDefault?: boolean; // Control initial collapsed state
+  layout?: "stack" | "grid"; // Layout mode: "stack" (vertical) or "grid" (responsive 4-col)
 }
 
 export function SchemaFormRenderer({
@@ -369,10 +416,17 @@ export function SchemaFormRenderer({
   readOnlyFields = [],
   hideFields = [],
   showCollapsedByDefault = false,
+  layout = "stack",
 }: SchemaFormRendererProps) {
   const [showAdvancedFields, setShowAdvancedFields] = useState(
     showCollapsedByDefault
   );
+
+  // Container class based on layout mode
+  const containerClass =
+    layout === "grid"
+      ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+      : "space-y-3";
 
   const properties = schema.properties || {};
   const allFieldNames = Object.keys(properties).filter(
@@ -428,8 +482,12 @@ export function SchemaFormRenderer({
     });
   };
 
+  // Full-width class for separator and toggle button in grid mode
+  const fullWidthClass =
+    layout === "grid" ? "md:col-span-2 lg:col-span-3 xl:col-span-4" : "";
+
   return (
-    <div className="space-y-3">
+    <div className={containerClass}>
       {/* Required fields section */}
       {requiredFieldNames.map((fieldName) => (
         <FormField
@@ -445,7 +503,7 @@ export function SchemaFormRenderer({
 
       {/* Separator between required and optional */}
       {hasRequiredFields && optionalFieldNames.length > 0 && (
-        <div>
+        <div className={fullWidthClass}>
           <div className="border-t border-border"></div>
         </div>
       )}
@@ -465,7 +523,7 @@ export function SchemaFormRenderer({
 
       {/* Collapsed optional fields toggle */}
       {hasCollapsedFields && (
-        <div className="md:col-span-2 lg:col-span-3 xl:col-span-4">
+        <div className={fullWidthClass}>
           <Button
             type="button"
             variant="ghost"

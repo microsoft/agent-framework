@@ -100,7 +100,6 @@ __all__ = [
     "DurableAgentStateUsage",
     "DurableAgentStateUsageContent",
     "DurableAgentThread",
-    "DurableAgentThread",
     "DurableStateFields",
     "RunRequest",
     "__version__",

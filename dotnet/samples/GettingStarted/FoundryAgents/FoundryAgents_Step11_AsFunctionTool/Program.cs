@@ -25,14 +25,14 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 
 // Create the weather agent with function tools.
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
-AIAgent weatherAgent = aiProjectClient.CreateAIAgent(
+AIAgent weatherAgent = await aiProjectClient.CreateAIAgentAsync(
     name: WeatherName,
     model: deploymentName,
     instructions: WeatherInstructions,
     tools: [weatherTool]);
 
 // Create the main agent, and provide the weather agent as a function tool.
-AIAgent agent = aiProjectClient.CreateAIAgent(
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     name: MainName,
     model: deploymentName,
     instructions: MainInstructions,

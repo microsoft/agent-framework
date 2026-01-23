@@ -6,20 +6,12 @@ import sys
 from typing import Any, TypedDict
 
 from agent_framework import ChatOptions
+from pydantic import BaseModel, Field
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
 else:
     from typing_extensions import TypeVar
-
-__all__ = [
-    "AGUIChatOptions",
-    "AgentState",
-    "PredictStateConfig",
-    "RunMetadata",
-]
-
-from pydantic import BaseModel, Field
 
 
 class PredictStateConfig(TypedDict):
@@ -62,6 +54,22 @@ class AGUIRequest(BaseModel):
     state: dict[str, Any] | None = Field(
         None,
         description="Optional shared state for agentic generative UI",
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        None,
+        description="Client-side tools to advertise to the LLM",
+    )
+    context: list[dict[str, Any]] | None = Field(
+        None,
+        description="List of context objects provided to the agent",
+    )
+    forwarded_props: dict[str, Any] | None = Field(
+        None,
+        description="Additional properties forwarded to the agent",
+    )
+    parent_run_id: str | None = Field(
+        None,
+        description="ID of the run that spawned this run",
     )
 
 

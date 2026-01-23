@@ -16,12 +16,9 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    TextContent,
+    Content,
 )
 from agent_framework._clients import TOptions_co
-
-from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
-from agent_framework_ag_ui._orchestrators import ExecutionContext
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -91,7 +88,7 @@ class StubAgent(AgentProtocol):
         self.id = agent_id
         self.name = agent_name
         self.description = "stub agent"
-        self.updates = updates or [AgentResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
+        self.updates = updates or [AgentResponseUpdate(contents=[Content.from_text(text="response")], role="assistant")]
         self.default_options: dict[str, Any] = (
             default_options if isinstance(default_options, dict) else {"tools": None, "response_format": None}
         )
@@ -125,14 +122,3 @@ class StubAgent(AgentProtocol):
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         return AgentThread()
-
-
-class TestExecutionContext(ExecutionContext):
-    """ExecutionContext helper that allows setting messages for tests."""
-
-    def set_messages(self, messages: list[ChatMessage], *, normalize: bool = True) -> None:
-        if normalize:
-            self._messages = _deduplicate_messages(_sanitize_tool_history(messages))
-        else:
-            self._messages = messages
-        self._snapshot_messages = None

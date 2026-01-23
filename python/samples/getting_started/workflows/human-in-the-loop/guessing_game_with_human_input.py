@@ -145,7 +145,7 @@ class TurnManager(Executor):
 
 def create_guessing_agent() -> ChatAgent:
     """Create the guessing agent with instructions to guess a number between 1 and 10."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "
