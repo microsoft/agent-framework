@@ -171,7 +171,7 @@ class TestGithubCopilotAgentLifecycle:
         await agent.start()
 
         mock_client.create_session.return_value = mock_session
-        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         await agent.stop()
 
@@ -443,7 +443,7 @@ class TestGithubCopilotAgentSessionManagement:
         )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -458,7 +458,7 @@ class TestGithubCopilotAgentSessionManagement:
         agent = GithubCopilotAgent(client=mock_client, instructions="You are a helpful assistant.")
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -474,7 +474,7 @@ class TestGithubCopilotAgentSessionManagement:
         agent = GithubCopilotAgent(client=mock_client)
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [], streaming=True)  # type: ignore
+        await agent._get_or_create_session(AgentThread(), streaming=True)  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -498,7 +498,7 @@ class TestGithubCopilotAgentToolConversion:
         agent = GithubCopilotAgent(client=mock_client, tools=[my_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), agent._tools)  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -506,32 +506,6 @@ class TestGithubCopilotAgentToolConversion:
         assert len(config["tools"]) == 1
         assert config["tools"][0].name == "my_tool"
         assert config["tools"][0].description == "A test tool."
-
-    async def test_runtime_tools_merged(
-        self,
-        mock_client: MagicMock,
-        mock_session: MagicMock,
-        assistant_message_event: SessionEvent,
-    ) -> None:
-        """Test that runtime tools are merged with agent tools."""
-
-        def agent_tool(x: str) -> str:
-            """Agent tool."""
-            return x
-
-        def runtime_tool(y: str) -> str:
-            """Runtime tool."""
-            return y
-
-        mock_session.send_and_wait.return_value = assistant_message_event
-
-        agent = GithubCopilotAgent(client=mock_client, tools=[agent_tool])
-        await agent.run("Hello", tools=[runtime_tool])
-
-        call_args = mock_client.create_session.call_args
-        config = call_args[0][0]
-        assert "tools" in config
-        assert len(config["tools"]) == 2
 
     async def test_tool_handler_returns_success_result(
         self,
@@ -547,7 +521,7 @@ class TestGithubCopilotAgentToolConversion:
         agent = GithubCopilotAgent(client=mock_client, tools=[my_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), agent._tools)  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -572,7 +546,7 @@ class TestGithubCopilotAgentToolConversion:
         agent = GithubCopilotAgent(client=mock_client, tools=[failing_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), agent._tools)  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -621,7 +595,7 @@ class TestGithubCopilotAgentErrorHandling:
         await agent.start()
 
         with pytest.raises(ServiceException, match="Failed to create GitHub Copilot session"):
-            await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+            await agent._get_or_create_session(AgentThread())  # type: ignore
 
     async def test_get_or_create_session_raises_when_client_not_initialized(self) -> None:
         """Test that _get_or_create_session raises ServiceException when client is not initialized."""
@@ -629,7 +603,7 @@ class TestGithubCopilotAgentErrorHandling:
         # Don't call start() - client remains None
 
         with pytest.raises(ServiceException, match="GitHub Copilot client not initialized"):
-            await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+            await agent._get_or_create_session(AgentThread())  # type: ignore
 
 
 class TestGithubCopilotAgentPermissions:
@@ -663,10 +637,10 @@ class TestGithubCopilotAgentPermissions:
         assert handler is not None
 
         result = handler({"kind": "shell"}, {})
-        assert result["kind"] == "approved"
+        assert result["kind"] == "approved"  # type: ignore
 
         result = handler({"kind": "read"}, {})
-        assert result["kind"] == "approved"
+        assert result["kind"] == "approved"  # type: ignore
 
     def test_permission_handler_denies_non_allowed_permission(self) -> None:
         """Test that the handler denies permissions not in the allowed list."""
@@ -677,10 +651,10 @@ class TestGithubCopilotAgentPermissions:
         assert handler is not None
 
         result = handler({"kind": "write"}, {})
-        assert result["kind"] == "denied-interactively-by-user"
+        assert result["kind"] == "denied-interactively-by-user"  # type: ignore
 
         result = handler({"kind": "read"}, {})
-        assert result["kind"] == "denied-interactively-by-user"
+        assert result["kind"] == "denied-interactively-by-user"  # type: ignore
 
     def test_permission_handler_denies_unknown_permission(self) -> None:
         """Test that the handler denies unknown permission kinds."""
@@ -690,8 +664,8 @@ class TestGithubCopilotAgentPermissions:
         handler = agent._permission_handler  # type: ignore
         assert handler is not None
 
-        result = handler({"kind": "unknown"}, {})
-        assert result["kind"] == "denied-interactively-by-user"
+        result = handler({"kind": "unknown"}, {})  # type: ignore
+        assert result["kind"] == "denied-interactively-by-user"  # type: ignore
 
     async def test_session_config_includes_permission_handler(
         self,
@@ -705,7 +679,7 @@ class TestGithubCopilotAgentPermissions:
         )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -721,7 +695,7 @@ class TestGithubCopilotAgentPermissions:
         agent = GithubCopilotAgent(client=mock_client)
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+        await agent._get_or_create_session(AgentThread())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]

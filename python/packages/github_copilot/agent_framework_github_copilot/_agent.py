@@ -268,11 +268,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
         options: TOptions | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
@@ -287,7 +282,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         Keyword Args:
             thread: The conversation thread associated with the message(s).
-            tools: Additional tools to use for this specific run.
             options: Runtime options (model, timeout, etc.).
             kwargs: Additional keyword arguments.
 
@@ -306,8 +300,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         opts: dict[str, Any] = dict(options) if options else {}
         timeout = opts.pop("timeout", None) or self._settings.timeout or DEFAULT_TIMEOUT_SECONDS
 
-        merged_tools = self._merge_tools(tools)
-        session = await self._get_or_create_session(thread, merged_tools, streaming=False)
+        session = await self._get_or_create_session(thread, streaming=False)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
@@ -339,11 +332,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
         options: TOptions | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
@@ -357,7 +345,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         Keyword Args:
             thread: The conversation thread associated with the message(s).
-            tools: Additional tools to use for this specific run.
             options: Runtime options (model, timeout, etc.).
             kwargs: Additional keyword arguments.
 
@@ -373,8 +360,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if not thread:
             thread = self.get_new_thread()
 
-        merged_tools = self._merge_tools(tools)
-        session = await self._get_or_create_session(thread, merged_tools, streaming=True)
+        session = await self._get_or_create_session(thread, streaming=True)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
@@ -431,19 +417,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         return handler
 
-    def _merge_tools(
-        self,
-        runtime_tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None,
-    ) -> list[ToolProtocol | MutableMapping[str, Any]]:
-        """Merge runtime tools with default tools."""
-        result = list(self._tools)
-        result.extend(normalize_tools(runtime_tools))
-        return result
-
     def _convert_tools_to_copilot_tools(
         self,
         tools: list[ToolProtocol | MutableMapping[str, Any]],
@@ -498,14 +471,12 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
     async def _get_or_create_session(
         self,
         thread: AgentThread,
-        tools: list[ToolProtocol | MutableMapping[str, Any]],
         streaming: bool = False,
     ) -> CopilotSession:
         """Get an existing session or create a new one for the thread.
 
         Args:
             thread: The conversation thread.
-            tools: Tools to register with the session.
             streaming: Whether to enable streaming for the session.
 
         Returns:
@@ -528,8 +499,8 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if self._instructions:
             config["system_message"] = {"mode": "append", "content": self._instructions}
 
-        if tools:
-            config["tools"] = self._convert_tools_to_copilot_tools(tools)
+        if self._tools:
+            config["tools"] = self._convert_tools_to_copilot_tools(self._tools)
 
         if self._permission_handler:
             config["on_permission_request"] = self._permission_handler
