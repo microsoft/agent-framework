@@ -558,6 +558,60 @@ class TestGithubCopilotAgentToolConversion:
         assert "Something went wrong" in result["textResultForLlm"]
         assert "Something went wrong" in result["error"]
 
+    def test_copilot_tool_passthrough(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that CopilotTool instances are passed through as-is."""
+        from copilot.types import Tool as CopilotTool
+
+        async def tool_handler(invocation: Any) -> Any:
+            return {"textResultForLlm": "result", "resultType": "success"}
+
+        copilot_tool = CopilotTool(
+            name="direct_tool",
+            description="A direct CopilotTool",
+            handler=tool_handler,
+            parameters={"type": "object", "properties": {}},
+        )
+
+        agent = GithubCopilotAgent(client=mock_client)
+        result = agent._convert_tools_to_copilot_tools([copilot_tool])  # type: ignore
+
+        assert len(result) == 1
+        assert result[0] == copilot_tool
+
+    def test_mixed_tools_conversion(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that mixed tool types are handled correctly."""
+        from agent_framework._tools import ai_function
+        from copilot.types import Tool as CopilotTool
+
+        @ai_function
+        def my_function(arg: str) -> str:
+            """A function tool."""
+            return arg
+
+        async def tool_handler(invocation: Any) -> Any:
+            return {"textResultForLlm": "result", "resultType": "success"}
+
+        copilot_tool = CopilotTool(
+            name="direct_tool",
+            description="A direct CopilotTool",
+            handler=tool_handler,
+        )
+
+        agent = GithubCopilotAgent(client=mock_client)
+        result = agent._convert_tools_to_copilot_tools([my_function, copilot_tool])  # type: ignore
+
+        assert len(result) == 2
+        # First tool is converted AIFunction
+        assert result[0].name == "my_function"
+        # Second tool is CopilotTool passthrough
+        assert result[1] == copilot_tool
+
 
 class TestGithubCopilotAgentErrorHandling:
     """Test cases for error handling."""

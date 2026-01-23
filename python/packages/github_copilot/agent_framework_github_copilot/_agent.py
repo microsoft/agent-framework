@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
@@ -47,6 +48,8 @@ DEFAULT_TIMEOUT_SECONDS: float = 60.0
 
 PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], PermissionRequestResult]
 """Type for permission request handlers."""
+
+logger = logging.getLogger("agent_framework.github_copilot")
 
 
 class GithubCopilotOptions(TypedDict, total=False):
@@ -432,8 +435,14 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         copilot_tools: list[CopilotTool] = []
 
         for tool in tools:
-            if isinstance(tool, AIFunction):
-                copilot_tools.append(self._ai_function_to_copilot_tool(tool))  # type: ignore
+            if isinstance(tool, ToolProtocol):
+                match tool:
+                    case AIFunction():
+                        copilot_tools.append(self._ai_function_to_copilot_tool(tool))  # type: ignore
+                    case _:
+                        logger.debug(f"Unsupported tool type: {type(tool)}")
+            elif isinstance(tool, CopilotTool):
+                copilot_tools.append(tool)
 
         return copilot_tools
 
