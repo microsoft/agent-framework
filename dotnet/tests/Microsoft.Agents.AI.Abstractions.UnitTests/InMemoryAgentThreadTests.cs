@@ -16,29 +16,29 @@ public class InMemoryAgentThreadTests
     #region Constructor and Property Tests
 
     [Fact]
-    public void Constructor_SetsDefaultMessageStore()
+    public void Constructor_SetsDefaultChatHistoryProvider()
     {
         // Arrange & Act
         var thread = new TestInMemoryAgentThread();
 
         // Assert
-        Assert.NotNull(thread.GetMessageStore());
-        Assert.Empty(thread.GetMessageStore());
+        Assert.NotNull(thread.GetChatHistoryProvider());
+        Assert.Empty(thread.GetChatHistoryProvider());
     }
 
     [Fact]
-    public void Constructor_WithMessageStore_SetsProperty()
+    public void Constructor_WithChatHistoryProvider_SetsProperty()
     {
         // Arrange
-        InMemoryChatMessageStore store = [new(ChatRole.User, "Hello")];
+        InMemoryChatHistoryProvider provider = [new(ChatRole.User, "Hello")];
 
         // Act
-        var thread = new TestInMemoryAgentThread(store);
+        var thread = new TestInMemoryAgentThread(provider);
 
         // Assert
-        Assert.Same(store, thread.GetMessageStore());
-        Assert.Single(thread.GetMessageStore());
-        Assert.Equal("Hello", thread.GetMessageStore()[0].Text);
+        Assert.Same(provider, thread.GetChatHistoryProvider());
+        Assert.Single(thread.GetChatHistoryProvider());
+        Assert.Equal("Hello", thread.GetChatHistoryProvider()[0].Text);
     }
 
     [Fact]
@@ -51,27 +51,27 @@ public class InMemoryAgentThreadTests
         var thread = new TestInMemoryAgentThread(messages);
 
         // Assert
-        Assert.NotNull(thread.GetMessageStore());
-        Assert.Single(thread.GetMessageStore());
-        Assert.Equal("Hi", thread.GetMessageStore()[0].Text);
+        Assert.NotNull(thread.GetChatHistoryProvider());
+        Assert.Single(thread.GetChatHistoryProvider());
+        Assert.Equal("Hi", thread.GetChatHistoryProvider()[0].Text);
     }
 
     [Fact]
     public void Constructor_WithSerializedState_SetsProperty()
     {
         // Arrange
-        InMemoryChatMessageStore store = [new(ChatRole.User, "TestMsg")];
-        var storeState = store.Serialize();
-        var threadStateWrapper = new InMemoryAgentThread.InMemoryAgentThreadState { StoreState = storeState };
+        InMemoryChatHistoryProvider provider = [new(ChatRole.User, "TestMsg")];
+        var providerState = provider.Serialize();
+        var threadStateWrapper = new InMemoryAgentThread.InMemoryAgentThreadState { ChatHistoryProviderState = providerState };
         var json = JsonSerializer.SerializeToElement(threadStateWrapper, TestJsonSerializerContext.Default.InMemoryAgentThreadState);
 
         // Act
         var thread = new TestInMemoryAgentThread(json);
 
         // Assert
-        Assert.NotNull(thread.GetMessageStore());
-        Assert.Single(thread.GetMessageStore());
-        Assert.Equal("TestMsg", thread.GetMessageStore()[0].Text);
+        Assert.NotNull(thread.GetChatHistoryProvider());
+        Assert.Single(thread.GetChatHistoryProvider());
+        Assert.Equal("TestMsg", thread.GetChatHistoryProvider()[0].Text);
     }
 
     [Fact]
@@ -99,9 +99,9 @@ public class InMemoryAgentThreadTests
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
-        Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
-        Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
-        Assert.True(storeStateProperty.TryGetProperty("messages", out var messagesProperty));
+        Assert.True(json.TryGetProperty("chatHistoryProviderState", out var providerStateProperty));
+        Assert.Equal(JsonValueKind.Object, providerStateProperty.ValueKind);
+        Assert.True(providerStateProperty.TryGetProperty("messages", out var messagesProperty));
         Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
         var messagesList = messagesProperty.EnumerateArray().ToList();
         Assert.Single(messagesList);
@@ -118,9 +118,9 @@ public class InMemoryAgentThreadTests
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
-        Assert.True(json.TryGetProperty("storeState", out var storeStateProperty));
-        Assert.Equal(JsonValueKind.Object, storeStateProperty.ValueKind);
-        Assert.True(storeStateProperty.TryGetProperty("messages", out var messagesProperty));
+        Assert.True(json.TryGetProperty("chatHistoryProviderState", out var providerStateProperty));
+        Assert.Equal(JsonValueKind.Object, providerStateProperty.ValueKind);
+        Assert.True(providerStateProperty.TryGetProperty("messages", out var messagesProperty));
         Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
         Assert.Empty(messagesProperty.EnumerateArray());
     }
@@ -130,15 +130,15 @@ public class InMemoryAgentThreadTests
     #region GetService Tests
 
     [Fact]
-    public void GetService_RequestingChatMessageStore_ReturnsChatMessageStore()
+    public void GetService_RequestingChatHistoryProvider_ReturnsChatHistoryProvider()
     {
         // Arrange
         var thread = new TestInMemoryAgentThread();
 
         // Act & Assert
-        Assert.NotNull(thread.GetService(typeof(ChatMessageStore)));
-        Assert.Same(thread.GetMessageStore(), thread.GetService(typeof(ChatMessageStore)));
-        Assert.Same(thread.GetMessageStore(), thread.GetService(typeof(InMemoryChatMessageStore)));
+        Assert.NotNull(thread.GetService(typeof(ChatHistoryProvider)));
+        Assert.Same(thread.GetChatHistoryProvider(), thread.GetService(typeof(ChatHistoryProvider)));
+        Assert.Same(thread.GetChatHistoryProvider(), thread.GetService(typeof(InMemoryChatHistoryProvider)));
     }
 
     #endregion
@@ -147,9 +147,9 @@ public class InMemoryAgentThreadTests
     private sealed class TestInMemoryAgentThread : InMemoryAgentThread
     {
         public TestInMemoryAgentThread() { }
-        public TestInMemoryAgentThread(InMemoryChatMessageStore? store) : base(store) { }
+        public TestInMemoryAgentThread(InMemoryChatHistoryProvider? provider) : base(provider) { }
         public TestInMemoryAgentThread(IEnumerable<ChatMessage> messages) : base(messages) { }
         public TestInMemoryAgentThread(JsonElement serializedThreadState) : base(serializedThreadState) { }
-        public InMemoryChatMessageStore GetMessageStore() => this.MessageStore;
+        public InMemoryChatHistoryProvider GetChatHistoryProvider() => this.ChatHistoryProvider;
     }
 }

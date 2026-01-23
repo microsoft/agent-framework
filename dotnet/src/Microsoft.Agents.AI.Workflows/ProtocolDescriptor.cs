@@ -12,12 +12,18 @@ namespace Microsoft.Agents.AI.Workflows;
 public class ProtocolDescriptor
 {
     /// <summary>
-    /// Get the collection of types accepted by the <see cref="Workflow"/> or <see cref="Executor"/>.
+    /// Get the collection of types explicitly accepted by the <see cref="Workflow"/> or <see cref="Executor"/>.
     /// </summary>
     public IEnumerable<Type> Accepts { get; }
 
-    internal ProtocolDescriptor(IEnumerable<Type> acceptedTypes)
+    /// <summary>
+    /// Gets a value indicating whether the <see cref="Workflow"/> or <see cref="Executor"/> has a "catch-all" handler.
+    /// </summary>
+    public bool AcceptsAll { get; set; }
+
+    internal ProtocolDescriptor(IEnumerable<Type> acceptedTypes, bool acceptsAll)
     {
         this.Accepts = acceptedTypes.ToArray();
+        this.AcceptsAll = acceptsAll;
     }
 }

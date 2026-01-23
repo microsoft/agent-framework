@@ -52,6 +52,15 @@ public class Workflow
     }
 
     /// <summary>
+    /// Gets the collection of executor bindings, keyed by their ID.
+    /// </summary>
+    /// <returns>A copy of the executor bindings dictionary. Modifications do not affect the workflow.</returns>
+    public Dictionary<string, ExecutorBinding> ReflectExecutors()
+    {
+        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
+    }
+
+    /// <summary>
     /// Gets the identifier of the starting executor of the workflow.
     /// </summary>
     public string StartExecutorId { get; }
@@ -166,9 +175,9 @@ public class Workflow
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
             Justification = "Does not exist in NetFx 4.7.2")]
-    internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
+    internal async ValueTask ReleaseOwnershipAsync(object ownerToken, object? targetOwnerToken)
     {
-        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken) ??
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, targetOwnerToken, ownerToken) ??
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
 
         if (!ReferenceEquals(originalToken, ownerToken))

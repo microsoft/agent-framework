@@ -68,6 +68,9 @@ public class TestRunContext : IRunnerContext
     }
 
     internal Dictionary<string, List<MessageEnvelope>> QueuedMessages { get; } = [];
+
+    internal Dictionary<string, List<object>> QueuedOutputs { get; } = [];
+
     public ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default)
     {
         if (!this.QueuedMessages.TryGetValue(sourceId, out List<MessageEnvelope>? deliveryQueue))
@@ -76,6 +79,17 @@ public class TestRunContext : IRunnerContext
         }
 
         deliveryQueue.Add(new(message, sourceId, targetId: targetId));
+        return default;
+    }
+
+    public ValueTask YieldOutputAsync(string sourceId, object output, CancellationToken cancellationToken = default)
+    {
+        if (!this.QueuedOutputs.TryGetValue(sourceId, out List<object>? outputQueue))
+        {
+            this.QueuedOutputs[sourceId] = outputQueue = [];
+        }
+
+        outputQueue.Add(output);
         return default;
     }
 
@@ -104,8 +118,11 @@ public class TestRunContext : IRunnerContext
     public ValueTask ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
         => this.AddEventAsync(workflowEvent, cancellationToken);
 
-    public ValueTask SendMessageAsync<TMessage>(string senderId, [System.Diagnostics.CodeAnalysis.DisallowNull] TMessage message, CancellationToken cancellationToken = default)
-        => this.SendMessageAsync(senderId, message, cancellationToken);
+    ValueTask ISuperStepJoinContext.SendMessageAsync<TMessage>(string senderId, [System.Diagnostics.CodeAnalysis.DisallowNull] TMessage message, CancellationToken cancellationToken)
+        => this.SendMessageAsync(senderId, message, cancellationToken: cancellationToken);
+
+    ValueTask ISuperStepJoinContext.YieldOutputAsync<TOutput>(string senderId, [System.Diagnostics.CodeAnalysis.DisallowNull] TOutput output, CancellationToken cancellationToken)
+        => this.YieldOutputAsync(senderId, output, cancellationToken);
 
     ValueTask<string> ISuperStepJoinContext.AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken) => new(string.Empty);
     ValueTask<bool> ISuperStepJoinContext.DetachSuperstepAsync(string joinId) => new(false);

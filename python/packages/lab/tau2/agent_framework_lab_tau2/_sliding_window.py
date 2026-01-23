@@ -77,7 +77,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
                 for content in msg.contents:
                     if hasattr(content, "type"):
                         if content.type == "text":
-                            total_tokens += len(self.encoding.encode(content.text))
+                            total_tokens += len(self.encoding.encode(content.text))  # type: ignore[arg-type]
                         elif content.type == "function_call":
                             total_tokens += 4
                             # Serialize function call and count tokens

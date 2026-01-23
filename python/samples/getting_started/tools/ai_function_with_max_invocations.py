@@ -20,7 +20,7 @@ def unicorn_function(times: Annotated[int, "The number of unicorns to return."])
 
 async def main():
     # tools = Tools()
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="ToolAgent",
         instructions="Use the provided tools.",
         tools=[unicorn_function],

@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
-namespace Microsoft.Agents.AI.UnitTests.ChatClient;
+namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Contains unit tests for the ChatClientAgent.GetNewThreadAsync methods.
@@ -39,19 +39,19 @@ public class ChatClientAgent_GetNewThreadTests
     }
 
     [Fact]
-    public async Task GetNewThread_UsesChatMessageStoreFactory_IfProvidedAsync()
+    public async Task GetNewThread_UsesChatHistoryProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
-        var mockMessageStore = new Mock<ChatMessageStore>();
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>();
         var factoryCalled = false;
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            ChatMessageStoreFactory = (_, _) =>
+            ChatHistoryProviderFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return new ValueTask<ChatMessageStore>(mockMessageStore.Object);
+                return new ValueTask<ChatHistoryProvider>(mockChatHistoryProvider.Object);
             }
         });
 
@@ -59,27 +59,27 @@ public class ChatClientAgent_GetNewThreadTests
         var thread = await agent.GetNewThreadAsync();
 
         // Assert
-        Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
+        Assert.True(factoryCalled, "ChatHistoryProviderFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
         var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockMessageStore.Object, typedThread.MessageStore);
+        Assert.Same(mockChatHistoryProvider.Object, typedThread.ChatHistoryProvider);
     }
 
     [Fact]
-    public async Task GetNewThread_UsesChatMessageStore_FromTypedOverloadAsync()
+    public async Task GetNewThread_UsesChatHistoryProvider_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
-        var mockMessageStore = new Mock<ChatMessageStore>();
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>();
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var thread = await agent.GetNewThreadAsync(mockMessageStore.Object);
+        var thread = await agent.GetNewThreadAsync(mockChatHistoryProvider.Object);
 
         // Assert
         Assert.IsType<ChatClientAgentThread>(thread);
         var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockMessageStore.Object, typedThread.MessageStore);
+        Assert.Same(mockChatHistoryProvider.Object, typedThread.ChatHistoryProvider);
     }
 
     [Fact]

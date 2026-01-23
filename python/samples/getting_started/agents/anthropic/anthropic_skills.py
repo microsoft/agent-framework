@@ -31,7 +31,7 @@ async def main() -> None:
 
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
         tools=HostedCodeInterpreterTool(),
@@ -61,7 +61,7 @@ async def main() -> None:
                 case "text_reasoning":
                     print(f"\033[32m{content.text}\033[0m", end="", flush=True)
                 case "usage":
-                    print(f"\n\033[34m[Usage so far: {content.details}]\033[0m\n", end="", flush=True)
+                    print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)
                 case "hosted_file":
                     # Catch generated files
                     files.append(content)

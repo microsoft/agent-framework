@@ -35,7 +35,7 @@ async def get_weather(
 
 
 async def main() -> None:
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="WeatherAgent", instructions="You are a helpful weather assistant.", tools=[get_weather]
     )
 

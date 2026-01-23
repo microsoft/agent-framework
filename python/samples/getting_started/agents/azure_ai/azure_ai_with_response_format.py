@@ -41,12 +41,13 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
 
-        if isinstance(result.value, ReleaseBrief):
-            release_brief = result.value
+        if release_brief := result.try_parse_value(ReleaseBrief):
             print("Agent:")
             print(f"Feature: {release_brief.feature}")
             print(f"Benefit: {release_brief.benefit}")
             print(f"Launch date: {release_brief.launch_date}")
+        else:
+            print(f"Failed to parse response: {result.text}")
 
 
 if __name__ == "__main__":

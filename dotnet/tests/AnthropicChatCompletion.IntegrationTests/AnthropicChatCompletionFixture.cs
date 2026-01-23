@@ -39,12 +39,12 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
     {
         var typedThread = (ChatClientAgentThread)thread;
 
-        if (typedThread.MessageStore is null)
+        if (typedThread.ChatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedThread.MessageStore.InvokingAsync(new([]))).ToList();
+        return (await typedThread.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(

@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import CitationAnnotation
+from agent_framework import Annotation
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
@@ -85,13 +85,11 @@ async def main() -> None:
             )
             print(f"User: {user_input}")
             print("Agent: ", end="", flush=True)
-
             # Stream the response and collect citations
-            citations: list[CitationAnnotation] = []
+            citations: list[Annotation] = []
             async for chunk in agent.run_stream(user_input):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
-
                 # Collect citations from Azure AI Search responses
                 for content in getattr(chunk, "contents", []):
                     annotations = getattr(content, "annotations", [])
@@ -104,7 +102,7 @@ async def main() -> None:
             if citations:
                 print("\n\nCitation:")
                 for i, citation in enumerate(citations, 1):
-                    print(f"[{i}] {citation.url}")
+                    print(f"[{i}] {citation.get('url')}")
 
             print("\n" + "=" * 50 + "\n")
             print("Hotel search conversation completed!")

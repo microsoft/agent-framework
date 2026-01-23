@@ -377,7 +377,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         """
         return "Unknown"
 
-    def create_agent(
+    def as_agent(
         self,
         *,
         id: str | None = None,
@@ -428,7 +428,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
                 client = OpenAIChatClient(model_id="gpt-4")
 
                 # Create an agent using the convenience method
-                agent = client.create_agent(
+                agent = client.as_agent(
                     name="assistant",
                     instructions="You are a helpful assistant.",
                     default_options={"temperature": 0.7, "max_tokens": 500},
