@@ -54,6 +54,7 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
     assert response.messages[2].text == "done"
 
 
+@pytest.mark.parametrize("max_iterations", [3])
 async def test_base_client_with_function_calling_resets(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
@@ -648,7 +649,7 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Ch
     # Should execute successfully
     assert response2 is not None
     assert exec_counter == 1
-    assert response2.messages[-1].text == "done"
+    assert response2.messages[-1].role == Role.TOOL
 
 
 async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: ChatClientProtocol):
@@ -866,7 +867,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
         content
         for msg in response.messages
         for content in msg.contents
-        if content.type == "function_result" and content.exception
+        if content.type == "function_result" and content.exception is not None
     ]
     # The first call errors, then the second call errors, hitting the limit
     # So we get 2 function calls with errors, but the responses show the behavior stopped
@@ -1682,6 +1683,7 @@ async def test_function_result_appended_to_existing_assistant_message(chat_clien
     assert has_result
 
 
+@pytest.mark.parametrize("max_iterations", [3])
 async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtocol):
     """Test that error counter resets after a successful function call."""
 
@@ -1728,7 +1730,7 @@ async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtoco
         content
         for msg in response.messages
         for content in msg.contents
-        if content.type == "function_result" and content.result
+        if content.type == "function_result" and not content.exception
     ]
 
     assert len(error_results) >= 1

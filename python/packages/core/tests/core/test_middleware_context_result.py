@@ -123,7 +123,7 @@ class TestResultOverrideMiddleware:
                 context.result = override_result
 
         middleware = ResultOverrideMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 
@@ -192,7 +192,7 @@ class TestResultOverrideMiddleware:
                 await next(context)
                 # Then conditionally override based on content
                 if any("custom stream" in msg.text for msg in context.messages if msg.text):
-                    context.result = custom_stream()
+                    context.result = ResponseStream(custom_stream())
 
         # Create ChatAgent with override middleware
         middleware = ChatAgentStreamOverrideMiddleware()
@@ -282,7 +282,7 @@ class TestResultOverrideMiddleware:
                 # Otherwise, don't call next() - no execution should happen
 
         middleware = ConditionalNoNextFunctionMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
 
         handler_called = False
 
@@ -371,7 +371,7 @@ class TestResultObservability:
                 observed_results.append(context.result)
 
         middleware = ObservabilityMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 
@@ -439,7 +439,7 @@ class TestResultObservability:
                     context.result = "modified after execution"
 
         middleware = PostExecutionOverrideMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 

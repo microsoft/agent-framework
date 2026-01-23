@@ -87,7 +87,7 @@ class EnumLike(type):
         return cls
 
 
-def _parse_content_list(contents_data: Sequence["Content | dict[str, Any]"]) -> list["Content"]:
+def _parse_content_list(contents_data: Sequence["Content | Mapping[str, Any]"]) -> list["Content"]:
     """Parse a list of content data dictionaries into appropriate Content objects.
 
     Args:
@@ -2357,12 +2357,24 @@ class ChatResponseUpdate(SerializationMixin):
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
 
+    contents: list[Content]
+    role: Role | None
+    author_name: str | None
+    response_id: str | None
+    message_id: str | None
+    conversation_id: str | None
+    model_id: str | None
+    created_at: CreatedAtT | None
+    finish_reason: FinishReason | None
+    additional_properties: dict[str, Any] | None
+    raw_representation: Any | None
+
     def __init__(
         self,
         *,
         contents: Sequence[Content] | None = None,
         text: Content | str | None = None,
-        role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any] | None = None,
+        role: Role | Literal["system", "user", "assistant", "tool"] | str | dict[str, Any] | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -2394,12 +2406,12 @@ class ChatResponseUpdate(SerializationMixin):
 
         """
         # Handle contents conversion
-        contents: list[Content] = [] if contents is None else _parse_content_list(contents)
+        parsed_contents: list[Content] = [] if contents is None else _parse_content_list(contents)
 
         if text is not None:
             if isinstance(text, str):
                 text = Content.from_text(text=text)
-            contents.append(text)
+            parsed_contents.append(text)
 
         # Handle role conversion
         if isinstance(role, dict):
@@ -2411,7 +2423,7 @@ class ChatResponseUpdate(SerializationMixin):
         if isinstance(finish_reason, dict):
             finish_reason = FinishReason.from_dict(finish_reason)
 
-        self.contents = contents
+        self.contents = parsed_contents
         self.role = role
         self.author_name = author_name
         self.response_id = response_id
@@ -2501,7 +2513,7 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
                     self._stream._teardown_hooks.extend(self._teardown_hooks)  # type: ignore[assignment]
                     self._teardown_hooks = []
                 return self._stream
-        return self._stream
+        return self._stream  # type: ignore[return-value]
 
     def __aiter__(self) -> "ResponseStream[TUpdate, TFinal]":
         return self
@@ -2517,14 +2529,18 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
             await self._run_teardown_hooks()
             raise
         if self._map_update is not None:
-            update = self._map_update(update)
-            if isinstance(update, Awaitable):
-                update = await update
+            mapped = self._map_update(update)
+            if isinstance(mapped, Awaitable):
+                update = await mapped
+            else:
+                update = mapped  # type: ignore[assignment]
         self._updates.append(update)
         for hook in self._update_hooks:
-            update = hook(update)
-            if isinstance(update, Awaitable):
-                update = await update
+            hooked = hook(update)
+            if isinstance(hooked, Awaitable):
+                update = await hooked
+            else:
+                update = hooked  # type: ignore[assignment]
         return update
 
     def __await__(self) -> Any:

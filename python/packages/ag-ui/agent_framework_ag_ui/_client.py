@@ -20,6 +20,7 @@ from agent_framework import (
     FunctionTool,
 )
 from agent_framework._clients import FunctionInvokingChatClient
+from agent_framework._types import ResponseStream
 
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
@@ -52,7 +53,7 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
+TBaseChatClient = TypeVar("TBaseChatClient", bound=type[FunctionInvokingChatClient[Any]])
 
 TAGUIChatOptions = TypeVar(
     "TAGUIChatOptions",
@@ -82,7 +83,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
         if response.messages:
             for message in response.messages:
                 _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
-        return response
+        return response  # type: ignore[no-any-return]
 
     async def _stream_wrapper_impl(
         self, original_func: Any, *args: Any, **kwargs: Any
@@ -319,32 +320,46 @@ class AGUIChatClient(FunctionInvokingChatClient[TAGUIChatOptions], Generic[TAGUI
         return thread_id
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
+        stream: bool,
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal method to get non-streaming response.
 
         Keyword Args:
             messages: List of chat messages
+            stream: Whether to stream the response.
             options: Chat options for the request
             **kwargs: Additional keyword arguments
 
         Returns:
             ChatResponse object
         """
-        return await ChatResponse.from_update_generator(
-            self._inner_get_streaming_response(
-                messages=messages,
-                options=options,
-                **kwargs,
+        if stream:
+            return ResponseStream(
+                self._inner_get_streaming_response(
+                    messages=messages,
+                    options=options,
+                    **kwargs,
+                ),
+                finalizer=ChatResponse.from_chat_response_updates,
             )
-        )
 
-    @override
+        async def _get_response() -> ChatResponse:
+            return await ChatResponse.from_chat_response_generator(
+                self._inner_get_streaming_response(
+                    messages=messages,
+                    options=options,
+                    **kwargs,
+                )
+            )
+
+        return _get_response()
+
     async def _inner_get_streaming_response(
         self,
         *,

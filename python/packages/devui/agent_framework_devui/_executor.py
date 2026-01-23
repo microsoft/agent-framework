@@ -426,7 +426,7 @@ class AgentFrameworkExecutor:
 
             # Get session-scoped checkpoint storage (InMemoryCheckpointStorage from conv_data)
             # Each conversation has its own storage instance, providing automatic session isolation.
-            # This storage is passed to workflow.run_stream() which sets it as runtime override,
+            # This storage is passed to workflow.run(stream=True) which sets it as runtime override,
             # ensuring all checkpoint operations (save/load) use THIS conversation's storage.
             # The framework guarantees runtime storage takes precedence over build-time storage.
             checkpoint_storage = self.checkpoint_manager.get_checkpoint_storage(conversation_id)
@@ -478,15 +478,17 @@ class AgentFrameworkExecutor:
                 # NOTE: Two-step approach for stateless HTTP (framework limitation):
                 # 1. Restore checkpoint to load pending requests into workflow's in-memory state
                 # 2. Then send responses using send_responses_streaming
-                # Future: Framework should support run_stream(checkpoint_id, responses) in single call
+                # Future: Framework should support run(stream=True, checkpoint_id, responses) in single call
                 # (checkpoint_id is guaranteed to exist due to earlier validation)
                 logger.debug(f"Restoring checkpoint {checkpoint_id} then sending HIL responses")
 
                 try:
                     # Step 1: Restore checkpoint to populate workflow's in-memory pending requests
                     restored = False
-                    async for _event in workflow.run_stream(
-                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    async for _event in workflow.run(
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
                     ):
                         restored = True
                         break  # Stop immediately after restoration, don't process events
@@ -545,8 +547,10 @@ class AgentFrameworkExecutor:
                 logger.info(f"Resuming workflow from checkpoint {checkpoint_id} in session {conversation_id}")
 
                 try:
-                    async for event in workflow.run_stream(
-                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    async for event in workflow.run(
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
                     ):
                         if isinstance(event, RequestInfoEvent):
                             self._enrich_request_info_event_with_response_schema(event, workflow)
@@ -571,7 +575,7 @@ class AgentFrameworkExecutor:
 
                 parsed_input = await self._parse_workflow_input(workflow, request.input)
 
-                async for event in workflow.run_stream(parsed_input, checkpoint_storage=checkpoint_storage):
+                async for event in workflow.run(parsed_input, stream=True, checkpoint_storage=checkpoint_storage):
                     if isinstance(event, RequestInfoEvent):
                         self._enrich_request_info_event_with_response_schema(event, workflow)
 

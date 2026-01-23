@@ -793,8 +793,9 @@ class EntityDiscovery:
         Returns:
             True if object appears to be a valid workflow
         """
-        # Check for workflow - must have run_stream method and executors
-        return hasattr(obj, "run_stream") and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
+        # Check for workflow - must have run (streaming via stream=True) and executors
+        has_run = hasattr(obj, "run")
+        return has_run and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
 
     async def _register_entity_from_object(
         self, obj: Any, obj_type: str, module_path: str, source: str = "directory"

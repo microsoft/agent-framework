@@ -7,7 +7,7 @@ import os
 from collections.abc import Awaitable, Callable, Generator, Mapping, MutableMapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypeVar, overload
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
@@ -1046,6 +1046,26 @@ class ChatTelemetryMixin(Generic[TChatClient]):
         self.duration_histogram = _get_duration_histogram()
         self.otel_provider_name = otel_provider_name or getattr(self, "OTEL_PROVIDER_NAME", "unknown")
 
+    @overload
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: Literal[False] = False,
+        options: "Mapping[str, Any] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable["ChatResponse"]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: Literal[True],
+        options: "Mapping[str, Any] | None" = None,
+        **kwargs: Any,
+    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
+
     def get_response(
         self,
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
@@ -1053,13 +1073,13 @@ class ChatTelemetryMixin(Generic[TChatClient]):
         stream: bool = False,
         options: "Mapping[str, Any] | None" = None,
         **kwargs: Any,
-    ) -> Awaitable["ChatResponse"] | "ResponseStream[ChatResponseUpdate, ChatResponse]":
+    ) -> "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]":
         """Trace chat responses with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_get_response(messages=messages, stream=stream, options=options, **kwargs)
+            return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
 
         options = options or {}
         provider_name = str(self.otel_provider_name)
@@ -1082,9 +1102,9 @@ class ChatTelemetryMixin(Generic[TChatClient]):
 
             stream_result = super_get_response(messages=messages, stream=True, options=options, **kwargs)
             if isinstance(stream_result, ResponseStream):
-                stream = stream_result
+                result_stream = stream_result
             elif isinstance(stream_result, Awaitable):
-                stream = ResponseStream.wrap(stream_result)
+                result_stream = ResponseStream.wrap(stream_result)
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
@@ -1133,7 +1153,7 @@ class ChatTelemetryMixin(Generic[TChatClient]):
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
-            return stream.with_finalizer(_finalize).with_teardown(_record_duration)
+            return result_stream.with_finalizer(_finalize).with_teardown(_record_duration)
 
         async def _get_response() -> "ChatResponse":
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
@@ -1166,7 +1186,7 @@ class ChatTelemetryMixin(Generic[TChatClient]):
                         finish_reason=response.finish_reason,
                         output=True,
                     )
-                return response
+                return response  # type: ignore[return-value,no-any-return]
 
         return _get_response()
 
@@ -1180,6 +1200,36 @@ class AgentTelemetryMixin(Generic[TAgent]):
         self.token_usage_histogram = _get_token_usage_histogram()
         self.duration_histogram = _get_duration_histogram()
         self.otel_provider_name = otel_provider_name or getattr(self, "AGENT_PROVIDER_NAME", "unknown")
+
+    @overload
+    def run(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
+        *,
+        stream: Literal[False] = False,
+        thread: "AgentThread | None" = None,
+        tools: (
+            "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | "
+            "list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"
+        ) = None,
+        options: "dict[str, Any] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable["AgentResponse"]: ...
+
+    @overload
+    def run(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
+        *,
+        stream: Literal[True],
+        thread: "AgentThread | None" = None,
+        tools: (
+            "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | "
+            "list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"
+        ) = None,
+        options: "dict[str, Any] | None" = None,
+        **kwargs: Any,
+    ) -> "ResponseStream[AgentResponseUpdate, AgentResponse]": ...
 
     def run(
         self,
@@ -1201,7 +1251,7 @@ class AgentTelemetryMixin(Generic[TAgent]):
         capture_usage = bool(getattr(self, "_otel_capture_usage", True))
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_run(
+            return super_run(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
                 thread=thread,
@@ -1217,9 +1267,9 @@ class AgentTelemetryMixin(Generic[TAgent]):
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
-            agent_id=self.id,
-            agent_name=self.name or self.id,
-            agent_description=self.description,
+            agent_id=getattr(self, "id", "unknown"),
+            agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
+            agent_description=getattr(self, "description", None),
             thread_id=thread.service_thread_id if thread else None,
             all_options=options,
             **kwargs,
@@ -1235,9 +1285,9 @@ class AgentTelemetryMixin(Generic[TAgent]):
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
-                stream = run_result
+                result_stream = run_result
             elif isinstance(run_result, Awaitable):
-                stream = ResponseStream.wrap(run_result)
+                result_stream = ResponseStream.wrap(run_result)
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
@@ -1285,7 +1335,7 @@ class AgentTelemetryMixin(Generic[TAgent]):
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
-            return stream.with_finalizer(_finalize).with_teardown(_record_duration)
+            return result_stream.with_finalizer(_finalize).with_teardown(_record_duration)
 
         async def _run() -> "AgentResponse":
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1317,7 +1367,7 @@ class AgentTelemetryMixin(Generic[TAgent]):
                         messages=response.messages,
                         output=True,
                     )
-                return response
+                return response  # type: ignore[return-value,no-any-return]
 
         return _run()
 
@@ -1491,7 +1541,7 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: "str | ChatMessage | list[str] | list[ChatMessage]",
+    messages: "str | ChatMessage | Sequence[str | ChatMessage]",
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: "FinishReason | None" = None,

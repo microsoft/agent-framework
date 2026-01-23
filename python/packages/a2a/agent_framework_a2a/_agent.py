@@ -56,7 +56,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-class A2AAgent(AgentTelemetryMixin, BaseAgent):
+class A2AAgent(AgentTelemetryMixin[Any], BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
@@ -183,7 +183,7 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
         if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
-    async def run(
+    async def run(  # type: ignore[override]
         self,
         messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,

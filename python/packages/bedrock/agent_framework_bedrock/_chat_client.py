@@ -4,8 +4,8 @@ import asyncio
 import json
 import sys
 from collections import deque
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, Literal
+from collections.abc import AsyncIterable, Awaitable, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
@@ -15,7 +15,10 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FunctionTool,
+    ResponseStream,
+    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -180,20 +183,20 @@ TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="B
 # endregion
 
 
-ROLE_MAP: dict[str, str] = {
-    "user": "user",
-    "assistant": "assistant",
-    "system": "user",
-    "tool": "user",
+ROLE_MAP: dict[Role, str] = {
+    Role.USER: "user",
+    Role.ASSISTANT: "assistant",
+    Role.SYSTEM: "user",
+    Role.TOOL: "user",
 }
 
-FINISH_REASON_MAP: dict[str, str] = {
-    "end_turn": "stop",
-    "stop_sequence": "stop",
-    "max_tokens": "length",
-    "length": "length",
-    "content_filtered": "content_filter",
-    "tool_use": "tool_calls",
+FINISH_REASON_MAP: dict[str, FinishReason] = {
+    "end_turn": FinishReason.STOP,
+    "stop_sequence": FinishReason.STOP,
+    "max_tokens": FinishReason.LENGTH,
+    "length": FinishReason.LENGTH,
+    "content_filtered": FinishReason.CONTENT_FILTER,
+    "tool_use": FinishReason.TOOL_CALLS,
 }
 
 
@@ -299,36 +302,40 @@ class BedrockChatClient(FunctionInvokingChatClient[TBedrockChatOptions], Generic
         return Boto3Session(**session_kwargs)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         request = self._prepare_options(messages, options, **kwargs)
-        raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
-        return self._process_converse_response(raw_response)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        response = await self._inner_get_response(messages=messages, options=options, **kwargs)
-        contents = list(response.messages[0].contents if response.messages else [])
-        if response.usage_details:
-            contents.append(Content.from_usage(usage_details=response.usage_details))  # type: ignore[arg-type]
-        yield ChatResponseUpdate(
-            response_id=response.response_id,
-            contents=contents,
-            model_id=response.model_id,
-            finish_reason=response.finish_reason,
-            raw_representation=response.raw_representation,
-        )
+        if stream:
+            # Streaming mode - simulate streaming by yielding a single update
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+                parsed_response = self._process_converse_response(response)
+                contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
+                if parsed_response.usage_details:
+                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
+                yield ChatResponseUpdate(
+                    response_id=parsed_response.response_id,
+                    contents=contents,
+                    model_id=parsed_response.model_id,
+                    finish_reason=parsed_response.finish_reason,
+                    raw_representation=parsed_response.raw_representation,
+                )
+
+            return ResponseStream(_stream(), finalizer=ChatResponse.from_chat_response_updates)
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+            return self._process_converse_response(raw_response)
+
+        return _get_response()
 
     def _prepare_options(
         self,
@@ -389,7 +396,7 @@ class BedrockChatClient(FunctionInvokingChatClient[TBedrockChatOptions], Generic
         conversation: list[dict[str, Any]] = []
         pending_tool_use_ids: deque[str] = deque()
         for message in messages:
-            if message.role == "system":
+            if message.role == Role.SYSTEM:
                 text_value = message.text
                 if text_value:
                     prompts.append({"text": text_value})
@@ -406,7 +413,7 @@ class BedrockChatClient(FunctionInvokingChatClient[TBedrockChatOptions], Generic
                     for block in content_blocks
                     if isinstance(block, MutableMapping) and "toolUse" in block
                 )
-            elif message.role == "tool":
+            elif message.role == Role.TOOL:
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
                 pending_tool_use_ids.clear()
                 if not content_blocks:
@@ -566,7 +573,7 @@ class BedrockChatClient(FunctionInvokingChatClient[TBedrockChatOptions], Generic
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage("assistant", contents, raw_representation=message)
+        chat_message = ChatMessage(role=Role.ASSISTANT, contents=contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
@@ -634,7 +641,7 @@ class BedrockChatClient(FunctionInvokingChatClient[TBedrockChatOptions], Generic
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> str | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReason | None:
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())

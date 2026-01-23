@@ -25,6 +25,9 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
+    ResponseStream,
+    Role,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -122,7 +125,7 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class OpenAIBaseChatClient(
+class OpenAIBaseChatClient(  # type: ignore[misc]
     OpenAIBase,
     FunctionInvokingChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
@@ -130,49 +133,75 @@ class OpenAIBaseChatClient(
     """OpenAI Chat completion class."""
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
 
-        try:
-            if stream:
-                # Streaming mode
-                options_dict["stream_options"] = {"include_usage": True}
+        if stream:
+            # Streaming mode
+            options_dict["stream_options"] = {"include_usage": True}
 
-                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                client = await self._ensure_client()
+                try:
                     async for chunk in await client.chat.completions.create(stream=True, **options_dict):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
                         yield self._parse_response_update_from_openai(chunk)
+                except BadRequestError as ex:
+                    if ex.code == "content_filter":
+                        raise OpenAIContentFilterException(
+                            f"{type(self)} service encountered a content error: {ex}",
+                            inner_exception=ex,
+                        ) from ex
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                except Exception as ex:
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
 
-                return _stream()
-            # Non-streaming mode
-            return self._parse_response_from_openai(
-                await client.chat.completions.create(stream=False, **options_dict), options
-            )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            client = await self._ensure_client()
+            try:
+                return self._parse_response_from_openai(
+                    await client.chat.completions.create(stream=False, **options_dict), options
+                )
+            except BadRequestError as ex:
+                if ex.code == "content_filter":
+                    raise OpenAIContentFilterException(
+                        f"{type(self)} service encountered a content error: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+            except Exception as ex:
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
+                    inner_exception=ex,
+                ) from ex
+
+        return _get_response()
 
     # region content creation
 
@@ -264,11 +293,11 @@ class OpenAIBaseChatClient(
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
-        finish_reason: str | None = None
+        finish_reason: FinishReason | None = None
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason
+                finish_reason = FinishReason(value=choice.finish_reason)
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -276,7 +305,7 @@ class OpenAIBaseChatClient(
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
-            messages.append(ChatMessage("assistant", contents))
+            messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -296,7 +325,7 @@ class OpenAIBaseChatClient(
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
         if chunk.usage:
             return ChatResponseUpdate(
-                role="assistant",
+                role=Role.ASSISTANT,
                 contents=[
                     Content.from_usage(
                         usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
@@ -308,12 +337,12 @@ class OpenAIBaseChatClient(
                 message_id=chunk.id,
             )
         contents: list[Content] = []
-        finish_reason: str | None = None
+        finish_reason: FinishReason | None = None
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason
+                finish_reason = FinishReason(value=choice.finish_reason)
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -322,7 +351,7 @@ class OpenAIBaseChatClient(
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
-            role="assistant",
+            role=Role.ASSISTANT,
             model_id=chunk.model,
             additional_properties=chunk_metadata,
             finish_reason=finish_reason,
@@ -409,7 +438,7 @@ class OpenAIBaseChatClient(
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
-        "tool" messages need to be formatted different than system/user/assistant messages:
+        Role.TOOL messages need to be formatted different than system/user/assistant messages:
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
@@ -438,9 +467,9 @@ class OpenAIBaseChatClient(
                 continue
 
             args: dict[str, Any] = {
-                "role": message.role,
+                "role": message.role.value if isinstance(message.role, Role) else message.role,
             }
-            if message.author_name and message.role != "tool":
+            if message.author_name and message.role != Role.TOOL:
                 args["name"] = message.author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]
@@ -544,7 +573,7 @@ class OpenAIBaseChatClient(
 # region Public client
 
 
-class OpenAIChatClient(
+class OpenAIChatClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     OpenAIBaseChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],

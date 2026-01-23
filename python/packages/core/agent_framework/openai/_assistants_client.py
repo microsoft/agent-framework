@@ -39,6 +39,8 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ResponseStream,
+    Role,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -195,7 +197,7 @@ TOpenAIAssistantsOptions = TypeVar(
 # endregion
 
 
-class OpenAIAssistantsClient(
+class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     FunctionInvokingChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
@@ -331,14 +333,14 @@ class OpenAIAssistantsClient(
             object.__setattr__(self, "_should_delete_assistant", False)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
             # Streaming mode - return the async generator directly
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -365,12 +367,22 @@ class OpenAIAssistantsClient(
                 async for update in self._process_stream_events(stream_obj, thread_id):
                     yield update
 
-            return _stream()
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
         # Non-streaming mode - collect updates and convert to response
-        return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_response(messages=messages, options=options, stream=True, **kwargs),
-            output_format_type=options.get("response_format"),
-        )
+        async def _get_response() -> ChatResponse:
+            stream_result = self._inner_get_response(messages=messages, options=options, stream=True, **kwargs)
+            return await ChatResponse.from_chat_response_generator(
+                updates=stream_result,  # type: ignore[arg-type]
+                output_format_type=options.get("response_format"),
+            )
+
+        return _get_response()
 
     async def _get_assistant_id_or_create(self) -> str:
         """Determine which assistant to use and create if needed.
@@ -474,19 +486,19 @@ class OpenAIAssistantsClient(
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role="assistant",
+                        role=Role.ASSISTANT,
                     )
                 elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
                     response_id = response.data.run_id
                 elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
                     delta = response.data.delta
-                    role = "user" if delta.role == "user" else "assistant"
+                    role = Role.USER if delta.role == "user" else Role.ASSISTANT
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
                             yield ChatResponseUpdate(
                                 role=role,
-                                contents=[Content.from_text(text=delta_block.text.value)],
+                                text=delta_block.text.value,
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
@@ -496,7 +508,7 @@ class OpenAIAssistantsClient(
                     contents = self._parse_function_calls_from_assistants(response.data, response_id)
                     if contents:
                         yield ChatResponseUpdate(
-                            role="assistant",
+                            role=Role.ASSISTANT,
                             contents=contents,
                             conversation_id=thread_id,
                             message_id=response_id,
@@ -517,7 +529,7 @@ class OpenAIAssistantsClient(
                         )
                     )
                     yield ChatResponseUpdate(
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         contents=[usage_content],
                         conversation_id=thread_id,
                         message_id=response_id,
@@ -531,7 +543,7 @@ class OpenAIAssistantsClient(
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role="assistant",
+                        role=Role.ASSISTANT,
                     )
 
     def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Content]:
@@ -665,7 +677,7 @@ class OpenAIAssistantsClient(
         # since there is no such message roles in OpenAI Assistants.
         # All other messages are added 1:1.
         for chat_message in messages:
-            if chat_message.role in ["system", "developer"]:
+            if chat_message.role.value in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if content.type == "text"]:
                     text = getattr(text_content, "text", None)
                     if text:
@@ -692,7 +704,7 @@ class OpenAIAssistantsClient(
                     additional_messages = []
                 additional_messages.append(
                     AdditionalMessage(
-                        role="assistant" if chat_message.role == "assistant" else "user",
+                        role="assistant" if chat_message.role == Role.ASSISTANT else "user",
                         content=message_contents,
                     )
                 )

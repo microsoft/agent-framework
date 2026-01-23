@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal
+from collections.abc import AsyncIterable, Awaitable, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -12,10 +12,13 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
+    ResponseStream,
+    Role,
     TextSpanRegion,
     UsageDetails,
     get_logger,
@@ -167,20 +170,20 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Role and Finish Reason Maps
 
 
-ROLE_MAP: dict[str, str] = {
-    "user": "user",
-    "assistant": "assistant",
-    "system": "user",
-    "tool": "user",
+ROLE_MAP: dict[Role, str] = {
+    Role.USER: "user",
+    Role.ASSISTANT: "assistant",
+    Role.SYSTEM: "user",
+    Role.TOOL: "user",
 }
 
-FINISH_REASON_MAP: dict[str, str] = {
-    "stop_sequence": "stop",
-    "max_tokens": "length",
-    "tool_use": "tool_calls",
-    "end_turn": "stop",
-    "refusal": "content_filter",
-    "pause_turn": "stop",
+FINISH_REASON_MAP: dict[str, FinishReason] = {
+    "stop_sequence": FinishReason.STOP,
+    "max_tokens": FinishReason.LENGTH,
+    "tool_use": FinishReason.TOOL_CALLS,
+    "end_turn": FinishReason.STOP,
+    "refusal": FinishReason.CONTENT_FILTER,
+    "pause_turn": FinishReason.STOP,
 }
 
 
@@ -328,35 +331,38 @@ class AnthropicClient(FunctionInvokingChatClient[TAnthropicOptions], Generic[TAn
     # region Get response methods
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
-        # execute
-        message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-        # process
-        return self._process_message(message, options)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options = self._prepare_options(messages, options, **kwargs)
-        # execute and process
-        async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-            parsed_chunk = self._process_stream_event(chunk)
-            if parsed_chunk:
-                yield parsed_chunk
+        if stream:
+            # Streaming mode
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                    parsed_chunk = self._process_stream_event(chunk)
+                    if parsed_chunk:
+                        yield parsed_chunk
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            return self._process_message(message, options)
+
+        return _get_response()
 
     # region Prep methods
 
@@ -407,7 +413,7 @@ class AnthropicClient(FunctionInvokingChatClient[TAnthropicOptions], Generic[TAn
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
             run_options["system"] = messages[0].text
 
         # betas
@@ -494,7 +500,7 @@ class AnthropicClient(FunctionInvokingChatClient[TAnthropicOptions], Generic[TAn
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
@@ -665,7 +671,7 @@ class AnthropicClient(FunctionInvokingChatClient[TAnthropicOptions], Generic[TAn
             response_id=message.id,
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=self._parse_contents_from_anthropic(message.content),
                     raw_representation=message,
                 )

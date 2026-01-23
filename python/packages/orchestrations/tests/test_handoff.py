@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
+    ResponseStream,
     Role,
     WorkflowEvent,
     WorkflowOutputEvent,
@@ -29,9 +30,10 @@ class MockChatClient:
 
     def __init__(
         self,
-        name: str,
         *,
+        name: str = "",
         handoff_to: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the mock chat client.
 
@@ -40,27 +42,44 @@ class MockChatClient:
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
+        super().__init__(**kwargs)
         self._name = name
         self._handoff_to = handoff_to
         self._call_index = 0
 
-    async def get_response(
-        self, messages: Any, stream: bool = False, **kwargs: Any
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    def get_response(
+        self,
+        messages: Any,
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        options = options or {}
         if stream:
+            return self._get_streaming_response(options=options)
 
-            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-                yield ChatResponseUpdate(contents=contents, role=Role.ASSISTANT)
+        async def _get() -> ChatResponse:
+            contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
+            reply = ChatMessage(
+                role=Role.ASSISTANT,
+                contents=contents,
+            )
+            return ChatResponse(messages=reply, response_id="mock_response")
 
-            return _stream()
+        return _get()
 
-        contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-        reply = ChatMessage(
-            role=Role.ASSISTANT,
-            contents=contents,
-        )
-        return ChatResponse(messages=reply, response_id="mock_response")
+    def _get_streaming_response(self, *, options: dict[str, Any]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
+            yield ChatResponseUpdate(contents=contents, role=Role.ASSISTANT, is_finished=True)
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _next_call_id(self) -> str | None:
         if not self._handoff_to:
@@ -103,7 +122,7 @@ class MockHandoffAgent(ChatAgent):
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
-        super().__init__(chat_client=MockChatClient(name, handoff_to=handoff_to), name=name, id=name)
+        super().__init__(chat_client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
 
 
 async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:

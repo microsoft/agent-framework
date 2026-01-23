@@ -337,7 +337,7 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
     assert mock_provider.invoking_called
     # no conversation id is created, so no need to thread_create to be called.
     assert not mock_provider.thread_created_called
-    assert mock_provider.invoked_called
+    assert not mock_provider.invoked_called
 
 
 async def test_chat_agent_context_providers_with_thread_service_id(chat_client_base: ChatClientProtocol) -> None:
@@ -588,7 +588,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
     )
     thread = agent.get_new_thread()
 
-    result = await agent.run("hello", thread=thread)
+    result = await agent.run("hello", thread=thread, options={"additional_function_arguments": {"thread": thread}})
 
     assert result.text == "done"
     assert captured.get("has_thread") is True

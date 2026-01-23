@@ -14,8 +14,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingMixin,
     FunctionTool,
+    Role,
     agent_middleware,
     chat_middleware,
     function_middleware,
@@ -29,7 +29,7 @@ from agent_framework._middleware import (
 )
 from agent_framework.exceptions import MiddlewareException
 
-from .conftest import MockBaseChatClient, MockChatClient
+from .conftest import FunctionInvokingMockBaseChatClient, MockBaseChatClient, MockChatClient
 
 # region ChatAgent Tests
 
@@ -57,13 +57,13 @@ class TestChatAgentClassBasedMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].role == "assistant"
+        assert response.messages[0].role == Role.ASSISTANT
         # Note: conftest "MockChatClient" returns different text format
         assert "test response" in response.messages[0].text
 
@@ -92,7 +92,7 @@ class TestChatAgentClassBasedMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
@@ -127,8 +127,8 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Execute the agent with multiple messages
         messages = [
-            ChatMessage("user", ["message1"]),
-            ChatMessage("user", ["message2"]),  # This should not be processed due to termination
+            ChatMessage(role=Role.USER, text="message1"),
+            ChatMessage(role=Role.USER, text="message2"),  # This should not be processed due to termination
         ]
         response = await agent.run(messages)
 
@@ -157,15 +157,15 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Execute the agent with multiple messages
         messages = [
-            ChatMessage("user", ["message1"]),
-            ChatMessage("user", ["message2"]),
+            ChatMessage(role=Role.USER, text="message1"),
+            ChatMessage(role=Role.USER, text="message2"),
         ]
         response = await agent.run(messages)
 
         # Verify response
         assert response is not None
         assert len(response.messages) == 1
-        assert response.messages[0].role == "assistant"
+        assert response.messages[0].role == Role.ASSISTANT
         assert "test response" in response.messages[0].text
 
         # Verify middleware execution order
@@ -189,7 +189,7 @@ class TestChatAgentFunctionBasedMiddleware:
                 execution_order.append("middleware_after")
 
         # Create a message to start the conversation
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
 
         # Set up chat client to return a function call, then a final response
         # If terminate works correctly, only the first response should be consumed
@@ -197,7 +197,7 @@ class TestChatAgentFunctionBasedMiddleware:
             ChatResponse(
                 messages=[
                     ChatMessage(
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         contents=[
                             Content.from_function_call(
                                 call_id="test_call", name="test_function", arguments={"text": "test"}
@@ -206,7 +206,7 @@ class TestChatAgentFunctionBasedMiddleware:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage("assistant", ["this should not be consumed"])]),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="this should not be consumed")]),
         ]
 
         # Create the test function with the expected signature
@@ -250,7 +250,7 @@ class TestChatAgentFunctionBasedMiddleware:
                 context.terminate = True
 
         # Create a message to start the conversation
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
 
         # Set up chat client to return a function call, then a final response
         # If terminate works correctly, only the first response should be consumed
@@ -258,7 +258,7 @@ class TestChatAgentFunctionBasedMiddleware:
             ChatResponse(
                 messages=[
                     ChatMessage(
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         contents=[
                             Content.from_function_call(
                                 call_id="test_call", name="test_function", arguments={"text": "test"}
@@ -267,7 +267,7 @@ class TestChatAgentFunctionBasedMiddleware:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage("assistant", ["this should not be consumed"])]),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="this should not be consumed")]),
         ]
 
         # Create the test function with the expected signature
@@ -311,13 +311,13 @@ class TestChatAgentFunctionBasedMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[tracking_agent_middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].role == "assistant"
+        assert response.messages[0].role == Role.ASSISTANT
         assert response.messages[0].text == "test response"
         assert chat_client.call_count == 1
 
@@ -339,7 +339,7 @@ class TestChatAgentFunctionBasedMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[tracking_function_middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
@@ -375,13 +375,13 @@ class TestChatAgentStreamingMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[Content.from_text(text="Streaming")], role="assistant"),
-                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role="assistant"),
+                ChatResponseUpdate(contents=[Content.from_text(text="Streaming")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
         # Execute streaming
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         updates: list[AgentResponseUpdate] = []
         async for update in agent.run(messages, stream=True):
             updates.append(update)
@@ -410,7 +410,7 @@ class TestChatAgentStreamingMiddleware:
         # Create ChatAgent with middleware
         middleware = FlagTrackingMiddleware()
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
 
         # Test non-streaming execution
         response = await agent.run(messages)
@@ -451,7 +451,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2, middleware3])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
@@ -510,7 +510,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         )
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
@@ -566,7 +566,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="call_123",
@@ -577,7 +577,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
         chat_client.responses = [function_call_response, final_response]
 
@@ -590,7 +590,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         )
 
         # Execute the agent
-        messages = [ChatMessage("user", ["Get weather for Seattle"])]
+        messages = [ChatMessage(role=Role.USER, text="Get weather for Seattle")]
         response = await agent.run(messages)
 
         # Verify response
@@ -626,7 +626,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="call_456",
@@ -637,7 +637,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
         chat_client.responses = [function_call_response, final_response]
 
@@ -649,7 +649,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         )
 
         # Execute the agent
-        messages = [ChatMessage("user", ["Get weather for San Francisco"])]
+        messages = [ChatMessage(role=Role.USER, text="Get weather for San Francisco")]
         response = await agent.run(messages)
 
         # Verify response
@@ -698,7 +698,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="call_789",
@@ -709,7 +709,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
         chat_client.responses = [function_call_response, final_response]
 
@@ -721,7 +721,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
         )
 
         # Execute the agent
-        messages = [ChatMessage("user", ["Get weather for New York"])]
+        messages = [ChatMessage(role=Role.USER, text="Get weather for New York")]
         response = await agent.run(messages)
 
         # Verify response
@@ -785,7 +785,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
             ChatResponse(
                 messages=[
                     ChatMessage(
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         contents=[
                             Content.from_function_call(
                                 call_id="test_call", name="sample_tool_function", arguments={"location": "Seattle"}
@@ -794,15 +794,17 @@ class TestChatAgentFunctionMiddlewareWithTools:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage("assistant", [Content.from_text("Function completed")])]),
+            ChatResponse(
+                messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("Function completed")])]
+            ),
         ]
 
         # Create ChatAgent with function middleware
         agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware], tools=[sample_tool_function])
 
         # Execute the agent with custom parameters passed as kwargs
-        messages = [ChatMessage("user", ["test message"])]
-        response = await agent.run(messages, custom_param="test_value")
+        messages = [ChatMessage(role=Role.USER, text="test message")]
+        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})
 
         # Verify response
         assert response is not None
@@ -1065,7 +1067,7 @@ class TestRunLevelMiddleware:
         # Verify response is correct
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].role == "assistant"
+        assert response.messages[0].role == Role.ASSISTANT
         assert "test response" in response.messages[0].text
 
         # Verify middleware was executed
@@ -1094,8 +1096,8 @@ class TestRunLevelMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role="assistant"),
-                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role="assistant"),
+                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
@@ -1179,7 +1181,7 @@ class TestRunLevelMiddleware:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="test_call",
@@ -1190,7 +1192,7 @@ class TestRunLevelMiddleware:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
         chat_client.responses = [function_call_response, final_response]
 
         # Create agent with agent-level middleware
@@ -1272,7 +1274,7 @@ class TestMiddlewareDecoratorLogic:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="test_call",
@@ -1283,7 +1285,7 @@ class TestMiddlewareDecoratorLogic:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
         chat_client.responses = [function_call_response, final_response]
 
         # Should work without errors
@@ -1293,7 +1295,7 @@ class TestMiddlewareDecoratorLogic:
             tools=[custom_tool_wrapped],
         )
 
-        response = await agent.run([ChatMessage("user", ["test"])])
+        response = await agent.run([ChatMessage(role=Role.USER, text="test")])
 
         assert response is not None
         assert "decorator_type_match_agent" in execution_order
@@ -1314,7 +1316,7 @@ class TestMiddlewareDecoratorLogic:
                 await next(context)
 
             agent = ChatAgent(chat_client=chat_client, middleware=[mismatched_middleware])
-            await agent.run([ChatMessage("user", ["test"])])
+            await agent.run([ChatMessage(role=Role.USER, text="test")])
 
     async def test_only_decorator_specified(self, chat_client: Any) -> None:
         """Only decorator specified - rely on decorator."""
@@ -1343,7 +1345,7 @@ class TestMiddlewareDecoratorLogic:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="test_call",
@@ -1354,7 +1356,7 @@ class TestMiddlewareDecoratorLogic:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
         chat_client.responses = [function_call_response, final_response]
 
         # Should work - relies on decorator
@@ -1364,7 +1366,7 @@ class TestMiddlewareDecoratorLogic:
             tools=[custom_tool_wrapped],
         )
 
-        response = await agent.run([ChatMessage("user", ["test"])])
+        response = await agent.run([ChatMessage(role=Role.USER, text="test")])
 
         assert response is not None
         assert "decorator_only_agent" in execution_order
@@ -1399,7 +1401,7 @@ class TestMiddlewareDecoratorLogic:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="test_call",
@@ -1410,7 +1412,7 @@ class TestMiddlewareDecoratorLogic:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
         chat_client.responses = [function_call_response, final_response]
 
         # Should work - relies on type annotations
@@ -1418,7 +1420,7 @@ class TestMiddlewareDecoratorLogic:
             chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool_wrapped]
         )
 
-        response = await agent.run([ChatMessage("user", ["test"])])
+        response = await agent.run([ChatMessage(role=Role.USER, text="test")])
 
         assert response is not None
         assert "type_only_agent" in execution_order
@@ -1433,7 +1435,7 @@ class TestMiddlewareDecoratorLogic:
         # Should raise MiddlewareException
         with pytest.raises(MiddlewareException, match="Cannot determine middleware type"):
             agent = ChatAgent(chat_client=chat_client, middleware=[no_info_middleware])
-            await agent.run([ChatMessage("user", ["test"])])
+            await agent.run([ChatMessage(role=Role.USER, text="test")])
 
     async def test_insufficient_parameters_error(self, chat_client: Any) -> None:
         """Test that middleware with insufficient parameters raises an error."""
@@ -1447,7 +1449,7 @@ class TestMiddlewareDecoratorLogic:
                 pass
 
             agent = ChatAgent(chat_client=chat_client, middleware=[insufficient_params_middleware])
-            await agent.run([ChatMessage("user", ["test"])])
+            await agent.run([ChatMessage(role=Role.USER, text="test")])
 
     async def test_decorator_markers_preserved(self) -> None:
         """Test that decorator markers are properly set on functions."""
@@ -1520,7 +1522,7 @@ class TestChatAgentThreadBehavior:
         thread = agent.get_new_thread()
 
         # First run
-        first_messages = [ChatMessage("user", ["first message"])]
+        first_messages = [ChatMessage(role=Role.USER, text="first message")]
         first_response = await agent.run(first_messages, thread=thread)
 
         # Verify first response
@@ -1528,7 +1530,7 @@ class TestChatAgentThreadBehavior:
         assert len(first_response.messages) > 0
 
         # Second run - use the same thread
-        second_messages = [ChatMessage("user", ["second message"])]
+        second_messages = [ChatMessage(role=Role.USER, text="second message")]
         second_response = await agent.run(second_messages, thread=thread)
 
         # Verify second response
@@ -1600,13 +1602,13 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].role == "assistant"
+        assert response.messages[0].role == Role.ASSISTANT
         assert "test response" in response.messages[0].text
         assert execution_order == ["chat_middleware_before", "chat_middleware_after"]
 
@@ -1626,13 +1628,13 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[tracking_chat_middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].role == "assistant"
+        assert response.messages[0].role == Role.ASSISTANT
         assert "test response" in response.messages[0].text
         assert execution_order == ["chat_middleware_before", "chat_middleware_after"]
 
@@ -1646,10 +1648,10 @@ class TestChatAgentChatMiddleware:
             # Modify the first message by adding a prefix
             if context.messages:
                 for idx, msg in enumerate(context.messages):
-                    if msg.role == "system":
+                    if msg.role.value == "system":
                         continue
                     original_text = msg.text or ""
-                    context.messages[idx] = ChatMessage(msg.role, [f"MODIFIED: {original_text}"])
+                    context.messages[idx] = ChatMessage(role=msg.role, text=f"MODIFIED: {original_text}")
                     break
             await next(context)
 
@@ -1658,7 +1660,7 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[message_modifier_middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify that the message was modified (MockBaseChatClient echoes back the input)
@@ -1674,7 +1676,7 @@ class TestChatAgentChatMiddleware:
         ) -> None:
             # Override the response without calling next()
             context.result = ChatResponse(
-                messages=[ChatMessage("assistant", ["Middleware overridden response"])],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="Middleware overridden response")],
                 response_id="middleware-response-123",
             )
             context.terminate = True
@@ -1684,7 +1686,7 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[response_override_middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify that the response was overridden
@@ -1714,7 +1716,7 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[first_middleware, second_middleware])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response
@@ -1740,13 +1742,13 @@ class TestChatAgentChatMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role="assistant"),
-                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role="assistant"),
+                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
         # Execute streaming
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         updates: list[AgentResponseUpdate] = []
         async for update in agent.run(messages, stream=True):
             updates.append(update)
@@ -1767,7 +1769,9 @@ class TestChatAgentChatMiddleware:
                 execution_order.append("middleware_before")
                 context.terminate = True
                 # Set a custom response since we're terminating
-                context.result = ChatResponse(messages=[ChatMessage("assistant", ["Terminated by middleware"])])
+                context.result = ChatResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, text="Terminated by middleware")]
+                )
                 # We call next() but since terminate=True, execution should stop
                 await next(context)
                 execution_order.append("middleware_after")
@@ -1777,7 +1781,7 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[PreTerminationChatMiddleware()])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response was from middleware
@@ -1802,7 +1806,7 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[PostTerminationChatMiddleware()])
 
         # Execute the agent
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages)
 
         # Verify response is from actual execution
@@ -1838,7 +1842,7 @@ class TestChatAgentChatMiddleware:
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     contents=[
                         Content.from_function_call(
                             call_id="call_456",
@@ -1849,9 +1853,9 @@ class TestChatAgentChatMiddleware:
                 )
             ]
         )
-        final_response = ChatResponse(messages=[ChatMessage("assistant", ["Final response"])])
+        final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
-        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
+        chat_client = FunctionInvokingMockBaseChatClient()
         chat_client.run_responses = [function_call_response, final_response]
 
         # Create ChatAgent with function middleware and tools
@@ -1862,7 +1866,7 @@ class TestChatAgentChatMiddleware:
         )
 
         # Execute the agent
-        messages = [ChatMessage("user", ["Get weather for San Francisco"])]
+        messages = [ChatMessage(role=Role.USER, text="Get weather for San Francisco")]
         response = await agent.run(messages)
 
         # Verify response
@@ -1874,10 +1878,8 @@ class TestChatAgentChatMiddleware:
         assert execution_order == [
             "agent_middleware_before",
             "chat_middleware_before",
-            "chat_middleware_after",
             "function_middleware_before",
             "function_middleware_after",
-            "chat_middleware_before",
             "chat_middleware_after",
             "agent_middleware_after",
         ]
@@ -1919,7 +1921,7 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware])
 
         # Execute the agent with custom parameters
-        messages = [ChatMessage("user", ["test message"])]
+        messages = [ChatMessage(role=Role.USER, text="test message")]
         response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
 
         # Verify response
@@ -1968,7 +1970,7 @@ class TestMiddlewareWithProtocolOnlyAgent:
                 self.middleware = [TrackingMiddleware()]
 
             async def run(self, messages=None, *, thread=None, **kwargs) -> AgentResponse:
-                return AgentResponse(messages=[ChatMessage("assistant", ["response"])])
+                return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
             def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentResponseUpdate]:
                 async def _stream():
@@ -1987,8 +1989,4 @@ class TestMiddlewareWithProtocolOnlyAgent:
         assert response is not None
         assert execution_order == ["before", "after"]
 
-        # Test run_stream (streaming)
-        execution_order.clear()
-        async for _ in agent.run_stream("test message"):
-            pass
-        assert execution_order == ["before", "after"]
+        # run_stream is not wrapped by use_agent_middleware

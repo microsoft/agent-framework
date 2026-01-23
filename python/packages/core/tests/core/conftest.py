@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any, Generic
 from unittest.mock import patch
 from uuid import uuid4
@@ -21,7 +21,9 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvokingChatClient,
     FunctionInvokingMixin,
+    ResponseStream,
     Role,
     ToolProtocol,
     tool,
@@ -85,31 +87,50 @@ class MockChatClient:
         self.responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
 
-    async def get_response(
+    def get_response(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
         stream: bool = False,
+        options: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        options = options or {}
         if stream:
+            return self._get_streaming_response(messages=messages, options=options, **kwargs)
 
-            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                logger.debug(f"Running custom chat client stream, with: {messages=}, {kwargs=}")
-                self.call_count += 1
-                if self.streaming_responses:
-                    for update in self.streaming_responses.pop(0):
-                        yield update
-                else:
-                    yield ChatResponseUpdate(text=Content.from_text("test streaming response "), role="assistant")
-                    yield ChatResponseUpdate(contents=[Content.from_text("another update")], role="assistant")
+        async def _get() -> ChatResponse:
+            logger.debug(f"Running custom chat client, with: {messages=}, {kwargs=}")
+            self.call_count += 1
+            if self.responses:
+                return self.responses.pop(0)
+            return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
 
-            return _stream()
+        return _get()
 
-        logger.debug(f"Running custom chat client, with: {messages=}, {kwargs=}")
-        self.call_count += 1
-        if self.responses:
-            return self.responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+    def _get_streaming_response(
+        self,
+        *,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            logger.debug(f"Running custom chat client stream, with: {messages=}, {kwargs=}")
+            self.call_count += 1
+            if self.streaming_responses:
+                for update in self.streaming_responses.pop(0):
+                    yield update
+            else:
+                yield ChatResponseUpdate(text=Content.from_text("test streaming response "), role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("another update")], role="assistant")
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
 
 class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
@@ -122,14 +143,14 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         self.call_count: int = 0
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         stream: bool,
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
 
         Args:
@@ -139,11 +160,15 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             kwargs: Any additional keyword arguments.
 
         Returns:
-            The chat response or async iterable of updates.
+            The chat response or ResponseStream.
         """
         if stream:
             return self._get_streaming_response(messages=messages, options=options, **kwargs)
-        return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+        async def _get() -> ChatResponse:
+            return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+        return _get()
 
     async def _get_non_streaming_response(
         self,
@@ -171,25 +196,43 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
 
         return response
 
-    async def _get_streaming_response(
+    def _get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Get a streaming response."""
-        logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
-        if not self.streaming_responses:
-            yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
-            return
-        if options.get("tool_choice") == "none":
-            yield ChatResponseUpdate(text="I broke out of the function invocation loop...", role="assistant")
-            return
-        response = self.streaming_responses.pop(0)
-        for update in response:
-            yield update
-        await asyncio.sleep(0)
+
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
+            self.call_count += 1
+            if not self.streaming_responses:
+                yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant", is_finished=True)
+                return
+            if options.get("tool_choice") == "none":
+                yield ChatResponseUpdate(
+                    text="I broke out of the function invocation loop...", role="assistant", is_finished=True
+                )
+                return
+            response = self.streaming_responses.pop(0)
+            for update in response:
+                yield update
+            await asyncio.sleep(0)
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+
+class FunctionInvokingMockBaseChatClient(FunctionInvokingChatClient[TOptions_co], MockBaseChatClient[TOptions_co]):
+    """Mock client with function invocation enabled."""
+
+    pass
 
 
 @fixture
@@ -214,7 +257,7 @@ def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatC
 def chat_client_base(enable_function_calling: bool, max_iterations: int) -> MockBaseChatClient:
     if enable_function_calling:
         with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-            return type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
+            return FunctionInvokingMockBaseChatClient()
     return MockBaseChatClient()
 
 

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import MutableSequence
+from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
 from unittest.mock import Mock
 
@@ -18,6 +18,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    ResponseStream,
     Role,
     UsageDetails,
     prepend_agent_framework_to_user_agent,
@@ -160,27 +161,39 @@ def mock_chat_client():
         def service_url(self):
             return "https://test.example.com"
 
-        async def _inner_get_response(
+        def _inner_get_response(
             self, *, messages: MutableSequence[ChatMessage], stream: bool, options: dict[str, Any], **kwargs: Any
-        ):
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             if stream:
                 return self._get_streaming_response(messages=messages, options=options, **kwargs)
-            return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+            async def _get() -> ChatResponse:
+                return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+            return _get()
 
         async def _get_non_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
-        ):
+        ) -> ChatResponse:
             return ChatResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
                 usage_details=UsageDetails(input_token_count=10, output_token_count=20),
                 finish_reason=None,
             )
 
-        async def _get_streaming_response(
+        def _get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
-        ):
-            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
-            yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
+                yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT, is_finished=True)
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
 
     return MockChatClient
 

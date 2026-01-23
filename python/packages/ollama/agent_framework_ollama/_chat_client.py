@@ -4,6 +4,7 @@ import json
 import sys
 from collections.abc import (
     AsyncIterable,
+    Awaitable,
     Callable,
     Mapping,
     MutableMapping,
@@ -20,6 +21,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
+    ResponseStream,
+    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -329,53 +332,53 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
         super().__init__(**kwargs)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
 
-        try:
-            # execute
-            response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
-                stream=False,
-                **options_dict,
-                **kwargs,
-            )
-        except Exception as ex:
-            raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
+        if stream:
+            # Streaming mode
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                try:
+                    response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
+                        stream=True,
+                        **options_dict,
+                        **kwargs,
+                    )
+                except Exception as ex:
+                    raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
-        # process
-        return self._parse_response_from_ollama(response)
+                async for part in response_object:
+                    yield self._parse_streaming_response_from_ollama(part)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        options_dict = self._prepare_options(messages, options)
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response_format = options.get("response_format")
+                output_format_type = response_format if isinstance(response_format, type) else None
+                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
 
-        try:
-            # execute
-            response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
-                stream=True,
-                **options_dict,
-                **kwargs,
-            )
-        except Exception as ex:
-            raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
+            return ResponseStream(_stream(), finalizer=_finalize)
 
-        # process
-        async for part in response_object:
-            yield self._parse_streaming_response_from_ollama(part)
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            try:
+                response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
+                    stream=False,
+                    **options_dict,
+                    **kwargs,
+                )
+            except Exception as ex:
+                raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
+
+            return self._parse_response_from_ollama(response)
+
+        return _get_response()
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
         # Handle instructions by prepending to messages as system message
@@ -435,12 +438,12 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
 
     def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
-            "system": self._format_system_message,
-            "user": self._format_user_message,
-            "assistant": self._format_assistant_message,
-            "tool": self._format_tool_message,
+            Role.SYSTEM.value: self._format_system_message,
+            Role.USER.value: self._format_user_message,
+            Role.ASSISTANT.value: self._format_assistant_message,
+            Role.TOOL.value: self._format_tool_message,
         }
-        return message_converters[message.role](message)
+        return message_converters[message.role.value](message)
 
     def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
@@ -509,8 +512,8 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
         contents = self._parse_contents_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
-            role="assistant",
-            model_id=response.model,
+            role=Role.ASSISTANT,
+            ai_model_id=response.model,
             created_at=response.created_at,
         )
 
@@ -518,7 +521,7 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage("assistant", contents)],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(
