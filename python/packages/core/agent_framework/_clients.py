@@ -132,6 +132,26 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 
     additional_properties: dict[str, Any]
 
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: TOptions_contra | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: TOptions_contra | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
+
     def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
