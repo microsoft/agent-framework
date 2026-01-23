@@ -19,11 +19,5 @@ var workflow = builder.WithName("ProcessOrder").Build();
 
 FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableOptions(options =>
-    {
-        options.Workflows.AddWorkflow(workflow);
-
-        // Optional - Configure AI agents
-        // options.Agents.AddAIAgent(agent);
-    })
+    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(workflow))
     .Build().Run();

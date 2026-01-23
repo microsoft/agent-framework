@@ -67,7 +67,7 @@ public sealed class DurableWorkflowOptions
     /// Adds a collection of workflows to the current instance.
     /// </summary>
     /// <param name="workflows">The collection of <see cref="Workflow"/> objects to add. Cannot be <see langword="null"/>.</param>
-    public void AddWorkflow(IEnumerable<Workflow> workflows)
+    public void AddWorkflows(IEnumerable<Workflow> workflows)
     {
         ArgumentNullException.ThrowIfNull(workflows);
 

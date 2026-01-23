@@ -12,13 +12,15 @@ PaymentProcesserExecutor paymentProcessor = new();
 NotifyFraudExecutor notifyFraud = new();
 
 WorkflowBuilder builder = new(orderParser);
-builder.AddEdge(orderParser, orderEnrich);
-builder.AddEdge(orderEnrich, notifyFraud, condition: OrderRouteConditions.WhenBlocked());
-builder.AddEdge(orderEnrich, paymentProcessor, condition: OrderRouteConditions.WhenNotBlocked());
+builder
+    .AddEdge(orderParser, orderEnrich)
+    .AddEdge(orderEnrich, notifyFraud, condition: OrderRouteConditions.WhenBlocked())
+    .AddEdge(orderEnrich, paymentProcessor, condition: OrderRouteConditions.WhenNotBlocked());
 
-var workflow = builder.WithName("ProcessOrder").Build();
+var workflow = builder.WithName("AuditOrder").Build();
 
 FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(workflow))
-    .Build().Run();
+    .Build()
+    .Run();
