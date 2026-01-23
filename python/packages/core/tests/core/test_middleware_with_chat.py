@@ -9,7 +9,7 @@ from agent_framework import (
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
-    FunctionCallContent,
+    Content,
     FunctionInvocationContext,
     Role,
     chat_middleware,
@@ -349,7 +349,7 @@ class TestChatMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_1",
                             name="sample_tool",
                             arguments={"location": "San Francisco"},
@@ -405,7 +405,7 @@ class TestChatMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_2",
                             name="sample_tool",
                             arguments={"location": "New York"},

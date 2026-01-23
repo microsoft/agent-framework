@@ -35,6 +35,18 @@
     <Project Path="samples/AzureFunctions/07_AgentAsMcpTool/07_AgentAsMcpTool.csproj" />
     <Project Path="samples/AzureFunctions/08_ReliableStreaming/08_ReliableStreaming.csproj" />
   </Folder>
+  <Folder Name="/Samples/DurableAgents/">
+    <File Path="samples/DurableAgents/ConsoleApps/README.md" />
+  </Folder>
+  <Folder Name="/Samples/DurableAgents/ConsoleApps/">
+    <Project Path="samples/DurableAgents/ConsoleApps/01_SingleAgent/01_SingleAgent.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/06_LongRunningTools/06_LongRunningTools.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/07_ReliableStreaming/07_ReliableStreaming.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
@@ -81,6 +93,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step20_AdditionalAIContext/Agent_Step20_AdditionalAIContext.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
@@ -286,6 +299,11 @@
     <File Path="../docs/decisions/0007-agent-filtering-middleware.md" />
     <File Path="../docs/decisions/0008-python-subpackages.md" />
     <File Path="../docs/decisions/0009-support-long-running-operations.md" />
+    <File Path="../docs/decisions/0010-ag-ui-support.md" />
+    <File Path="../docs/decisions/0011-create-get-agent-api.md" />
+    <File Path="../docs/decisions/0012-python-typeddict-options.md" />
+    <File Path="../docs/decisions/0013-python-get-response-simplification.md" />
+    <File Path="../docs/decisions/0014-feature-collections.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
@@ -396,6 +414,7 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.AzureAI/Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Workflows.Generators/Microsoft.Agents.AI.Workflows.Generators.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
@@ -435,6 +454,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/Microsoft.Agents.AI.Workflows.Generators.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
   </Folder>
 </Solution>

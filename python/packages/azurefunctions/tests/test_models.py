@@ -120,6 +120,34 @@ class TestAgentSessionId:
         assert parsed.name == original.name
         assert parsed.key == original.key
 
+    def test_parse_with_agent_name_override(self) -> None:
+        """Test parsing @name@key format with agent_name parameter overrides the name."""
+        session_id = AgentSessionId.parse("@OriginalAgent@test-key-123", agent_name="OverriddenAgent")
+
+        assert session_id.name == "OverriddenAgent"
+        assert session_id.key == "test-key-123"
+
+    def test_parse_without_agent_name_uses_parsed_name(self) -> None:
+        """Test parsing @name@key format without agent_name uses name from string."""
+        session_id = AgentSessionId.parse("@ParsedAgent@test-key-123")
+
+        assert session_id.name == "ParsedAgent"
+        assert session_id.key == "test-key-123"
+
+    def test_parse_plain_string_with_agent_name(self) -> None:
+        """Test parsing plain string with agent_name uses entire string as key."""
+        session_id = AgentSessionId.parse("simple-thread-123", agent_name="TestAgent")
+
+        assert session_id.name == "TestAgent"
+        assert session_id.key == "simple-thread-123"
+
+    def test_parse_plain_string_without_agent_name_raises(self) -> None:
+        """Test parsing plain string without agent_name raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            AgentSessionId.parse("simple-thread-123")
+
+        assert "Invalid agent session ID format" in str(exc_info.value)
+
     def test_to_entity_name_adds_prefix(self) -> None:
         """Test that to_entity_name adds the dafx- prefix."""
         entity_name = AgentSessionId.to_entity_name("TestAgent")

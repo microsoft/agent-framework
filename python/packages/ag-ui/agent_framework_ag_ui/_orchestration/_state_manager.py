@@ -6,7 +6,9 @@ import json
 from typing import Any
 
 from ag_ui.core import CustomEvent, EventType
-from agent_framework import ChatMessage, TextContent
+from agent_framework import ChatMessage, Content
+
+from .._utils import make_json_safe
 
 
 class StateManager:
@@ -67,11 +69,11 @@ class StateManager:
         if conversation_has_tool_calls and not self._state_from_input:
             return None
 
-        state_json = json.dumps(self.current_state, indent=2)
+        state_json = json.dumps(make_json_safe(self.current_state), indent=2)
         return ChatMessage(
             role="system",
             contents=[
-                TextContent(
+                Content.from_text(
                     text=(
                         "Current state of the application:\n"
                         f"{state_json}\n\n"

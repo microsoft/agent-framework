@@ -37,14 +37,13 @@ async def non_streaming_example() -> None:
     # Get structured response from the agent using response_format parameter
     result = await agent.run(query, options={"response_format": OutputStruct})
 
-    # Access the structured output directly from the response value
-    if result.value:
-        structured_data: OutputStruct = result.value  # type: ignore
-        print("Structured Output Agent (from result.value):")
+    # Access the structured output using try_parse_value for safe parsing
+    if structured_data := result.try_parse_value(OutputStruct):
+        print("Structured Output Agent (from result.try_parse_value):")
         print(f"City: {structured_data.city}")
         print(f"Description: {structured_data.description}")
     else:
-        print("Error: No structured data found in result.value")
+        print(f"Failed to parse response: {result.text}")
 
 
 async def streaming_example() -> None:
@@ -67,14 +66,13 @@ async def streaming_example() -> None:
         output_format_type=OutputStruct,
     )
 
-    # Access the structured output directly from the response value
-    if result.value:
-        structured_data: OutputStruct = result.value  # type: ignore
+    # Access the structured output using try_parse_value for safe parsing
+    if structured_data := result.try_parse_value(OutputStruct):
         print("Structured Output (from streaming with AgentResponse.from_agent_response_generator):")
         print(f"City: {structured_data.city}")
         print(f"Description: {structured_data.description}")
     else:
-        print("Error: No structured data found in result.value")
+        print(f"Failed to parse response: {result.text}")
 
 
 async def main() -> None:
