@@ -357,6 +357,7 @@ public sealed class AnthropicClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
+        Assert.Null(agent.Instructions);
     }
 
     /// <summary>
@@ -377,5 +378,6 @@ public sealed class AnthropicClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
+        Assert.Null(agent.Instructions);
     }
 }
