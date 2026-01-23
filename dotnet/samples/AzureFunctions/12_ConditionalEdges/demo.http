@@ -1,0 +1,14 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Start the workflow
+POST {{authority}}/api/workflows/ProcessOrder/run
+Content-Type: text/plain
+
+B123
+
+### Start second workflow
+POST {{authority}}/api/workflows/ProcessOrder/run
+Content-Type: text/plain
+
+456

@@ -37,6 +37,7 @@
     <Project Path="samples/AzureFunctions/09_Workflow/09_Workflow.csproj" />
     <Project Path="samples/AzureFunctions/10_WorkflowConcurrent/10_WorkflowConcurrent.csproj" />
     <Project Path="samples/AzureFunctions/11_WorkflowSharedState/11_WorkflowSharedState.csproj" />
+    <Project Path="samples/AzureFunctions/12_ConditionalEdges/12_ConditionalEdges.csproj" />
   </Folder>
   <Folder Name="/Samples/DurableAgents/">
     <File Path="samples/DurableAgents/ConsoleApps/README.md" />

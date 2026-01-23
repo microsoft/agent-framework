@@ -37,6 +37,30 @@ public class Workflow
     }
 
     /// <summary>
+    /// Gets the condition functions for direct edges, keyed by (sourceId, targetId) tuple.
+    /// </summary>
+    /// <returns>A dictionary mapping edge connections to their condition functions (null if no condition).</returns>
+    /// <remarks>This method creates a new dictionary each time it is called to ensure thread safety.</remarks>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1024:Use properties where appropriate", Justification = "Method creates a new collection on each call.")]
+    public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> GetEdgeConditions()
+    {
+        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> conditions = [];
+
+        foreach (KeyValuePair<string, HashSet<Edge>> edgeGroup in this.Edges)
+        {
+            foreach (Edge edge in edgeGroup.Value)
+            {
+                if (edge.DirectEdgeData is DirectEdgeData directEdge)
+                {
+                    conditions[(directEdge.SourceId, directEdge.SinkId)] = directEdge.Condition;
+                }
+            }
+        }
+
+        return conditions;
+    }
+
+    /// <summary>
     /// Gets all executor bindings in the workflow, keyed by their ID.
     /// </summary>
     /// <returns>A dictionary mapping executor IDs to their <see cref="ExecutorBinding"/>.</returns>

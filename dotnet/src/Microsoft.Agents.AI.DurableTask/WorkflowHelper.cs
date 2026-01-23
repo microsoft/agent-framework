@@ -42,6 +42,17 @@ public sealed class WorkflowExecutionPlan
     public Dictionary<string, List<string>> Successors { get; } = [];
 
     /// <summary>
+    /// Maps edge connections (sourceId, targetId) to their condition functions.
+    /// The condition function takes the predecessor's result and returns true if the edge should be followed.
+    /// </summary>
+    public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> EdgeConditions { get; } = [];
+
+    /// <summary>
+    /// Maps executor IDs to their output types (for proper deserialization during condition evaluation).
+    /// </summary>
+    public Dictionary<string, Type?> ExecutorOutputTypes { get; } = [];
+
+    /// <summary>
     /// Gets whether this workflow has any parallel execution opportunities.
     /// </summary>
     public bool HasParallelism => this.Levels.Any(l => l.Executors.Count > 1);
@@ -89,6 +100,7 @@ public static class WorkflowHelper
 
         Dictionary<string, ExecutorBinding> executors = workflow.ReflectExecutors();
         Dictionary<string, HashSet<EdgeInfo>> edges = workflow.ReflectEdges();
+        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> edgeConditions = workflow.GetEdgeConditions();
 
         WorkflowExecutionPlan plan = new();
 
@@ -97,12 +109,15 @@ public static class WorkflowHelper
         Dictionary<string, List<string>> predecessors = [];
         Dictionary<string, int> inDegree = [];
 
-        // Initialize all executors
-        foreach (string executorId in executors.Keys)
+        // Initialize all executors and extract their output types
+        foreach (KeyValuePair<string, ExecutorBinding> executor in executors)
         {
-            successors[executorId] = [];
-            predecessors[executorId] = [];
-            inDegree[executorId] = 0;
+            successors[executor.Key] = [];
+            predecessors[executor.Key] = [];
+            inDegree[executor.Key] = 0;
+
+            // Extract output type from executor type (e.g., Executor<TInput, TOutput> -> TOutput)
+            plan.ExecutorOutputTypes[executor.Key] = GetExecutorOutputType(executor.Value.ExecutorType);
         }
 
         // Build the graph from edges
@@ -122,6 +137,12 @@ public static class WorkflowHelper
                     }
                 }
             }
+        }
+
+        // Store edge conditions in the plan
+        foreach (KeyValuePair<(string SourceId, string TargetId), Func<object?, bool>?> condition in edgeConditions)
+        {
+            plan.EdgeConditions[condition.Key] = condition.Value;
         }
 
         // Store the graph structure in the plan
@@ -212,5 +233,42 @@ public static class WorkflowHelper
 
         return typeName.Contains("AIAgentHostExecutor", StringComparison.OrdinalIgnoreCase) &&
                 assemblyName.Contains("Microsoft.Agents.AI", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Extracts the output type from an executor type.
+    /// For Executor&lt;TInput, TOutput&gt;, returns TOutput.
+    /// For Executor&lt;TInput&gt;, returns null (void output).
+    /// </summary>
+    /// <param name="executorType">The executor type to analyze.</param>
+    /// <returns>The output type, or null if the executor has no typed output.</returns>
+    private static Type? GetExecutorOutputType(Type executorType)
+    {
+        // Walk up the inheritance chain to find Executor<TInput, TOutput> or Executor<TInput>
+        Type? currentType = executorType;
+        while (currentType is not null)
+        {
+            if (currentType.IsGenericType)
+            {
+                Type genericDefinition = currentType.GetGenericTypeDefinition();
+                Type[] genericArgs = currentType.GetGenericArguments();
+
+                // Check for Executor<TInput, TOutput> (2 type parameters)
+                if (genericArgs.Length == 2 && genericDefinition.Name.StartsWith("Executor", StringComparison.Ordinal))
+                {
+                    return genericArgs[1]; // TOutput
+                }
+
+                // Check for Executor<TInput> (1 type parameter) - void return
+                if (genericArgs.Length == 1 && genericDefinition.Name.StartsWith("Executor", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+            }
+
+            currentType = currentType.BaseType;
+        }
+
+        return null;
     }
 }
