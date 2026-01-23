@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """
-Github Copilot Agent Basic Example
+GitHub Copilot Agent Basic Example
 
 This sample demonstrates basic usage of GithubCopilotAgent.
 Shows both streaming and non-streaming responses with function tools.
@@ -61,7 +61,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic Github Copilot Agent Example ===")
+    print("=== Basic GitHub Copilot Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()

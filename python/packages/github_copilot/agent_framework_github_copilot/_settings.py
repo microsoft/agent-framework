@@ -6,7 +6,7 @@ from agent_framework._pydantic import AFBaseSettings
 
 
 class GithubCopilotSettings(AFBaseSettings):
-    """Github Copilot model settings.
+    """GitHub Copilot model settings.
 
     The settings are first loaded from environment variables with the prefix 'GITHUB_COPILOT_'.
     If the environment variables are not found, the settings can be loaded from a .env file

@@ -1,4 +1,4 @@
-# Github Copilot Agent Examples
+# GitHub Copilot Agent Examples
 
 This directory contains examples demonstrating how to use the `GithubCopilotAgent` from the Microsoft Agent Framework.
 
@@ -13,8 +13,8 @@ This directory contains examples demonstrating how to use the `GithubCopilotAgen
 
 ## Prerequisites
 
-1. **Github Copilot CLI**: Install and authenticate the Copilot CLI
-2. **Github Copilot Subscription**: An active Github Copilot subscription
+1. **GitHub Copilot CLI**: Install and authenticate the Copilot CLI
+2. **GitHub Copilot Subscription**: An active GitHub Copilot subscription
 3. **Install the package**:
    ```bash
    pip install agent-framework-github-copilot --pre

@@ -1,4 +1,4 @@
-# Get Started with Microsoft Agent Framework Github Copilot
+# Get Started with Microsoft Agent Framework GitHub Copilot
 
 Please install this package via pip:
 
@@ -6,16 +6,16 @@ Please install this package via pip:
 pip install agent-framework-github-copilot --pre
 ```
 
-## Github Copilot Agent
+## GitHub Copilot Agent
 
-The Github Copilot agent enables integration with Github Copilot, allowing you to interact with Copilot's agentic capabilities through the Agent Framework.
+The GitHub Copilot agent enables integration with GitHub Copilot, allowing you to interact with Copilot's agentic capabilities through the Agent Framework.
 
 ### Prerequisites
 
-Before using the Github Copilot agent, you need:
+Before using the GitHub Copilot agent, you need:
 
-1. **Github Copilot CLI**: The Copilot CLI must be installed and authenticated
-2. **Github Copilot Subscription**: An active Github Copilot subscription
+1. **GitHub Copilot CLI**: The Copilot CLI must be installed and authenticated
+2. **GitHub Copilot Subscription**: An active GitHub Copilot subscription
 
 ### Environment Variables
 
@@ -126,7 +126,7 @@ Available permission kinds:
 
 ### Examples
 
-For more comprehensive examples, see the [Github Copilot examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/github_copilot/) which demonstrate:
+For more comprehensive examples, see the [GitHub Copilot examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/github_copilot/) which demonstrate:
 
 - Basic non-streaming and streaming execution
 - Custom tool integration using Agent Framework patterns

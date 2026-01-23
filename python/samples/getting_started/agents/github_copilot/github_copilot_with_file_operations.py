@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """
-Github Copilot Agent with File Operation Permissions
+GitHub Copilot Agent with File Operation Permissions
 
 This sample demonstrates how to enable file read and write operations with GithubCopilotAgent.
 By setting allowed_permissions to include "read" and/or "write", the agent can read from
@@ -50,7 +50,7 @@ async def read_write_example() -> None:
 
 
 async def main() -> None:
-    print("=== Github Copilot Agent with File Operation Permissions ===\n")
+    print("=== GitHub Copilot Agent with File Operation Permissions ===\n")
 
     await read_only_example()
     await read_write_example()

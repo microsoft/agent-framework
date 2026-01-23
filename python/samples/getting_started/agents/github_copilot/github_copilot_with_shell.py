@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """
-Github Copilot Agent with Shell Permissions
+GitHub Copilot Agent with Shell Permissions
 
 This sample demonstrates how to enable shell command execution with GithubCopilotAgent.
 By setting allowed_permissions to include "shell", the agent can execute shell commands
@@ -17,7 +17,7 @@ from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOpti
 
 
 async def main() -> None:
-    print("=== Github Copilot Agent with Shell Permissions ===\n")
+    print("=== GitHub Copilot Agent with Shell Permissions ===\n")
 
     agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
         instructions="You are a helpful assistant that can execute shell commands.",

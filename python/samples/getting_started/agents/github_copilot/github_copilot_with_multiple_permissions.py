@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """
-Github Copilot Agent with Multiple Permissions
+GitHub Copilot Agent with Multiple Permissions
 
 This sample demonstrates how to enable multiple permission types with GithubCopilotAgent.
 By combining different permission kinds, the agent can perform complex tasks that require
@@ -24,7 +24,7 @@ from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOpti
 
 
 async def main() -> None:
-    print("=== Github Copilot Agent with Multiple Permissions ===\n")
+    print("=== GitHub Copilot Agent with Multiple Permissions ===\n")
 
     # Enable shell, read, and write permissions for a development assistant
     agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(

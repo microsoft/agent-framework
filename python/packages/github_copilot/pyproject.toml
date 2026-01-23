@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-github-copilot"
-description = "Github Copilot integration for Microsoft Agent Framework."
+description = "GitHub Copilot integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"

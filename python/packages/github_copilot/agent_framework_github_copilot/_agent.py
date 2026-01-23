@@ -49,7 +49,7 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 
 
 class GithubCopilotOptions(TypedDict, total=False):
-    """Github Copilot-specific options."""
+    """GitHub Copilot-specific options."""
 
     cli_path: str
     """Path to the Copilot CLI executable."""
@@ -81,9 +81,9 @@ TOptions = TypeVar(
 
 
 class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
-    """A Github Copilot Agent.
+    """A GitHub Copilot Agent.
 
-    This agent wraps the Github Copilot SDK to provide Copilot agentic capabilities
+    This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
     within the Agent Framework. It supports both streaming and non-streaming responses,
     custom tools, and session management.
 
@@ -141,7 +141,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize the Github Copilot Agent.
+        """Initialize the GitHub Copilot Agent.
 
         Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
@@ -194,7 +194,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
                 env_file_encoding=env_file_encoding,
             )
         except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Github Copilot settings.", ex) from ex
+            raise ServiceInitializationError("Failed to create GitHub Copilot settings.", ex) from ex
 
         self._instructions = instructions
         self._tools = normalize_tools(tools)
@@ -237,7 +237,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
             await self._client.start()
             self._started = True
         except Exception as ex:
-            raise ServiceException(f"Failed to start Github Copilot client: {ex}") from ex
+            raise ServiceException(f"Failed to start GitHub Copilot client: {ex}") from ex
 
     async def stop(self) -> None:
         """Stop the Copilot client and clean up resources.
@@ -313,7 +313,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         try:
             response_event = await session.send_and_wait({"prompt": prompt}, timeout=timeout)
         except Exception as ex:
-            raise ServiceException(f"Github Copilot request failed: {ex}") from ex
+            raise ServiceException(f"GitHub Copilot request failed: {ex}") from ex
 
         response_messages: list[ChatMessage] = []
         response_id: str | None = None
@@ -400,7 +400,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
                 completion_event.set()
             elif event.type == SessionEventType.SESSION_ERROR:
                 error_msg = event.data.message or "Unknown error"
-                errors.append(ServiceException(f"Github Copilot session error: {error_msg}"))
+                errors.append(ServiceException(f"GitHub Copilot session error: {error_msg}"))
                 completion_event.set()
 
         unsubscribe = session.on(event_handler)
@@ -522,7 +522,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
             ServiceException: If the session cannot be created.
         """
         if not self._client:
-            raise ServiceException("Github Copilot client not initialized. Call start() first.")
+            raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
 
         if thread.service_thread_id and thread.service_thread_id in self._sessions:
             return self._sessions[thread.service_thread_id]
@@ -547,4 +547,4 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
             self._sessions[session.session_id] = session
             return session
         except Exception as ex:
-            raise ServiceException(f"Failed to create Github Copilot session: {ex}") from ex
+            raise ServiceException(f"Failed to create GitHub Copilot session: {ex}") from ex
