@@ -171,10 +171,10 @@ public abstract class ChatMessageStore
         /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
         /// <param name="chatMessageStoreMessages">The messages retrieved from the <see cref="ChatMessageStore"/> for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage> chatMessageStoreMessages)
+        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage>? chatMessageStoreMessages)
         {
             this.RequestMessages = Throw.IfNull(requestMessages);
-            this.ChatMessageStoreMessages = Throw.IfNull(chatMessageStoreMessages);
+            this.ChatMessageStoreMessages = chatMessageStoreMessages;
         }
 
         /// <summary>
@@ -191,9 +191,9 @@ public abstract class ChatMessageStore
         /// </summary>
         /// <value>
         /// A collection of <see cref="ChatMessage"/> instances that were retrieved from the <see cref="ChatMessageStore"/>,
-        /// and were used by the agent as part of the invocation.
+        /// and were used by the agent as part of the invocation. May be null on the first run.
         /// </value>
-        public IEnumerable<ChatMessage> ChatMessageStoreMessages { get; set { field = Throw.IfNull(value); } }
+        public IEnumerable<ChatMessage>? ChatMessageStoreMessages { get; set; }
 
         /// <summary>
         /// Gets or sets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.

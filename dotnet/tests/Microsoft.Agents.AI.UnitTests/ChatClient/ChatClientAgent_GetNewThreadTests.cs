@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
-namespace Microsoft.Agents.AI.UnitTests.ChatClient;
+namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Contains unit tests for the ChatClientAgent.GetNewThreadAsync methods.

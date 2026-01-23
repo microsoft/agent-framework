@@ -14,6 +14,8 @@ Here are some general guidelines that apply to all code.
 
 - The top of all *.cs files should have a copyright notice: `// Copyright (c) Microsoft. All rights reserved.`
 - All public methods and classes should have XML documentation comments.
+- After adding, modifying or deleting code, run `dotnet build`, and then fix any reported build errors.
+- After adding or modifying code, run `dotnet format` to automatically fix any formatting errors.
 
 ### C# Sample Code Guidelines
 
