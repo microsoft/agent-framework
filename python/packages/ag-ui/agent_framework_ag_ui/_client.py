@@ -8,7 +8,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, MutableSequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
 from agent_framework import (
@@ -18,9 +18,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
+    ResponseStream,
 )
-from agent_framework._clients import FunctionInvokingChatClient
-from agent_framework._types import ResponseStream
 
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
@@ -53,7 +52,7 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound=type[FunctionInvokingChatClient[Any]])
+TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
 
 TAGUIChatOptions = TypeVar(
     "TAGUIChatOptions",
@@ -104,7 +103,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 
 
 @_apply_server_function_call_unwrap
-class AGUIChatClient(FunctionInvokingChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
+class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
     """Chat client for communicating with AG-UI compliant servers.
 
     This client implements the BaseChatClient interface and automatically handles:
