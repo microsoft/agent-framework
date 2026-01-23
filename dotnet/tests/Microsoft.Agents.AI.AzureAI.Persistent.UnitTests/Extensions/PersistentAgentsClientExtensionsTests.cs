@@ -581,7 +581,7 @@ public sealed class PersistentAgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client.AsAIAgent((Response<PersistentAgent>)null!, chatOptions: new ChatOptions()));
+            client.AsAIAgent(persistentAgentResponse: null!, chatOptions: new ChatOptions()));
 
         Assert.Equal("persistentAgentResponse", exception.ParamName);
     }
