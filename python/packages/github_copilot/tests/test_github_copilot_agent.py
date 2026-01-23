@@ -187,6 +187,36 @@ class TestGithubCopilotAgentLifecycle:
         mock_client.stop.assert_not_called()
         assert agent._started is False  # type: ignore
 
+    async def test_stop_calls_client_stop_when_agent_owns_client(self) -> None:
+        """Test that stop calls client.stop() when agent created the client."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GithubCopilotAgent()
+            await agent.start()
+            await agent.stop()
+
+            mock_client.stop.assert_called_once()
+
+    async def test_start_creates_client_with_options(self) -> None:
+        """Test that start creates client with cli_path and log_level from settings."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+                default_options={"cli_path": "/custom/path", "log_level": "debug"}
+            )
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args["cli_path"] == "/custom/path"
+            assert call_args["log_level"] == "debug"
+
 
 class TestGithubCopilotAgentRun:
     """Test cases for run method."""
@@ -358,6 +388,29 @@ class TestGithubCopilotAgentRunStream:
             async for _ in agent.run_stream("Hello"):
                 pass
 
+    async def test_run_stream_auto_starts(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that run_stream auto-starts the agent if not started."""
+
+        def mock_on(handler: Any) -> Any:
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GithubCopilotAgent(client=mock_client)
+        assert agent._started is False  # type: ignore
+
+        async for _ in agent.run_stream("Hello"):
+            pass
+
+        assert agent._started is True  # type: ignore
+        mock_client.start.assert_called_once()
+
 
 class TestGithubCopilotAgentSessionManagement:
     """Test cases for session management."""
@@ -412,6 +465,21 @@ class TestGithubCopilotAgentSessionManagement:
         assert config["system_message"]["mode"] == "append"
         assert config["system_message"]["content"] == "You are a helpful assistant."
 
+    async def test_session_config_includes_streaming_flag(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that session config includes the streaming flag."""
+        agent = GithubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread(), [], streaming=True)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert config["streaming"] is True
+
 
 class TestGithubCopilotAgentToolConversion:
     """Test cases for tool conversion."""
@@ -464,3 +532,197 @@ class TestGithubCopilotAgentToolConversion:
         config = call_args[0][0]
         assert "tools" in config
         assert len(config["tools"]) == 2
+
+    async def test_tool_handler_returns_success_result(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that tool handler returns success result on successful invocation."""
+
+        def my_tool(arg: str) -> str:
+            """A test tool."""
+            return f"Result: {arg}"
+
+        agent = GithubCopilotAgent(client=mock_client, tools=[my_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread(), agent._tools)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        copilot_tool = config["tools"][0]
+
+        result = await copilot_tool.handler({"arguments": {"arg": "test"}})
+
+        assert result["resultType"] == "success"
+        assert result["textResultForLlm"] == "Result: test"
+
+    async def test_tool_handler_returns_failure_result_on_error(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that tool handler returns failure result when invocation raises exception."""
+
+        def failing_tool(arg: str) -> str:
+            """A tool that fails."""
+            raise ValueError("Something went wrong")
+
+        agent = GithubCopilotAgent(client=mock_client, tools=[failing_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread(), agent._tools)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        copilot_tool = config["tools"][0]
+
+        result = await copilot_tool.handler({"arguments": {"arg": "test"}})
+
+        assert result["resultType"] == "failure"
+        assert "Something went wrong" in result["textResultForLlm"]
+        assert "Something went wrong" in result["error"]
+
+
+class TestGithubCopilotAgentErrorHandling:
+    """Test cases for error handling."""
+
+    async def test_start_raises_on_client_error(self, mock_client: MagicMock) -> None:
+        """Test that start raises ServiceException when client fails to start."""
+        mock_client.start.side_effect = Exception("Connection failed")
+
+        agent = GithubCopilotAgent(client=mock_client)
+
+        with pytest.raises(ServiceException, match="Failed to start GitHub Copilot client"):
+            await agent.start()
+
+    async def test_run_raises_on_send_error(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that run raises ServiceException when send_and_wait fails."""
+        mock_session.send_and_wait.side_effect = Exception("Request timeout")
+
+        agent = GithubCopilotAgent(client=mock_client)
+
+        with pytest.raises(ServiceException, match="GitHub Copilot request failed"):
+            await agent.run("Hello")
+
+    async def test_get_or_create_session_raises_on_create_error(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that _get_or_create_session raises ServiceException when create_session fails."""
+        mock_client.create_session.side_effect = Exception("Session creation failed")
+
+        agent = GithubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with pytest.raises(ServiceException, match="Failed to create GitHub Copilot session"):
+            await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+
+    async def test_get_or_create_session_raises_when_client_not_initialized(self) -> None:
+        """Test that _get_or_create_session raises ServiceException when client is not initialized."""
+        agent = GithubCopilotAgent()
+        # Don't call start() - client remains None
+
+        with pytest.raises(ServiceException, match="GitHub Copilot client not initialized"):
+            await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+
+
+class TestGithubCopilotAgentPermissions:
+    """Test cases for permission handling."""
+
+    def test_create_permission_handler_returns_none_when_no_permissions(self) -> None:
+        """Test that no handler is created when allowed_permissions is not provided."""
+        agent = GithubCopilotAgent()
+        assert agent._permission_handler is None  # type: ignore
+
+    def test_create_permission_handler_returns_none_for_empty_list(self) -> None:
+        """Test that no handler is created when allowed_permissions is empty."""
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"allowed_permissions": []}
+        )
+        assert agent._permission_handler is None  # type: ignore
+
+    def test_create_permission_handler_returns_handler_when_permissions_provided(self) -> None:
+        """Test that a handler is created when allowed_permissions is provided."""
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"allowed_permissions": ["shell"]}
+        )
+        assert agent._permission_handler is not None  # type: ignore
+
+    def test_permission_handler_approves_allowed_permission(self) -> None:
+        """Test that the handler approves permissions in the allowed list."""
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"allowed_permissions": ["shell", "read"]}
+        )
+        handler = agent._permission_handler  # type: ignore
+        assert handler is not None
+
+        result = handler({"kind": "shell"}, {})
+        assert result["kind"] == "approved"
+
+        result = handler({"kind": "read"}, {})
+        assert result["kind"] == "approved"
+
+    def test_permission_handler_denies_non_allowed_permission(self) -> None:
+        """Test that the handler denies permissions not in the allowed list."""
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"allowed_permissions": ["shell"]}
+        )
+        handler = agent._permission_handler  # type: ignore
+        assert handler is not None
+
+        result = handler({"kind": "write"}, {})
+        assert result["kind"] == "denied-interactively-by-user"
+
+        result = handler({"kind": "read"}, {})
+        assert result["kind"] == "denied-interactively-by-user"
+
+    def test_permission_handler_denies_unknown_permission(self) -> None:
+        """Test that the handler denies unknown permission kinds."""
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"allowed_permissions": ["shell"]}
+        )
+        handler = agent._permission_handler  # type: ignore
+        assert handler is not None
+
+        result = handler({"kind": "unknown"}, {})
+        assert result["kind"] == "denied-interactively-by-user"
+
+    async def test_session_config_includes_permission_handler(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that session config includes permission handler when permissions are set."""
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            client=mock_client,
+            default_options={"allowed_permissions": ["shell", "read"]},
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert "on_permission_request" in config
+        assert config["on_permission_request"] is not None
+
+    async def test_session_config_excludes_permission_handler_when_not_set(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that session config does not include permission handler when not set."""
+        agent = GithubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread(), [])  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert "on_permission_request" not in config

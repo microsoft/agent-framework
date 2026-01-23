@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import contextlib
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
@@ -377,43 +378,35 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
-        import asyncio
-
-        completion_event = asyncio.Event()
-        updates: list[AgentResponseUpdate] = []
-        errors: list[Exception] = []
+        queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
 
         def event_handler(event: SessionEvent) -> None:
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
                 delta_content = event.data.delta_content or ""
                 if delta_content:
-                    updates.append(
-                        AgentResponseUpdate(
-                            role=Role.ASSISTANT,
-                            contents=[Content.from_text(delta_content)],
-                            response_id=event.data.message_id,
-                            message_id=event.data.message_id,
-                            raw_representation=event,
-                        )
+                    update = AgentResponseUpdate(
+                        role=Role.ASSISTANT,
+                        contents=[Content.from_text(delta_content)],
+                        response_id=event.data.message_id,
+                        message_id=event.data.message_id,
+                        raw_representation=event,
                     )
+                    queue.put_nowait(update)
             elif event.type == SessionEventType.SESSION_IDLE:
-                completion_event.set()
+                queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
                 error_msg = event.data.message or "Unknown error"
-                errors.append(ServiceException(f"GitHub Copilot session error: {error_msg}"))
-                completion_event.set()
+                queue.put_nowait(ServiceException(f"GitHub Copilot session error: {error_msg}"))
 
         unsubscribe = session.on(event_handler)
 
         try:
             await session.send({"prompt": prompt})
-            await completion_event.wait()
 
-            if errors:
-                raise errors[0]
-
-            for update in updates:
-                yield update
+            while (item := await queue.get()) is not None:
+                if isinstance(item, Exception):
+                    raise item
+                yield item
         finally:
             unsubscribe()
 
