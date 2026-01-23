@@ -12,10 +12,10 @@ namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
 public sealed class GithubCopilotAgentTests
 {
     [Fact]
-    public async Task Constructor_WithCopilotClient_InitializesPropertiesCorrectlyAsync()
+    public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
     {
         // Arrange
-        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         const string TestId = "test-id";
         const string TestName = "test-name";
         const string TestDescription = "test-description";
@@ -37,10 +37,10 @@ public sealed class GithubCopilotAgentTests
     }
 
     [Fact]
-    public async Task Constructor_WithDefaultParameters_UsesBasePropertiesAsync()
+    public void Constructor_WithDefaultParameters_UsesBaseProperties()
     {
         // Arrange
-        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
         var agent = new GithubCopilotAgent(copilotClient);
@@ -56,7 +56,7 @@ public sealed class GithubCopilotAgentTests
     public async Task GetNewThreadAsync_ReturnsGithubCopilotAgentThreadAsync()
     {
         // Arrange
-        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         var agent = new GithubCopilotAgent(copilotClient);
 
         // Act
@@ -71,7 +71,7 @@ public sealed class GithubCopilotAgentTests
     public async Task GetNewThreadAsync_WithSessionId_ReturnsThreadWithSessionIdAsync()
     {
         // Arrange
-        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         var agent = new GithubCopilotAgent(copilotClient);
         const string TestSessionId = "test-session-id";
 
