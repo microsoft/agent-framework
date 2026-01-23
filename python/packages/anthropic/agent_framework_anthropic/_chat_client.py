@@ -368,8 +368,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create run options for the Anthropic client based on messages and options.
@@ -657,7 +657,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
     # region Response Processing Methods
 
-    def _process_message(self, message: BetaMessage, options: dict[str, Any]) -> ChatResponse:
+    def _process_message(self, message: BetaMessage, options: Mapping[str, Any]) -> ChatResponse:
         """Process the response from the Anthropic client.
 
         Args:

@@ -3,16 +3,12 @@
 """Comprehensive tests for AgentFrameworkAgent (_agent.py)."""
 
 import json
-import sys
 from collections.abc import AsyncIterator, MutableSequence
-from pathlib import Path
 from typing import Any
 
 import pytest
 from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
 from pydantic import BaseModel
-
-sys.path.insert(0, str(Path(__file__).parent))
 from utils_test_ag_ui import StreamingChatClientStub
 
 
@@ -427,16 +423,11 @@ async def test_thread_metadata_tracking():
     """
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    captured_thread: dict[str, Any] = {}
     captured_options: dict[str, Any] = {}
 
     async def stream_fn(
         messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        # Capture the thread object from kwargs
-        thread = kwargs.get("thread")
-        if thread and hasattr(thread, "metadata"):
-            captured_thread["metadata"] = thread.metadata
         # Capture options to verify internal keys are NOT passed to chat client
         captured_options.update(options)
         yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")])
@@ -455,7 +446,8 @@ async def test_thread_metadata_tracking():
         events.append(event)
 
     # AG-UI internal metadata should be stored in thread.metadata
-    thread_metadata = captured_thread.get("metadata", {})
+    thread = agent.chat_client.last_thread
+    thread_metadata = thread.metadata if thread and hasattr(thread, "metadata") else {}
     assert thread_metadata.get("ag_ui_thread_id") == "test_thread_123"
     assert thread_metadata.get("ag_ui_run_id") == "test_run_456"
 
@@ -473,16 +465,11 @@ async def test_state_context_injection():
     """
     from agent_framework_ag_ui import AgentFrameworkAgent
 
-    captured_thread: dict[str, Any] = {}
     captured_options: dict[str, Any] = {}
 
     async def stream_fn(
         messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        # Capture the thread object from kwargs
-        thread = kwargs.get("thread")
-        if thread and hasattr(thread, "metadata"):
-            captured_thread["metadata"] = thread.metadata
         # Capture options to verify internal keys are NOT passed to chat client
         captured_options.update(options)
         yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")])
@@ -503,7 +490,8 @@ async def test_state_context_injection():
         events.append(event)
 
     # Current state should be stored in thread.metadata
-    thread_metadata = captured_thread.get("metadata", {})
+    thread = agent.chat_client.last_thread
+    thread_metadata = thread.metadata if thread and hasattr(thread, "metadata") else {}
     current_state = thread_metadata.get("current_state")
     if isinstance(current_state, str):
         current_state = json.loads(current_state)
@@ -633,9 +621,6 @@ async def test_agent_with_use_service_thread_is_false():
     async def stream_fn(
         messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        nonlocal request_service_thread_id
-        thread = kwargs.get("thread")
-        request_service_thread_id = thread.service_thread_id if thread else None
         yield ChatResponseUpdate(
             contents=[Content.from_text(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
         )
@@ -675,6 +660,8 @@ async def test_agent_with_use_service_thread_is_true():
     events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
+    thread = agent.chat_client.last_thread
+    request_service_thread_id = thread.service_thread_id if thread else None
     assert request_service_thread_id == "conv_123456"  # type: ignore[attr-defined] (service_thread_id should be set)
 
 

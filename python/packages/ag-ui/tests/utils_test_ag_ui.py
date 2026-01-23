@@ -37,6 +37,19 @@ class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co])
         super().__init__()
         self._stream_fn = stream_fn
         self._response_fn = response_fn
+        self.last_thread: AgentThread | None = None
+
+    @override
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: TOptions_co | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.last_thread = kwargs.get("thread")
+        return super().get_response(messages=messages, stream=stream, options=options, **kwargs)
 
     @override
     def _inner_get_response(
