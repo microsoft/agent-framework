@@ -55,8 +55,11 @@ logger = logging.getLogger("agent_framework.github_copilot")
 class GithubCopilotOptions(TypedDict, total=False):
     """GitHub Copilot-specific options."""
 
+    instructions: str
+    """System message to append to the session."""
+
     cli_path: str
-    """Path to the Copilot CLI executable."""
+    """Path to the Copilot CLI executable. Defaults to COPILOT_CLI_PATH env var or 'copilot' in PATH."""
 
     model: str
     """Model to use (e.g., "gpt-5", "claude-sonnet-4")."""
@@ -101,7 +104,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
                 response = await agent.run("Hello, world!")
                 print(response)
 
-        With typed options:
+        With explicitly typed options:
 
         .. code-block:: python
 
@@ -128,7 +131,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
     def __init__(
         self,
         client: CopilotClient | None = None,
-        instructions: str | None = None,
         *,
         id: str | None = None,
         name: str | None = None,
@@ -149,7 +151,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
                 a new client will be created using the other parameters.
-            instructions: System message to append to the session.
 
         Keyword Args:
             id: ID of the GithubCopilotAgent.
@@ -181,6 +182,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         # Parse options
         opts: dict[str, Any] = dict(default_options) if default_options else {}
+        instructions = opts.pop("instructions", None)
         cli_path = opts.pop("cli_path", None)
         model = opts.pop("model", None)
         timeout = opts.pop("timeout", None)
@@ -314,6 +316,8 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         response_messages: list[ChatMessage] = []
         response_id: str | None = None
 
+        # send_and_wait returns only the final ASSISTANT_MESSAGE event;
+        # other events (deltas, tool calls) are handled internally by the SDK.
         if response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
             message_id = response_event.data.message_id
 
@@ -398,7 +402,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         finally:
             unsubscribe()
 
-    def _convert_tools_to_copilot_tools(
+    def _prepare_tools(
         self,
         tools: list[ToolProtocol | MutableMapping[str, Any]],
     ) -> list[CopilotTool]:
@@ -438,14 +442,12 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
                 return ToolResult(
                     textResultForLlm=str(result),
                     resultType="success",
-                    toolTelemetry={},
                 )
             except Exception as e:
                 return ToolResult(
                     textResultForLlm=f"Error: {e}",
                     resultType="failure",
                     error=str(e),
-                    toolTelemetry={},
                 )
 
         return CopilotTool(
@@ -487,7 +489,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
             config["system_message"] = {"mode": "append", "content": self._instructions}
 
         if self._tools:
-            config["tools"] = self._convert_tools_to_copilot_tools(self._tools)
+            config["tools"] = self._prepare_tools(self._tools)
 
         if self._permission_handler:
             config["on_permission_request"] = self._permission_handler

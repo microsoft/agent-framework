@@ -14,7 +14,7 @@ SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 
 import asyncio
 
-from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 
@@ -36,8 +36,10 @@ async def main() -> None:
     print("=== GitHub Copilot Agent with File Operation Permissions ===\n")
 
     agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-        instructions="You are a helpful assistant that can read and write files.",
-        default_options={"on_permission_request": prompt_permission},
+        default_options={
+            "instructions": "You are a helpful assistant that can read and write files.",
+            "on_permission_request": prompt_permission,
+        },
     )
 
     async with agent:

@@ -13,7 +13,7 @@ Shell commands have full access to your system within the permissions of the run
 
 import asyncio
 
-from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 
@@ -35,8 +35,10 @@ async def main() -> None:
     print("=== GitHub Copilot Agent with Shell Permissions ===\n")
 
     agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-        instructions="You are a helpful assistant that can execute shell commands.",
-        default_options={"on_permission_request": prompt_permission},
+        default_options={
+            "instructions": "You are a helpful assistant that can execute shell commands.",
+            "on_permission_request": prompt_permission,
+        },
     )
 
     async with agent:

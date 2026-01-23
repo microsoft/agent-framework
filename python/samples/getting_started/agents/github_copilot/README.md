@@ -50,7 +50,7 @@ The following permission kinds can be approved via `on_permission_request`:
 ### Basic Usage (No Permissions)
 
 ```python
-from agent_framework.github_copilot import GithubCopilotAgent
+from agent_framework.github import GithubCopilotAgent
 
 async with GithubCopilotAgent() as agent:
     response = await agent.run("Hello!")
@@ -61,7 +61,7 @@ async with GithubCopilotAgent() as agent:
 ```python
 from typing import Annotated
 
-from agent_framework.github_copilot import GithubCopilotAgent
+from agent_framework.github import GithubCopilotAgent
 from pydantic import Field
 
 def get_weather(
@@ -79,7 +79,7 @@ async with GithubCopilotAgent(tools=[get_weather]) as agent:
 Implement a permission handler to approve specific actions:
 
 ```python
-from agent_framework.github_copilot import GithubCopilotAgent
+from agent_framework.github import GithubCopilotAgent
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 def my_permission_handler(

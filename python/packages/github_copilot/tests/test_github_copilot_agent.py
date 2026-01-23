@@ -128,7 +128,9 @@ class TestGithubCopilotAgentInit:
 
     def test_init_with_instructions(self) -> None:
         """Test initialization with custom instructions."""
-        agent = GithubCopilotAgent(instructions="You are a helpful assistant.")
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            default_options={"instructions": "You are a helpful assistant."}
+        )
         assert agent._instructions == "You are a helpful assistant."  # type: ignore
 
 
@@ -455,7 +457,10 @@ class TestGithubCopilotAgentSessionManagement:
         mock_session: MagicMock,
     ) -> None:
         """Test that session config includes instructions."""
-        agent = GithubCopilotAgent(client=mock_client, instructions="You are a helpful assistant.")
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            client=mock_client,
+            default_options={"instructions": "You are a helpful assistant."},
+        )
         await agent.start()
 
         await agent._get_or_create_session(AgentThread())  # type: ignore
@@ -576,7 +581,7 @@ class TestGithubCopilotAgentToolConversion:
         )
 
         agent = GithubCopilotAgent(client=mock_client)
-        result = agent._convert_tools_to_copilot_tools([copilot_tool])  # type: ignore
+        result = agent._prepare_tools([copilot_tool])  # type: ignore
 
         assert len(result) == 1
         assert result[0] == copilot_tool
@@ -604,7 +609,7 @@ class TestGithubCopilotAgentToolConversion:
         )
 
         agent = GithubCopilotAgent(client=mock_client)
-        result = agent._convert_tools_to_copilot_tools([my_function, copilot_tool])  # type: ignore
+        result = agent._prepare_tools([my_function, copilot_tool])  # type: ignore
 
         assert len(result) == 2
         # First tool is converted AIFunction

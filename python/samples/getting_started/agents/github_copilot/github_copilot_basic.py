@@ -17,7 +17,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.github_copilot import GithubCopilotAgent
+from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
 from pydantic import Field
 
 
@@ -33,10 +33,12 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    async with GithubCopilotAgent(
-        instructions="You are a helpful weather agent.",
+    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+        default_options={"instructions": "You are a helpful weather agent."},
         tools=[get_weather],
-    ) as agent:
+    )
+
+    async with agent:
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)
@@ -47,10 +49,12 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    async with GithubCopilotAgent(
-        instructions="You are a helpful weather agent.",
+    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+        default_options={"instructions": "You are a helpful weather agent."},
         tools=[get_weather],
-    ) as agent:
+    )
+
+    async with agent:
         query = "What's the weather like in Tokyo?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)

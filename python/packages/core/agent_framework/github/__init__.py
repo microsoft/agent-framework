@@ -21,7 +21,7 @@ def __getattr__(name: str) -> Any:
                 f"The package {package_name} is required to use `{name}`. "
                 f"Please use `pip install {package_name}`, or update your requirements.txt or pyproject.toml file."
             ) from exc
-    raise AttributeError(f"Module `agent_framework.github_copilot` has no attribute {name}.")
+    raise AttributeError(f"Module `agent_framework.github` has no attribute {name}.")
 
 
 def __dir__() -> list[str]:
