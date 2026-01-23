@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable, Awaitable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
@@ -260,7 +260,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(
-        self, messages: MutableSequence[ChatMessage]
+        self, messages: Sequence[ChatMessage]
     ) -> tuple[list[ChatMessage], dict[str, Any] | None]:
         """Extract state from last message if present.
 
@@ -307,7 +307,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         """
         return agent_framework_messages_to_agui(messages)
 
-    def _get_thread_id(self, options: dict[str, Any]) -> str:
+    def _get_thread_id(self, options: Mapping[str, Any]) -> str:
         """Get or generate thread ID from chat options.
 
         Args:
@@ -330,9 +330,9 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: Sequence[ChatMessage],
         stream: bool,
-        options: dict[str, Any],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal method to get non-streaming response.
@@ -348,7 +348,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         """
         if stream:
             return ResponseStream(
-                self._inner_get_streaming_response(
+                self._streaming_impl(
                     messages=messages,
                     options=options,
                     **kwargs,
@@ -358,7 +358,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
 
         async def _get_response() -> ChatResponse:
             return await ChatResponse.from_chat_response_generator(
-                self._inner_get_streaming_response(
+                self._streaming_impl(
                     messages=messages,
                     options=options,
                     **kwargs,
@@ -367,17 +367,17 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
 
         return _get_response()
 
-    async def _inner_get_streaming_response(
+    async def _streaming_impl(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Internal method to get streaming response.
 
         Keyword Args:
-            messages: List of chat messages
+            messages: Sequence of chat messages
             options: Chat options for the request
             **kwargs: Additional keyword arguments
 
