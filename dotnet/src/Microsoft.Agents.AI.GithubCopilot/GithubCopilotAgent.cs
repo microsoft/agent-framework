@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.GithubCopilot;
 /// <summary>
 /// Represents an <see cref="AIAgent"/> that uses the GitHub Copilot SDK to provide agentic capabilities.
 /// </summary>
-public sealed class GithubCopilotAgent : AIAgent
+public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 {
     private readonly CopilotClient _copilotClient;
     private readonly string? _id;
@@ -26,12 +26,14 @@ public sealed class GithubCopilotAgent : AIAgent
     private readonly string? _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly ILogger _logger;
+    private readonly bool _ownsClient;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
     /// <param name="sessionConfig">Optional session configuration for the agent.</param>
+    /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
@@ -39,6 +41,7 @@ public sealed class GithubCopilotAgent : AIAgent
     public GithubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
+        bool ownsClient = false,
         string? id = null,
         string? name = null,
         string? description = null,
@@ -48,6 +51,7 @@ public sealed class GithubCopilotAgent : AIAgent
 
         this._copilotClient = copilotClient;
         this._sessionConfig = sessionConfig;
+        this._ownsClient = ownsClient;
         this._id = id;
         this._name = name;
         this._description = description;
@@ -268,6 +272,18 @@ public sealed class GithubCopilotAgent : AIAgent
 
     /// <inheritdoc/>
     public override string? Description => this._description;
+
+    /// <summary>
+    /// Disposes the agent and releases resources.
+    /// </summary>
+    /// <returns>A value task representing the asynchronous dispose operation.</returns>
+    public async ValueTask DisposeAsync()
+    {
+        if (this._ownsClient)
+        {
+            await this._copilotClient.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
