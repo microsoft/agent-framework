@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -21,20 +21,20 @@ public class AIAgentMetadataTests
     public void Constructor_WithProviderName_SetsProperty()
     {
         // Arrange
-        const string providerName = "TestProvider";
+        const string ProviderName = "TestProvider";
 
         // Act
-        AIAgentMetadata metadata = new(providerName);
+        AIAgentMetadata metadata = new(ProviderName);
 
         // Assert
-        Assert.Equal(providerName, metadata.ProviderName);
+        Assert.Equal(ProviderName, metadata.ProviderName);
     }
 
     [Fact]
     public void Constructor_WithNullProviderName_SetsProviderNameToNull()
     {
         // Arrange & Act
-        AIAgentMetadata metadata = new(providerName: null);
+        AIAgentMetadata metadata = new(null);
 
         // Assert
         Assert.Null(metadata.ProviderName);
