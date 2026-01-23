@@ -17,7 +17,6 @@ from ._utils import (
     AGUI_TO_FRAMEWORK_ROLE,
     FRAMEWORK_TO_AGUI_ROLE,
     get_role_value,
-    make_json_safe,
     normalize_agui_role,
     safe_json_parse,
 )
@@ -253,22 +252,19 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             tool_calls = raw_msg.get("tool_calls") or raw_msg.get("toolCalls")
             if not isinstance(tool_calls, list):
                 continue
-            tool_calls_list = cast(list[Any], tool_calls)
-            for tool_call in tool_calls_list:
+            for tool_call in tool_calls:
                 if not isinstance(tool_call, dict):
                     continue
-                tool_call_dict = cast(dict[str, Any], tool_call)
-                if str(tool_call_dict.get("id", "")) != tool_call_id:
+                if str(tool_call.get("id", "")) != tool_call_id:
                     continue
-                function_payload = tool_call_dict.get("function")
+                function_payload = tool_call.get("function")
                 if not isinstance(function_payload, dict):
                     return
-                function_payload_dict = cast(dict[str, Any], function_payload)
-                existing_args = function_payload_dict.get("arguments")
+                existing_args = function_payload.get("arguments")
                 if isinstance(existing_args, str):
-                    function_payload_dict["arguments"] = json.dumps(make_json_safe(modified_args))
+                    function_payload["arguments"] = json.dumps(modified_args)
                 else:
-                    function_payload_dict["arguments"] = modified_args
+                    function_payload["arguments"] = modified_args
                 return
 
     def _find_matching_func_call(call_id: str) -> Content | None:
@@ -378,9 +374,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 # a proper FunctionApprovalResponseContent. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
                 accepted = parsed.get("accepted", False) if parsed is not None else False
-                approval_payload_text = (
-                    result_content if isinstance(result_content, str) else json.dumps(make_json_safe(parsed))
-                )
+                approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
                 # Log the full approval payload to debug modified arguments
                 import logging
@@ -436,8 +430,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                                         if desc:
                                             approved_by_description[str(desc)] = step_item_dict
                                 merged_steps: list[Any] = []
-                                original_steps_list = cast(list[Any], original_steps)
-                                for orig_step in original_steps_list:
+                                for orig_step in original_steps:
                                     if not isinstance(orig_step, dict):
                                         merged_steps.append(orig_step)
                                         continue
@@ -457,9 +450,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
                         # Keep the original tool call and AG-UI snapshot in sync with approved args.
                         updated_args = (
-                            json.dumps(make_json_safe(merged_args))
-                            if isinstance(matching_func_call.arguments, str)
-                            else merged_args
+                            json.dumps(merged_args) if isinstance(matching_func_call.arguments, str) else merged_args
                         )
                         matching_func_call.arguments = updated_args
                         _update_tool_call_arguments(messages, str(approval_call_id), merged_args)
@@ -467,7 +458,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         func_call_for_approval = Content.from_function_call(
                             call_id=matching_func_call.call_id,  # type: ignore[arg-type]
                             name=matching_func_call.name,  # type: ignore[arg-type]
-                            arguments=json.dumps(make_json_safe(filtered_args)),
+                            arguments=json.dumps(filtered_args),
                         )
                         logger.info(f"Using modified arguments from approval: {filtered_args}")
                     else:
@@ -503,9 +494,9 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             if isinstance(result_content, str):
                 func_result = result_content
             elif isinstance(result_content, dict):
-                func_result = cast(dict[str, Any], result_content)
+                func_result = result_content
             elif isinstance(result_content, list):
-                func_result = cast(list[Any], result_content)
+                func_result = result_content
             else:
                 func_result = str(result_content)
             chat_msg = ChatMessage(
@@ -739,40 +730,35 @@ def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dic
         if isinstance(content, list):
             # Convert content array format to simple string
             text_parts: list[str] = []
-            content_list = cast(list[Any], content)
-            for item in content_list:
+            for item in content:
                 if isinstance(item, dict):
-                    item_dict = cast(dict[str, Any], item)
                     # Convert 'input_text' to 'text' type
-                    if item_dict.get("type") == "input_text":
-                        text_parts.append(str(item_dict.get("text", "")))
-                    elif item_dict.get("type") == "text":
-                        text_parts.append(str(item_dict.get("text", "")))
+                    if item.get("type") == "input_text":
+                        text_parts.append(str(item.get("text", "")))
+                    elif item.get("type") == "text":
+                        text_parts.append(str(item.get("text", "")))
                     else:
                         # Other types - just extract text field if present
-                        text_parts.append(str(item_dict.get("text", "")))
+                        text_parts.append(str(item.get("text", "")))
             normalized_msg["content"] = "".join(text_parts)
         elif content is None:
             normalized_msg["content"] = ""
 
         tool_calls = normalized_msg.get("tool_calls") or normalized_msg.get("toolCalls")
         if isinstance(tool_calls, list):
-            tool_calls_list = cast(list[Any], tool_calls)
-            for tool_call in tool_calls_list:
+            for tool_call in tool_calls:
                 if not isinstance(tool_call, dict):
                     continue
-                tool_call_dict = cast(dict[str, Any], tool_call)
-                function_payload = tool_call_dict.get("function")
+                function_payload = tool_call.get("function")
                 if not isinstance(function_payload, dict):
                     continue
-                function_payload_dict = cast(dict[str, Any], function_payload)
-                if "arguments" not in function_payload_dict:
+                if "arguments" not in function_payload:
                     continue
-                arguments = function_payload_dict.get("arguments")
+                arguments = function_payload.get("arguments")
                 if arguments is None:
-                    function_payload_dict["arguments"] = ""
+                    function_payload["arguments"] = ""
                 elif not isinstance(arguments, str):
-                    function_payload_dict["arguments"] = json.dumps(make_json_safe(arguments))
+                    function_payload["arguments"] = json.dumps(arguments)
 
         # Normalize tool_call_id to toolCallId for tool messages
         normalized_msg["role"] = normalize_agui_role(normalized_msg.get("role"))
@@ -786,11 +772,3 @@ def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dic
         result.append(normalized_msg)
 
     return result
-
-
-__all__ = [
-    "agui_messages_to_agent_framework",
-    "agent_framework_messages_to_agui",
-    "agui_messages_to_snapshot_format",
-    "extract_text_from_contents",
-]
