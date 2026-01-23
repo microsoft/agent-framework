@@ -52,6 +52,15 @@ public class Workflow
     }
 
     /// <summary>
+    /// Gets the collection of executor bindings, keyed by their ID.
+    /// </summary>
+    /// <returns>A copy of the executor bindings dictionary. Modifications do not affect the workflow.</returns>
+    public Dictionary<string, ExecutorBinding> ReflectExecutors()
+    {
+        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
+    }
+
+    /// <summary>
     /// Gets the identifier of the starting executor of the workflow.
     /// </summary>
     public string StartExecutorId { get; }

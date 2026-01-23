@@ -3,11 +3,11 @@
 """Example agent demonstrating predictive state updates with document writing."""
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
-from agent_framework.ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 
-@ai_function
-def write_document_local(document: str) -> str:
+@ai_function(approval_mode="always_require")
+def write_document(document: str) -> str:
     """Write a document. Use markdown formatting to format the document.
 
     It's good to format the document extensively so it's easy to read.
@@ -28,7 +28,7 @@ def write_document_local(document: str) -> str:
 
 _DOCUMENT_WRITER_INSTRUCTIONS = (
     "You are a helpful assistant for writing documents. "
-    "To write the document, you MUST use the write_document_local tool. "
+    "To write the document, you MUST use the write_document tool. "
     "You MUST write the full document, even when changing only a few words. "
     "When you wrote the document, DO NOT repeat it as a message. "
     "Just briefly summarize the changes you made. 2 sentences max. "
@@ -51,7 +51,7 @@ def document_writer_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgen
         name="document_writer",
         instructions=_DOCUMENT_WRITER_INSTRUCTIONS,
         chat_client=chat_client,
-        tools=[write_document_local],
+        tools=[write_document],
     )
 
     return AgentFrameworkAgent(
@@ -62,7 +62,6 @@ def document_writer_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgen
             "document": {"type": "string", "description": "The current document content"},
         },
         predict_state_config={
-            "document": {"tool": "write_document_local", "tool_argument": "document"},
+            "document": {"tool": "write_document", "tool_argument": "document"},
         },
-        confirmation_strategy=DocumentWriterConfirmationStrategy(),
     )

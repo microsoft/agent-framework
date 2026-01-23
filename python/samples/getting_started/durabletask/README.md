@@ -7,6 +7,7 @@ This directory contains samples for durable agent hosting using the Durable Task
 ### Basic Patterns
 - **[01_single_agent](01_single_agent/)**: Host a single conversational agent and interact with it via a client. Demonstrates basic worker-client architecture and agent state management.
 - **[02_multi_agent](02_multi_agent/)**: Host multiple domain-specific agents (physicist and chemist) and route requests to the appropriate agent based on the question topic.
+- **[03_single_agent_streaming](03_single_agent_streaming/)**: Enable reliable, resumable streaming using Redis Streams with agent response callbacks. Demonstrates non-blocking agent execution and cursor-based resumption for disconnected clients.
 
 ### Orchestration Patterns
 - **[04_single_agent_orchestration_chaining](04_single_agent_orchestration_chaining/)**: Chain multiple invocations of the same agent using durable orchestration, preserving conversation context across sequential runs.
