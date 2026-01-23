@@ -8,7 +8,7 @@ from collections.abc import (
     MutableSequence,
     Sequence,
 )
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, TypeVar, overload
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, overload
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
