@@ -42,7 +42,7 @@ class AzureFunctionEntityStateProvider(AgentEntityStateProviderMixin):
         self._context.set_state(state)
 
     def _get_thread_id_from_entity(self) -> str:
-        return self._context.entity_key
+        return str(self._context.entity_key)
 
 
 def create_agent_entity(

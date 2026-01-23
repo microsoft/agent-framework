@@ -1235,7 +1235,7 @@ class DurableAgentStateUsage:
         )
 
     @staticmethod
-    def from_usage(usage: UsageDetails | MutableMapping[str, int] | None) -> DurableAgentStateUsage | None:
+    def from_usage(usage: UsageDetails | MutableMapping[str, Any] | None) -> DurableAgentStateUsage | None:
         if usage is None:
             return None
 
@@ -1245,21 +1245,22 @@ class DurableAgentStateUsage:
         }
 
         return DurableAgentStateUsage(
-            input_token_count=usage.get(DurableAgentStateUsage._INPUT_TOKEN_COUNT),
-            output_token_count=usage.get(DurableAgentStateUsage._OUTPUT_TOKEN_COUNT),
-            total_token_count=usage.get(DurableAgentStateUsage._TOTAL_TOKEN_COUNT),
+            input_token_count=cast("int | None", usage.get(DurableAgentStateUsage._INPUT_TOKEN_COUNT)),
+            output_token_count=cast("int | None", usage.get(DurableAgentStateUsage._OUTPUT_TOKEN_COUNT)),
+            total_token_count=cast("int | None", usage.get(DurableAgentStateUsage._TOTAL_TOKEN_COUNT)),
             extensionData=extension_data if extension_data else None,
         )
 
     def to_usage_details(self) -> UsageDetails:
         # Convert back to AI SDK UsageDetails
-
-        return UsageDetails(
+        result = UsageDetails(
             input_token_count=self.input_token_count,
             output_token_count=self.output_token_count,
             total_token_count=self.total_token_count,
-            **self.extensionData if self.extensionData else {},
         )
+        if self.extensionData:
+            result.update(self.extensionData)  # type: ignore[typeddict-item]
+        return result
 
 
 class DurableAgentStateUsageContent(DurableAgentStateContent):

@@ -66,6 +66,11 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         TaskT: The task type returned by this agent (e.g., AgentResponse, DurableAgentTask, AgentTask)
     """
 
+    id: str
+    name: str
+    display_name: str
+    description: str | None
+
     def __init__(self, executor: DurableAgentExecutor[TaskT], name: str, *, agent_id: str | None = None):
         """Initialize the shim with a provider and agent name.
 
@@ -75,32 +80,12 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             agent_id: Optional unique identifier for the agent (defaults to name)
         """
         self._executor = executor
-        self._name = name
-        self._id = agent_id if agent_id is not None else name
-        self._display_name = name
-        self._description = f"Durable agent proxy for {name}"
+        self.name = name  # pyright: ignore[reportIncompatibleVariableOverride]
+        self.id = agent_id if agent_id is not None else name
+        self.display_name = name
+        self.description = f"Durable agent proxy for {name}"
 
-    @property
-    def id(self) -> str:
-        """Get the unique identifier for this agent."""
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        """Get the name of the agent."""
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        """Get the display name of the agent."""
-        return self._display_name
-
-    @property
-    def description(self) -> str | None:
-        """Get the description of the agent."""
-        return self._description
-
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -138,12 +123,12 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         )
 
         return self._executor.run_durable_agent(
-            agent_name=self._name,
+            agent_name=self.name,
             run_request=run_request,
             thread=thread,
         )
 
-    def run_stream(
+    def run_stream(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -164,7 +149,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
     def get_new_thread(self, **kwargs: Any) -> DurableAgentThread:
         """Create a new agent thread via the provider."""
-        return self._executor.get_new_thread(self._name, **kwargs)
+        return self._executor.get_new_thread(self.name, **kwargs)
 
     def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
         """Convert supported message inputs to a single string.

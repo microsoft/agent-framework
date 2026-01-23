@@ -117,7 +117,7 @@ class DurableAIAgentWorker:
             The worker will block until stopped.
         """
         logger.info("[DurableAIAgentWorker] Starting worker with %d registered agents", len(self._registered_agents))
-        self._worker.start()
+        self._worker.start()  # type: ignore[no-untyped-call]
 
     def stop(self) -> None:
         """Stop the worker gracefully.
@@ -126,7 +126,7 @@ class DurableAIAgentWorker:
             This method delegates to the underlying worker's stop method.
         """
         logger.info("[DurableAIAgentWorker] Stopping worker")
-        self._worker.stop()
+        self._worker.stop()  # type: ignore[no-untyped-call]
 
     @property
     def registered_agent_names(self) -> list[str]:

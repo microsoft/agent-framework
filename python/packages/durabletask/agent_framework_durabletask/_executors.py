@@ -501,7 +501,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
 
             # Create a pre-completed task with acceptance response
             acceptance_response = self._create_acceptance_response(run_request.correlation_id)
-            entity_task: CompletableTask[AgentResponse] = CompletableTask()
+            entity_task: CompletableTask[AgentResponse] = CompletableTask()  # type: ignore[no-untyped-call]
             entity_task.complete(acceptance_response)
         else:
             # Blocking mode: call entity and wait for response

@@ -43,7 +43,7 @@ else:
     _TypedCompoundTask = CompoundTask
 
 
-class PreCompletedTask(TaskBase):
+class PreCompletedTask(TaskBase):  # type: ignore[misc]
     """A simple task that is already completed with a result.
 
     Used for fire-and-forget mode where we want to return immediately
