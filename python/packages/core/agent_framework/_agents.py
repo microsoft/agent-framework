@@ -1249,7 +1249,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 if context.instructions:
                     chat_options["instructions"] = (
                         context.instructions
-                        if not chat_options.get("instructions")
+                        if "instructions" not in chat_options
                         else f"{chat_options['instructions']}\n{context.instructions}"
                     )
         thread_messages.extend(input_messages or [])

@@ -6,8 +6,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from agent_framework._tools import FunctionTool
-from agent_framework._types import ChatMessage, Content, Role
+from agent_framework import ChatMessage, Content, FunctionTool, Role
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,
     convert_tau2_tool_to_function_tool,
@@ -79,10 +78,10 @@ def test_convert_tau2_tool_to_function_tool_multiple_tools(tau2_airline_environm
     tools = tau2_airline_environment.get_tools()
 
     # Convert multiple tools
-    tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools[:3]]  # Test first 3 tools
+    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools[:3]]  # Test first 3 tools
 
     # Verify all conversions
-    for tool, tau2_tool in zip(tools, tools[:3], strict=False):
+    for tool, tau2_tool in zip(function_tools, tools[:3], strict=False):
         assert isinstance(tool, FunctionTool)
         assert tool.name == tau2_tool.name
         assert tool.description == tau2_tool._get_description()
