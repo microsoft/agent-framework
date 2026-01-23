@@ -67,11 +67,10 @@ class GithubCopilotOptions(TypedDict, total=False):
     log_level: str
     """CLI log level."""
 
-    allowed_permissions: Sequence[str]
-    """List of permission kinds to approve automatically.
-    Copilot may request permissions for operations like shell commands,
-    file writes, etc. Only permissions in this list will be approved.
-    Valid values: "shell", "write", "read", "mcp", "url".
+    on_permission_request: PermissionHandlerType
+    """Permission request handler.
+    Called when Copilot requests permission to perform an action (shell, read, write, etc.).
+    Takes a PermissionRequest and context dict, returns PermissionRequestResult.
     If not provided, all permission requests will be denied by default.
     """
 
@@ -186,7 +185,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         model = opts.pop("model", None)
         timeout = opts.pop("timeout", None)
         log_level = opts.pop("log_level", None)
-        allowed_permissions: Sequence[str] | None = opts.pop("allowed_permissions", None)
+        on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
 
         try:
             self._settings = GithubCopilotSettings(
@@ -202,7 +201,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         self._instructions = instructions
         self._tools = normalize_tools(tools)
-        self._permission_handler = self._create_permission_handler(allowed_permissions)
+        self._permission_handler = on_permission_request
         self._default_options = opts
         self._started = False
 
@@ -316,16 +315,17 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         response_id: str | None = None
 
         if response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
-            content = response_event.data.content or ""
             message_id = response_event.data.message_id
-            response_messages.append(
-                ChatMessage(
-                    role=Role.ASSISTANT,
-                    contents=[Content.from_text(content)],
-                    message_id=message_id,
-                    raw_representation=response_event,
+
+            if response_event.data.content:
+                response_messages.append(
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        contents=[Content.from_text(response_event.data.content)],
+                        message_id=message_id,
+                        raw_representation=response_event,
+                    )
                 )
-            )
             response_id = message_id
 
         return AgentResponse(messages=response_messages, response_id=response_id)
@@ -371,11 +371,10 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         def event_handler(event: SessionEvent) -> None:
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
-                delta_content = event.data.delta_content or ""
-                if delta_content:
+                if event.data.delta_content:
                     update = AgentResponseUpdate(
                         role=Role.ASSISTANT,
-                        contents=[Content.from_text(delta_content)],
+                        contents=[Content.from_text(event.data.delta_content)],
                         response_id=event.data.message_id,
                         message_id=event.data.message_id,
                         raw_representation=event,
@@ -398,27 +397,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
                 yield item
         finally:
             unsubscribe()
-
-    def _create_permission_handler(
-        self,
-        allowed_permissions: Sequence[str] | None,
-    ) -> PermissionHandlerType | None:
-        """Create a permission handler from a list of allowed permission kinds."""
-        if not allowed_permissions:
-            return None
-
-        allowed_set = set(allowed_permissions)
-
-        def handler(
-            request: PermissionRequest,
-            context: dict[str, str],
-        ) -> PermissionRequestResult:
-            kind = request.get("kind")
-            if kind in allowed_set:
-                return PermissionRequestResult(kind="approved")
-            return PermissionRequestResult(kind="denied-interactively-by-user")
-
-        return handler
 
     def _convert_tools_to_copilot_tools(
         self,

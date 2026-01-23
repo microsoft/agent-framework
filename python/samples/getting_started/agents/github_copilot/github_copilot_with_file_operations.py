@@ -4,8 +4,8 @@
 GitHub Copilot Agent with File Operation Permissions
 
 This sample demonstrates how to enable file read and write operations with GithubCopilotAgent.
-By setting allowed_permissions to include "read" and/or "write", the agent can read from
-and write to files on the filesystem.
+By providing a permission handler that approves "read" and/or "write" requests, the agent can
+read from and write to files on the filesystem.
 
 SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 - "read" allows the agent to read any accessible file
@@ -15,15 +15,29 @@ SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 import asyncio
 
 from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOptions
+from copilot.types import PermissionRequest, PermissionRequestResult
 
 
-async def read_only_example() -> None:
-    """Example with read-only file permissions."""
-    print("=== Read-Only File Access Example ===\n")
+def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+    """Permission handler that prompts the user for approval."""
+    kind = request.get("kind", "unknown")
+    print(f"\n[Permission Request: {kind}]")
+
+    if "path" in request:
+        print(f"  Path: {request.get('path')}")
+
+    response = input("Approve? (y/n): ").strip().lower()
+    if response in ("y", "yes"):
+        return PermissionRequestResult(kind="approved")
+    return PermissionRequestResult(kind="denied-interactively-by-user")
+
+
+async def main() -> None:
+    print("=== GitHub Copilot Agent with File Operation Permissions ===\n")
 
     agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-        instructions="You are a helpful assistant that can read files.",
-        default_options={"allowed_permissions": ["read"]},
+        instructions="You are a helpful assistant that can read and write files.",
+        default_options={"on_permission_request": prompt_permission},
     )
 
     async with agent:
@@ -31,29 +45,6 @@ async def read_only_example() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
-
-
-async def read_write_example() -> None:
-    """Example with both read and write file permissions."""
-    print("=== Read and Write File Access Example ===\n")
-
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-        instructions="You are a helpful assistant that can read and write files.",
-        default_options={"allowed_permissions": ["read", "write"]},
-    )
-
-    async with agent:
-        query = "Create a file called 'hello.txt' with the text 'Hello from Copilot!'"
-        print(f"User: {query}")
-        result = await agent.run(query)
-        print(f"Agent: {result}\n")
-
-
-async def main() -> None:
-    print("=== GitHub Copilot Agent with File Operation Permissions ===\n")
-
-    await read_only_example()
-    await read_write_example()
 
 
 if __name__ == "__main__":

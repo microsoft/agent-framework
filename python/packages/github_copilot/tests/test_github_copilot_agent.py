@@ -663,73 +663,41 @@ class TestGithubCopilotAgentErrorHandling:
 class TestGithubCopilotAgentPermissions:
     """Test cases for permission handling."""
 
-    def test_create_permission_handler_returns_none_when_no_permissions(self) -> None:
-        """Test that no handler is created when allowed_permissions is not provided."""
+    def test_no_permission_handler_when_not_provided(self) -> None:
+        """Test that no handler is set when on_permission_request is not provided."""
         agent = GithubCopilotAgent()
         assert agent._permission_handler is None  # type: ignore
 
-    def test_create_permission_handler_returns_none_for_empty_list(self) -> None:
-        """Test that no handler is created when allowed_permissions is empty."""
-        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-            default_options={"allowed_permissions": []}
-        )
-        assert agent._permission_handler is None  # type: ignore
+    def test_permission_handler_set_when_provided(self) -> None:
+        """Test that a handler is set when on_permission_request is provided."""
+        from copilot.types import PermissionRequest, PermissionRequestResult
 
-    def test_create_permission_handler_returns_handler_when_permissions_provided(self) -> None:
-        """Test that a handler is created when allowed_permissions is provided."""
+        def approve_shell(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+            if request.get("kind") == "shell":
+                return PermissionRequestResult(kind="approved")
+            return PermissionRequestResult(kind="denied-interactively-by-user")
+
         agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-            default_options={"allowed_permissions": ["shell"]}
+            default_options={"on_permission_request": approve_shell}
         )
         assert agent._permission_handler is not None  # type: ignore
-
-    def test_permission_handler_approves_allowed_permission(self) -> None:
-        """Test that the handler approves permissions in the allowed list."""
-        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-            default_options={"allowed_permissions": ["shell", "read"]}
-        )
-        handler = agent._permission_handler  # type: ignore
-        assert handler is not None
-
-        result = handler({"kind": "shell"}, {})
-        assert result["kind"] == "approved"  # type: ignore
-
-        result = handler({"kind": "read"}, {})
-        assert result["kind"] == "approved"  # type: ignore
-
-    def test_permission_handler_denies_non_allowed_permission(self) -> None:
-        """Test that the handler denies permissions not in the allowed list."""
-        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-            default_options={"allowed_permissions": ["shell"]}
-        )
-        handler = agent._permission_handler  # type: ignore
-        assert handler is not None
-
-        result = handler({"kind": "write"}, {})
-        assert result["kind"] == "denied-interactively-by-user"  # type: ignore
-
-        result = handler({"kind": "read"}, {})
-        assert result["kind"] == "denied-interactively-by-user"  # type: ignore
-
-    def test_permission_handler_denies_unknown_permission(self) -> None:
-        """Test that the handler denies unknown permission kinds."""
-        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-            default_options={"allowed_permissions": ["shell"]}
-        )
-        handler = agent._permission_handler  # type: ignore
-        assert handler is not None
-
-        result = handler({"kind": "unknown"}, {})  # type: ignore
-        assert result["kind"] == "denied-interactively-by-user"  # type: ignore
 
     async def test_session_config_includes_permission_handler(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that session config includes permission handler when permissions are set."""
+        """Test that session config includes permission handler when provided."""
+        from copilot.types import PermissionRequest, PermissionRequestResult
+
+        def approve_shell_read(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+            if request.get("kind") in ("shell", "read"):
+                return PermissionRequestResult(kind="approved")
+            return PermissionRequestResult(kind="denied-interactively-by-user")
+
         agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
             client=mock_client,
-            default_options={"allowed_permissions": ["shell", "read"]},
+            default_options={"on_permission_request": approve_shell_read},
         )
         await agent.start()
 

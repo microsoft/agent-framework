@@ -33,7 +33,7 @@ The following environment variables can be configured:
 
 ## Permission Kinds
 
-When using `allowed_permissions`, the following permission kinds are available:
+The following permission kinds can be approved via `on_permission_request`:
 
 | Permission | Description |
 |------------|-------------|
@@ -76,20 +76,28 @@ async with GithubCopilotAgent(tools=[get_weather]) as agent:
 
 ### With Permissions
 
+Implement a permission handler to approve specific actions:
+
 ```python
 from agent_framework.github_copilot import GithubCopilotAgent
+from copilot.types import PermissionRequest, PermissionRequestResult
 
-# Read-only access
-async with GithubCopilotAgent(
-    default_options={"allowed_permissions": ["read"]}
-) as agent:
-    response = await agent.run("Read the README.md file")
+def my_permission_handler(
+    request: PermissionRequest,
+    context: dict[str, str],
+) -> PermissionRequestResult:
+    kind = request.get("kind")
+    print(f"Permission requested: {kind}")
 
-# Full development access
+    # Implement your approval logic here
+    if kind == "shell":
+        return PermissionRequestResult(kind="approved")
+    return PermissionRequestResult(kind="denied-interactively-by-user")
+
 async with GithubCopilotAgent(
-    default_options={"allowed_permissions": ["shell", "read", "write"]}
+    default_options={"on_permission_request": my_permission_handler}
 ) as agent:
-    response = await agent.run("Create a new Python file with a hello world function")
+    response = await agent.run("List Python files")
 ```
 
 ## Running the Examples

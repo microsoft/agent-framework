@@ -4,8 +4,8 @@
 GitHub Copilot Agent with Shell Permissions
 
 This sample demonstrates how to enable shell command execution with GithubCopilotAgent.
-By setting allowed_permissions to include "shell", the agent can execute shell commands
-to perform tasks like listing files, running scripts, or executing system commands.
+By providing a permission handler that approves "shell" requests, the agent can execute
+shell commands to perform tasks like listing files, running scripts, or executing system commands.
 
 SECURITY NOTE: Only enable shell permissions when you trust the agent's actions.
 Shell commands have full access to your system within the permissions of the running process.
@@ -14,6 +14,21 @@ Shell commands have full access to your system within the permissions of the run
 import asyncio
 
 from agent_framework.github_copilot import GithubCopilotAgent, GithubCopilotOptions
+from copilot.types import PermissionRequest, PermissionRequestResult
+
+
+def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+    """Permission handler that prompts the user for approval."""
+    kind = request.get("kind", "unknown")
+    print(f"\n[Permission Request: {kind}]")
+
+    if "command" in request:
+        print(f"  Command: {request.get('command')}")
+
+    response = input("Approve? (y/n): ").strip().lower()
+    if response in ("y", "yes"):
+        return PermissionRequestResult(kind="approved")
+    return PermissionRequestResult(kind="denied-interactively-by-user")
 
 
 async def main() -> None:
@@ -21,18 +36,11 @@ async def main() -> None:
 
     agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
         instructions="You are a helpful assistant that can execute shell commands.",
-        default_options={"allowed_permissions": ["shell"]},
+        default_options={"on_permission_request": prompt_permission},
     )
 
     async with agent:
-        # Example: Run a shell command to display current directory
-        query = "Run 'pwd' and tell me the current directory"
-        print(f"User: {query}")
-        result = await agent.run(query)
-        print(f"Agent: {result}\n")
-
-        # Example: Run echo command
-        query = "Run 'echo Hello from shell!' and show me the output"
+        query = "List the first 3 Python files in the current directory"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
