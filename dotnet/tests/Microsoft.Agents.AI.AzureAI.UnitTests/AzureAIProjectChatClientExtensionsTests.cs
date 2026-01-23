@@ -3161,7 +3161,7 @@ public sealed class AzureAIProjectChatClientExtensionsCoverageTests
 
         public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            return ValueTask.CompletedTask;
+            return default;
         }
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
