@@ -12,28 +12,21 @@ namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
 public sealed class GithubCopilotAgentTests
 {
     [Fact]
-    public void Constructor_WithCopilotClientOptions_InitializesPropertiesCorrectly()
+    public async Task Constructor_WithCopilotClient_InitializesPropertiesCorrectlyAsync()
     {
         // Arrange
-        var options = new CopilotClientOptions { AutoStart = false };
+        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         const string TestId = "test-id";
         const string TestName = "test-name";
         const string TestDescription = "test-description";
 
         // Act
-        var agent = new GithubCopilotAgent(options, id: TestId, name: TestName, description: TestDescription);
+        var agent = new GithubCopilotAgent(copilotClient, id: TestId, name: TestName, description: TestDescription);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
         Assert.Equal(TestName, agent.Name);
         Assert.Equal(TestDescription, agent.Description);
-    }
-
-    [Fact]
-    public void Constructor_WithNullCopilotClientOptions_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent((CopilotClientOptions)null!));
     }
 
     [Fact]
@@ -44,13 +37,13 @@ public sealed class GithubCopilotAgentTests
     }
 
     [Fact]
-    public void Constructor_WithDefaultParameters_UsesBaseProperties()
+    public async Task Constructor_WithDefaultParameters_UsesBasePropertiesAsync()
     {
         // Arrange
-        var options = new CopilotClientOptions { AutoStart = false };
+        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = new GithubCopilotAgent(options);
+        var agent = new GithubCopilotAgent(copilotClient);
 
         // Assert
         Assert.NotNull(agent.Id);
@@ -63,8 +56,8 @@ public sealed class GithubCopilotAgentTests
     public async Task GetNewThreadAsync_ReturnsGithubCopilotAgentThreadAsync()
     {
         // Arrange
-        var options = new CopilotClientOptions { AutoStart = false };
-        var agent = new GithubCopilotAgent(options);
+        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GithubCopilotAgent(copilotClient);
 
         // Act
         var thread = await agent.GetNewThreadAsync();
@@ -78,8 +71,8 @@ public sealed class GithubCopilotAgentTests
     public async Task GetNewThreadAsync_WithSessionId_ReturnsThreadWithSessionIdAsync()
     {
         // Arrange
-        var options = new CopilotClientOptions { AutoStart = false };
-        var agent = new GithubCopilotAgent(options);
+        await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GithubCopilotAgent(copilotClient);
         const string TestSessionId = "test-session-id";
 
         // Act

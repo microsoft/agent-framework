@@ -1,5 +1,9 @@
 # Prerequisites
 
+> **⚠️ WARNING: Container Recommendation**
+> 
+> GitHub Copilot can execute tools and commands that may interact with your system. For safety, it is strongly recommended to run this sample in a containerized environment (e.g., Docker, Dev Container) to avoid unintended consequences to your machine.
+
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
@@ -33,16 +37,18 @@ You can customize the agent by providing additional configuration:
 
 ```csharp
 using GitHub.Copilot.SDK;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GithubCopilot;
-using Microsoft.Extensions.AI;
 
 // Create a Copilot client with custom options
-var copilotClientOptions = new CopilotClientOptions
+await using CopilotClient copilotClient = new(new CopilotClientOptions
 {
     CliPath = "/custom/path/to/copilot",  // Custom CLI path
     LogLevel = "debug",                    // Enable debug logging
     AutoStart = true
-};
+});
+
+await copilotClient.StartAsync();
 
 // Create session configuration with specific model
 var sessionConfig = new SessionConfig
@@ -53,7 +59,7 @@ var sessionConfig = new SessionConfig
 
 // Create an agent with custom configuration
 AIAgent agent = new GithubCopilotAgent(
-    copilotClientOptions,
+    copilotClient,
     sessionConfig,
     id: "my-copilot-agent",
     name: "My Copilot Assistant",

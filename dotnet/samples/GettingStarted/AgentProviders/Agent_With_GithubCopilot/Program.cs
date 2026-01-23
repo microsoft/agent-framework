@@ -6,15 +6,13 @@ using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GithubCopilot;
 
-// Create a Copilot client with default options
-var copilotClientOptions = new CopilotClientOptions
-{
-    AutoStart = true
-};
+// Create and start a Copilot client
+await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = true });
+await copilotClient.StartAsync();
 
-// Create an instance of the AIAgent using GitHub Copilot SDK
-AIAgent agent = new GithubCopilotAgent(copilotClientOptions);
+// Create an instance of the AIAgent using the Copilot client
+AIAgent agent = new GithubCopilotAgent(copilotClient);
 
-// Invoke the agent and output the text result
-AgentResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
+// Ask Copilot to write code for us - demonstrate its code generation capabilities
+AgentResponse response = await agent.RunAsync("Write a small .NET 10 C# hello world single file application");
 Console.WriteLine(response);

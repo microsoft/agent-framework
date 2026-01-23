@@ -14,12 +14,12 @@ public sealed class GithubCopilotAgentThread : AgentThread
     /// <summary>
     /// Gets or sets the session ID for the GitHub Copilot conversation.
     /// </summary>
-    public string? SessionId { get; set; }
+    public string? SessionId { get; internal set; }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GithubCopilotAgentThread"/> class.
     /// </summary>
-    public GithubCopilotAgentThread()
+    internal GithubCopilotAgentThread()
     {
     }
 
@@ -30,12 +30,8 @@ public sealed class GithubCopilotAgentThread : AgentThread
     /// <param name="jsonSerializerOptions">Optional JSON serialization options.</param>
     internal GithubCopilotAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        // Try both SessionId (PascalCase) and sessionId (camelCase) for compatibility
-        // The JSON serialization uses camelCase by default, but we check both for robustness
-#pragma warning disable CA1507 // Use nameof to express symbol names - Need literal strings to check both PascalCase and camelCase variants
-        if (serializedThread.TryGetProperty("SessionId", out JsonElement sessionIdElement) ||
-            serializedThread.TryGetProperty("sessionId", out sessionIdElement))
-#pragma warning restore CA1507
+        // The JSON serialization uses camelCase
+        if (serializedThread.TryGetProperty("sessionId", out JsonElement sessionIdElement))
         {
             this.SessionId = sessionIdElement.GetString();
         }
@@ -44,17 +40,17 @@ public sealed class GithubCopilotAgentThread : AgentThread
     /// <inheritdoc/>
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        GithubCopilotAgentThreadState state = new()
+        State state = new()
         {
             SessionId = this.SessionId
         };
 
         return JsonSerializer.SerializeToElement(
             state,
-            GithubCopilotJsonUtilities.DefaultOptions.GetTypeInfo(typeof(GithubCopilotAgentThreadState)));
+            GithubCopilotJsonUtilities.DefaultOptions.GetTypeInfo(typeof(State)));
     }
 
-    internal sealed class GithubCopilotAgentThreadState
+    internal sealed class State
     {
         public string? SessionId { get; set; }
     }

@@ -21,17 +21,17 @@ public sealed class GithubCopilotAgentThreadTests
     }
 
     [Fact]
-    public void SessionId_CanBeSetAndRetrieved()
+    public void SessionId_IsInternalSet()
     {
         // Arrange
-        var thread = new GithubCopilotAgentThread();
-        const string TestSessionId = "test-session-id";
+        const string Json = """{"sessionId":"test-value"}""";
+        JsonDocument doc = JsonDocument.Parse(Json);
 
         // Act
-        thread.SessionId = TestSessionId;
+        var thread = new GithubCopilotAgentThread(doc.RootElement);
 
         // Assert
-        Assert.Equal(TestSessionId, thread.SessionId);
+        Assert.Equal("test-value", thread.SessionId);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class GithubCopilotAgentThreadTests
     public void Deserialize_WithSessionId_DeserializesCorrectly()
     {
         // Arrange
-        const string Json = """{"SessionId":"test-session-id"}""";
+        const string Json = """{"sessionId":"test-session-id"}""";
         JsonDocument doc = JsonDocument.Parse(Json);
 
         // Act

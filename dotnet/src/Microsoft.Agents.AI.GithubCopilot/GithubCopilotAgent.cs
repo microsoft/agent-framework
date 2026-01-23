@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.GithubCopilot;
 /// <summary>
 /// Represents an <see cref="AIAgent"/> that uses the GitHub Copilot SDK to provide agentic capabilities.
 /// </summary>
-public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
+public sealed class GithubCopilotAgent : AIAgent
 {
     private readonly CopilotClient _copilotClient;
     private readonly string? _id;
@@ -26,7 +26,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly string? _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly ILogger _logger;
-    private readonly bool _ownsClient;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class.
@@ -53,35 +52,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         this._name = name;
         this._description = description;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<GithubCopilotAgent>();
-        this._ownsClient = false;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class with custom options.
-    /// </summary>
-    /// <param name="copilotClientOptions">Options for creating the Copilot client.</param>
-    /// <param name="sessionConfig">Optional session configuration for the agent.</param>
-    /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The name of the agent.</param>
-    /// <param name="description">The description of the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public GithubCopilotAgent(
-        CopilotClientOptions copilotClientOptions,
-        SessionConfig? sessionConfig = null,
-        string? id = null,
-        string? name = null,
-        string? description = null,
-        ILoggerFactory? loggerFactory = null)
-    {
-        _ = Throw.IfNull(copilotClientOptions);
-
-        this._copilotClient = new CopilotClient(copilotClientOptions);
-        this._sessionConfig = sessionConfig;
-        this._id = id;
-        this._name = name;
-        this._description = description;
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<GithubCopilotAgent>();
-        this._ownsClient = true;
     }
 
     /// <inheritdoc/>
@@ -238,7 +208,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         try
         {
             TaskCompletionSource<bool> completionSource = new();
-            List<AgentResponseUpdate> updates = [];
+            System.Threading.Channels.Channel<AgentResponseUpdate> channel = System.Threading.Channels.Channel.CreateUnbounded<AgentResponseUpdate>();
 
             // Subscribe to session events
             IDisposable subscription = session.On(evt =>
@@ -246,20 +216,23 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 switch (evt)
                 {
                     case AssistantMessageDeltaEvent deltaEvent:
-                        updates.Add(ConvertToAgentResponseUpdate(deltaEvent));
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(deltaEvent));
                         break;
 
                     case AssistantMessageEvent assistantMessage:
-                        updates.Add(ConvertToAgentResponseUpdate(assistantMessage));
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
                         break;
 
                     case SessionIdleEvent:
+                        channel.Writer.Complete();
                         completionSource.TrySetResult(true);
                         break;
 
                     case SessionErrorEvent errorEvent:
-                        completionSource.TrySetException(new InvalidOperationException(
-                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}"));
+                        Exception exception = new InvalidOperationException(
+                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
+                        channel.Writer.Complete(exception);
+                        completionSource.TrySetException(exception);
                         break;
                 }
             });
@@ -270,11 +243,8 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
                 await session.SendAsync(new MessageOptions { Prompt = prompt }, cancellationToken).ConfigureAwait(false);
 
-                // Wait for completion
-                await completionSource.Task.ConfigureAwait(false);
-
-                // Yield all collected updates
-                foreach (AgentResponseUpdate update in updates)
+                // Yield updates as they arrive
+                await foreach (AgentResponseUpdate update in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
                 {
                     yield return update;
                 }
@@ -298,18 +268,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
     /// <inheritdoc/>
     public override string? Description => this._description;
-
-    /// <summary>
-    /// Disposes the agent and releases resources.
-    /// </summary>
-    /// <returns>A value task representing the asynchronous dispose operation.</returns>
-    public async ValueTask DisposeAsync()
-    {
-        if (this._ownsClient)
-        {
-            await this._copilotClient.DisposeAsync().ConfigureAwait(false);
-        }
-    }
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {

@@ -51,7 +51,7 @@ internal static partial class GithubCopilotJsonUtilities
         UseStringEnumConverter = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
-    [JsonSerializable(typeof(GithubCopilotAgentThread.GithubCopilotAgentThreadState))]
+    [JsonSerializable(typeof(GithubCopilotAgentThread.State))]
     [ExcludeFromCodeCoverage]
     private sealed partial class JsonContext : JsonSerializerContext;
 }
