@@ -1216,7 +1216,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Create a shallow copy of options and deep copy non-tool values
         # Tools containing HTTP clients or other non-copyable objects cannot be deep copied
         if self.default_options:
-            chat_options = {}
+            chat_options: dict[str, Any] = {}
             for key, value in self.default_options.items():
                 if key == "tools":
                     # Keep tool references as-is (don't deep copy)
