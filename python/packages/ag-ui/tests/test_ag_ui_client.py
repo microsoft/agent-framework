@@ -3,7 +3,7 @@
 """Tests for AGUIChatClient."""
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterable, MutableSequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, MutableSequence
 from typing import Any
 
 from agent_framework import (
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ResponseStream,
     Role,
     tool,
 )
@@ -49,11 +50,11 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose streaming response helper."""
         return super().get_streaming_response(messages, **kwargs)
 
-    async def inner_get_response(
+    def inner_get_response(
         self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
-        return await self._inner_get_response(messages=messages, options=options, stream=stream)
+        return self._inner_get_response(messages=messages, options=options, stream=stream)
 
 
 class TestAGUIChatClient:
