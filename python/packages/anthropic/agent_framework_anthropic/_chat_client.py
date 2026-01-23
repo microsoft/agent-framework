@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -443,7 +443,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options.update(kwargs)
         return run_options
 
-    def _prepare_betas(self, options: dict[str, Any]) -> set[str]:
+    def _prepare_betas(self, options: Mapping[str, Any]) -> set[str]:
         """Prepare the beta flags for the Anthropic API request.
 
         Args:
@@ -493,7 +493,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             "schema": schema,
         }
 
-    def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_anthropic(self, messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare a list of ChatMessages for the Anthropic client.
 
         This skips the first message if it is a system message,
@@ -564,7 +564,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             "content": a_content,
         }
 
-    def _prepare_tools_for_anthropic(self, options: dict[str, Any]) -> dict[str, Any] | None:
+    def _prepare_tools_for_anthropic(self, options: Mapping[str, Any]) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
         Args:
