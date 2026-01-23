@@ -20,7 +20,6 @@ from agent_framework_durabletask import (
 )
 
 from agent_framework.azure._entra_id_authentication import get_entra_auth_token
-from agent_framework.openai._chat_client import AzureUserSecurityContext
 
 __all__ = [
     "AgentCallbackContext",
@@ -34,7 +33,6 @@ __all__ = [
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
     "AzureAISettings",
-    "AzureUserSecurityContext",
     "DurableAIAgent",
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",

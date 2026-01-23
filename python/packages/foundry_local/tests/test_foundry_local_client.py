@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from agent_framework import ChatClientProtocol
 from agent_framework.exceptions import ServiceInitializationError
-from pydantic import ValidationError
 
 from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings

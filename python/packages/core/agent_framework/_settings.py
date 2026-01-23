@@ -260,10 +260,8 @@ class AFSettings:
                 kwarg_value = kwargs[field_name]
                 # Coerce string values to SecretStr if needed
                 if isinstance(kwarg_value, str) and field_type is not str:
-                    try:
+                    with suppress(ValueError, TypeError):
                         kwarg_value = _coerce_value(kwarg_value, field_type)
-                    except (ValueError, TypeError):
-                        pass  # Keep original value
                 setattr(self, field_name, kwarg_value)
                 continue
 

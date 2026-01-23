@@ -79,7 +79,9 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
 
 def test_anthropic_settings_init_with_explicit_values() -> None:
     """Test AnthropicSettings initialization with explicit values."""
-    settings = AnthropicSettings(api_key="custom-api-key", model_id="claude-3-opus-20240229", env_file_path="/nonexistent/test.env")
+    settings = AnthropicSettings(
+        api_key="custom-api-key", model_id="claude-3-opus-20240229", env_file_path="/nonexistent/test.env"
+    )
 
     assert settings.api_key is not None
     # String kwargs are coerced to SecretStr

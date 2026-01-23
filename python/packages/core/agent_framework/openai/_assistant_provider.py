@@ -144,7 +144,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             # Load settings and create client
             try:
                 settings = OpenAISettings(
-                    api_key=api_key,  # type: ignore[reportArgumentType]
+                    api_key=api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key,
                     org_id=org_id,
                     base_url=base_url,
                     env_file_path=env_file_path,

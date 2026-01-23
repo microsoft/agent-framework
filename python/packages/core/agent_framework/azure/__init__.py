@@ -3,6 +3,16 @@
 import importlib
 from typing import Any
 
+from agent_framework.openai import OpenAIAssistantsClient as AzureOpenAIAssistantsClient
+from agent_framework.openai import OpenAIChatClient as AzureOpenAIChatClient
+from agent_framework.openai import OpenAIResponsesClient as AzureOpenAIResponsesClient
+
+_AZURE_OPENAI_ALIASES = [
+    "AzureOpenAIAssistantsClient",
+    "AzureOpenAIChatClient",
+    "AzureOpenAIResponsesClient",
+]
+
 _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentCallbackContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "AgentFunctionApp": ("agent_framework_azurefunctions", "agent-framework-azurefunctions"),
@@ -31,6 +41,14 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "get_entra_auth_token": ("agent_framework.azure._entra_id_authentication", "agent-framework-core"),
 }
 
+__all__ = [
+    *_IMPORTS.keys(),
+    *_AZURE_OPENAI_ALIASES,
+    "AzureOpenAIAssistantsClient",
+    "AzureOpenAIChatClient",
+    "AzureOpenAIResponsesClient",
+]
+
 
 def __getattr__(name: str) -> Any:
     if name in _IMPORTS:
@@ -46,4 +64,4 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    return list(_IMPORTS.keys())
+    return __all__
