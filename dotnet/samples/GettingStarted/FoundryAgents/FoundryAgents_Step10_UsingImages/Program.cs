@@ -17,7 +17,7 @@ const string VisionName = "VisionAgent";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = aiProjectClient.CreateAIAgent(name: VisionName, model: deploymentName, instructions: VisionInstructions);
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: VisionName, model: deploymentName, instructions: VisionInstructions);
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),

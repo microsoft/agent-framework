@@ -16,9 +16,9 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="ExecutorOptions"></param>
 public record SubworkflowBinding(Workflow WorkflowInstance, string Id, ExecutorOptions? ExecutorOptions = null)
     : ExecutorBinding(Throw.IfNull(Id),
-                           CreateWorkflowExecutorFactory(WorkflowInstance, Id, ExecutorOptions),
-                           typeof(WorkflowHostExecutor),
-                           WorkflowInstance)
+                      CreateWorkflowExecutorFactory(WorkflowInstance, Id, ExecutorOptions),
+                      typeof(WorkflowHostExecutor),
+                      WorkflowInstance)
 {
     private static Func<string, ValueTask<Executor>> CreateWorkflowExecutorFactory(Workflow workflow, string id, ExecutorOptions? options)
     {

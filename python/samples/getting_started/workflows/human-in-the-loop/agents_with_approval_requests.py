@@ -213,7 +213,7 @@ async def conclude_workflow(
 
 def create_email_writer_agent() -> ChatAgent:
     """Create the Email Writer agent with tools that require approval."""
-    return OpenAIChatClient().create_agent(
+    return OpenAIChatClient().as_agent(
         name="Email Writer",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
         # tools with `approval_mode="always_require"` will trigger approval requests

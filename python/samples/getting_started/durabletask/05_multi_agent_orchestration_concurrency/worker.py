@@ -16,7 +16,7 @@ import logging
 import os
 from typing import Any
 
-from agent_framework import AgentResponse
+from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.task import OrchestrationContext, when_all, Task
@@ -31,25 +31,25 @@ PHYSICIST_AGENT_NAME = "PhysicistAgent"
 CHEMIST_AGENT_NAME = "ChemistAgent"
 
 
-def create_physicist_agent():
+def create_physicist_agent() -> "ChatAgent":
     """Create the Physicist agent using Azure OpenAI.
     
     Returns:
-        AgentProtocol: The configured Physicist agent
+        ChatAgent: The configured Physicist agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
 
-def create_chemist_agent():
+def create_chemist_agent() -> "ChatAgent":
     """Create the Chemist agent using Azure OpenAI.
     
     Returns:
-        AgentProtocol: The configured Chemist agent
+        ChatAgent: The configured Chemist agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )

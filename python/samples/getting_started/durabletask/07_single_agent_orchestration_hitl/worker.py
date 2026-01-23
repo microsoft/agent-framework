@@ -17,7 +17,7 @@ import logging
 import os
 from typing import Any, cast
 
-from agent_framework import AgentResponse
+from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
@@ -52,11 +52,11 @@ class HumanApproval(BaseModel):
     feedback: str = ""
 
 
-def create_writer_agent():
+def create_writer_agent() -> "ChatAgent":
     """Create the Writer agent using Azure OpenAI.
     
     Returns:
-        AgentProtocol: The configured Writer agent
+        ChatAgent: The configured Writer agent
     """
     instructions = (
         "You are a professional content writer who creates high-quality articles on various topics. "
@@ -65,7 +65,7 @@ def create_writer_agent():
         "Limit response to 300 words or less."
     )
     
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

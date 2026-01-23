@@ -62,7 +62,7 @@ def is_approved(message: Any) -> bool:
 chat_client = AzureOpenAIChatClient(api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""))
 
 # Create Writer agent - generates content
-writer = chat_client.create_agent(
+writer = chat_client.as_agent(
     name="Writer",
     instructions=(
         "You are an excellent content writer. "
@@ -72,7 +72,7 @@ writer = chat_client.create_agent(
 )
 
 # Create Reviewer agent - evaluates and provides structured feedback
-reviewer = chat_client.create_agent(
+reviewer = chat_client.as_agent(
     name="Reviewer",
     instructions=(
         "You are an expert content reviewer. "
@@ -90,7 +90,7 @@ reviewer = chat_client.create_agent(
 )
 
 # Create Editor agent - improves content based on feedback
-editor = chat_client.create_agent(
+editor = chat_client.as_agent(
     name="Editor",
     instructions=(
         "You are a skilled editor. "
@@ -101,7 +101,7 @@ editor = chat_client.create_agent(
 )
 
 # Create Publisher agent - formats content for publication
-publisher = chat_client.create_agent(
+publisher = chat_client.as_agent(
     name="Publisher",
     instructions=(
         "You are a publishing agent. "
@@ -111,7 +111,7 @@ publisher = chat_client.create_agent(
 )
 
 # Create Summarizer agent - creates final publication report
-summarizer = chat_client.create_agent(
+summarizer = chat_client.as_agent(
     name="Summarizer",
     instructions=(
         "You are a summarizer agent. "

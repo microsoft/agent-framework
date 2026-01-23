@@ -13,7 +13,6 @@ Tests operations with multiple specialized agents:
 from typing import Any
 
 import pytest
-from agent_framework import FunctionCallContent
 from dt_testutils import create_agent_client
 
 # Agent names from the 02_multi_agent sample
@@ -65,7 +64,7 @@ class TestMultiAgent:
 
         # Verify that the get_weather tool was actually invoked
         tool_calls = [
-            content for msg in response.messages for content in msg.contents if isinstance(content, FunctionCallContent)
+            content for msg in response.messages for content in msg.contents if content.type == "function_call"
         ]
         assert len(tool_calls) > 0, "Expected at least one tool call"
         assert any(call.name == "get_weather" for call in tool_calls), "Expected get_weather tool to be called"
@@ -84,7 +83,7 @@ class TestMultiAgent:
 
         # Verify that the calculate_tip tool was actually invoked
         tool_calls = [
-            content for msg in response.messages for content in msg.contents if isinstance(content, FunctionCallContent)
+            content for msg in response.messages for content in msg.contents if content.type == "function_call"
         ]
         assert len(tool_calls) > 0, "Expected at least one tool call"
         assert any(call.name == "calculate_tip" for call in tool_calls), "Expected calculate_tip tool to be called"

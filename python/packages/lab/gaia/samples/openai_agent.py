@@ -49,7 +49,7 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
     """
     chat_client = OpenAIResponsesClient()
 
-    async with chat_client.create_agent(
+    async with chat_client.as_agent(
         name="GaiaAgent",
         instructions="Solve tasks to your best ability. Use Web Search to find "
         "information and Code Interpreter to perform calculations and data analysis.",

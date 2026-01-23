@@ -51,7 +51,7 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -103,7 +103,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
 
     content = initial_raw.value
 
-    if content is None or not isinstance(content, GeneratedContent):
+    if content is None:
         raise ValueError("Agent returned no content after extraction.")
 
     attempt = 0
@@ -152,11 +152,9 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
                 options={"response_format": GeneratedContent},
             )
 
-            rewritten_value = rewritten_raw.value
-            if rewritten_value is None or not isinstance(rewritten_value, GeneratedContent):
+            content = rewritten_raw.try_parse_value(GeneratedContent)
+            if content is None:
                 raise ValueError("Agent returned no content after rewrite.")
-
-            content = rewritten_value
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."

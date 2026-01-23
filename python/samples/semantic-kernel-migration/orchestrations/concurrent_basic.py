@@ -77,12 +77,12 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physics = chat_client.create_agent(
+    physics = chat_client.as_agent(
         instructions=("You are an expert in physics. Answer questions from a physics perspective."),
         name="physics",
     )
 
-    chemistry = chat_client.create_agent(
+    chemistry = chat_client.as_agent(
         instructions=("You are an expert in chemistry. Answer questions from a chemistry perspective."),
         name="chemistry",
     )

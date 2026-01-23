@@ -13,7 +13,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     ChatMessage,
-    ErrorContent,
+    Content,
     Role,
     get_logger,
 )
@@ -176,7 +176,7 @@ class AgentEntity:
             logger.exception("[AgentEntity.run] Agent execution failed.")
 
             error_message = ChatMessage(
-                role=Role.ASSISTANT, contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)]
+                role=Role.ASSISTANT, contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
             )
             error_response = AgentResponse(messages=[error_message])
 

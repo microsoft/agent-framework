@@ -277,6 +277,48 @@ public class AgentExtensionsTests
         Assert.Equal("Complex response", result.ToString());
     }
 
+    [Fact]
+    public async Task CreateFromAgent_InvokeWithAdditionalProperties_PropagatesAdditionalPropertiesToChildAgentAsync()
+    {
+        // Arrange
+        var expectedResponse = new AgentResponse
+        {
+            AgentId = "agent-123",
+            ResponseId = "response-456",
+            CreatedAt = DateTimeOffset.UtcNow,
+            Messages = { new ChatMessage(ChatRole.Assistant, "Complex response") }
+        };
+
+        var testAgent = new TestAgent("TestAgent", "Test description", expectedResponse);
+        var aiFunction = testAgent.AsAIFunction();
+
+        // Use reflection to set the protected CurrentContext property
+        var context = new FunctionInvocationContext()
+        {
+            Options = new()
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    { "customProperty1", "value1" },
+                    { "customProperty2", 42 }
+                }
+            }
+        };
+        SetFunctionInvokingChatClientCurrentContext(context);
+
+        // Act
+        var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
+        var result = await aiFunction.InvokeAsync(arguments);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Complex response", result.ToString());
+        Assert.NotNull(testAgent.ReceivedAgentRunOptions);
+        Assert.NotNull(testAgent.ReceivedAgentRunOptions!.AdditionalProperties);
+        Assert.Equal("value1", testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty1"]);
+        Assert.Equal(42, testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty2"]);
+    }
+
     [Theory]
     [InlineData("MyAgent", "MyAgent")]
     [InlineData("Agent123", "Agent123")]
@@ -300,6 +342,22 @@ public class AgentExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(expectedFunctionName, result.Name);
+    }
+
+    /// <summary>
+    /// Uses reflection to set the protected static CurrentContext property on FunctionInvokingChatClient.
+    /// </summary>
+    private static void SetFunctionInvokingChatClientCurrentContext(FunctionInvocationContext? context)
+    {
+        // Access the private static field _currentContext which is an AsyncLocal<FunctionInvocationContext?>
+        var currentContextField = typeof(FunctionInvokingChatClient).GetField(
+            "_currentContext",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        if (currentContextField?.GetValue(null) is AsyncLocal<FunctionInvocationContext?> asyncLocal)
+        {
+            asyncLocal.Value = context;
+        }
     }
 
     /// <summary>
@@ -334,6 +392,7 @@ public class AgentExtensionsTests
         public override string? Description { get; }
 
         public List<ChatMessage> ReceivedMessages { get; } = [];
+        public AgentRunOptions? ReceivedAgentRunOptions { get; private set; }
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
 
@@ -346,6 +405,7 @@ public class AgentExtensionsTests
             this.RunAsyncCallCount++;
             this.LastCancellationToken = cancellationToken;
             this.ReceivedMessages.AddRange(messages);
+            this.ReceivedAgentRunOptions = options;
 
             if (this._exceptionToThrow is not null)
             {

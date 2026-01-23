@@ -48,7 +48,7 @@ public class OpenAIAssistantClientExtensionsTests
                         Tools = [weatherFunction]
                     }
                 }),
-            "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
+            "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
                 options: new ChatClientAgentOptions()
                 {
@@ -115,7 +115,7 @@ public class OpenAIAssistantClientExtensionsTests
                         Tools = [codeInterpreterTool]
                     }
                 }),
-            "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
+            "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
                 options: new ChatClientAgentOptions()
                 {
@@ -193,7 +193,7 @@ public class OpenAIAssistantClientExtensionsTests
                         Tools = [fileSearchTool]
                     }
                 }),
-            "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
+            "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
                 options: new ChatClientAgentOptions()
                 {

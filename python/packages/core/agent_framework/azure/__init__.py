@@ -9,6 +9,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentResponseCallbackProtocol": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "AzureAIAgentClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAIAgentOptions": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
+    "AzureAIProjectAgentOptions": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAIClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAIProjectAgentProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAISearchContextProvider": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),

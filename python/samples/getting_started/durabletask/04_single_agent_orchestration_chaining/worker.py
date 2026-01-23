@@ -15,7 +15,7 @@ from collections.abc import Generator
 import logging
 import os
 
-from agent_framework import AgentResponse
+from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.task import OrchestrationContext, Task
@@ -29,21 +29,21 @@ logger = logging.getLogger(__name__)
 WRITER_AGENT_NAME = "WriterAgent"
 
 
-def create_writer_agent():
+def create_writer_agent() -> "ChatAgent":
     """Create the Writer agent using Azure OpenAI.
     
     This agent refines short pieces of text, enhancing initial sentences
     and polishing improved versions further.
     
     Returns:
-        AgentProtocol: The configured Writer agent
+        ChatAgent: The configured Writer agent
     """
     instructions = (
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"
         "when given an improved sentence you polish it further."
     )
     
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

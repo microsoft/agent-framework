@@ -19,15 +19,17 @@ internal sealed class WorkflowThread : AgentThread
     private readonly Workflow _workflow;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
     private readonly bool _includeExceptionDetails;
+    private readonly bool _includeWorkflowOutputsInResponse;
 
     private readonly CheckpointManager _checkpointManager;
     private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false)
+    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
+        this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
         // If the user provided an external checkpoint manager, use that, otherwise rely on an in-memory one.
         // TODO: Implement persist-only-last functionality for in-memory checkpoint manager, to avoid unbounded
@@ -35,13 +37,15 @@ internal sealed class WorkflowThread : AgentThread
         this._checkpointManager = checkpointManager ?? new(this._inMemoryCheckpointManager = new());
 
         this.RunId = Throw.IfNullOrEmpty(runId);
-        this.MessageStore = new WorkflowMessageStore();
+        this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
     }
 
-    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
+        this._includeExceptionDetails = includeExceptionDetails;
+        this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         ThreadState threadState = marshaller.Marshal<ThreadState>(serializedThread);
@@ -66,7 +70,7 @@ internal sealed class WorkflowThread : AgentThread
 
         this.RunId = threadState.RunId;
         this.LastCheckpoint = threadState.LastCheckpoint;
-        this.MessageStore = new WorkflowMessageStore(threadState.MessageStoreState);
+        this.ChatHistoryProvider = new WorkflowChatHistoryProvider(threadState.ChatHistoryProviderState);
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
@@ -77,7 +81,7 @@ internal sealed class WorkflowThread : AgentThread
         ThreadState info = new(
             this.RunId,
             this.LastCheckpoint,
-            this.MessageStore.ExportStoreState(),
+            this.ChatHistoryProvider.ExportStoreState(),
             this._inMemoryCheckpointManager);
 
         return marshaller.Marshal(info);
@@ -96,7 +100,24 @@ internal sealed class WorkflowThread : AgentThread
             RawRepresentation = raw
         };
 
-        this.MessageStore.AddMessages(update.ToChatMessage());
+        this.ChatHistoryProvider.AddMessages(update.ToChatMessage());
+
+        return update;
+    }
+
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message)
+    {
+        Throw.IfNull(message);
+
+        AgentResponseUpdate update = new(message.Role, message.Contents)
+        {
+            CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
+            MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
+            ResponseId = responseId,
+            RawRepresentation = raw
+        };
+
+        this.ChatHistoryProvider.AddMessages(update.ToChatMessage());
 
         return update;
     }
@@ -112,7 +133,6 @@ internal sealed class WorkflowThread : AgentThread
                             .ResumeStreamAsync(this._workflow,
                                                this.LastCheckpoint,
                                                this._checkpointManager,
-                                               this.RunId,
                                                cancellationToken)
                             .ConfigureAwait(false);
 
@@ -136,7 +156,7 @@ internal sealed class WorkflowThread : AgentThread
         try
         {
             this.LastResponseId = Guid.NewGuid().ToString("N");
-            List<ChatMessage> messages = this.MessageStore.GetFromBookmark().ToList();
+            List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark().ToList();
 
 #pragma warning disable CA2007 // Analyzer misfiring and not seeing .ConfigureAwait(false) below.
             await using Checkpointed<StreamingRun> checkpointed =
@@ -184,6 +204,25 @@ internal sealed class WorkflowThread : AgentThread
                         this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
                         goto default;
 
+                    case WorkflowOutputEvent output:
+                        IEnumerable<ChatMessage>? updateMessages = output.Data switch
+                        {
+                            IEnumerable<ChatMessage> chatMessages => chatMessages,
+                            ChatMessage chatMessage => [chatMessage],
+                            _ => null
+                        };
+
+                        if (!this._includeWorkflowOutputsInResponse || updateMessages == null)
+                        {
+                            goto default;
+                        }
+
+                        foreach (ChatMessage message in updateMessages)
+                        {
+                            yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                        }
+                        break;
+
                     default:
                         // Emit all other workflow events for observability (DevUI, logging, etc.)
                         yield return new AgentResponseUpdate(ChatRole.Assistant, [])
@@ -201,7 +240,7 @@ internal sealed class WorkflowThread : AgentThread
         finally
         {
             // Do we want to try to undo the step, and not update the bookmark?
-            this.MessageStore.UpdateBookmark();
+            this.ChatHistoryProvider.UpdateBookmark();
         }
     }
 
@@ -210,17 +249,17 @@ internal sealed class WorkflowThread : AgentThread
     public string RunId { get; }
 
     /// <inheritdoc/>
-    public WorkflowMessageStore MessageStore { get; }
+    public WorkflowChatHistoryProvider ChatHistoryProvider { get; }
 
     internal sealed class ThreadState(
         string runId,
         CheckpointInfo? lastCheckpoint,
-        WorkflowMessageStore.StoreState messageStoreState,
+        WorkflowChatHistoryProvider.StoreState chatHistoryProviderState,
         InMemoryCheckpointManager? checkpointManager = null)
     {
         public string RunId { get; } = runId;
         public CheckpointInfo? LastCheckpoint { get; } = lastCheckpoint;
-        public WorkflowMessageStore.StoreState MessageStoreState { get; } = messageStoreState;
+        public WorkflowChatHistoryProvider.StoreState ChatHistoryProviderState { get; } = chatHistoryProviderState;
         public InMemoryCheckpointManager? CheckpointManager { get; } = checkpointManager;
     }
 }

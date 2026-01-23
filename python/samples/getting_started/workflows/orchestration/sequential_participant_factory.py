@@ -50,7 +50,7 @@ class Accumulate(Executor):
 
 
 def create_agent() -> ChatAgent:
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="ContentProducer",
     )

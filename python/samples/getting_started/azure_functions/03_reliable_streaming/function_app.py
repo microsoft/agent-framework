@@ -29,7 +29,6 @@ from agent_framework.azure import (
     AzureOpenAIChatClient,
 )
 from azure.identity import AzureCliCredential
-
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
 
@@ -152,7 +151,7 @@ redis_callback = RedisStreamCallback()
 # Create the travel planner agent
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:
@@ -292,24 +291,21 @@ def _format_chunk(chunk: StreamChunk, use_sse_format: bool) -> str:
     """Format a text chunk."""
     if use_sse_format:
         return _format_sse_event("message", chunk.text, chunk.entry_id)
-    else:
-        return chunk.text
+    return chunk.text
 
 
 def _format_end_of_stream(entry_id: str, use_sse_format: bool) -> str:
     """Format end-of-stream marker."""
     if use_sse_format:
         return _format_sse_event("done", "[DONE]", entry_id)
-    else:
-        return "\n"
+    return "\n"
 
 
 def _format_error(error: str, use_sse_format: bool) -> str:
     """Format error message."""
     if use_sse_format:
         return _format_sse_event("error", error, None)
-    else:
-        return f"\n[Error: {error}]\n"
+    return f"\n[Error: {error}]\n"
 
 
 def _format_sse_event(event_type: str, data: str, event_id: str | None = None) -> str:

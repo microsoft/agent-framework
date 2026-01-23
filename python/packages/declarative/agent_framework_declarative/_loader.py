@@ -2,19 +2,18 @@
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 import yaml
 from agent_framework import (
     AIFunction,
     ChatAgent,
     ChatClientProtocol,
+    Content,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedFileSearchTool,
     HostedMCPSpecificApproval,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
     ToolProtocol,
 )
@@ -88,6 +87,11 @@ PROVIDER_TYPE_OBJECT_MAPPING: dict[str, ProviderTypeMapping] = {
         "package": "agent_framework.azure",
         "name": "AzureAIClient",
         "model_id_field": "model_deployment_name",
+    },
+    "AzureAI.ProjectProvider": {
+        "package": "agent_framework.azure",
+        "name": "AzureAIProjectAgentProvider",
+        "model_id_field": "model",
     },
     "Anthropic.Chat": {
         "package": "agent_framework.anthropic",
@@ -448,6 +452,175 @@ class AgentFactory:
             **chat_options,
         )
 
+    async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> ChatAgent:
+        """Async version: Create a ChatAgent from a YAML file path.
+
+        Use this method when the provider requires async initialization, such as
+        AzureAI.ProjectProvider which creates agents on the Azure AI Agent Service.
+
+        Args:
+            yaml_path: Path to the YAML file representation of a PromptAgent.
+
+        Returns:
+            The ``ChatAgent`` instance created from the YAML file.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                factory = AgentFactory(
+                    client_kwargs={"credential": credential},
+                    default_provider="AzureAI.ProjectProvider",
+                )
+                agent = await factory.create_agent_from_yaml_path_async("agent.yaml")
+        """
+        if not isinstance(yaml_path, Path):
+            yaml_path = Path(yaml_path)
+        if not yaml_path.exists():
+            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
+        yaml_str = yaml_path.read_text()
+        return await self.create_agent_from_yaml_async(yaml_str)
+
+    async def create_agent_from_yaml_async(self, yaml_str: str) -> ChatAgent:
+        """Async version: Create a ChatAgent from a YAML string.
+
+        Use this method when the provider requires async initialization, such as
+        AzureAI.ProjectProvider which creates agents on the Azure AI Agent Service.
+
+        Args:
+            yaml_str: YAML string representation of a PromptAgent.
+
+        Returns:
+            The ``ChatAgent`` instance created from the YAML string.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                yaml_content = '''
+                kind: Prompt
+                name: MyAgent
+                instructions: You are a helpful assistant.
+                model:
+                    id: gpt-4o
+                    provider: AzureAI.ProjectProvider
+                '''
+
+                factory = AgentFactory(client_kwargs={"credential": credential})
+                agent = await factory.create_agent_from_yaml_async(yaml_content)
+        """
+        return await self.create_agent_from_dict_async(yaml.safe_load(yaml_str))
+
+    async def create_agent_from_dict_async(self, agent_def: dict[str, Any]) -> ChatAgent:
+        """Async version: Create a ChatAgent from a dictionary definition.
+
+        Use this method when the provider requires async initialization, such as
+        AzureAI.ProjectProvider which creates agents on the Azure AI Agent Service.
+
+        Args:
+            agent_def: Dictionary representation of a PromptAgent.
+
+        Returns:
+            The ``ChatAgent`` instance created from the dictionary.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                agent_def = {
+                    "kind": "Prompt",
+                    "name": "MyAgent",
+                    "instructions": "You are a helpful assistant.",
+                    "model": {
+                        "id": "gpt-4o",
+                        "provider": "AzureAI.ProjectProvider",
+                    },
+                }
+
+                factory = AgentFactory(client_kwargs={"credential": credential})
+                agent = await factory.create_agent_from_dict_async(agent_def)
+        """
+        # Set safe_mode context before parsing YAML to control PowerFx environment variable access
+        _safe_mode_context.set(self.safe_mode)
+        prompt_agent = agent_schema_dispatch(agent_def)
+        if not isinstance(prompt_agent, PromptAgent):
+            raise DeclarativeLoaderError("Only definitions for a PromptAgent are supported for agent creation.")
+
+        # Check if we're using a provider-based approach (like AzureAIProjectAgentProvider)
+        mapping = self._retrieve_provider_configuration(prompt_agent.model) if prompt_agent.model else None
+        if mapping and mapping["name"] == "AzureAIProjectAgentProvider":
+            return await self._create_agent_with_provider(prompt_agent, mapping)
+
+        # Fall back to standard ChatClient approach
+        client = self._get_client(prompt_agent)
+        chat_options = self._parse_chat_options(prompt_agent.model)
+        if tools := self._parse_tools(prompt_agent.tools):
+            chat_options["tools"] = tools
+        if output_schema := prompt_agent.outputSchema:
+            chat_options["response_format"] = _create_model_from_json_schema("agent", output_schema.to_json_schema())
+        return ChatAgent(
+            chat_client=client,
+            name=prompt_agent.name,
+            description=prompt_agent.description,
+            instructions=prompt_agent.instructions,
+            **chat_options,
+        )
+
+    async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> ChatAgent:
+        """Create a ChatAgent using AzureAIProjectAgentProvider.
+
+        This method handles the special case where we use a provider that creates
+        agents on a remote service (like Azure AI Agent Service) and returns
+        ChatAgent instances directly.
+        """
+        # Import the provider class
+        module_name = mapping["package"]
+        class_name = mapping["name"]
+        module = __import__(module_name, fromlist=[class_name])
+        provider_class = getattr(module, class_name)
+
+        # Build provider kwargs from client_kwargs and connection info
+        provider_kwargs: dict[str, Any] = {}
+        provider_kwargs.update(self.client_kwargs)
+
+        # Handle connection settings for the model
+        if prompt_agent.model and prompt_agent.model.connection:
+            match prompt_agent.model.connection:
+                case RemoteConnection() | AnonymousConnection():
+                    if prompt_agent.model.connection.endpoint:
+                        provider_kwargs["project_endpoint"] = prompt_agent.model.connection.endpoint
+                case ApiKeyConnection():
+                    if prompt_agent.model.connection.endpoint:
+                        provider_kwargs["project_endpoint"] = prompt_agent.model.connection.endpoint
+
+        # Create the provider and use it to create the agent
+        provider = provider_class(**provider_kwargs)
+
+        # Parse tools
+        tools = self._parse_tools(prompt_agent.tools) if prompt_agent.tools else None
+
+        # Parse response format
+        response_format = None
+        if prompt_agent.outputSchema:
+            response_format = _create_model_from_json_schema("agent", prompt_agent.outputSchema.to_json_schema())
+
+        # Create the agent using the provider
+        # The provider's create_agent returns a ChatAgent directly
+        return cast(
+            ChatAgent,
+            await provider.create_agent(
+                name=prompt_agent.name,
+                model=prompt_agent.model.id if prompt_agent.model else None,
+                instructions=prompt_agent.instructions,
+                description=prompt_agent.description,
+                tools=tools,
+                response_format=response_format,
+            ),
+        )
+
     def _get_client(self, prompt_agent: PromptAgent) -> ChatClientProtocol:
         """Create the ChatClientProtocol instance based on the PromptAgent model."""
         if not prompt_agent.model:
@@ -565,14 +738,14 @@ class AgentFactory:
                 if tool_resource.filters:
                     add_props["filters"] = tool_resource.filters
                 return HostedFileSearchTool(
-                    inputs=[HostedVectorStoreContent(id) for id in tool_resource.vectorStoreIds or []],
+                    inputs=[Content.from_hosted_vector_store(id) for id in tool_resource.vectorStoreIds or []],
                     description=tool_resource.description,
                     max_results=tool_resource.maximumResultCount,
                     additional_properties=add_props,
                 )
             case CodeInterpreterTool():
                 return HostedCodeInterpreterTool(
-                    inputs=[HostedFileContent(file_id=file) for file in tool_resource.fileIds or []],
+                    inputs=[Content.from_hosted_file(file_id=file) for file in tool_resource.fileIds or []],
                     description=tool_resource.description,
                 )
             case McpTool():
@@ -594,12 +767,46 @@ class AgentFactory:
                             )
                         if not approval_mode:
                             approval_mode = None
+
+                # Handle connection settings
+                headers: dict[str, str] | None = None
+                additional_properties: dict[str, Any] | None = None
+
+                if tool_resource.connection is not None:
+                    match tool_resource.connection:
+                        case ApiKeyConnection():
+                            if tool_resource.connection.apiKey:
+                                headers = {"Authorization": f"Bearer {tool_resource.connection.apiKey}"}
+                        case RemoteConnection():
+                            additional_properties = {
+                                "connection": {
+                                    "kind": tool_resource.connection.kind,
+                                    "name": tool_resource.connection.name,
+                                    "authenticationMode": tool_resource.connection.authenticationMode,
+                                    "endpoint": tool_resource.connection.endpoint,
+                                }
+                            }
+                        case ReferenceConnection():
+                            additional_properties = {
+                                "connection": {
+                                    "kind": tool_resource.connection.kind,
+                                    "name": tool_resource.connection.name,
+                                    "authenticationMode": tool_resource.connection.authenticationMode,
+                                }
+                            }
+                        case AnonymousConnection():
+                            pass
+                        case _:
+                            raise ValueError(f"Unsupported connection kind: {tool_resource.connection.kind}")
+
                 return HostedMCPTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,
                     url=tool_resource.url,  # type: ignore
                     allowed_tools=tool_resource.allowedTools,
                     approval_mode=approval_mode,
+                    headers=headers,
+                    additional_properties=additional_properties,
                 )
             case _:
                 raise ValueError(f"Unsupported tool kind: {tool_resource.kind}")

@@ -1,0 +1,10 @@
+<!-- Targets to skip build when incompatible TFM is passed -->
+<Project>
+  <Target Name="CoreCompile">
+    <Message Importance="high" Text="Skipping $(MSBuildProjectName) - TFM $(TargetFramework) is not supported (requires netstandard2.0)" />
+  </Target>
+
+  <Target Name="CreateManifestResourceNames" />
+
+  <Target Name="CopyFilesToOutputDirectory" />
+</Project>

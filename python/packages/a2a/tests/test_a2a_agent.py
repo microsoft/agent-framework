@@ -24,12 +24,8 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     ChatMessage,
-    DataContent,
-    ErrorContent,
-    HostedFileContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
 )
 from agent_framework.a2a import A2AAgent
 from pytest import fixture, raises
@@ -289,8 +285,8 @@ def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
 
     # Verify conversion
     assert len(contents) == 2
-    assert isinstance(contents[0], TextContent)
-    assert isinstance(contents[1], TextContent)
+    assert contents[0].type == "text"
+    assert contents[1].type == "text"
     assert contents[0].text == "First part"
     assert contents[1].text == "Second part"
 
@@ -299,7 +295,7 @@ def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None
     """Test _prepare_message_for_a2a with ErrorContent."""
 
     # Create ChatMessage with ErrorContent
-    error_content = ErrorContent(message="Test error message")
+    error_content = Content.from_error(message="Test error message")
     message = ChatMessage(role=Role.USER, contents=[error_content])
 
     # Convert to A2A message
@@ -314,7 +310,7 @@ def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with UriContent."""
 
     # Create ChatMessage with UriContent
-    uri_content = UriContent(uri="http://example.com/file.pdf", media_type="application/pdf")
+    uri_content = Content.from_uri(uri="http://example.com/file.pdf", media_type="application/pdf")
     message = ChatMessage(role=Role.USER, contents=[uri_content])
 
     # Convert to A2A message
@@ -330,7 +326,7 @@ def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with DataContent."""
 
     # Create ChatMessage with DataContent (base64 data URI)
-    data_content = DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
+    data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
     message = ChatMessage(role=Role.USER, contents=[data_content])
 
     # Convert to A2A message
@@ -368,7 +364,7 @@ async def test_run_stream_with_message_response(a2a_agent: A2AAgent, mock_a2a_cl
     assert len(updates[0].contents) == 1
 
     content = updates[0].contents[0]
-    assert isinstance(content, TextContent)
+    assert content.type == "text"
     assert content.text == "Streaming response from agent!"
 
     assert updates[0].response_id == "msg-stream-123"
@@ -414,10 +410,10 @@ def test_prepare_message_for_a2a_with_multiple_contents() -> None:
     message = ChatMessage(
         role=Role.USER,
         contents=[
-            TextContent(text="Here's the analysis:"),
-            DataContent(data=b"binary data", media_type="application/octet-stream"),
-            UriContent(uri="https://example.com/image.png", media_type="image/png"),
-            TextContent(text='{"structured": "data"}'),
+            Content.from_text(text="Here's the analysis:"),
+            Content.from_data(data=b"binary data", media_type="application/octet-stream"),
+            Content.from_uri(uri="https://example.com/image.png", media_type="image/png"),
+            Content.from_text(text='{"structured": "data"}'),
         ],
     )
 
@@ -445,7 +441,7 @@ def test_parse_contents_from_a2a_with_data_part() -> None:
 
     assert len(contents) == 1
 
-    assert isinstance(contents[0], TextContent)
+    assert contents[0].type == "text"
     assert contents[0].text == '{"key": "value", "number": 42}'
     assert contents[0].additional_properties == {"source": "test"}
 
@@ -470,7 +466,7 @@ def test_prepare_message_for_a2a_with_hosted_file() -> None:
     # Create message with hosted file content
     message = ChatMessage(
         role=Role.USER,
-        contents=[HostedFileContent(file_id="hosted://storage/document.pdf")],
+        contents=[Content.from_hosted_file(file_id="hosted://storage/document.pdf")],
     )
 
     result = agent._prepare_message_for_a2a(message)  # noqa: SLF001
@@ -507,7 +503,7 @@ def test_parse_contents_from_a2a_with_hosted_file_uri() -> None:
 
     assert len(contents) == 1
 
-    assert isinstance(contents[0], UriContent)
+    assert contents[0].type == "uri"
     assert contents[0].uri == "hosted://storage/document.pdf"
     assert contents[0].media_type == ""  # Converted None to empty string
 

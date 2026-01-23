@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Purview;
 /// <summary>
 /// Service that runs jobs in background threads.
 /// </summary>
-internal sealed class BackgroundJobRunner
+internal sealed class BackgroundJobRunner : IBackgroundJobRunner
 {
     private readonly IChannelHandler _channelHandler;
     private readonly IPurviewClient _purviewClient;
@@ -69,5 +69,13 @@ internal sealed class BackgroundJobRunner
                 _ = await this._purviewClient.SendContentActivitiesAsync(contentActivityJob.Request, CancellationToken.None).ConfigureAwait(false);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Shutdown the job runners.
+    /// </summary>
+    public async Task ShutdownAsync()
+    {
+        await this._channelHandler.StopAndWaitForCompletionAsync().ConfigureAwait(false);
     }
 }
