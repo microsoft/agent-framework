@@ -33,7 +33,6 @@ from ._tools import (
     FunctionInvocationConfiguration,
     FunctionInvokingMixin,
     ToolProtocol,
-    normalize_function_invocation_configuration,
 )
 from ._types import (
     ChatMessage,
@@ -252,24 +251,15 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         self,
         *,
         additional_properties: dict[str, Any] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a BaseChatClient instance.
 
         Keyword Args:
             additional_properties: Additional properties for the client.
-            function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
         self.additional_properties = additional_properties or {}
-
-        stored_config = function_invocation_configuration
-        if stored_config is None:
-            stored_config = getattr(self, "function_invocation_configuration", None)
-        if stored_config is not None:
-            stored_config = normalize_function_invocation_configuration(stored_config)
-        self.function_invocation_configuration = stored_config
         super().__init__(**kwargs)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
@@ -293,7 +283,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
         return result
 
-    async def _validate_options(self, options: dict[str, Any]) -> dict[str, Any]:
+    async def _validate_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
         """Validate and normalize chat options.
 
         Subclasses should call this at the start of _inner_get_response to validate options.

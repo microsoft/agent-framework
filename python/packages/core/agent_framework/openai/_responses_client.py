@@ -7,7 +7,6 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from datetime import datetime, timezone
@@ -214,8 +213,8 @@ class OpenAIBaseResponsesClient(  # type: ignore[misc]
 
     async def _prepare_request(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[AsyncOpenAI, dict[str, Any], dict[str, Any]]:
         """Validate options and prepare the request.
@@ -244,8 +243,8 @@ class OpenAIBaseResponsesClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -508,8 +507,8 @@ class OpenAIBaseResponsesClient(  # type: ignore[misc]
 
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
@@ -605,7 +604,7 @@ class OpenAIBaseResponsesClient(  # type: ignore[misc]
                 raise ValueError("model_id must be a non-empty string")
             options["model"] = self.model_id
 
-    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID, preferring kwargs over options.
 
         This ensures runtime-updated conversation IDs (for example, from tool execution

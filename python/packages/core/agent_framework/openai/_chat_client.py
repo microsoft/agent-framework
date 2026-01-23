@@ -2,7 +2,7 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
@@ -136,8 +136,8 @@ class OpenAIBaseChatClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -235,7 +235,7 @@ class OpenAIBaseChatClient(  # type: ignore[misc]
             ret_dict["web_search_options"] = web_search_options
         return ret_dict
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist
         from .._types import prepend_instructions_to_messages, validate_tool_mode
 
@@ -289,7 +289,7 @@ class OpenAIBaseChatClient(  # type: ignore[misc]
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
 
-    def _parse_response_from_openai(self, response: ChatCompletion, options: dict[str, Any]) -> "ChatResponse":
+    def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> "ChatResponse":
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
