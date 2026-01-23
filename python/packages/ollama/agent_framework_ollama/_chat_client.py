@@ -8,7 +8,6 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from itertools import chain
@@ -337,8 +336,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -383,7 +382,7 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
 
         return _get_response()
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
         # Handle instructions by prepending to messages as system message
         instructions = options.get("instructions")
         if instructions:
@@ -434,7 +433,7 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
 
         return run_options
 
-    def _prepare_messages_for_ollama(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
+    def _prepare_messages_for_ollama(self, messages: Sequence[ChatMessage]) -> list[OllamaMessage]:
         ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))

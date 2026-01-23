@@ -4,7 +4,7 @@ import asyncio
 import json
 import sys
 from collections import deque
-from collections.abc import AsyncIterable, Awaitable, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
@@ -305,8 +305,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -339,8 +339,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         model_id = options.get("model_id") or self.model_id

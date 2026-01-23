@@ -8,7 +8,7 @@ import sys
 from collections.abc import Awaitable, Callable, Generator, Mapping, MutableMapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, overload
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
@@ -1096,9 +1096,9 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
 
-        options = options or {}
+        opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(self.otel_provider_name)
-        model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
         service_url = str(
             service_url_func()
             if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -1115,7 +1115,7 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         if stream:
             from ._types import ResponseStream
 
-            stream_result = super_get_response(messages=messages, stream=True, options=options, **kwargs)
+            stream_result = super_get_response(messages=messages, stream=True, options=opts, **kwargs)
             if isinstance(stream_result, ResponseStream):
                 result_stream = stream_result
             elif isinstance(stream_result, Awaitable):
@@ -1130,7 +1130,7 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=options.get("instructions"),
+                    system_instructions=opts.get("instructions"),
                 )
 
             span_state = {"closed": False}
@@ -1177,11 +1177,11 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=options.get("instructions"),
+                        system_instructions=opts.get("instructions"),
                     )
                 start_time_stamp = perf_counter()
                 try:
-                    response = await super_get_response(messages=messages, stream=False, options=options, **kwargs)
+                    response = await super_get_response(messages=messages, stream=False, options=opts, **kwargs)
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                     raise
