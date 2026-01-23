@@ -83,7 +83,7 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                     }
 
                     // Check if the executor type is an agent-related type
-                    if (WorkflowHelper.IsAgentExecutorType(executorBinding.ExecutorType))
+                    if (executorBinding is AIAgentBinding)
                     {
                         this._logger.LogAddingAgentEntityFunction(executorId, executorBinding.ExecutorType.FullName ?? executorBinding.ExecutorType.Name, workflow.Key);
                         //original.Add(CreateAgentTrigger(functionName));
