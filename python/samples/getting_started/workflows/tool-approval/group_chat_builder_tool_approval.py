@@ -10,7 +10,7 @@ from agent_framework import (
     GroupChatRequestSentEvent,
     GroupChatState,
     RequestInfoEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -44,19 +44,19 @@ Prerequisites:
 
 
 # 1. Define tools for different agents
-@ai_function
+@tool
 def run_tests(test_suite: Annotated[str, "Name of the test suite to run"]) -> str:
     """Run automated tests for the application."""
     return f"Test suite '{test_suite}' completed: 47 passed, 0 failed, 0 skipped"
 
 
-@ai_function
+@tool
 def check_staging_status() -> str:
     """Check the current status of the staging environment."""
     return "Staging environment: Healthy, Version 2.3.0 deployed, All services running"
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def deploy_to_production(
     version: Annotated[str, "The version to deploy"],
     components: Annotated[str, "Comma-separated list of components to deploy"],
@@ -65,7 +65,7 @@ def deploy_to_production(
     return f"Production deployment complete: Version {version}, Components: {components}"
 
 
-@ai_function
+@tool
 def create_rollback_plan(version: Annotated[str, "The version being deployed"]) -> str:
     """Create a rollback plan for the deployment."""
     return (

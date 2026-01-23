@@ -7,7 +7,7 @@ from agent_framework.openai import OpenAIResponsesClient
 
 """
 This sample demonstrates how to configure function invocation settings
-for an client and use a simple ai_function as a tool in an agent.
+for an client and use a simple tool as a tool in an agent.
 
 This behavior is the same for all chat client types.
 """

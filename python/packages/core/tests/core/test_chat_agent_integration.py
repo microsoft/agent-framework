@@ -16,7 +16,7 @@ from agent_framework import (
     HostedImageGenerationTool,
     HostedMCPTool,
     MCPStreamableHTTPTool,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
 
@@ -29,7 +29,7 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
-@ai_function
+@tool
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
@@ -230,7 +230,7 @@ async def test_openai_responses_client_run_level_tool_isolation():
     # Counter to track how many times the weather tool is called
     call_count = 0
 
-    @ai_function
+    @tool
     async def get_weather_with_counter(
         location: Annotated[str, "The location as a city name"],
     ) -> str:

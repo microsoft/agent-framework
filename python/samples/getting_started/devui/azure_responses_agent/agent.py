@@ -21,7 +21,7 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def analyze_content(
     return f"Analyzing content for: {query}"
 
 
-@ai_function
+@tool
 def summarize_document(
     length: Annotated[str, "Desired summary length: 'brief', 'medium', or 'detailed'"] = "medium",
 ) -> str:
@@ -58,7 +58,7 @@ def summarize_document(
     return f"Generating {length} summary of the document..."
 
 
-@ai_function
+@tool
 def extract_key_points(
     max_points: Annotated[int, "Maximum number of key points to extract"] = 5,
 ) -> str:

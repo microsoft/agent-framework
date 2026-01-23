@@ -13,7 +13,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Role,
-    ai_function,
+    tool,
 )
 from pytest import MonkeyPatch
 
@@ -231,9 +231,9 @@ class TestAGUIChatClient:
         When server requests a client function, @use_function_invocation decorator
         intercepts and executes it locally. This matches .NET AG-UI implementation.
         """
-        from agent_framework import ai_function
+        from agent_framework import tool
 
-        @ai_function
+        @tool
         def test_tool(param: str) -> str:
             """Test tool."""
             return "result"
@@ -299,7 +299,7 @@ class TestAGUIChatClient:
     async def test_server_tool_calls_not_executed_locally(self, monkeypatch: MonkeyPatch) -> None:
         """Server tools should not trigger local function invocation even when client tools exist."""
 
-        @ai_function
+        @tool
         def client_tool() -> str:
             """Client tool stub."""
             return "client"

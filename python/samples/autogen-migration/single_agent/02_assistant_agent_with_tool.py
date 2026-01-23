@@ -46,12 +46,12 @@ async def run_autogen() -> None:
 
 
 async def run_agent_framework() -> None:
-    """Agent Framework agent with @ai_function decorator."""
-    from agent_framework import ai_function
+    """Agent Framework agent with @tool decorator."""
+    from agent_framework import tool
     from agent_framework.openai import OpenAIChatClient
 
-    # Define tool with @ai_function decorator (automatic schema inference)
-    @ai_function
+    # Define tool with @tool decorator (automatic schema inference)
+    @tool
     def get_weather(location: str) -> str:
         """Get the weather for a location.
 

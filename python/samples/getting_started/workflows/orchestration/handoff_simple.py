@@ -16,7 +16,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -38,19 +38,19 @@ Key Concepts:
 """
 
 
-@ai_function
+@tool
 def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
     """Simulated function to process a refund for a given order number."""
     return f"Refund processed successfully for order {order_number}."
 
 
-@ai_function
+@tool
 def check_order_status(order_number: Annotated[str, "Order number to check status for"]) -> str:
     """Simulated function to check the status of a given order number."""
     return f"Order {order_number} is currently being processed and will ship in 2 business days."
 
 
-@ai_function
+@tool
 def process_return(order_number: Annotated[str, "Order number to process return for"]) -> str:
     """Simulated function to process a return for a given order number."""
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."

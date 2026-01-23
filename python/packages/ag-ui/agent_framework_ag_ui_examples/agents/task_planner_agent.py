@@ -4,11 +4,11 @@
 
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def create_calendar_event(title: str, date: str, time: str) -> str:
     """Create a calendar event.
 
@@ -23,7 +23,7 @@ def create_calendar_event(title: str, date: str, time: str) -> str:
     return f"Calendar event '{title}' created for {date} at {time}"
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def send_email(to: str, subject: str, body: str) -> str:
     """Send an email.
 
@@ -38,7 +38,7 @@ def send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to} with subject '{subject}'"
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def book_meeting_room(room_name: str, date: str, start_time: str, end_time: str) -> str:
     """Book a meeting room.
 

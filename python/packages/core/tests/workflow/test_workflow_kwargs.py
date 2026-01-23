@@ -20,7 +20,7 @@ from agent_framework import (
     SequentialBuilder,
     WorkflowRunState,
     WorkflowStatusEvent,
-    ai_function,
+    tool,
 )
 from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
 
@@ -28,7 +28,7 @@ from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
 _received_kwargs: list[dict[str, Any]] = []
 
 
-@ai_function
+@tool
 def tool_with_kwargs(
     action: Annotated[str, "The action to perform"],
     **kwargs: Any,

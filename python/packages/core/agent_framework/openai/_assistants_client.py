@@ -36,7 +36,7 @@ from .._memory import ContextProvider
 from .._middleware import Middleware, use_chat_middleware
 from .._threads import ChatMessageStoreProtocol
 from .._tools import (
-    AIFunction,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     ToolProtocol,
@@ -626,7 +626,7 @@ class OpenAIAssistantsClient(
         tool_definitions: list[MutableMapping[str, Any]] = []
         if tool_mode["mode"] != "none" and tools is not None:
             for tool in tools:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                 elif isinstance(tool, HostedCodeInterpreterTool):
                     tool_definitions.append({"type": "code_interpreter"})

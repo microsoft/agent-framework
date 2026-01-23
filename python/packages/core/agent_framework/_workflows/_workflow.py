@@ -456,7 +456,7 @@ class Workflow(DictConvertible):
                                - Without checkpoint_id: Enables checkpointing for this run, overriding
                                  build-time configuration
             **kwargs: Additional keyword arguments to pass through to agent invocations.
-                     These are stored in SharedState and accessible in @ai_function tools
+                     These are stored in SharedState and accessible in @tool functions
                      via the **kwargs parameter.
 
         Yields:
@@ -476,7 +476,7 @@ class Workflow(DictConvertible):
                 async for event in workflow.run_stream("start message"):
                     process(event)
 
-            With custom context for ai_functions:
+            With custom context for tools:
 
             .. code-block:: python
 
@@ -590,7 +590,7 @@ class Workflow(DictConvertible):
                                  build-time configuration
             include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
             **kwargs: Additional keyword arguments to pass through to agent invocations.
-                     These are stored in SharedState and accessible in @ai_function tools
+                     These are stored in SharedState and accessible in @tool functions
                      via the **kwargs parameter.
 
         Returns:
@@ -610,7 +610,7 @@ class Workflow(DictConvertible):
                 result = await workflow.run("start message")
                 outputs = result.get_outputs()
 
-            With custom context for ai_functions:
+            With custom context for tools:
 
             .. code-block:: python
 

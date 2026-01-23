@@ -5,7 +5,7 @@
 from enum import Enum
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, tool
 from pydantic import BaseModel, Field
 
 
@@ -23,7 +23,7 @@ class TaskStep(BaseModel):
     status: StepStatus = Field(default=StepStatus.ENABLED, description="Whether the step is enabled or disabled")
 
 
-@ai_function(
+@tool(
     name="generate_task_steps",
     description="Generate execution steps for a task",
     approval_mode="always_require",

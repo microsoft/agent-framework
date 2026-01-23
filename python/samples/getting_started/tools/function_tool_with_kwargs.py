@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated, Any
 
-from agent_framework import ai_function
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -20,7 +20,7 @@ or provide.
 
 
 # Define the function tool with **kwargs to accept injected arguments
-@ai_function
+@tool
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
     **kwargs: Any,

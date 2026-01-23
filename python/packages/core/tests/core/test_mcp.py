@@ -1620,7 +1620,7 @@ def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
 async def test_mcp_tool_deduplication():
     """Test that MCP tools are not duplicated in MCPTool"""
     from agent_framework._mcp import MCPTool
-    from agent_framework._tools import AIFunction
+    from agent_framework._tools import FunctionTool
 
     # Create MCPStreamableHTTPTool instance
     tool = MCPTool(name="test_mcp_tool")
@@ -1629,12 +1629,12 @@ async def test_mcp_tool_deduplication():
     tool._functions = []
 
     # Add initial functions
-    func1 = AIFunction(
+    func1 = FunctionTool(
         func=lambda x: f"Result: {x}",
         name="analyze_content",
         description="Analyzes content",
     )
-    func2 = AIFunction(
+    func2 = FunctionTool(
         func=lambda x: f"Extract: {x}",
         name="extract_info",
         description="Extracts information",
@@ -1662,7 +1662,7 @@ async def test_mcp_tool_deduplication():
         if tool_name in existing_names:
             continue  # Skip duplicates
 
-        new_func = AIFunction(func=lambda x: f"Process: {x}", name=tool_name, description=description)
+        new_func = FunctionTool(func=lambda x: f"Process: {x}", name=tool_name, description=description)
         tool._functions.append(new_func)
         existing_names.add(tool_name)
         added_count += 1

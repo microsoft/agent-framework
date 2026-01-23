@@ -5,7 +5,7 @@
 import sys
 from typing import Any, TypedDict
 
-from agent_framework import AIFunction, ChatAgent, ChatClientProtocol, ChatOptions
+from agent_framework import ChatAgent, ChatClientProtocol, ChatOptions, FunctionTool
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 if sys.version_info >= (3, 13):
@@ -14,7 +14,7 @@ else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
-generate_haiku = AIFunction[Any, str](
+generate_haiku = FunctionTool[Any, str](
     name="generate_haiku",
     description="""Generate a haiku with image and gradient background (FRONTEND_RENDER).
 
@@ -62,7 +62,7 @@ generate_haiku = AIFunction[Any, str](
     },
 )
 
-create_chart = AIFunction[Any, str](
+create_chart = FunctionTool[Any, str](
     name="create_chart",
     description="""Create an interactive chart (FRONTEND_RENDER).
 
@@ -90,7 +90,7 @@ create_chart = AIFunction[Any, str](
     },
 )
 
-display_timeline = AIFunction[Any, str](
+display_timeline = FunctionTool[Any, str](
     name="display_timeline",
     description="""Display an interactive timeline (FRONTEND_RENDER).
 
@@ -118,7 +118,7 @@ display_timeline = AIFunction[Any, str](
     },
 )
 
-show_comparison_table = AIFunction[Any, str](
+show_comparison_table = FunctionTool[Any, str](
     name="show_comparison_table",
     description="""Show a comparison table (FRONTEND_RENDER).
 

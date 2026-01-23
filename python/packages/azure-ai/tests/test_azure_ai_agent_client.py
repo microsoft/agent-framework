@@ -940,7 +940,7 @@ async def test_azure_ai_chat_client_service_url(mock_agents_client: MagicMock) -
     assert result == "https://test-endpoint.com/"
 
 
-async def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_ai_function_result(
+async def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_tool_result(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with FunctionResultContent."""

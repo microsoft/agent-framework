@@ -10,7 +10,7 @@ from agent_framework import (
     FunctionApprovalResponseContent,
     RequestInfoEvent,
     WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -45,7 +45,7 @@ Prerequisites:
 
 
 # 1. Define market data tools (no approval required)
-@ai_function
+@tool
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""
     # Mock data for demonstration
@@ -54,7 +54,7 @@ def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     return f"{symbol.upper()}: ${price:.2f}"
 
 
-@ai_function
+@tool
 def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get market sentiment analysis for a stock."""
     # Mock sentiment data
@@ -68,7 +68,7 @@ def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> s
 
 
 # 2. Define trading tools (approval required)
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def execute_trade(
     symbol: Annotated[str, "The stock ticker symbol"],
     action: Annotated[str, "Either 'buy' or 'sell'"],
@@ -78,7 +78,7 @@ def execute_trade(
     return f"Trade executed: {action.upper()} {quantity} shares of {symbol.upper()}"
 
 
-@ai_function
+@tool
 def get_portfolio_balance() -> str:
     """Get current portfolio balance and available funds."""
     return "Portfolio: $50,000 invested, $10,000 cash available. Holdings: AAPL, GOOGL, MSFT."

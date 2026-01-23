@@ -15,7 +15,7 @@ from agent_framework import (
     FunctionInvocationContext,
     Role,
     TextContent,
-    ai_function,
+    tool,
     chat_middleware,
     function_middleware,
 )
@@ -123,7 +123,7 @@ def get_forecast(
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def send_email(
     recipient: Annotated[str, "The email address of the recipient."],
     subject: Annotated[str, "The subject of the email."],

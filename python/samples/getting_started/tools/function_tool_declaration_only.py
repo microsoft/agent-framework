@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import AIFunction
+from agent_framework import FunctionTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -8,13 +8,13 @@ Example of how to create a function that only consists of a declaration without 
 This is useful when you want the agent to use tools that are defined elsewhere or when you want
 to test the agent's ability to reason about tool usage without executing them.
 
-The only difference is that you provide an AIFunction without a function.
+The only difference is that you provide a FunctionTool without a function.
 If you need a input_model, you can still provide that as well.
 """
 
 
 async def main():
-    function_declaration = AIFunction[None, None](
+    function_declaration = FunctionTool(
         name="get_current_time",
         description="Get the current time in ISO 8601 format.",
     )

@@ -14,13 +14,13 @@ from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Role,
     ToolProtocol,
     UsageDetails,
@@ -545,13 +545,13 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
+                    case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
                     case _:
                         raise ServiceInvalidRequestError(
                             "Unsupported tool type '"
                             f"{type(tool).__name__}"
-                            "' for Ollama client. Supported tool types: AIFunction."
+                            "' for Ollama client. Supported tool types: FunctionTool."
                         )
             else:
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))

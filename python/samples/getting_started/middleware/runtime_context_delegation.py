@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext, ai_function, function_middleware
+from agent_framework import FunctionInvocationContext, tool, function_middleware
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -81,7 +81,7 @@ class SessionContextContainer:
 runtime_context = SessionContextContainer()
 
 
-@ai_function
+@tool
 async def send_email(
     to: Annotated[str, Field(description="Recipient email address")],
     subject: Annotated[str, Field(description="Email subject line")],
@@ -112,7 +112,7 @@ async def send_email(
     return f"Email sent to {to} from user {user_id} (tenant: {tenant}). Subject: '{subject}'"
 
 
-@ai_function
+@tool
 async def send_notification(
     message: Annotated[str, Field(description="Notification message to send")],
     priority: Annotated[str, Field(description="Priority level: low, medium, high")] = "medium",
@@ -241,7 +241,7 @@ async def pattern_1_single_agent_with_closure() -> None:
 
 
 # Create tools for sub-agents (these will use kwargs propagation)
-@ai_function
+@tool
 async def send_email_v2(
     to: Annotated[str, Field(description="Recipient email")],
     subject: Annotated[str, Field(description="Subject")],
@@ -253,7 +253,7 @@ async def send_email_v2(
     return f"Email sent to {to} with subject '{subject}'"
 
 
-@ai_function
+@tool
 async def send_sms(
     phone: Annotated[str, Field(description="Phone number")],
     message: Annotated[str, Field(description="SMS message")],
@@ -377,7 +377,7 @@ class AuthContextMiddleware:
         await next(context)
 
 
-@ai_function
+@tool
 async def protected_operation(operation: Annotated[str, Field(description="Operation to perform")]) -> str:
     """Protected operation that requires authentication."""
     return f"Executed protected operation: {operation}"

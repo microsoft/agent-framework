@@ -11,13 +11,13 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
-    ai_function,
+    tool,
 )
 
 from agent_framework_bedrock import BedrockChatClient
 
 
-@ai_function
+@tool
 def get_weather(city: str) -> dict[str, str]:
     """Return a mock forecast for the requested city."""
     normalized = city.strip() or "New York"

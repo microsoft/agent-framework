@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -198,7 +198,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
+                    case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
                     case HostedWebSearchTool():
                         web_search_options = (

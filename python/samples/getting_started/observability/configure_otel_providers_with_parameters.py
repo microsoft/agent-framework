@@ -6,7 +6,7 @@ from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import ai_function, setup_logging
+from agent_framework import tool, setup_logging
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
@@ -28,7 +28,7 @@ Use this approach when you need custom exporter configuration beyond what enviro
 """
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
-SCENARIOS = ["chat_client", "chat_client_stream", "ai_function", "all"]
+SCENARIOS = ["chat_client", "chat_client_stream", "tool", "all"]
 
 
 async def get_weather(
@@ -78,7 +78,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
             print(f"Assistant: {response}")
 
 
-async def run_ai_function() -> None:
+async def run_tool() -> None:
     """Run a AI function.
 
     This function runs a AI function and prints the output.
@@ -90,12 +90,12 @@ async def run_ai_function() -> None:
     """
     with get_tracer().start_as_current_span("Scenario: AI Function", kind=trace.SpanKind.CLIENT):
         print("Running scenario: AI Function")
-        func = ai_function(get_weather)
+        func = tool(get_weather)
         weather = await func.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
 
-async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
+async def main(scenario: Literal["chat_client", "chat_client_stream", "tool", "all"] = "all"):
     """Run the selected scenario(s)."""
 
     # Setup the logging with the more complete format
@@ -137,9 +137,9 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
         client = OpenAIResponsesClient()
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
-        if scenario == "ai_function" or scenario == "all":
+        if scenario == "tool" or scenario == "all":
             with suppress(Exception):
-                await run_ai_function()
+                await run_tool()
         if scenario == "chat_client_stream" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=True)
