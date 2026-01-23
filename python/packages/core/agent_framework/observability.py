@@ -1064,22 +1064,22 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[False] = ...,
         options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse]: ...
+    ) -> "Awaitable[ChatResponse]": ...
 
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[True],
         options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
+    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
 
     def get_response(
         self,
