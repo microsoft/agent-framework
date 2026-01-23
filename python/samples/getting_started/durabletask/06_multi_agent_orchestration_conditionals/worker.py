@@ -16,7 +16,7 @@ import logging
 import os
 from typing import Any, cast
 
-from agent_framework import AgentResponse
+from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.task import ActivityContext, OrchestrationContext, Task
@@ -49,25 +49,25 @@ class EmailPayload(BaseModel):
     email_content: str
 
 
-def create_spam_agent():
+def create_spam_agent() -> "ChatAgent":
     """Create the Spam Detection agent using Azure OpenAI.
     
     Returns:
-        AgentProtocol: The configured Spam Detection agent
+        ChatAgent: The configured Spam Detection agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
 
-def create_email_agent():
+def create_email_agent() -> "ChatAgent":
     """Create the Email Assistant agent using Azure OpenAI.
     
     Returns:
-        AgentProtocol: The configured Email Assistant agent
+        ChatAgent: The configured Email Assistant agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )
