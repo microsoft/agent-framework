@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, Awaitable, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -334,8 +334,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
