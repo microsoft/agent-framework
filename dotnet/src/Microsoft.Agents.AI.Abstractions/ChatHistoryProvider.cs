@@ -11,11 +11,12 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an abstract base class for storing and managing chat messages associated with agent conversations.
+/// Provides an abstract base class for fetching chat messages from, and adding chat messages to, chat history for the purposes of agent execution.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="ChatMessageStore"/> defines the contract for persistent storage of chat messages in agent conversations.
+/// <see cref="ChatHistoryProvider"/> defines the contract that an <see cref="AIAgent"/> can use to retrieve messsages from chat history
+/// and provide notification of newly produced messages.
 /// Implementations are responsible for managing message persistence, retrieval, and any necessary optimization
 /// strategies such as truncation, summarization, or archival.
 /// </para>
@@ -28,11 +29,15 @@ namespace Microsoft.Agents.AI;
 /// <item><description>Supporting serialization for thread persistence and migration</description></item>
 /// </list>
 /// </para>
+/// <para>
+/// A <see cref="ChatHistoryProvider"/> is only relevant for scenarios where the underlying AI service that the agent is using
+/// does not use in-service chat history storage.
+/// </para>
 /// </remarks>
-public abstract class ChatMessageStore
+public abstract class ChatHistoryProvider
 {
     /// <summary>
-    /// Called at the start of agent invocation to retrieve all messages from the store that should be provided as context for the next agent invocation.
+    /// Called at the start of agent invocation to provide messages from the chat history as context for the next agent invocation.
     /// </summary>
     /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -56,14 +61,14 @@ public abstract class ChatMessageStore
     /// </list>
     /// </para>
     /// <para>
-    /// Each store instance should be associated with a single conversation thread to ensure proper message isolation
+    /// Each <see cref="ChatHistoryProvider"/> instance should be associated with a single <see cref="AgentThread"/> to ensure proper message isolation
     /// and context management.
     /// </para>
     /// </remarks>
     public abstract ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Called at the end of the agent invocation to add new messages to the store.
+    /// Called at the end of the agent invocation to add new messages to the chat history.
     /// </summary>
     /// <param name="context">Contains the invocation context including request messages, response messages, and any exception that occurred.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -71,7 +76,7 @@ public abstract class ChatMessageStore
     /// <remarks>
     /// <para>
     /// Messages should be added in the order they were generated to maintain proper chronological sequence.
-    /// The store is responsible for preserving message ordering and ensuring that subsequent calls to
+    /// The <see cref="ChatHistoryProvider"/> is responsible for preserving message ordering and ensuring that subsequent calls to
     /// <see cref="InvokingAsync"/> return messages in the correct chronological order.
     /// </para>
     /// <para>
@@ -80,7 +85,6 @@ public abstract class ChatMessageStore
     /// <item><description>Validating message content and metadata</description></item>
     /// <item><description>Applying storage optimizations or compression</description></item>
     /// <item><description>Triggering background maintenance operations</description></item>
-    /// <item><description>Updating indices or search capabilities</description></item>
     /// </list>
     /// </para>
     /// <para>
@@ -97,13 +101,13 @@ public abstract class ChatMessageStore
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
     public abstract JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null);
 
-    /// <summary>Asks the <see cref="ChatMessageStore"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
+    /// <summary>Asks the <see cref="ChatHistoryProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
     /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
     /// <returns>The found object, otherwise <see langword="null"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="serviceType"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="ChatMessageStore"/>,
+    /// The purpose of this method is to allow for the retrieval of strongly-typed services that might be provided by the <see cref="ChatHistoryProvider"/>,
     /// including itself or any services it might be wrapping.
     /// </remarks>
     public virtual object? GetService(Type serviceType, object? serviceKey = null)
@@ -115,12 +119,12 @@ public abstract class ChatMessageStore
             : null;
     }
 
-    /// <summary>Asks the <see cref="ChatMessageStore"/> for an object of type <typeparamref name="TService"/>.</summary>
+    /// <summary>Asks the <see cref="ChatHistoryProvider"/> for an object of type <typeparamref name="TService"/>.</summary>
     /// <typeparam name="TService">The type of the object to be retrieved.</typeparam>
     /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
     /// <returns>The found object, otherwise <see langword="null"/>.</returns>
     /// <remarks>
-    /// The purpose of this method is to allow for the retrieval of strongly typed services that may be provided by the <see cref="ChatMessageStore"/>,
+    /// The purpose of this method is to allow for the retrieval of strongly typed services that may be provided by the <see cref="ChatHistoryProvider"/>,
     /// including itself or any services it might be wrapping.
     /// </remarks>
     public TService? GetService<TService>(object? serviceKey = null)
@@ -130,9 +134,9 @@ public abstract class ChatMessageStore
     /// Contains the context information provided to <see cref="InvokingAsync(InvokingContext, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
-    /// This class provides context about the invocation before the messages are retrieved from the store,
-    /// including the new messages that will be used. Stores can use this information to determine what
-    /// messages should be retrieved for the invocation.
+    /// This class provides context about the invocation including the new messages that will be used.
+    /// A <see cref="ChatHistoryProvider"/> can use this information to determine what messages should be provided
+    /// for the invocation.
     /// </remarks>
     public sealed class InvokingContext
     {
@@ -169,12 +173,12 @@ public abstract class ChatMessageStore
         /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.
         /// </summary>
         /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
-        /// <param name="chatMessageStoreMessages">The messages retrieved from the <see cref="ChatMessageStore"/> for this invocation.</param>
+        /// <param name="chatHistoryProviderMessages">The messages retrieved from the <see cref="ChatHistoryProvider"/> for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage>? chatMessageStoreMessages)
+        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage>? chatHistoryProviderMessages)
         {
             this.RequestMessages = Throw.IfNull(requestMessages);
-            this.ChatMessageStoreMessages = chatMessageStoreMessages;
+            this.ChatHistoryProviderMessages = chatHistoryProviderMessages;
         }
 
         /// <summary>
@@ -182,18 +186,18 @@ public abstract class ChatMessageStore
         /// </summary>
         /// <value>
         /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
-        /// This does not include any <see cref="ChatMessageStore"/> supplied messages.
+        /// This does not include any <see cref="ChatHistoryProvider"/> supplied messages.
         /// </value>
         public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
 
         /// <summary>
-        /// Gets the messages retrieved from the <see cref="ChatMessageStore"/> for this invocation, if any.
+        /// Gets the messages retrieved from the <see cref="ChatHistoryProvider"/> for this invocation, if any.
         /// </summary>
         /// <value>
-        /// A collection of <see cref="ChatMessage"/> instances that were retrieved from the <see cref="ChatMessageStore"/>,
-        /// and were used by the agent as part of the invocation. May be null on the first run.
+        /// A collection of <see cref="ChatMessage"/> instances that were retrieved from the <see cref="ChatHistoryProvider"/>,
+        /// and were used by the agent as part of the invocation.
         /// </value>
-        public IEnumerable<ChatMessage>? ChatMessageStoreMessages { get; set; }
+        public IEnumerable<ChatMessage>? ChatHistoryProviderMessages { get; set; }
 
         /// <summary>
         /// Gets or sets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.

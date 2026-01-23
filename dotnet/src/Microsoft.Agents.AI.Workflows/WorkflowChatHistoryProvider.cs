@@ -10,16 +10,16 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
-internal sealed class WorkflowMessageStore : ChatMessageStore
+internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 {
     private int _bookmark;
     private readonly List<ChatMessage> _chatMessages = [];
 
-    public WorkflowMessageStore()
+    public WorkflowChatHistoryProvider()
     {
     }
 
-    public WorkflowMessageStore(StoreState state)
+    public WorkflowChatHistoryProvider(StoreState state)
     {
         this.ImportStoreState(Throw.IfNull(state));
     }

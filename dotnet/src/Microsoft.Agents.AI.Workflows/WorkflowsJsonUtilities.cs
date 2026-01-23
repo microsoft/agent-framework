@@ -83,7 +83,7 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(EdgeConnection))]
 
     // Workflow-as-Agent
-    [JsonSerializable(typeof(WorkflowMessageStore.StoreState))]
+    [JsonSerializable(typeof(WorkflowChatHistoryProvider.StoreState))]
     [JsonSerializable(typeof(WorkflowThread.ThreadState))]
 
     // Message Types
