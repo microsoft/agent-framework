@@ -8,3 +8,6 @@ dotnet_diagnostic.DURABLE0003.severity = none
 dotnet_diagnostic.DURABLE0004.severity = none
 dotnet_diagnostic.DURABLE0005.severity = none
 dotnet_diagnostic.DURABLE0006.severity = none
+
+# CA1812: Internal classes are instantiated via dependency injection or reflection in samples
+dotnet_diagnostic.CA1812.severity = none

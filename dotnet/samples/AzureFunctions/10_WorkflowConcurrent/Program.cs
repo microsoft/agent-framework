@@ -30,21 +30,19 @@ AIAgent chemist = client.GetChatClient(deploymentName).CreateAIAgent("You are an
 var startExecutor = new ConcurrentStartExecutor();
 var aggregationExecutor = new ResultAggregationExecutor();
 
-// Build the workflow by adding executors and connecting them
 var workflow = new WorkflowBuilder(startExecutor)
-    .WithName("FanOutWorkflow")
+    .WithName("ExpertReview")
     .AddFanOutEdge(startExecutor, [physicist, chemist])
     .AddFanInEdge([physicist, chemist], aggregationExecutor)
     .Build();
 
-// Configure the function app to host AI agents and workflows in a unified way.
-// This will automatically generate HTTP API endpoints for agents and workflows.
-
-FunctionsApplication.CreateBuilder(args)
+var host = FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableOptions(options =>
     {
         // Configure workflows
-        options.Workflows.AddWorkflow(workflow, enableMcpToolTrigger: true);
+        options.Workflows.AddWorkflow(workflow);
     })
-    .Build().Run();
+    .Build();
+
+host.Run();

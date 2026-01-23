@@ -23,9 +23,8 @@ var orderParserExecutor = orderParserFunc.BindAsExecutor("ParseOrderId");
 OrderLookup orderLookupExecutor = new();
 OrderEnrich orderEnricherExeecutor = new();
 PaymentProcessor paymentProcessorExecutor = new();
-OrderCancel orderArchiverExecutor = new();
 
-Workflow processOrder = new WorkflowBuilder(orderParserExecutor)
+Workflow fulfillOrder = new WorkflowBuilder(orderParserExecutor)
     .WithName("FulfillOrder")
     .WithDescription("Looks up an order by ID and run payment processing")
     .AddEdge(orderParserExecutor, orderLookupExecutor)
@@ -33,20 +32,17 @@ Workflow processOrder = new WorkflowBuilder(orderParserExecutor)
     .AddEdge(orderEnricherExeecutor, paymentProcessorExecutor)
     .Build();
 
-Workflow cancelOrder = new WorkflowBuilder(orderParserExecutor)
-    .WithName("CancelOrder")
-    .WithDescription("Cancel an order")
-    .AddEdge(orderParserExecutor, orderLookupExecutor)
-    .AddEdge(orderLookupExecutor, orderArchiverExecutor)
-    .Build();
+//OrderCancel orderArchiverExecutor = new();
+//Workflow cancelOrder = new WorkflowBuilder(orderParserExecutor)
+//    .WithName("CancelOrder")
+//    .WithDescription("Cancel an order")
+//    .AddEdge(orderParserExecutor, orderLookupExecutor)
+//    .AddEdge(orderLookupExecutor, orderArchiverExecutor)
+//    .Build();
 
 var host = FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableOptions(options =>
-    {
-        options.Workflows.AddWorkflow(processOrder);
-        options.Workflows.AddWorkflow(cancelOrder, true);
-    })
+    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(fulfillOrder))
     .Build();
 
 host.Run();

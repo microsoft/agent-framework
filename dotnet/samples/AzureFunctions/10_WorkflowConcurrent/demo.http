@@ -2,7 +2,7 @@
 @authority=http://localhost:7071
 
 ### Start the workflow
-POST {{authority}}/api/workflows/FanOutWorkflow/run
+POST {{authority}}/api/workflows/ExpertReview/run
 Content-Type: text/plain
 
 What is temperature?
