@@ -11,13 +11,13 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingMixin,
+    CoreChatClient,
     ResponseStream,
     tool,
 )
 
 
-class _MockBaseChatClient(BaseChatClient[Any]):
+class _MockBaseChatClient(CoreChatClient[Any]):
     """Mock chat client for testing function invocation."""
 
     def __init__(self) -> None:
@@ -77,7 +77,7 @@ class _MockBaseChatClient(BaseChatClient[Any]):
         return ResponseStream(_stream(), finalizer=_finalize)
 
 
-class _FunctionInvokingMockClient(FunctionInvokingMixin[Any], _MockBaseChatClient):
+class FunctionInvokingMockClient(BaseChatClient[Any], _MockBaseChatClient):
     """Mock client with function invocation support."""
 
     pass
@@ -96,7 +96,7 @@ class TestKwargsPropagationToFunctionTool:
             captured_kwargs.update(kwargs)
             return f"result: x={x}"
 
-        client = _FunctionInvokingMockClient()
+        client = FunctionInvokingMockClient()
         client.run_responses = [
             # First response: function call
             ChatResponse(
@@ -146,7 +146,7 @@ class TestKwargsPropagationToFunctionTool:
             """A simple tool without **kwargs."""
             return f"result: x={x}"
 
-        client = _FunctionInvokingMockClient()
+        client = FunctionInvokingMockClient()
         client.run_responses = [
             ChatResponse(
                 messages=[
@@ -184,7 +184,7 @@ class TestKwargsPropagationToFunctionTool:
             invocation_kwargs.append(dict(kwargs))
             return f"called with {name}"
 
-        client = _FunctionInvokingMockClient()
+        client = FunctionInvokingMockClient()
         client.run_responses = [
             # Two function calls in one response
             ChatResponse(
@@ -234,7 +234,7 @@ class TestKwargsPropagationToFunctionTool:
             captured_kwargs.update(kwargs)
             return f"processed: {value}"
 
-        client = _FunctionInvokingMockClient()
+        client = FunctionInvokingMockClient()
         client.streaming_responses = [
             # First stream: function call
             [

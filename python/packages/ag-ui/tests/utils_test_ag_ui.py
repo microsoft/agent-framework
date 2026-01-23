@@ -40,7 +40,12 @@ class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co])
 
     @override
     def _inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False, **kwargs: Any
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        stream: bool = False,
+        options: dict[str, Any],
+        **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
 
@@ -105,7 +110,7 @@ class StubAgent(AgentProtocol):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
