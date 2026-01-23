@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Threading.Tasks;
@@ -33,7 +33,7 @@ public sealed class GithubCopilotAgentTests
     public void Constructor_WithNullCopilotClient_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent((CopilotClient)null!));
+        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent(null!));
     }
 
     [Fact]
