@@ -32,17 +32,9 @@ Workflow fulfillOrder = new WorkflowBuilder(orderParserExecutor)
     .AddEdge(orderEnricherExeecutor, paymentProcessorExecutor)
     .Build();
 
-//OrderCancel orderArchiverExecutor = new();
-//Workflow cancelOrder = new WorkflowBuilder(orderParserExecutor)
-//    .WithName("CancelOrder")
-//    .WithDescription("Cancel an order")
-//    .AddEdge(orderParserExecutor, orderLookupExecutor)
-//    .AddEdge(orderLookupExecutor, orderArchiverExecutor)
-//    .Build();
-
 var host = FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(fulfillOrder))
+    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(fulfillOrder, enableMcpToolTrigger: true))
     .Build();
 
 host.Run();

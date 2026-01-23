@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use durable state management in Azure Functions workflows.
-// The OrderIdParserExecutor writes a value to shared state, and the FraudValidation reads it back.
+// The OrderIdParser writes a value to shared state, and the FraudValidation reads it back.
 // The state is persisted durably using Durable Entities behind the scenes.
 
 using Microsoft.Agents.AI.Workflows;
@@ -32,7 +32,7 @@ internal sealed class Order
 
 public sealed record Customer(int Id, string Name, bool IsBlocked);
 
-internal sealed class OrderIdParserExecutor() : Executor<string, Order>("OrderIdParserExecutor")
+internal sealed class OrderIdParser() : Executor<string, Order>("OrderIdParser")
 {
     public override async ValueTask<Order> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -65,7 +65,7 @@ internal sealed class OrderEnrich() : Executor<Order, Order>("EnrichOrder")
     }
 }
 
-internal sealed class PaymentProcesserExecutor() : Executor<Order, Order>("PaymentProcesserExecutor")
+internal sealed class PaymentProcesser() : Executor<Order, Order>("PaymentProcesser")
 {
     public override async ValueTask<Order> HandleAsync(Order message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -75,7 +75,7 @@ internal sealed class PaymentProcesserExecutor() : Executor<Order, Order>("Payme
     }
 }
 
-internal sealed class NotifyFraudExecutor() : Executor<Order, string>("NotifyFraud")
+internal sealed class NotifyFraud() : Executor<Order, string>("NotifyFraud")
 {
     public override async ValueTask<string> HandleAsync(Order message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {

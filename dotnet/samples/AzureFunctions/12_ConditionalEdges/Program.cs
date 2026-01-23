@@ -6,10 +6,10 @@ using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
 using SingleAgent;
 
-OrderIdParserExecutor orderParser = new();
+OrderIdParser orderParser = new();
 OrderEnrich orderEnrich = new();
-PaymentProcesserExecutor paymentProcessor = new();
-NotifyFraudExecutor notifyFraud = new();
+PaymentProcesser paymentProcessor = new();
+NotifyFraud notifyFraud = new();
 
 WorkflowBuilder builder = new(orderParser);
 builder
@@ -21,6 +21,6 @@ var workflow = builder.WithName("AuditOrder").Build();
 
 FunctionsApplication.CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(workflow))
+    .ConfigureDurableOptions(options => options.Workflows.AddWorkflow(workflow, enableMcpToolTrigger: true))
     .Build()
     .Run();
