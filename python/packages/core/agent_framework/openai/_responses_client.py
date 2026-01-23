@@ -270,12 +270,8 @@ class OpenAIBaseResponsesClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
 
-            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                response_format = validated_options.get("response_format") if validated_options else None
-                output_format_type = response_format if isinstance(response_format, type) else None
-                return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
-
-            return ResponseStream(_stream(), finalizer=_finalize)
+            response_format = validated_options.get("response_format") if validated_options else None
+            return self._build_response_stream(_stream(), response_format=response_format)
 
         # Non-streaming
         async def _get_response() -> ChatResponse:
