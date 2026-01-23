@@ -514,4 +514,4 @@ class FunctionInvokingChatClient(  # type: ignore[misc,type-var]
     pass
 
 
-BaseChatClient.register(FunctionInvokingChatClient)
+BaseChatClient.register(FunctionInvokingChatClient)  # type: ignore[type-abstract]
