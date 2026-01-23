@@ -12,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     ChatMessage,
@@ -21,6 +21,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
+    HostedWebSearchTool,
     ResponseStream,
     Role,
     ToolProtocol,
@@ -283,7 +284,7 @@ class OllamaSettings(AFBaseSettings):
 logger = get_logger("agent_framework.ollama")
 
 
-class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[TOllamaChatOptions]):
+class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions]):
     """Ollama Chat completion class."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
@@ -330,6 +331,7 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
         self.host = str(self.client._client.base_url)
 
         super().__init__(**kwargs)
+        self.middleware = list(self.chat_middleware)
 
     @override
     def _inner_get_response(
@@ -340,12 +342,11 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        # prepare
-        options_dict = self._prepare_options(messages, options)
-
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                validated_options = await self._validate_options(options)
+                options_dict = self._prepare_options(messages, validated_options)
                 try:
                     response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                         stream=True,
@@ -367,6 +368,8 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
+            validated_options = await self._validate_options(options)
+            options_dict = self._prepare_options(messages, validated_options)
             try:
                 response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                     stream=False,
@@ -426,7 +429,7 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
 
         # tools
         tools = options.get("tools")
-        if tools and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        if tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options
@@ -549,6 +552,8 @@ class OllamaChatClient(FunctionInvokingChatClient[TOllamaChatOptions], Generic[T
                 match tool:
                     case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
+                    case HostedWebSearchTool():
+                        raise ServiceInvalidRequestError("HostedWebSearchTool is not supported by the Ollama client.")
                     case _:
                         raise ServiceInvalidRequestError(
                             "Unsupported tool type '"

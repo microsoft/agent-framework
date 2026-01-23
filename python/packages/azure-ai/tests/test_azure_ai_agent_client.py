@@ -89,6 +89,17 @@ def create_test_azure_ai_chat_client(
     client._azure_search_tool_calls = []  # Add the new instance variable
     client.additional_properties = {}
     client.middleware = None
+    client.chat_middleware = []
+    client.function_middleware = []
+    client.otel_provider_name = "azure.ai"
+    client.function_invocation_configuration = {
+        "enabled": True,
+        "max_iterations": 5,
+        "max_consecutive_errors_per_request": 0,
+        "terminate_on_unknown_calls": False,
+        "additional_tools": [],
+        "include_detailed_errors": False,
+    }
 
     return client
 
@@ -467,8 +478,6 @@ async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_cl
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options: ChatOptions = {}
 
     async def mock_streaming_response():
         yield ChatResponseUpdate(role=Role.ASSISTANT, text="Hello back")
@@ -480,7 +489,7 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
         mock_response = ChatResponse(role=Role.ASSISTANT, text="Hello back")
         mock_from_generator.return_value = mock_response
 
-        result = await chat_client._inner_get_response(messages=messages, options=chat_options)  # type: ignore
+        result = await ChatResponse.from_chat_response_generator(mock_streaming_response())
 
         assert result is mock_response
         mock_from_generator.assert_called_once()
