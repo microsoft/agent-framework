@@ -207,6 +207,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
+        // When tools are provided, ChatOptions is created but instructions remain null
+        Assert.Null(agent.Instructions);
     }
 
     /// <summary>
@@ -227,6 +229,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
+        // MaxTokens is applied at the chat client level, agent is created successfully
+        Assert.NotNull(agent.ChatClient);
     }
 
     /// <summary>
@@ -249,6 +253,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
+        Assert.Equal("Test instructions", agent.Instructions);
     }
 
     /// <summary>
@@ -270,6 +275,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Test Agent", agent.Name);
+        // With empty tools and no instructions, agent instructions remain null
+        Assert.Null(agent.Instructions);
     }
 
     /// <summary>
