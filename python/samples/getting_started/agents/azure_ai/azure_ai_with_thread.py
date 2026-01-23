@@ -5,6 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.openai import OpenAIResponsesOptions
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -49,7 +50,9 @@ async def example_with_automatic_thread_creation() -> None:
         print(f"\nUser: {query2}")
         result2 = await agent.run(query2)
         print(f"Agent: {result2.text}")
-        print("Note: Each call creates a separate thread, so the agent doesn't remember previous context.\n")
+        print(
+            "Note: Each call creates a separate thread, so the agent doesn't remember previous context.\n"
+        )
 
 
 async def example_with_thread_persistence_in_memory() -> None:
@@ -75,21 +78,29 @@ async def example_with_thread_persistence_in_memory() -> None:
         # First conversation
         query1 = "What's the weather like in Tokyo?"
         print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread, store=False)
+        result1 = await agent.run(
+            query1, thread=thread, options=OpenAIResponsesOptions(store=False)
+        )
         print(f"Agent: {result1.text}")
 
         # Second conversation using the same thread - maintains context
         query2 = "How about London?"
         print(f"\nUser: {query2}")
-        result2 = await agent.run(query2, thread=thread, store=False)
+        result2 = await agent.run(
+            query2, thread=thread, options=OpenAIResponsesOptions(store=False)
+        )
         print(f"Agent: {result2.text}")
 
         # Third conversation - agent should remember both previous cities
         query3 = "Which of the cities I asked about has better weather?"
         print(f"\nUser: {query3}")
-        result3 = await agent.run(query3, thread=thread, store=False)
+        result3 = await agent.run(
+            query3, thread=thread, options=OpenAIResponsesOptions(store=False)
+        )
         print(f"Agent: {result3.text}")
-        print("Note: The agent remembers context from previous messages in the same thread.\n")
+        print(
+            "Note: The agent remembers context from previous messages in the same thread.\n"
+        )
 
 
 async def example_with_existing_thread_id() -> None:
@@ -125,7 +136,9 @@ async def example_with_existing_thread_id() -> None:
         print(f"Thread ID: {existing_thread_id}")
 
         if existing_thread_id:
-            print("\n--- Continuing with the same thread ID in a new agent instance ---")
+            print(
+                "\n--- Continuing with the same thread ID in a new agent instance ---"
+            )
 
             # Create a new agent instance from the same provider
             agent2 = await provider.create_agent(
@@ -141,15 +154,17 @@ async def example_with_existing_thread_id() -> None:
             print(f"User: {query2}")
             result2 = await agent2.run(query2, thread=thread)
             print(f"Agent: {result2.text}")
-            print("Note: The agent continues the conversation from the previous thread by using thread ID.\n")
+            print(
+                "Note: The agent continues the conversation from the previous thread by using thread ID.\n"
+            )
 
 
 async def main() -> None:
     print("=== Azure AI Agent Thread Management Examples ===\n")
 
-    await example_with_automatic_thread_creation()
+    # await example_with_automatic_thread_creation()
     await example_with_thread_persistence_in_memory()
-    await example_with_existing_thread_id()
+    # await example_with_existing_thread_id()
 
 
 if __name__ == "__main__":
