@@ -34,7 +34,7 @@ async def main() -> None:
 
     async with agent:
         # Complex task that requires multiple permissions
-        query = "List all Python files, then read the first one and create a summary in summary.txt"
+        query = "List the first 3 Python files, then read the first one and create a summary in summary.txt"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")

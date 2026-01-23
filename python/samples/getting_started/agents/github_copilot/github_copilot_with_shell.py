@@ -25,14 +25,14 @@ async def main() -> None:
     )
 
     async with agent:
-        # Example: List files in current directory
-        query = "List all Python files in the current directory"
+        # Example: Run a shell command to display current directory
+        query = "Run 'pwd' and tell me the current directory"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
 
-        # Example: Get system information
-        query = "What is the current working directory?"
+        # Example: Run echo command
+        query = "Run 'echo Hello from shell!' and show me the output"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
