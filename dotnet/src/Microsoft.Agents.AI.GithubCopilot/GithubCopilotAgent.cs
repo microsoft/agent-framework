@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -9,8 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.GithubCopilot;
@@ -25,7 +23,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly string? _name;
     private readonly string? _description;
     private readonly SessionConfig? _sessionConfig;
-    private readonly ILogger _logger;
     private readonly bool _ownsClient;
 
     /// <summary>
@@ -37,15 +34,13 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
     public GithubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
-        string? description = null,
-        ILoggerFactory? loggerFactory = null)
+        string? description = null)
     {
         _ = Throw.IfNull(copilotClient);
 
@@ -55,7 +50,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         this._id = id;
         this._name = name;
         this._description = description;
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<GithubCopilotAgent>();
     }
 
     /// <inheritdoc/>
@@ -121,7 +115,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 switch (evt)
                 {
                     case AssistantMessageEvent assistantMessage:
-                        responseMessages.Add(ConvertToChatMessage(assistantMessage));
+                        responseMessages.Add(this.ConvertToChatMessage(assistantMessage));
                         break;
 
                     case SessionIdleEvent:

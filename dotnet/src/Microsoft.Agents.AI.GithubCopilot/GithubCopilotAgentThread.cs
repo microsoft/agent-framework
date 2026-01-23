@@ -1,8 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Text.Json;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GithubCopilot;
 

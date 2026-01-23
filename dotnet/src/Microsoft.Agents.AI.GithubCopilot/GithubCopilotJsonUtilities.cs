@@ -1,10 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GithubCopilot;
 
