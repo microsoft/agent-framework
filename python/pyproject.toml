@@ -101,6 +101,7 @@ agent-framework-mem0 = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
+agent-framework-shell-local = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -250,6 +251,7 @@ pytest --import-mode=importlib
 --cov=agent_framework_mem0
 --cov=agent_framework_purview
 --cov=agent_framework_redis
+--cov=agent_framework_shell_local
 --cov-config=pyproject.toml
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**

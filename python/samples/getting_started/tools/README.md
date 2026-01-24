@@ -16,6 +16,7 @@ This folder contains examples demonstrating how to use AI functions (tools) with
 | [`ai_function_with_max_exceptions.py`](ai_function_with_max_exceptions.py) | Shows how to limit the number of times a tool can fail with exceptions using `max_invocation_exceptions`. Useful for preventing expensive tools from being called repeatedly when they keep failing. |
 | [`ai_function_with_max_invocations.py`](ai_function_with_max_invocations.py) | Demonstrates limiting the total number of times a tool can be invoked using `max_invocations`. Useful for rate-limiting expensive operations or ensuring tools are only called a specific number of times per conversation. |
 | [`ai_functions_in_class.py`](ai_functions_in_class.py) | Shows how to use `ai_function` decorator with class methods to create stateful tools. Demonstrates how class state can control tool behavior dynamically, allowing you to adjust tool functionality at runtime by modifying class properties. |
+| [`shell_tool_with_approval.py`](shell_tool_with_approval.py) | Demonstrates using `ShellTool` with `LocalShellExecutor` for secure shell command execution. Shows allowlist patterns, path restrictions, and human-in-the-loop approval workflow for shell commands. |
 
 ## Key Concepts
 

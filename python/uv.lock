@@ -45,6 +45,7 @@ members = [
     "agent-framework-ollama",
     "agent-framework-purview",
     "agent-framework-redis",
+    "agent-framework-shell-local",
 ]
 overrides = [
     { name = "grpcio", marker = "python_full_version < '3.14'", specifier = ">=1.62.3,<1.68.0" },
@@ -620,6 +621,17 @@ requires-dist = [
     { name = "redis", specifier = ">=6.4.0" },
     { name = "redisvl", specifier = ">=0.8.2" },
 ]
+
+[[package]]
+name = "agent-framework-shell-local"
+version = "1.0.0b260116"
+source = { editable = "packages/shell-local" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agentlightning"
