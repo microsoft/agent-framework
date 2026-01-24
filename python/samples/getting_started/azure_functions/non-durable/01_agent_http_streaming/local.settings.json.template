@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "PYTHON_ENABLE_INIT_INDEXING": "1",
+    "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com",
+    "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "gpt-4",
+    "AZURE_OPENAI_API_KEY": "<AZURE_OPENAI_API_KEY>"
+  }
+}

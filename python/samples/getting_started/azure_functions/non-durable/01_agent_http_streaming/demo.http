@@ -1,0 +1,116 @@
+### Health Check
+GET http://localhost:7071/api/health
+
+### Stream agent response - Simple weather query
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+{
+    "message": "What's the weather like in Seattle?"
+}
+
+### Stream agent response - Multiple locations
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+{
+    "message": "Tell me the weather in Seattle, Portland, and San Francisco."
+}
+
+### Stream agent response - Weather and time
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+{
+    "message": "What's the weather in Tokyo and what time is it now?"
+}
+
+### Stream agent response - Conversational
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+{
+    "message": "I'm planning a trip to Paris next week. Can you tell me what the weather might be like?"
+}
+
+### Stream agent response - Time only
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+{
+    "message": "What time is it right now?"
+}
+
+### Test error handling - Missing message
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+{
+    "query": "This will fail because field is wrong"
+}
+
+### Test error handling - Invalid JSON
+POST http://localhost:7071/api/agent/stream
+Content-Type: application/json
+
+This is not valid JSON
+
+###
+# cURL Examples (for terminal/command line use)
+###
+
+# Simple weather query
+# curl -X POST http://localhost:7071/api/agent/stream \
+#   -H "Content-Type: application/json" \
+#   -d '{"message": "What is the weather in Seattle?"}'
+
+# With streaming output visible
+# curl -N -X POST http://localhost:7071/api/agent/stream \
+#   -H "Content-Type: application/json" \
+#   -d '{"message": "Tell me about the weather in London"}'
+
+###
+# Python Client Example
+###
+
+# import requests
+# import json
+#
+# response = requests.post(
+#     'http://localhost:7071/api/agent/stream',
+#     json={'message': 'What is the weather in Seattle?'},
+#     stream=True
+# )
+#
+# print("Agent: ", end='', flush=True)
+# for line in response.iter_lines():
+#     if line.startswith(b'data: '):
+#         try:
+#             data = json.loads(line[6:])
+#             if data.get('text'):
+#                 print(data['text'], end='', flush=True)
+#             elif data.get('type') == 'done':
+#                 print('\n[Stream completed]')
+#         except json.JSONDecodeError:
+#             pass
+
+###
+# JavaScript Browser Example
+###
+
+# const eventSource = new EventSource('http://localhost:7071/api/agent/stream');
+#
+# eventSource.onmessage = (event) => {
+#     const data = JSON.parse(event.data);
+#     if (data.text) {
+#         document.body.innerHTML += data.text;
+#     } else if (data.type === 'done') {
+#         console.log('Stream completed');
+#         eventSource.close();
+#     }
+# };
+#
+# eventSource.onerror = (error) => {
+#     console.error('EventSource error:', error);
+#     eventSource.close();
+# };
