@@ -24,9 +24,6 @@ public abstract class Executor : IIdentified
     /// </summary>
     public string Id { get; }
 
-    private static readonly string s_namespace = typeof(Executor).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
-
     // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
 
     /// <summary>
@@ -121,7 +118,8 @@ public abstract class Executor : IIdentified
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
+        WorkflowTelemetryContext telemetryContext = (context as IWorkflowContextWithTelemetry)?.TelemetryContext ?? WorkflowTelemetryContext.Disabled;
+        using var activity = telemetryContext.StartActivity(ActivityNames.ExecutorProcess + " " + this.Id);
         activity?.SetTag(Tags.ExecutorId, this.Id)
             .SetTag(Tags.ExecutorType, this.GetType().FullName)
             .SetTag(Tags.MessageType, messageType.TypeName)

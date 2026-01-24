@@ -66,6 +66,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.OutgoingEvents = outgoingEvents;
     }
 
+    public WorkflowTelemetryContext TelemetryContext => this._workflow.TelemetryContext;
+
     public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
@@ -178,12 +180,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return this.OutgoingEvents.EnqueueAsync(workflowEvent);
     }
 
-    private static readonly string s_namespace = typeof(IWorkflowContext).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
-
     public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default)
     {
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        using Activity? activity = this._workflow.TelemetryContext.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        activity?.SetTag(Tags.MessageSourceId, sourceId);
+        if (targetId is not null) { activity?.SetTag(Tags.MessageTargetId, targetId); }
+
         // Create a carrier for trace context propagation
         var traceContext = activity is null ? null : new Dictionary<string, string>();
         if (traceContext is not null)
@@ -242,8 +244,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
         OutputFilter outputFilter,
-        Dictionary<string, string>? traceContext) : IWorkflowContext
+        Dictionary<string, string>? traceContext) : IWorkflowContextWithTelemetry
     {
+        public WorkflowTelemetryContext TelemetryContext => RunnerContext._workflow.TelemetryContext;
+
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)

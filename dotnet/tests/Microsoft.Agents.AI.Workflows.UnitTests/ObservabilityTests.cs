@@ -67,7 +67,7 @@ public sealed class ObservabilityTests : IDisposable
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
 
-        return builder.Build();
+        return builder.WithOpenTelemetry().Build();
     }
 
     private static Dictionary<string, int> GetExpectedActivityNameCounts() =>
@@ -122,12 +122,12 @@ public sealed class ObservabilityTests : IDisposable
         {
             var activityName = kvp.Key;
             var expectedCount = kvp.Value;
-            var actualCount = capturedActivities.Count(a => a.OperationName == activityName);
+            var actualCount = capturedActivities.Count(a => a.OperationName.StartsWith(activityName, StringComparison.Ordinal));
             actualCount.Should().Be(expectedCount, $"Activity '{activityName}' should occur {expectedCount} times.");
         }
 
         // Verify WorkflowRun activity events include workflow lifecycle events
-        var workflowRunActivity = capturedActivities.First(a => a.OperationName == ActivityNames.WorkflowRun);
+        var workflowRunActivity = capturedActivities.First(a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal));
         var activityEvents = workflowRunActivity.Events.ToList();
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowStarted, "activity should have workflow started event");
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
@@ -182,5 +182,25 @@ public sealed class ObservabilityTests : IDisposable
         var tags = capturedActivities[0].Tags.ToDictionary(t => t.Key, t => t.Value);
         tags.Should().ContainKey(Tags.WorkflowId);
         tags.Should().ContainKey(Tags.WorkflowDefinition);
+    }
+
+    [Fact]
+    public async Task TelemetryDisabledByDefault_CreatesNoActivitiesAsync()
+    {
+        // Arrange
+        // Create a test activity to correlate captured activities
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        // Act - Build workflow WITHOUT calling WithOpenTelemetry()
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        WorkflowBuilder builder = new(uppercase);
+        var workflow = builder.Build(); // No WithOpenTelemetry() call
+        await Task.Delay(100); // Allow time for activities to be captured
+
+        // Assert - No activities should be created
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");
     }
 }
