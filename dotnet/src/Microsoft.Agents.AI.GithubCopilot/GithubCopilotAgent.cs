@@ -163,29 +163,10 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
 
                 // Handle DataContent as attachments
-                List<UserMessageDataAttachmentsItem>? attachments = null;
-                foreach (ChatMessage message in messages)
-                {
-                    foreach (AIContent content in message.Contents)
-                    {
-                        if (content is DataContent dataContent)
-                        {
-                            // Write DataContent to a temp file
-                            string tempFilePath = Path.Combine(Path.GetTempPath(), $"copilot_data_{Guid.NewGuid()}{GetExtensionForMediaType(dataContent.MediaType)}");
-                            await File.WriteAllBytesAsync(tempFilePath, dataContent.Data.ToArray(), cancellationToken).ConfigureAwait(false);
-                            tempFiles.Add(tempFilePath);
-
-                            // Create attachment
-                            attachments ??= [];
-                            attachments.Add(new UserMessageDataAttachmentsItem
-                            {
-                                Type = UserMessageDataAttachmentsItemType.File,
-                                Path = tempFilePath,
-                                DisplayName = Path.GetFileName(tempFilePath)
-                            });
-                        }
-                    }
-                }
+                List<UserMessageDataAttachmentsItem>? attachments = await ProcessDataContentAttachmentsAsync(
+                    messages,
+                    tempFiles,
+                    cancellationToken).ConfigureAwait(false);
 
                 // Send the message with attachments
                 MessageOptions messageOptions = new() { Prompt = prompt };
@@ -208,22 +189,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             finally
             {
                 subscription.Dispose();
-
-                // Clean up temp files
-                foreach (string tempFile in tempFiles)
-                {
-                    try
-                    {
-                        if (File.Exists(tempFile))
-                        {
-                            File.Delete(tempFile);
-                        }
-                    }
-                    catch
-                    {
-                        // Best effort cleanup
-                    }
-                }
+                CleanupTempFiles(tempFiles);
             }
         }
         finally
@@ -316,29 +282,10 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
 
                 // Handle DataContent as attachments
-                List<UserMessageDataAttachmentsItem>? attachments = null;
-                foreach (ChatMessage message in messages)
-                {
-                    foreach (AIContent content in message.Contents)
-                    {
-                        if (content is DataContent dataContent)
-                        {
-                            // Write DataContent to a temp file
-                            string tempFilePath = Path.Combine(Path.GetTempPath(), $"copilot_data_{Guid.NewGuid()}{GetExtensionForMediaType(dataContent.MediaType)}");
-                            await File.WriteAllBytesAsync(tempFilePath, dataContent.Data.ToArray(), cancellationToken).ConfigureAwait(false);
-                            tempFiles.Add(tempFilePath);
-
-                            // Create attachment
-                            attachments ??= [];
-                            attachments.Add(new UserMessageDataAttachmentsItem
-                            {
-                                Type = UserMessageDataAttachmentsItemType.File,
-                                Path = tempFilePath,
-                                DisplayName = Path.GetFileName(tempFilePath)
-                            });
-                        }
-                    }
-                }
+                List<UserMessageDataAttachmentsItem>? attachments = await ProcessDataContentAttachmentsAsync(
+                    messages,
+                    tempFiles,
+                    cancellationToken).ConfigureAwait(false);
 
                 // Send the message with attachments
                 MessageOptions messageOptions = new() { Prompt = prompt };
@@ -358,22 +305,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             finally
             {
                 subscription.Dispose();
-
-                // Clean up temp files
-                foreach (string tempFile in tempFiles)
-                {
-                    try
-                    {
-                        if (File.Exists(tempFile))
-                        {
-                            File.Delete(tempFile);
-                        }
-                    }
-                    catch
-                    {
-                        // Best effort cleanup
-                    }
-                }
+                CleanupTempFiles(tempFiles);
             }
         }
         finally
@@ -458,5 +390,55 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             "APPLICATION/PDF" => ".pdf",
             _ => ".dat"
         };
+    }
+
+    private static async Task<List<UserMessageDataAttachmentsItem>?> ProcessDataContentAttachmentsAsync(
+        IEnumerable<ChatMessage> messages,
+        List<string> tempFiles,
+        CancellationToken cancellationToken)
+    {
+        List<UserMessageDataAttachmentsItem>? attachments = null;
+        foreach (ChatMessage message in messages)
+        {
+            foreach (AIContent content in message.Contents)
+            {
+                if (content is DataContent dataContent)
+                {
+                    // Write DataContent to a temp file
+                    string tempFilePath = Path.Combine(Path.GetTempPath(), $"copilot_data_{Guid.NewGuid()}{GetExtensionForMediaType(dataContent.MediaType)}");
+                    await File.WriteAllBytesAsync(tempFilePath, dataContent.Data.ToArray(), cancellationToken).ConfigureAwait(false);
+                    tempFiles.Add(tempFilePath);
+
+                    // Create attachment
+                    attachments ??= [];
+                    attachments.Add(new UserMessageDataAttachmentsItem
+                    {
+                        Type = UserMessageDataAttachmentsItemType.File,
+                        Path = tempFilePath,
+                        DisplayName = Path.GetFileName(tempFilePath)
+                    });
+                }
+            }
+        }
+
+        return attachments;
+    }
+
+    private static void CleanupTempFiles(List<string> tempFiles)
+    {
+        foreach (string tempFile in tempFiles)
+        {
+            try
+            {
+                if (File.Exists(tempFile))
+                {
+                    File.Delete(tempFile);
+                }
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
+        }
     }
 }
