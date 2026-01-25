@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -314,7 +315,8 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     {
         return new ChatMessage(ChatRole.Assistant, assistantMessage.Data?.Content ?? string.Empty)
         {
-            MessageId = assistantMessage.Data?.MessageId
+            MessageId = assistantMessage.Data?.MessageId,
+            CreatedAt = DateTimeOffset.UtcNow
         };
     }
 
@@ -323,7 +325,8 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         return new AgentResponseUpdate(ChatRole.Assistant, [new TextContent(deltaEvent.Data?.DeltaContent ?? string.Empty)])
         {
             AgentId = this.Id,
-            MessageId = deltaEvent.Data?.MessageId
+            MessageId = deltaEvent.Data?.MessageId,
+            CreatedAt = DateTimeOffset.UtcNow
         };
     }
 
@@ -333,7 +336,8 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             AgentId = this.Id,
             ResponseId = assistantMessage.Data?.MessageId,
-            MessageId = assistantMessage.Data?.MessageId
+            MessageId = assistantMessage.Data?.MessageId,
+            CreatedAt = DateTimeOffset.UtcNow
         };
     }
 }
