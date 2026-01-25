@@ -156,19 +156,15 @@ public class DurableWorkflowRunner
         }
 
         string json = input;
-        if (input.StartsWith('"') && input.EndsWith('"'))
+
+        // Check for double-serialized strings (e.g., "\"actual json\"")
+        // A properly double-serialized string starts with \" and ends with \"
+        if (input.Length > 2 && input[0] == '"' && input[^1] == '"' && input[1] == '\\')
         {
-            try
+            string? innerJson = JsonSerializer.Deserialize<string>(input);
+            if (innerJson is not null)
             {
-                string? innerJson = JsonSerializer.Deserialize<string>(input);
-                if (innerJson is not null)
-                {
-                    json = innerJson;
-                }
-            }
-            catch (JsonException)
-            {
-                // Not double-serialized, use original
+                json = innerJson;
             }
         }
 
@@ -183,7 +179,7 @@ public class DurableWorkflowRunner
         ILogger logger)
     {
         WorkflowExecutionPlan plan = WorkflowHelper.GetExecutionPlan(workflow);
-        Dictionary<string, string> results = [];
+        Dictionary<string, string> results = new(plan.Levels.Sum(l => l.Executors.Count));
 
         foreach (WorkflowExecutionLevel level in plan.Levels)
         {
@@ -204,14 +200,16 @@ public class DurableWorkflowRunner
             }
             else
             {
-                List<Task<(string Id, string Result)>> tasks = [];
-                foreach (WorkflowExecutorInfo executorInfo in eligibleExecutors)
+                Task<(string Id, string Result)>[] tasks = new Task<(string Id, string Result)>[eligibleExecutors.Count];
+                for (int i = 0; i < eligibleExecutors.Count; i++)
                 {
+                    WorkflowExecutorInfo executorInfo = eligibleExecutors[i];
                     string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                    tasks.Add(this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger));
+                    tasks[i] = this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger);
                 }
 
-                foreach ((string id, string result) in await Task.WhenAll(tasks).ConfigureAwait(true))
+                (string Id, string Result)[] completedTasks = await Task.WhenAll(tasks).ConfigureAwait(true);
+                foreach ((string id, string result) in completedTasks)
                 {
                     results[id] = result;
                 }
@@ -234,15 +232,13 @@ public class DurableWorkflowRunner
         WorkflowExecutionPlan plan,
         ILogger logger)
     {
-        List<WorkflowExecutorInfo> eligible = [];
+        List<WorkflowExecutorInfo> eligible = new(executors.Count);
 
         foreach (WorkflowExecutorInfo executorInfo in executors)
         {
-            List<string> predecessors = plan.Predecessors[executorInfo.ExecutorId];
-
-            // Root executor (no predecessors) is always eligible
-            if (predecessors.Count == 0)
+            if (!plan.Predecessors.TryGetValue(executorInfo.ExecutorId, out List<string>? predecessors) || predecessors.Count == 0)
             {
+                // Root executor (no predecessors) is always eligible
                 eligible.Add(executorInfo);
                 continue;
             }
@@ -252,16 +248,9 @@ public class DurableWorkflowRunner
             foreach (string predecessorId in predecessors)
             {
                 // Get the condition for this edge (predecessor -> current executor)
-                if (!plan.EdgeConditions.TryGetValue((predecessorId, executorInfo.ExecutorId), out Func<object?, bool>? condition))
+                if (!plan.EdgeConditions.TryGetValue((predecessorId, executorInfo.ExecutorId), out Func<object?, bool>? condition) || condition is null)
                 {
-                    // No condition registered for this edge, assume it's eligible
-                    isEligible = true;
-                    break;
-                }
-
-                if (condition is null)
-                {
-                    // Edge has no condition, always eligible
+                    // No condition registered for this edge or edge has no condition, always eligible
                     isEligible = true;
                     break;
                 }
@@ -272,7 +261,7 @@ public class DurableWorkflowRunner
                     try
                     {
                         // Get the predecessor's output type for proper deserialization
-                        Type? predecessorOutputType = plan.ExecutorOutputTypes.GetValueOrDefault(predecessorId);
+                        plan.ExecutorOutputTypes.TryGetValue(predecessorId, out Type? predecessorOutputType);
 
                         // Deserialize the predecessor result to the expected type for condition evaluation
                         object? resultObject = DeserializeForCondition(predecessorResult, predecessorOutputType);
@@ -382,9 +371,7 @@ public class DurableWorkflowRunner
         Dictionary<string, string> results,
         WorkflowExecutionPlan plan)
     {
-        List<string> predecessors = plan.Predecessors[executorId];
-
-        if (predecessors.Count == 0)
+        if (!plan.Predecessors.TryGetValue(executorId, out List<string>? predecessors) || predecessors.Count == 0)
         {
             return initialInput;
         }
@@ -394,7 +381,7 @@ public class DurableWorkflowRunner
             return results.TryGetValue(predecessors[0], out string? result) ? result : initialInput;
         }
 
-        List<string> aggregated = [];
+        List<string> aggregated = new(predecessors.Count);
         foreach (string predecessorId in predecessors)
         {
             if (results.TryGetValue(predecessorId, out string? result))
@@ -409,14 +396,15 @@ public class DurableWorkflowRunner
     private static string GetFinalResult(WorkflowExecutionPlan plan, Dictionary<string, string> results)
     {
         WorkflowExecutionLevel lastLevel = plan.Levels[^1];
+        List<WorkflowExecutorInfo> lastExecutors = lastLevel.Executors;
 
-        if (lastLevel.Executors.Count == 1)
+        if (lastExecutors.Count == 1)
         {
-            return results[lastLevel.Executors[0].ExecutorId];
+            return results.TryGetValue(lastExecutors[0].ExecutorId, out string? singleResult) ? singleResult : string.Empty;
         }
 
-        List<string> finalResults = [];
-        foreach (WorkflowExecutorInfo executor in lastLevel.Executors)
+        List<string> finalResults = new(lastExecutors.Count);
+        foreach (WorkflowExecutorInfo executor in lastExecutors)
         {
             if (results.TryGetValue(executor.ExecutorId, out string? result))
             {

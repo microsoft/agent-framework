@@ -105,16 +105,18 @@ public static class WorkflowHelper
         WorkflowExecutionPlan plan = new();
 
         // Build adjacency lists (successors and predecessors)
-        Dictionary<string, List<string>> successors = [];
-        Dictionary<string, List<string>> predecessors = [];
-        Dictionary<string, int> inDegree = [];
+        Dictionary<string, List<string>> successors = new(executors.Count);
+        Dictionary<string, List<string>> predecessors = new(executors.Count);
+        int[] inDegree = new int[executors.Count];
+        Dictionary<string, int> executorIndex = new(executors.Count);
 
         // Initialize all executors and extract their output types
+        int index = 0;
         foreach (KeyValuePair<string, ExecutorBinding> executor in executors)
         {
+            executorIndex[executor.Key] = index++;
             successors[executor.Key] = [];
             predecessors[executor.Key] = [];
-            inDegree[executor.Key] = 0;
 
             // Extract output type from executor type (e.g., Executor<TInput, TOutput> -> TOutput)
             plan.ExecutorOutputTypes[executor.Key] = GetExecutorOutputType(executor.Value.ExecutorType);
@@ -124,16 +126,17 @@ public static class WorkflowHelper
         foreach (KeyValuePair<string, HashSet<EdgeInfo>> edgeGroup in edges)
         {
             string sourceId = edgeGroup.Key;
+            List<string> sourceSuccessors = successors[sourceId];
 
             foreach (EdgeInfo edge in edgeGroup.Value)
             {
                 foreach (string sinkId in edge.Connection.SinkIds)
                 {
-                    if (executors.ContainsKey(sinkId))
+                    if (executorIndex.TryGetValue(sinkId, out int sinkIdx))
                     {
-                        successors[sourceId].Add(sinkId);
+                        sourceSuccessors.Add(sinkId);
                         predecessors[sinkId].Add(sourceId);
-                        inDegree[sinkId]++;
+                        inDegree[sinkIdx]++;
                     }
                 }
             }
@@ -145,74 +148,82 @@ public static class WorkflowHelper
             plan.EdgeConditions[condition.Key] = condition.Value;
         }
 
-        // Store the graph structure in the plan
+        // Store the graph structure in the plan (reuse the built lists directly)
         foreach (string executorId in executors.Keys)
         {
-            plan.Predecessors[executorId] = [.. predecessors[executorId]];
-            plan.Successors[executorId] = [.. successors[executorId]];
+            plan.Predecessors[executorId] = predecessors[executorId];
+            plan.Successors[executorId] = successors[executorId];
         }
 
-        // Build execution levels using modified Kahn's algorithm
-        // Instead of processing one at a time, we process all nodes with in-degree 0 at once (same level)
-        HashSet<string> processed = [];
-        Dictionary<string, int> currentInDegree = new(inDegree);
-        int levelNumber = 0;
-
-        while (processed.Count < executors.Count)
+        // Build execution levels using queue-based Kahn's algorithm
+        // Process all nodes with in-degree 0 at once (same level) for parallel execution
+        Queue<string> currentLevel = new();
+        foreach (KeyValuePair<string, int> kvp in executorIndex)
         {
-            // Find all executors that can be executed at this level (in-degree == 0 and not yet processed)
-            List<string> currentLevelIds = [];
-
-            foreach (KeyValuePair<string, int> kvp in currentInDegree)
+            if (inDegree[kvp.Value] == 0)
             {
-                if (kvp.Value == 0 && !processed.Contains(kvp.Key))
-                {
-                    currentLevelIds.Add(kvp.Key);
-                }
+                currentLevel.Enqueue(kvp.Key);
             }
+        }
 
-            // If no executors found but not all processed, there might be a cycle
-            if (currentLevelIds.Count == 0)
+        int levelNumber = 0;
+        int processedCount = 0;
+
+        while (currentLevel.Count > 0)
+        {
+            List<WorkflowExecutorInfo> levelExecutors = new(currentLevel.Count);
+            Queue<string> nextLevel = new();
+            bool isFanIn = false;
+
+            while (currentLevel.Count > 0)
             {
-                // Add remaining unprocessed executors
-                foreach (string executorId in executors.Keys)
+                string executorId = currentLevel.Dequeue();
+                processedCount++;
+
+                ExecutorBinding executorBinding = executors[executorId];
+                bool isAgentic = IsAgentExecutorType(executorBinding.ExecutorType);
+                levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic));
+
+                // Check Fan-In for this executor
+                if (predecessors[executorId].Count > 1)
                 {
-                    if (!processed.Contains(executorId))
-                    {
-                        currentLevelIds.Add(executorId);
-                    }
+                    isFanIn = true;
                 }
 
-                if (currentLevelIds.Count == 0)
-                {
-                    break;
-                }
-            }
-
-            // Check if this level is a Fan-In point (any executor has multiple predecessors)
-            bool isFanIn = currentLevelIds.Any(id => predecessors[id].Count > 1);
-
-            // Convert to WorkflowExecutorInfo
-            List<WorkflowExecutorInfo> levelExecutors = [];
-            foreach (string executorId in currentLevelIds)
-            {
-                processed.Add(executorId);
-
-                if (executors.TryGetValue(executorId, out ExecutorBinding? executorBinding))
-                {
-                    bool isAgentic = IsAgentExecutorType(executorBinding.ExecutorType);
-                    levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic));
-                }
-
-                // Decrement in-degree of all successors
+                // Decrement in-degree of all successors and enqueue those ready for next level
                 foreach (string successor in successors[executorId])
                 {
-                    currentInDegree[successor]--;
+                    int successorIdx = executorIndex[successor];
+                    if (--inDegree[successorIdx] == 0)
+                    {
+                        nextLevel.Enqueue(successor);
+                    }
                 }
             }
 
             plan.Levels.Add(new WorkflowExecutionLevel(levelNumber, levelExecutors, isFanIn));
             levelNumber++;
+            currentLevel = nextLevel;
+        }
+
+        // Handle cycle detection: if not all executors were processed, there's a cycle
+        if (processedCount < executors.Count)
+        {
+            List<WorkflowExecutorInfo> remainingExecutors = [];
+            foreach (KeyValuePair<string, ExecutorBinding> executor in executors)
+            {
+                if (inDegree[executorIndex[executor.Key]] > 0)
+                {
+                    bool isAgentic = IsAgentExecutorType(executor.Value.ExecutorType);
+                    remainingExecutors.Add(new WorkflowExecutorInfo(executor.Key, isAgentic));
+                }
+            }
+
+            if (remainingExecutors.Count > 0)
+            {
+                bool isFanIn = remainingExecutors.Exists(e => predecessors[e.ExecutorId].Count > 1);
+                plan.Levels.Add(new WorkflowExecutionLevel(levelNumber, remainingExecutors, isFanIn));
+            }
         }
 
         return plan;
