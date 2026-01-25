@@ -117,51 +117,67 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
-        // Get or create session
-        CopilotSession session = await this.GetOrCreateSessionAsync(typedThread, cancellationToken).ConfigureAwait(false);
-
-        // Prepare to collect response
-        List<ChatMessage> responseMessages = [];
-        TaskCompletionSource<bool> completionSource = new();
-
-        // Subscribe to session events
-        IDisposable subscription = session.On(evt =>
+        // Create or resume a session
+        CopilotSession session;
+        if (typedThread.SessionId is not null)
         {
-            switch (evt)
-            {
-                case AssistantMessageEvent assistantMessage:
-                    responseMessages.Add(this.ConvertToChatMessage(assistantMessage));
-                    break;
-
-                case SessionIdleEvent:
-                    completionSource.TrySetResult(true);
-                    break;
-
-                case SessionErrorEvent errorEvent:
-                    completionSource.TrySetException(new InvalidOperationException(
-                        $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}"));
-                    break;
-            }
-        });
+            session = await this._copilotClient.ResumeSessionAsync(typedThread.SessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            session = await this._copilotClient.CreateSessionAsync(this._sessionConfig, cancellationToken).ConfigureAwait(false);
+            typedThread.SessionId = session.SessionId;
+        }
 
         try
         {
-            // Send the message
-            string prompt = string.Join("\n", messages.Select(m => m.Text));
-            await session.SendAsync(new MessageOptions { Prompt = prompt }, cancellationToken).ConfigureAwait(false);
+            // Prepare to collect response
+            List<ChatMessage> responseMessages = [];
+            TaskCompletionSource<bool> completionSource = new();
 
-            // Wait for completion
-            await completionSource.Task.ConfigureAwait(false);
-
-            return new AgentResponse(responseMessages)
+            // Subscribe to session events
+            IDisposable subscription = session.On(evt =>
             {
-                AgentId = this.Id,
-                ResponseId = responseMessages.LastOrDefault()?.MessageId,
-            };
+                switch (evt)
+                {
+                    case AssistantMessageEvent assistantMessage:
+                        responseMessages.Add(this.ConvertToChatMessage(assistantMessage));
+                        break;
+
+                    case SessionIdleEvent:
+                        completionSource.TrySetResult(true);
+                        break;
+
+                    case SessionErrorEvent errorEvent:
+                        completionSource.TrySetException(new InvalidOperationException(
+                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}"));
+                        break;
+                }
+            });
+
+            try
+            {
+                // Send the message
+                string prompt = string.Join("\n", messages.Select(m => m.Text));
+                await session.SendAsync(new MessageOptions { Prompt = prompt }, cancellationToken).ConfigureAwait(false);
+
+                // Wait for completion
+                await completionSource.Task.ConfigureAwait(false);
+
+                return new AgentResponse(responseMessages)
+                {
+                    AgentId = this.Id,
+                    ResponseId = responseMessages.LastOrDefault()?.MessageId,
+                };
+            }
+            finally
+            {
+                subscription.Dispose();
+            }
         }
         finally
         {
-            subscription.Dispose();
+            await session.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -185,33 +201,60 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
-        // Get or create session with streaming enabled
-        CopilotSession session = await this.GetOrCreateSessionAsync(typedThread, cancellationToken, streaming: true).ConfigureAwait(false);
-
-        System.Threading.Channels.Channel<AgentResponseUpdate> channel = System.Threading.Channels.Channel.CreateUnbounded<AgentResponseUpdate>();
-
-        // Subscribe to session events
-        IDisposable subscription = session.On(evt =>
-        {
-            switch (evt)
+        // Create or resume a session with streaming enabled
+        SessionConfig sessionConfig = this._sessionConfig != null
+            ? new SessionConfig
             {
-                case AssistantMessageDeltaEvent deltaEvent:
-                    channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(deltaEvent));
-                    break;
+                Model = this._sessionConfig.Model,
+                Tools = this._sessionConfig.Tools,
+                SystemMessage = this._sessionConfig.SystemMessage,
+                AvailableTools = this._sessionConfig.AvailableTools,
+                ExcludedTools = this._sessionConfig.ExcludedTools,
+                Provider = this._sessionConfig.Provider,
+                Streaming = true
+            }
+            : new SessionConfig { Streaming = true };
 
-                case AssistantMessageEvent assistantMessage:
-                    channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
-                    break;
+        CopilotSession session;
+        if (typedThread.SessionId is not null)
+        {
+            session = await this._copilotClient.ResumeSessionAsync(
+                typedThread.SessionId,
+                new ResumeSessionConfig { Streaming = true },
+                cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            session = await this._copilotClient.CreateSessionAsync(sessionConfig, cancellationToken).ConfigureAwait(false);
+            typedThread.SessionId = session.SessionId;
+        }
 
-                case SessionIdleEvent:
-                    channel.Writer.TryComplete();
-                    break;
+        try
+        {
+            System.Threading.Channels.Channel<AgentResponseUpdate> channel = System.Threading.Channels.Channel.CreateUnbounded<AgentResponseUpdate>();
 
-                    case SessionErrorEvent errorEvent:
-                        Exception exception = new InvalidOperationException(
-                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
-                        channel.Writer.TryComplete(exception);
+            // Subscribe to session events
+            IDisposable subscription = session.On(evt =>
+            {
+                switch (evt)
+                {
+                    case AssistantMessageDeltaEvent deltaEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(deltaEvent));
                         break;
+
+                    case AssistantMessageEvent assistantMessage:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
+                        break;
+
+                    case SessionIdleEvent:
+                        channel.Writer.TryComplete();
+                        break;
+
+                        case SessionErrorEvent errorEvent:
+                            Exception exception = new InvalidOperationException(
+                                $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
+                            channel.Writer.TryComplete(exception);
+                            break;
                 }
             });
 
@@ -231,6 +274,11 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             {
                 subscription.Dispose();
             }
+        }
+        finally
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>
@@ -260,53 +308,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    private async Task<CopilotSession> GetOrCreateSessionAsync(
-        GithubCopilotAgentThread thread,
-        CancellationToken cancellationToken,
-        bool streaming = false)
-    {
-        // If thread already has an active session, reuse it
-        if (thread.Session is not null)
-        {
-            return thread.Session;
-        }
-
-        // Create or resume session
-        CopilotSession session;
-        if (thread.SessionId is not null)
-        {
-            // Resume existing session
-            ResumeSessionConfig resumeConfig = new() { Streaming = streaming };
-            session = await this._copilotClient.ResumeSessionAsync(
-                thread.SessionId,
-                resumeConfig,
-                cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            // Create new session
-            SessionConfig sessionConfig = this._sessionConfig != null
-                ? new SessionConfig
-                {
-                    Model = this._sessionConfig.Model,
-                    Tools = this._sessionConfig.Tools,
-                    SystemMessage = this._sessionConfig.SystemMessage,
-                    AvailableTools = this._sessionConfig.AvailableTools,
-                    ExcludedTools = this._sessionConfig.ExcludedTools,
-                    Provider = this._sessionConfig.Provider,
-                    Streaming = streaming
-                }
-                : new SessionConfig { Streaming = streaming };
-
-            session = await this._copilotClient.CreateSessionAsync(sessionConfig, cancellationToken).ConfigureAwait(false);
-            thread.SessionId = session.SessionId;
-        }
-
-        // Store session in thread
-        thread.Session = session;
-        return session;
     }
 
     private ChatMessage ConvertToChatMessage(AssistantMessageEvent assistantMessage)
