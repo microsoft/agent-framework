@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
 
@@ -82,5 +84,20 @@ public sealed class GithubCopilotAgentTests
         Assert.NotNull(thread);
         var typedThread = Assert.IsType<GithubCopilotAgentThread>(thread);
         Assert.Equal(TestSessionId, typedThread.SessionId);
+    }
+
+    [Fact]
+    public void Constructor_WithTools_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+
+        // Act
+        var agent = new GithubCopilotAgent(copilotClient, tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.NotNull(agent.Id);
     }
 }

@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using GitHub.Copilot.SDK;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
 
@@ -63,6 +65,21 @@ public sealed class CopilotClientExtensionsTests
 
         // Act
         var agent = copilotClient.AsAIAgent(ownsClient: true);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<GithubCopilotAgent>(agent);
+    }
+
+    [Fact]
+    public void AsAIAgent_WithTools_ReturnsAgentWithTools()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+
+        // Act
+        var agent = copilotClient.AsAIAgent(tools);
 
         // Assert
         Assert.NotNull(agent);

@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GithubCopilot;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace GitHub.Copilot.SDK;
@@ -43,5 +45,28 @@ public static class CopilotClientExtensions
         Throw.IfNull(client);
 
         return new GithubCopilotAgent(client, sessionConfig, ownsClient, id, name, description);
+    }
+
+    /// <summary>
+    /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client with tools.
+    /// </summary>
+    /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
+    /// <param name="tools">The tools to make available to the agent.</param>
+    /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
+    /// <param name="id">The unique identifier for the agent.</param>
+    /// <param name="name">The name of the agent.</param>
+    /// <param name="description">The description of the agent.</param>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
+    public static AIAgent AsAIAgent(
+        this CopilotClient client,
+        IList<AITool>? tools,
+        bool ownsClient = false,
+        string? id = null,
+        string? name = null,
+        string? description = null)
+    {
+        Throw.IfNull(client);
+
+        return new GithubCopilotAgent(client, tools, ownsClient, id, name, description);
     }
 }
