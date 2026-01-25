@@ -706,8 +706,8 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessageFromRecordWithImageDataUri_PreservesMimeType()
     {
         // Arrange
-        const string dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA";
-        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent(dataUri)!]);
+        const string DataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA";
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent(DataUri)!]);
         DataValue record = source.ToRecord().ToDataValue();
 
         // Act
@@ -724,8 +724,8 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessageFromRecordWithImageHttpUri_InfersMimeTypeFromExtension()
     {
         // Arrange
-        const string uri = "https://example.com/test.png";
-        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent(uri)!]);
+        const string Uri = "https://example.com/test.png";
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent(Uri)!]);
         DataValue record = source.ToRecord().ToDataValue();
 
         // Act

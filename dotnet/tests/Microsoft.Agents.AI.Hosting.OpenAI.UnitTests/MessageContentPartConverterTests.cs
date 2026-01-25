@@ -89,10 +89,10 @@ public sealed class MessageContentPartConverterTests
     public void ToAIContent_ImageDataUriPng_CreatesDataContent()
     {
         // Arrange
-        const string dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        const string DataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
         ImageContentPart imagePart = new ImageContentPart
         {
-            ImageUrl = new ImageUrl { Url = dataUri }
+            ImageUrl = new ImageUrl { Url = DataUri }
         };
 
         // Act
@@ -102,17 +102,17 @@ public sealed class MessageContentPartConverterTests
         Assert.NotNull(result);
         DataContent dataContent = Assert.IsType<DataContent>(result);
         Assert.Equal("image/png", dataContent.MediaType);
-        Assert.Equal(dataUri, dataContent.Uri);
+        Assert.Equal(DataUri, dataContent.Uri);
     }
 
     [Fact]
     public void ToAIContent_ImageHttpUriPng_CreatesUriContent()
     {
         // Arrange
-        const string uri = "https://example.com/test.png";
+        const string Uri = "https://example.com/test.png";
         ImageContentPart imagePart = new ImageContentPart
         {
-            ImageUrl = new ImageUrl { Url = uri }
+            ImageUrl = new ImageUrl { Url = Uri }
         };
 
         // Act
@@ -122,17 +122,17 @@ public sealed class MessageContentPartConverterTests
         Assert.NotNull(result);
         UriContent uriContent = Assert.IsType<UriContent>(result);
         Assert.Equal("image/png", uriContent.MediaType);
-        Assert.Equal(uri, uriContent.Uri?.ToString());
+        Assert.Equal(Uri, uriContent.Uri?.ToString());
     }
 
     [Fact]
     public void ToAIContent_TextPart_CreatesTextContent()
     {
         // Arrange
-        const string text = "Hello, world!";
+        const string Text = "Hello, world!";
         TextContentPart textPart = new TextContentPart
         {
-            Text = text
+            Text = Text
         };
 
         // Act
@@ -141,7 +141,7 @@ public sealed class MessageContentPartConverterTests
         // Assert
         Assert.NotNull(result);
         TextContent textContent = Assert.IsType<TextContent>(result);
-        Assert.Equal(text, textContent.Text);
+        Assert.Equal(Text, textContent.Text);
     }
 
     [Fact]
@@ -170,12 +170,12 @@ public sealed class MessageContentPartConverterTests
     public void ToAIContent_AudioPart_CorrectMimeType(string format, string expectedMediaType)
     {
         // Arrange
-        const string audioData = "data:audio/wav;base64,UklGRiQAAABXQVZF";
+        const string AudioData = "data:audio/wav;base64,UklGRiQAAABXQVZF";
         AudioContentPart audioPart = new AudioContentPart
         {
             InputAudio = new InputAudio
             {
-                Data = audioData,
+                Data = AudioData,
                 Format = format
             }
         };
@@ -193,10 +193,10 @@ public sealed class MessageContentPartConverterTests
     public void ToAIContent_FilePartWithFileId_CreatesHostedFileContent()
     {
         // Arrange
-        const string fileId = "file-abc123";
+        const string FileId = "file-abc123";
         FileContentPart filePart = new FileContentPart
         {
-            File = new InputFile { FileId = fileId }
+            File = new InputFile { FileId = FileId }
         };
 
         // Act
@@ -205,21 +205,21 @@ public sealed class MessageContentPartConverterTests
         // Assert
         Assert.NotNull(result);
         HostedFileContent hostedFile = Assert.IsType<HostedFileContent>(result);
-        Assert.Equal(fileId, hostedFile.FileId);
+        Assert.Equal(FileId, hostedFile.FileId);
     }
 
     [Fact]
     public void ToAIContent_FilePartWithFileData_CreatesDataContent()
     {
         // Arrange
-        const string fileData = "data:application/pdf;base64,JVBERi0xLjQ=";
-        const string filename = "document.pdf";
+        const string FileData = "data:application/pdf;base64,JVBERi0xLjQ=";
+        const string Filename = "document.pdf";
         FileContentPart filePart = new FileContentPart
         {
             File = new InputFile
             {
-                FileData = fileData,
-                Filename = filename
+                FileData = FileData,
+                Filename = Filename
             }
         };
 
@@ -230,6 +230,6 @@ public sealed class MessageContentPartConverterTests
         Assert.NotNull(result);
         DataContent dataContent = Assert.IsType<DataContent>(result);
         Assert.Equal("application/octet-stream", dataContent.MediaType);
-        Assert.Equal(filename, dataContent.Name);
+        Assert.Equal(Filename, dataContent.Name);
     }
 }

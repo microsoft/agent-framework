@@ -89,10 +89,10 @@ public sealed class ItemContentConverterTests
     public void ToAIContent_DataUriPng_CreatesDataContent()
     {
         // Arrange
-        const string dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        const string DataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
         ItemContentInputImage inputImage = new ItemContentInputImage
         {
-            ImageUrl = dataUri
+            ImageUrl = DataUri
         };
 
         // Act
@@ -102,17 +102,17 @@ public sealed class ItemContentConverterTests
         Assert.NotNull(result);
         DataContent dataContent = Assert.IsType<DataContent>(result);
         Assert.Equal("image/png", dataContent.MediaType);
-        Assert.Equal(dataUri, dataContent.Uri);
+        Assert.Equal(DataUri, dataContent.Uri);
     }
 
     [Fact]
     public void ToAIContent_HttpUriPng_CreatesUriContent()
     {
         // Arrange
-        const string uri = "https://example.com/test.png";
+        const string Uri = "https://example.com/test.png";
         ItemContentInputImage inputImage = new ItemContentInputImage
         {
-            ImageUrl = uri
+            ImageUrl = Uri
         };
 
         // Act
@@ -122,17 +122,17 @@ public sealed class ItemContentConverterTests
         Assert.NotNull(result);
         UriContent uriContent = Assert.IsType<UriContent>(result);
         Assert.Equal("image/png", uriContent.MediaType);
-        Assert.Equal(uri, uriContent.Uri?.ToString());
+        Assert.Equal(Uri, uriContent.Uri?.ToString());
     }
 
     [Fact]
     public void ToAIContent_FileId_CreatesHostedFileContent()
     {
         // Arrange
-        const string fileId = "file-abc123";
+        const string FileId = "file-abc123";
         ItemContentInputImage inputImage = new ItemContentInputImage
         {
-            FileId = fileId
+            FileId = FileId
         };
 
         // Act
@@ -141,7 +141,7 @@ public sealed class ItemContentConverterTests
         // Assert
         Assert.NotNull(result);
         HostedFileContent hostedFile = Assert.IsType<HostedFileContent>(result);
-        Assert.Equal(fileId, hostedFile.FileId);
+        Assert.Equal(FileId, hostedFile.FileId);
     }
 
     [Fact]
@@ -180,10 +180,10 @@ public sealed class ItemContentConverterTests
     public void ToAIContent_PreservesImageDetail()
     {
         // Arrange
-        const string uri = "https://example.com/test.png";
+        const string Uri = "https://example.com/test.png";
         ItemContentInputImage inputImage = new ItemContentInputImage
         {
-            ImageUrl = uri,
+            ImageUrl = Uri,
             Detail = "high"
         };
 
