@@ -181,7 +181,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                             {
                                 Type = UserMessageDataAttachmentsItemType.File,
                                 Path = tempFilePath,
-                                DisplayName = System.IO.Path.GetFileName(tempFilePath)
+                                DisplayName = Path.GetFileName(tempFilePath)
                             });
                         }
                     }
@@ -301,11 +301,11 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryComplete();
                         break;
 
-                        case SessionErrorEvent errorEvent:
-                            Exception exception = new InvalidOperationException(
-                                $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
-                            channel.Writer.TryComplete(exception);
-                            break;
+                    case SessionErrorEvent errorEvent:
+                        Exception exception = new InvalidOperationException(
+                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
+                        channel.Writer.TryComplete(exception);
+                        break;
                 }
             });
 
@@ -334,7 +334,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                             {
                                 Type = UserMessageDataAttachmentsItemType.File,
                                 Path = tempFilePath,
-                                DisplayName = System.IO.Path.GetFileName(tempFilePath)
+                                DisplayName = Path.GetFileName(tempFilePath)
                             });
                         }
                     }

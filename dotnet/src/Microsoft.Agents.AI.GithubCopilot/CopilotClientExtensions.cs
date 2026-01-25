@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GithubCopilot;
 using Microsoft.Extensions.AI;
