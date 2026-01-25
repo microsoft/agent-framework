@@ -205,7 +205,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
         try
         {
-            TaskCompletionSource<bool> completionSource = new();
             System.Threading.Channels.Channel<AgentResponseUpdate> channel = System.Threading.Channels.Channel.CreateUnbounded<AgentResponseUpdate>();
 
             // Subscribe to session events
@@ -222,15 +221,13 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                         break;
 
                     case SessionIdleEvent:
-                        channel.Writer.Complete();
-                        completionSource.TrySetResult(true);
+                        channel.Writer.TryComplete();
                         break;
 
                     case SessionErrorEvent errorEvent:
                         Exception exception = new InvalidOperationException(
                             $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
-                        channel.Writer.Complete(exception);
-                        completionSource.TrySetException(exception);
+                        channel.Writer.TryComplete(exception);
                         break;
                 }
             });

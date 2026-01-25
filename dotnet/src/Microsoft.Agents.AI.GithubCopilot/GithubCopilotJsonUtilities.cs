@@ -21,8 +21,6 @@ internal static partial class GithubCopilotJsonUtilities
     /// Creates and configures the default JSON serialization options.
     /// </summary>
     /// <returns>The configured options.</returns>
-    [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Converter is guarded by IsReflectionEnabledByDefault check.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Converter is guarded by IsReflectionEnabledByDefault check.")]
     private static JsonSerializerOptions CreateDefaultOptions()
     {
         // Copy the configuration from the source generated context.
@@ -35,12 +33,6 @@ internal static partial class GithubCopilotJsonUtilities
         options.TypeInfoResolverChain.Clear();
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
         options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
-
-        // If reflection-based serialization is enabled by default, include string-based enum serialization.
-        if (JsonSerializer.IsReflectionEnabledByDefault)
-        {
-            options.Converters.Add(new JsonStringEnumConverter());
-        }
 
         options.MakeReadOnly();
         return options;
