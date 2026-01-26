@@ -60,15 +60,6 @@ public class Workflow
         return conditions;
     }
 
-    /// <summary>
-    /// Gets all executor bindings in the workflow, keyed by their ID.
-    /// </summary>
-    /// <returns>A dictionary mapping executor IDs to their <see cref="ExecutorBinding"/>.</returns>
-    public Dictionary<string, ExecutorBinding> ReflectExecutors()
-    {
-        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
-    }
-
     internal Dictionary<string, RequestPort> Ports { get; init; } = [];
 
     /// <summary>
@@ -92,6 +83,15 @@ public class Workflow
     public Dictionary<string, ExecutorBinding> ReflectExecutors()
     {
         return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
+    }
+
+    /// <summary>
+    /// Gets the set of executor IDs that are registered as output sources via <see cref="WorkflowBuilder.WithOutputFrom"/>.
+    /// </summary>
+    /// <returns>A copy of the output executor IDs set. Modifications do not affect the workflow.</returns>
+    public HashSet<string> ReflectOutputExecutors()
+    {
+        return new HashSet<string>(this.OutputExecutors);
     }
 
     /// <summary>

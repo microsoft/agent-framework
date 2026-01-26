@@ -24,8 +24,8 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
     : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
 
-AIAgent physicist = client.GetChatClient(deploymentName).CreateAIAgent("You are an expert in physics. You answer questions from a physics perspective.", "Physicist");
-AIAgent chemist = client.GetChatClient(deploymentName).CreateAIAgent("You are an expert in chemistry. You answer questions from a chemistry perspective.", "Chemist");
+AIAgent physicist = client.GetChatClient(deploymentName).AsAIAgent("You are an expert in physics. You answer questions from a physics perspective.", "Physicist");
+AIAgent chemist = client.GetChatClient(deploymentName).AsAIAgent("You are an expert in chemistry. You answer questions from a chemistry perspective.", "Chemist");
 
 var startExecutor = new ConcurrentStartExecutor();
 var aggregationExecutor = new ResultAggregationExecutor();

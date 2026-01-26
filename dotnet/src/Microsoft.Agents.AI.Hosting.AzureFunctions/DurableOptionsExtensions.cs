@@ -90,9 +90,6 @@ public static class DurableOptionsExtensions
     {
         builder.ConfigureDurableWorker().AddTasks(tasks =>
         {
-            // Register the workflow state entity for shared state management within workflows.
-            tasks.AddEntity<WorkflowSharedStateEntity>(WorkflowSharedStateEntity.EntityName);
-
             foreach (string workflowName in workflows.Workflows.Select(kp => kp.Key))
             {
                 string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);

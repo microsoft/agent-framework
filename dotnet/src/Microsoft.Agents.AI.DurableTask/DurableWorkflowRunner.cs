@@ -4,10 +4,38 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask;
-using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.DurableTask;
+
+/// <summary>
+/// Represents the custom status set when the orchestration is waiting for an external event.
+/// </summary>
+/// <param name="EventName">The name of the event being waited for (the RequestPort ID).</param>
+/// <param name="Input">The serialized input data that was passed to the RequestPort.</param>
+/// <param name="RequestType">The full type name of the request type.</param>
+/// <param name="ResponseType">The full type name of the expected response type.</param>
+public sealed record PendingExternalEventStatus(
+    string EventName,
+    string Input,
+    string RequestType,
+    string ResponseType);
+
+/// <summary>
+/// Represents the complete custom status for a durable workflow orchestration.
+/// </summary>
+public sealed class DurableWorkflowCustomStatus
+{
+    /// <summary>
+    /// Gets or sets the pending external event status when waiting for HITL input.
+    /// </summary>
+    public PendingExternalEventStatus? PendingEvent { get; set; }
+
+    /// <summary>
+    /// Gets or sets the list of serialized workflow events emitted by executors.
+    /// </summary>
+    public List<string> Events { get; set; } = [];
+}
 
 /// <summary>
 /// Core workflow runner that executes workflow orchestrations using Durable Tasks.
@@ -64,23 +92,7 @@ public class DurableWorkflowRunner
 
         logger.LogRunningWorkflow(workflow.Name);
 
-        string result = await this.ExecuteWorkflowLevelsAsync(context, workflow, input, logger).ConfigureAwait(true);
-
-        await CleanupWorkflowStateAsync(context).ConfigureAwait(true);
-
-        return result;
-    }
-
-    /// <summary>
-    /// Cleans up the workflow state entity by signaling it to delete itself.
-    /// </summary>
-    private static async Task CleanupWorkflowStateAsync(TaskOrchestrationContext context)
-    {
-        EntityInstanceId stateEntityId = new(WorkflowSharedStateEntity.EntityName, context.InstanceId);
-
-        // Call the entity's Delete method to clean up state
-        // Using CallEntityAsync ensures the deletion completes before the orchestration finishes
-        await context.Entities.CallEntityAsync(stateEntityId, nameof(WorkflowSharedStateEntity.Delete)).ConfigureAwait(true);
+        return await this.ExecuteWorkflowLevelsAsync(context, workflow, input, logger).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -181,6 +193,10 @@ public class DurableWorkflowRunner
         WorkflowExecutionPlan plan = WorkflowHelper.GetExecutionPlan(workflow);
         Dictionary<string, string> results = new(plan.Levels.Sum(l => l.Executors.Count));
 
+        // Track accumulated events and shared state
+        DurableWorkflowCustomStatus customStatus = new();
+        Dictionary<string, string> sharedState = [];
+
         foreach (WorkflowExecutionLevel level in plan.Levels)
         {
             // Filter executors based on edge conditions from their predecessors
@@ -196,27 +212,171 @@ public class DurableWorkflowRunner
             {
                 WorkflowExecutorInfo executorInfo = eligibleExecutors[0];
                 string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                results[executorInfo.ExecutorId] = await this.ExecuteExecutorAsync(context, executorInfo, input, logger).ConfigureAwait(true);
+                string rawResult = await this.ExecuteExecutorAsync(context, executorInfo, input, logger, customStatus, sharedState).ConfigureAwait(true);
+                results[executorInfo.ExecutorId] = UnwrapActivityResult(rawResult, customStatus, sharedState);
+
+                // Update custom status with any new events
+                UpdateCustomStatus(context, customStatus);
             }
             else
             {
+                // For parallel execution, each activity gets a snapshot of the current state
+                // State updates are merged after all activities complete
                 Task<(string Id, string Result)>[] tasks = new Task<(string Id, string Result)>[eligibleExecutors.Count];
                 for (int i = 0; i < eligibleExecutors.Count; i++)
                 {
                     WorkflowExecutorInfo executorInfo = eligibleExecutors[i];
                     string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                    tasks[i] = this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger);
+                    tasks[i] = this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger, customStatus, sharedState);
                 }
 
                 (string Id, string Result)[] completedTasks = await Task.WhenAll(tasks).ConfigureAwait(true);
-                foreach ((string id, string result) in completedTasks)
+                foreach ((string id, string rawResult) in completedTasks)
                 {
-                    results[id] = result;
+                    results[id] = UnwrapActivityResult(rawResult, customStatus, sharedState);
                 }
+
+                // Update custom status with any new events
+                UpdateCustomStatus(context, customStatus);
             }
         }
 
         return GetFinalResult(plan, results);
+    }
+
+    /// <summary>
+    /// Unwraps an activity result, extracting state updates, events, and returning the actual result.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing known wrapper type.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing known wrapper type.")]
+    private static string UnwrapActivityResult(string rawResult, DurableWorkflowCustomStatus customStatus, Dictionary<string, string> sharedState)
+    {
+        if (string.IsNullOrEmpty(rawResult))
+        {
+            return rawResult;
+        }
+
+        try
+        {
+            // Try to deserialize as DurableActivityOutput
+            DurableActivityOutput? output = JsonSerializer.Deserialize<DurableActivityOutput>(rawResult);
+
+            // Check if this is actually a DurableActivityOutput (has Result property set or state updates)
+            // This distinguishes it from other JSON objects that would deserialize with default/empty values
+            if (output is not null && (output.Result is not null || output.StateUpdates.Count > 0 || output.ClearedScopes.Count > 0 || output.Events.Count > 0))
+            {
+                // Apply cleared scopes first
+                foreach (string clearedScope in output.ClearedScopes)
+                {
+                    string scopePrefix = clearedScope == "__default__" ? "__default__:" : $"{clearedScope}:";
+                    List<string> keysToRemove = sharedState.Keys
+                        .Where(k => k.StartsWith(scopePrefix, StringComparison.Ordinal))
+                        .ToList();
+
+                    foreach (string key in keysToRemove)
+                    {
+                        sharedState.Remove(key);
+                    }
+                }
+
+                // Apply state updates
+                foreach (KeyValuePair<string, string?> update in output.StateUpdates)
+                {
+                    if (update.Value is null)
+                    {
+                        sharedState.Remove(update.Key);
+                    }
+                    else
+                    {
+                        sharedState[update.Key] = update.Value;
+                    }
+                }
+
+                // Add events to the accumulated list
+                if (output.Events.Count > 0)
+                {
+                    customStatus.Events.AddRange(output.Events);
+                }
+
+                return output.Result ?? string.Empty;
+            }
+        }
+        catch (JsonException)
+        {
+            // Not a wrapped result, return as-is
+        }
+
+        return rawResult;
+    }
+
+    /// <summary>
+    /// Updates the orchestration custom status with current events and pending event info.
+    /// </summary>
+    private static void UpdateCustomStatus(TaskOrchestrationContext context, DurableWorkflowCustomStatus customStatus)
+    {
+        // Only update if there are events or a pending event
+        if (customStatus.Events.Count > 0 || customStatus.PendingEvent is not null)
+        {
+            context.SetCustomStatus(customStatus);
+        }
+    }
+
+    /// <summary>
+    /// Wrapper for activity output that includes state updates and events.
+    /// </summary>
+    internal sealed class ActivityOutputWithState
+    {
+        /// <summary>
+        /// Gets or sets the serialized result of the activity.
+        /// </summary>
+        public string? Result { get; set; }
+
+        /// <summary>
+        /// Gets or sets state updates made during activity execution.
+        /// </summary>
+        public Dictionary<string, string?> StateUpdates { get; set; } = [];
+
+        /// <summary>
+        /// Gets or sets scopes that were cleared during activity execution.
+        /// </summary>
+        public List<string> ClearedScopes { get; set; } = [];
+
+        /// <summary>
+        /// Gets or sets the serialized workflow events emitted during activity execution.
+        /// </summary>
+        public List<string> Events { get; set; } = [];
+    }
+
+    /// <summary>
+    /// Wrapper for serialized workflow events that includes type information for proper deserialization.
+    /// </summary>
+    public sealed class SerializedWorkflowEvent
+    {
+        /// <summary>
+        /// Gets or sets the assembly-qualified type name of the event.
+        /// </summary>
+        public string? TypeName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the serialized JSON data of the event.
+        /// </summary>
+        public string? Data { get; set; }
+    }
+
+    /// <summary>
+    /// Wrapper for activity input that includes shared state.
+    /// </summary>
+    internal sealed class ActivityInputWithState
+    {
+        /// <summary>
+        /// Gets or sets the serialized executor input.
+        /// </summary>
+        public string? Input { get; set; }
+
+        /// <summary>
+        /// Gets or sets the shared state dictionary.
+        /// </summary>
+        public Dictionary<string, string> State { get; set; } = [];
     }
 
     /// <summary>
@@ -323,26 +483,82 @@ public class DurableWorkflowRunner
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         string input,
-        ILogger logger)
+        ILogger logger,
+        DurableWorkflowCustomStatus customStatus,
+        Dictionary<string, string> sharedState)
     {
-        string result = await this.ExecuteExecutorAsync(context, executorInfo, input, logger).ConfigureAwait(true);
+        string result = await this.ExecuteExecutorAsync(context, executorInfo, input, logger, customStatus, sharedState).ConfigureAwait(true);
         return (executorInfo.ExecutorId, result);
     }
 
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing known wrapper type.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing known wrapper type.")]
     private async Task<string> ExecuteExecutorAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         string input,
-        ILogger logger)
+        ILogger logger,
+        DurableWorkflowCustomStatus customStatus,
+        Dictionary<string, string> sharedState)
     {
+        // Handle RequestPort executors by waiting for external event (human-in-the-loop)
+        if (executorInfo.IsRequestPortExecutor)
+        {
+            return await ExecuteRequestPortAsync(context, executorInfo, input, logger, customStatus).ConfigureAwait(true);
+        }
+
         if (!executorInfo.IsAgenticExecutor)
         {
             string executorName = WorkflowNamingHelper.GetExecutorName(executorInfo.ExecutorId);
             string triggerName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
-            return await context.CallActivityAsync<string>(triggerName, input).ConfigureAwait(true);
+
+            // Wrap input with shared state for the activity
+            ActivityInputWithState inputWithState = new()
+            {
+                Input = input,
+                State = new Dictionary<string, string>(sharedState) // Pass a copy of the state
+            };
+
+            string wrappedInput = JsonSerializer.Serialize(inputWithState);
+            return await context.CallActivityAsync<string>(triggerName, wrappedInput).ConfigureAwait(true);
         }
 
         return await ExecuteAgentAsync(context, executorInfo, input, logger).ConfigureAwait(true);
+    }
+
+    private static async Task<string> ExecuteRequestPortAsync(
+        TaskOrchestrationContext context,
+        WorkflowExecutorInfo executorInfo,
+        string input,
+        ILogger logger,
+        DurableWorkflowCustomStatus customStatus)
+    {
+        RequestPort requestPort = executorInfo.RequestPort!;
+        string eventName = requestPort.Id;
+
+        logger.LogWaitingForExternalEvent(eventName, input);
+
+        // Set custom status to notify clients that we're waiting for external input
+        // Include any accumulated events
+        customStatus.PendingEvent = new(
+            EventName: eventName,
+            Input: input,
+            RequestType: requestPort.Request.FullName ?? requestPort.Request.Name,
+            ResponseType: requestPort.Response.FullName ?? requestPort.Response.Name);
+
+        context.SetCustomStatus(customStatus);
+
+        // Wait for the external event (human-in-the-loop)
+        // The event data will be the response from the external actor
+        string response = await context.WaitForExternalEvent<string>(eventName).ConfigureAwait(true);
+
+        // Clear pending event status after receiving the event
+        customStatus.PendingEvent = null;
+        context.SetCustomStatus(customStatus.Events.Count > 0 ? customStatus : null);
+
+        logger.LogReceivedExternalEvent(eventName, response);
+
+        return response;
     }
 
     private static async Task<string> ExecuteAgentAsync(
@@ -360,8 +576,8 @@ public class DurableWorkflowRunner
             return $"Agent '{agentName}' not found";
         }
 
-        AgentThread thread = agent.GetNewThread();
-        AgentRunResponse response = await agent.RunAsync(input, thread).ConfigureAwait(true);
+        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentResponse response = await agent.RunAsync(input, thread);
         return response.Text;
     }
 

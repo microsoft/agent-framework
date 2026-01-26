@@ -136,4 +136,16 @@ internal static partial class Logs
         Level = LogLevel.Debug,
         Message = "Executor '{ExecutorId}' skipped due to edge condition evaluation")]
     public static partial void LogExecutorSkipped(this ILogger logger, string executorId);
+
+    [LoggerMessage(
+        EventId = 18,
+        Level = LogLevel.Debug,
+        Message = "Waiting for external event '{EventName}' with input: {Input}")]
+    public static partial void LogWaitingForExternalEvent(this ILogger logger, string eventName, string input);
+
+    [LoggerMessage(
+        EventId = 19,
+        Level = LogLevel.Debug,
+        Message = "Received external event '{EventName}' with response: {Response}")]
+    public static partial void LogReceivedExternalEvent(this ILogger logger, string eventName, string response);
 }

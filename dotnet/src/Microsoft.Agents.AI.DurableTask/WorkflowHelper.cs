@@ -10,7 +10,14 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// </summary>
 /// <param name="ExecutorId">The unique identifier of the executor.</param>
 /// <param name="IsAgenticExecutor">Indicates whether this executor is an agentic executor.</param>
-public sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor);
+/// <param name="RequestPort">The request port if this executor is a request port executor; otherwise, null.</param>
+public sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor, RequestPort? RequestPort = null)
+{
+    /// <summary>
+    /// Gets a value indicating whether this executor is a request port executor (human-in-the-loop).
+    /// </summary>
+    public bool IsRequestPortExecutor => this.RequestPort is not null;
+}
 
 /// <summary>
 /// Represents a level of executors that can be executed in parallel (Fan-Out).
@@ -20,48 +27,6 @@ public sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecu
 /// <param name="Executors">The executors that can run in parallel at this level.</param>
 /// <param name="IsFanIn">Indicates if this level is a Fan-In point (has executors with multiple predecessors).</param>
 public sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
-
-/// <summary>
-/// Represents the complete execution plan for a workflow, including parallel execution levels.
-/// </summary>
-public sealed class WorkflowExecutionPlan
-{
-    /// <summary>
-    /// The execution levels in order. Each level contains executors that can run in parallel.
-    /// </summary>
-    public List<WorkflowExecutionLevel> Levels { get; } = [];
-
-    /// <summary>
-    /// Maps each executor ID to its predecessors (for Fan-In result aggregation).
-    /// </summary>
-    public Dictionary<string, List<string>> Predecessors { get; } = [];
-
-    /// <summary>
-    /// Maps each executor ID to its successors (for Fan-Out result distribution).
-    /// </summary>
-    public Dictionary<string, List<string>> Successors { get; } = [];
-
-    /// <summary>
-    /// Maps edge connections (sourceId, targetId) to their condition functions.
-    /// The condition function takes the predecessor's result and returns true if the edge should be followed.
-    /// </summary>
-    public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> EdgeConditions { get; } = [];
-
-    /// <summary>
-    /// Maps executor IDs to their output types (for proper deserialization during condition evaluation).
-    /// </summary>
-    public Dictionary<string, Type?> ExecutorOutputTypes { get; } = [];
-
-    /// <summary>
-    /// Gets whether this workflow has any parallel execution opportunities.
-    /// </summary>
-    public bool HasParallelism => this.Levels.Any(l => l.Executors.Count > 1);
-
-    /// <summary>
-    /// Gets whether this workflow has any Fan-In points.
-    /// </summary>
-    public bool HasFanIn => this.Levels.Any(l => l.IsFanIn);
-}
 
 /// <summary>
 /// Provides helper methods for analyzing and executing workflows.
@@ -182,7 +147,8 @@ public static class WorkflowHelper
 
                 ExecutorBinding executorBinding = executors[executorId];
                 bool isAgentic = IsAgentExecutorType(executorBinding.ExecutorType);
-                levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic));
+                RequestPort? requestPort = (executorBinding is RequestPortBinding rpb) ? rpb.Port : null;
+                levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic, requestPort));
 
                 // Check Fan-In for this executor
                 if (predecessors[executorId].Count > 1)
@@ -215,7 +181,8 @@ public static class WorkflowHelper
                 if (inDegree[executorIndex[executor.Key]] > 0)
                 {
                     bool isAgentic = IsAgentExecutorType(executor.Value.ExecutorType);
-                    remainingExecutors.Add(new WorkflowExecutorInfo(executor.Key, isAgentic));
+                    RequestPort? requestPort = (executor.Value is RequestPortBinding rpb) ? rpb.Port : null;
+                    remainingExecutors.Add(new WorkflowExecutorInfo(executor.Key, isAgentic, requestPort));
                 }
             }
 
