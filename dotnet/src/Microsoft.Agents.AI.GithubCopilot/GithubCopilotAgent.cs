@@ -20,10 +20,13 @@ namespace Microsoft.Agents.AI.GithubCopilot;
 /// </summary>
 public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 {
+    private const string DefaultName = "GitHub Copilot Agent";
+    private const string DefaultDescription = "An AI agent powered by GitHub Copilot";
+
     private readonly CopilotClient _copilotClient;
     private readonly string? _id;
-    private readonly string? _name;
-    private readonly string? _description;
+    private readonly string _name;
+    private readonly string _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly bool _ownsClient;
 
@@ -50,8 +53,8 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         this._sessionConfig = sessionConfig;
         this._ownsClient = ownsClient;
         this._id = id;
-        this._name = name;
-        this._description = description;
+        this._name = name ?? DefaultName;
+        this._description = description ?? DefaultDescription;
     }
 
     /// <summary>
@@ -77,8 +80,8 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             GetSessionConfig(tools, instructions),
             ownsClient,
             id,
-            name ?? "GitHub Copilot Agent",
-            description ?? "An AI agent powered by GitHub Copilot")
+            name,
+            description)
     {
     }
 
@@ -278,14 +281,15 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
                         break;
 
-                    case SessionIdleEvent:
+                    case SessionIdleEvent idleEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(idleEvent));
                         channel.Writer.TryComplete();
                         break;
 
                     case SessionErrorEvent errorEvent:
-                        Exception exception = new InvalidOperationException(
-                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
-                        channel.Writer.TryComplete(exception);
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(errorEvent));
+                        channel.Writer.TryComplete(new InvalidOperationException(
+                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}"));
                         break;
 
                     default:
@@ -323,7 +327,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             }
             finally
             {
-                subscription.Dispose();
                 CleanupTempFiles(tempFiles);
             }
         }
@@ -337,10 +340,10 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name;
+    public override string Name => this._name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description;
+    public override string Description => this._description;
 
     /// <summary>
     /// Disposes the agent and releases resources.
@@ -423,7 +426,9 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             InputTokenCount = (int?)(usageEvent.Data?.InputTokens),
             OutputTokenCount = (int?)(usageEvent.Data?.OutputTokens),
-            TotalTokenCount = (int?)((usageEvent.Data?.InputTokens ?? 0) + (usageEvent.Data?.OutputTokens ?? 0))
+            TotalTokenCount = (int?)((usageEvent.Data?.InputTokens ?? 0) + (usageEvent.Data?.OutputTokens ?? 0)),
+            CachedInputTokenCount = (int?)(usageEvent.Data?.CacheReadTokens),
+            AdditionalCounts = GetAdditionalCounts(usageEvent),
         };
 
         UsageContent usageContent = new(usageDetails)
@@ -436,6 +441,36 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             AgentId = this.Id,
             CreatedAt = usageEvent.Timestamp
         };
+    }
+
+    private static AdditionalPropertiesDictionary<long>? GetAdditionalCounts(AssistantUsageEvent usageEvent)
+    {
+        if (usageEvent.Data is null)
+        {
+            return null;
+        }
+
+        AdditionalPropertiesDictionary<long>? additionalCounts = null;
+
+        if (usageEvent.Data.CacheWriteTokens is double cacheWriteTokens)
+        {
+            additionalCounts ??= [];
+            additionalCounts["CacheWriteTokens"] = (long)cacheWriteTokens;
+        }
+
+        if (usageEvent.Data.Cost is double cost)
+        {
+            additionalCounts ??= [];
+            additionalCounts["Cost"] = (long)cost;
+        }
+
+        if (usageEvent.Data.Duration is double duration)
+        {
+            additionalCounts ??= [];
+            additionalCounts["Duration"] = (long)duration;
+        }
+
+        return additionalCounts;
     }
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(SessionEvent sessionEvent)
