@@ -2,15 +2,23 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
 /// Event triggered when a workflow executor yields output.
 /// </summary>
-public sealed class WorkflowOutputEvent : WorkflowEvent
+[JsonDerivedType(typeof(AgentResponseEvent))]
+[JsonDerivedType(typeof(AgentResponseUpdateEvent))]
+public class WorkflowOutputEvent : WorkflowEvent
 {
-    internal WorkflowOutputEvent(object data, string executorId) : base(data)
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WorkflowOutputEvent"/> class.
+    /// </summary>
+    /// <param name="data">The output data.</param>
+    /// <param name="executorId">The identifier of the executor that yielded this output.</param>
+    public WorkflowOutputEvent(object data, string executorId) : base(data)
     {
         this.ExecutorId = executorId;
     }
