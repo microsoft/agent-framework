@@ -1,17 +1,51 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with GitHub Copilot SDK.
+// This sample shows how to create a GitHub Copilot agent with shell command permissions.
 
 using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
+
+// Permission handler that prompts the user for approval
+static Task<PermissionRequestResult> PromptPermission(PermissionRequest request, PermissionInvocation invocation)
+{
+    Console.WriteLine($"\n[Permission Request: {request.Kind}]");
+    Console.Write("Approve? (y/n): ");
+
+    string? input = Console.ReadLine()?.Trim().ToUpperInvariant();
+    string kind = input is "Y" or "YES" ? "approved" : "denied-interactively-by-user";
+
+    return Task.FromResult(new PermissionRequestResult { Kind = kind });
+}
 
 // Create and start a Copilot client
 await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = true });
 await copilotClient.StartAsync();
 
-// Create an instance of the AIAgent using the extension method
-AIAgent agent = copilotClient.AsAIAgent(ownsClient: true);
+// Create an agent with a session config that enables permission handling
+SessionConfig sessionConfig = new()
+{
+    OnPermissionRequest = PromptPermission,
+};
 
-// Ask Copilot to write code for us - demonstrate its code generation capabilities
-AgentResponse response = await agent.RunAsync("Write a small .NET 10 C# hello world single file application");
-Console.WriteLine(response);
+AIAgent agent = copilotClient.AsAIAgent(sessionConfig, ownsClient: true);
+
+// Toggle between streaming and non-streaming modes
+bool useStreaming = true;
+
+string prompt = "List all files in the current directory";
+Console.WriteLine($"User: {prompt}\n");
+
+if (useStreaming)
+{
+    await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(prompt))
+    {
+        Console.Write(update);
+    }
+
+    Console.WriteLine();
+}
+else
+{
+    AgentResponse response = await agent.RunAsync(prompt);
+    Console.WriteLine(response);
+}

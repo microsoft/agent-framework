@@ -122,7 +122,10 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         CopilotSession session;
         if (typedThread.SessionId is not null)
         {
-            session = await this._copilotClient.ResumeSessionAsync(typedThread.SessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
+            session = await this._copilotClient.ResumeSessionAsync(
+                typedThread.SessionId,
+                this.CreateResumeConfig(),
+                cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -228,6 +231,11 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 AvailableTools = this._sessionConfig.AvailableTools,
                 ExcludedTools = this._sessionConfig.ExcludedTools,
                 Provider = this._sessionConfig.Provider,
+                OnPermissionRequest = this._sessionConfig.OnPermissionRequest,
+                McpServers = this._sessionConfig.McpServers,
+                CustomAgents = this._sessionConfig.CustomAgents,
+                SkillDirectories = this._sessionConfig.SkillDirectories,
+                DisabledSkills = this._sessionConfig.DisabledSkills,
                 Streaming = true
             }
             : new SessionConfig { Streaming = true };
@@ -237,7 +245,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             session = await this._copilotClient.ResumeSessionAsync(
                 typedThread.SessionId,
-                new ResumeSessionConfig { Streaming = true },
+                this.CreateResumeConfig(streaming: true),
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -341,6 +349,21 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private ResumeSessionConfig CreateResumeConfig(bool streaming = false)
+    {
+        return new ResumeSessionConfig
+        {
+            Tools = this._sessionConfig?.Tools,
+            Provider = this._sessionConfig?.Provider,
+            OnPermissionRequest = this._sessionConfig?.OnPermissionRequest,
+            McpServers = this._sessionConfig?.McpServers,
+            CustomAgents = this._sessionConfig?.CustomAgents,
+            SkillDirectories = this._sessionConfig?.SkillDirectories,
+            DisabledSkills = this._sessionConfig?.DisabledSkills,
+            Streaming = streaming,
+        };
     }
 
     private ChatMessage ConvertToChatMessage(AssistantMessageEvent assistantMessage)
