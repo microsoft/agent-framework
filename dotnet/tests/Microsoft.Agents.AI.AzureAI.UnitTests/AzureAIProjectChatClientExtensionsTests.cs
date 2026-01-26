@@ -2339,10 +2339,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateChatClientAgentOptions preserves ChatMessageStoreFactory.
+    /// Verify that CreateChatClientAgentOptions preserves ChatHistoryProviderFactory.
     /// </summary>
     [Fact]
-    public async Task GetAIAgentAsync_WithChatMessageStoreFactory_PreservesFactoryAsync()
+    public async Task GetAIAgentAsync_WithChatHistoryProviderFactory_PreservesFactoryAsync()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -2350,7 +2350,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         {
             Name = "test-agent",
             ChatOptions = new ChatOptions { Instructions = "Test" },
-            ChatMessageStoreFactory = (_, _) => new ValueTask<ChatMessageStore>(new TestChatMessageStore())
+            ChatHistoryProviderFactory = (_, _) => new ValueTask<ChatHistoryProvider>(new TestChatHistoryProvider())
         };
 
         // Act
@@ -2937,16 +2937,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Test ChatMessageStore for options preservation tests.
+    /// Test ChatHistoryProvider for options preservation tests.
     /// </summary>
-    private sealed class TestChatMessageStore : ChatMessageStore
+    private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
-        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(ChatHistoryProvider.InvokingContext context, CancellationToken cancellationToken = default)
         {
             return new ValueTask<IEnumerable<ChatMessage>>(Array.Empty<ChatMessage>());
         }
 
-        public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        public override ValueTask InvokedAsync(ChatHistoryProvider.InvokedContext context, CancellationToken cancellationToken = default)
         {
             return default;
         }
