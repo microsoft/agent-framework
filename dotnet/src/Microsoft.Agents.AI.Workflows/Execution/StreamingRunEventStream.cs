@@ -60,7 +60,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
-        using Activity? activity = this._stepRunner.TelemetryContext.StartActivity(ActivityNames.WorkflowRun);
+        using Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
         activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
 
         try

@@ -608,7 +608,7 @@ public class WorkflowBuilder
     /// or if the start executor is not bound.</exception>
     public Workflow Build(bool validateOrphans = true)
     {
-        using Activity? activity = this._telemetryContext.StartActivity(ActivityNames.WorkflowBuild);
+        using Activity? activity = this._telemetryContext.StartWorkflowBuildActivity();
 
         var workflow = this.BuildInternal(validateOrphans, activity);
 

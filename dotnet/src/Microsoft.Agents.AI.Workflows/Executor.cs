@@ -121,7 +121,7 @@ public abstract class Executor : IIdentified
 
     internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
-        using var activity = telemetryContext.StartActivity(ActivityNames.ExecutorProcess + " " + this.Id);
+        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id);
         activity?.SetTag(Tags.ExecutorId, this.Id)
             .SetTag(Tags.ExecutorType, this.GetType().FullName)
             .SetTag(Tags.MessageType, messageType.TypeName)

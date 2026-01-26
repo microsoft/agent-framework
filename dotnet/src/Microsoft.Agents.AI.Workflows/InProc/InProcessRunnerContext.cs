@@ -182,7 +182,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default)
     {
-        using Activity? activity = this._workflow.TelemetryContext.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        using Activity? activity = this._workflow.TelemetryContext.StartMessageSendActivity();
         activity?.SetTag(Tags.MessageSourceId, sourceId);
         if (targetId is not null) { activity?.SetTag(Tags.MessageTargetId, targetId); }
 

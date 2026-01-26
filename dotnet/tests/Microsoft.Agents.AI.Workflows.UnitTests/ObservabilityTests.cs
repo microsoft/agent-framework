@@ -240,4 +240,158 @@ public sealed class ObservabilityTests : IDisposable
             a => a.Source.Name == "UserProvidedSource",
             "All activities should come from the user-provided ActivitySource.");
     }
+
+    [Fact]
+    public async Task DisableWorkflowBuild_PreventsWorkflowBuildActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowBuild = true).Build();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
+            "WorkflowBuild activity should be disabled.");
+    }
+
+    [Fact]
+    public async Task DisableWorkflowRun_PreventsWorkflowRunActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowRun = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
+            "WorkflowRun activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    [Fact]
+    public async Task DisableExecutorProcess_PreventsExecutorProcessActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableExecutorProcess = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
+            "ExecutorProcess activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    [Fact]
+    public async Task DisableEdgeGroupProcess_PreventsEdgeGroupProcessActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        var workflow = CreateWorkflowWithDisabledEdges();
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.EdgeGroupProcess, StringComparison.Ordinal),
+            "EdgeGroupProcess activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    [Fact]
+    public async Task DisableMessageSend_PreventsMessageSendActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        var workflow = CreateWorkflowWithDisabledMessages();
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal),
+            "MessageSend activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    private static Workflow CreateWorkflowWithDisabledEdges()
+    {
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+
+        return builder.WithOpenTelemetry(configure: opts => opts.DisableEdgeGroupProcess = true).Build();
+    }
+
+    private static Workflow CreateWorkflowWithDisabledMessages()
+    {
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+
+        return builder.WithOpenTelemetry(configure: opts => opts.DisableMessageSend = true).Build();
+    }
 }

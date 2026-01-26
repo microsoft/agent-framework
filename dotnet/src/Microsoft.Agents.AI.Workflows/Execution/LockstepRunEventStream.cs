@@ -50,7 +50,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
         this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
 
-        using Activity? activity = this._stepRunner.TelemetryContext.StartActivity(ActivityNames.WorkflowRun);
+        using Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
         activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
 
         try

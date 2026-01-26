@@ -63,4 +63,75 @@ internal sealed class WorkflowTelemetryContext
     {
         return this.ActivitySource?.StartActivity(name, kind);
     }
+
+    /// <summary>
+    /// Starts a workflow build activity if enabled.
+    /// </summary>
+    /// <returns>An activity if workflow build telemetry is enabled, otherwise null.</returns>
+    public Activity? StartWorkflowBuildActivity()
+    {
+        if (this.Options.DisableWorkflowBuild)
+        {
+            return null;
+        }
+
+        return this.ActivitySource?.StartActivity(ActivityNames.WorkflowBuild);
+    }
+
+    /// <summary>
+    /// Starts a workflow run activity if enabled.
+    /// </summary>
+    /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
+    public Activity? StartWorkflowRunActivity()
+    {
+        if (this.Options.DisableWorkflowRun)
+        {
+            return null;
+        }
+
+        return this.ActivitySource?.StartActivity(ActivityNames.WorkflowRun);
+    }
+
+    /// <summary>
+    /// Starts an executor process activity if enabled.
+    /// </summary>
+    /// <param name="executorId">The executor identifier to include in the activity name.</param>
+    /// <returns>An activity if executor process telemetry is enabled, otherwise null.</returns>
+    public Activity? StartExecutorProcessActivity(string executorId)
+    {
+        if (this.Options.DisableExecutorProcess)
+        {
+            return null;
+        }
+
+        return this.ActivitySource?.StartActivity(ActivityNames.ExecutorProcess + " " + executorId);
+    }
+
+    /// <summary>
+    /// Starts an edge group process activity if enabled.
+    /// </summary>
+    /// <returns>An activity if edge group process telemetry is enabled, otherwise null.</returns>
+    public Activity? StartEdgeGroupProcessActivity()
+    {
+        if (this.Options.DisableEdgeGroupProcess)
+        {
+            return null;
+        }
+
+        return this.ActivitySource?.StartActivity(ActivityNames.EdgeGroupProcess);
+    }
+
+    /// <summary>
+    /// Starts a message send activity if enabled.
+    /// </summary>
+    /// <returns>An activity if message send telemetry is enabled, otherwise null.</returns>
+    public Activity? StartMessageSendActivity()
+    {
+        if (this.Options.DisableMessageSend)
+        {
+            return null;
+        }
+
+        return this.ActivitySource?.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+    }
 }
