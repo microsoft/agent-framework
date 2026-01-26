@@ -184,25 +184,7 @@ class DurableAIAgentWorker:
                     AgentResponse as dict
                 """
                 logger.debug("[ConfiguredAgentEntity.run] Executing agent: %s", agent_name)
-                # Get or create event loop for async execution
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                # Run the async agent execution synchronously
-                if loop.is_running():
-                    # If loop is already running (shouldn't happen in entity context),
-                    # create a temporary loop
-                    temp_loop = asyncio.new_event_loop()
-                    try:
-                        response = temp_loop.run_until_complete(self._agent_entity.run(request))
-                    finally:
-                        temp_loop.close()
-                else:
-                    response = loop.run_until_complete(self._agent_entity.run(request))
-
+                response = asyncio.run(self._agent_entity.run(request))
                 return response.to_dict()
 
             def reset(self) -> None:
