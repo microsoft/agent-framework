@@ -244,10 +244,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
         OutputFilter outputFilter,
-        Dictionary<string, string>? traceContext) : IWorkflowContextWithTelemetry
+        Dictionary<string, string>? traceContext) : IWorkflowContext
     {
-        public WorkflowTelemetryContext TelemetryContext => RunnerContext._workflow.TelemetryContext;
-
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
