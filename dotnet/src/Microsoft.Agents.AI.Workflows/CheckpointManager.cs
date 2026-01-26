@@ -42,10 +42,11 @@ public sealed class CheckpointManager : ICheckpointManager
     /// <param name="store">The checkpoint store to use for persisting and retrieving checkpoint data as JSON elements. Cannot be null.</param>
     /// <param name="customOptions">Optional custom JSON serializer options to use for serialization and deserialization. Must be provided if
     /// using custom types in messages or state.</param>
+    /// <param name="checkpointOptions">Optional checkpoint manager options to configure JSON serialization behavior.</param>
     /// <returns>A CheckpointManager instance configured to serialize checkpoint data as JSON.</returns>
-    public static CheckpointManager CreateJson(ICheckpointStore<JsonElement> store, JsonSerializerOptions? customOptions = null)
+    public static CheckpointManager CreateJson(ICheckpointStore<JsonElement> store, JsonSerializerOptions? customOptions = null, JsonCheckpointManagerOptions? checkpointOptions = null)
     {
-        JsonMarshaller marshaller = new(customOptions);
+        JsonMarshaller marshaller = new(customOptions, checkpointOptions);
         return new(CreateImpl(marshaller, store));
     }
 

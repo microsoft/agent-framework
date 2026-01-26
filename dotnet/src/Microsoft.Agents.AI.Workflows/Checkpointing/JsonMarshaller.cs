@@ -11,9 +11,15 @@ internal sealed class JsonMarshaller : IWireMarshaller<JsonElement>
     private readonly JsonSerializerOptions _internalOptions;
     private readonly JsonSerializerOptions? _externalOptions;
 
-    public JsonMarshaller(JsonSerializerOptions? serializerOptions = null)
+    public JsonMarshaller(JsonSerializerOptions? serializerOptions = null, JsonCheckpointManagerOptions? checkpointOptions = null)
     {
-        this._internalOptions = new JsonSerializerOptions(WorkflowsJsonUtilities.DefaultOptions);
+        this._internalOptions = new JsonSerializerOptions(WorkflowsJsonUtilities.DefaultOptions)
+        {
+            // We only set this to true if the user explicitly opts into it via checkpoint options. If the options
+            // are not supplied, or the property is false, we leave the default behavior (false).
+            AllowOutOfOrderMetadataProperties = checkpointOptions?.AllowOutOfOrderMetadataProperties is true,
+        };
+
         this._internalOptions.Converters.Add(new PortableValueConverter(this));
         this._internalOptions.Converters.Add(new ExecutorIdentityConverter());
         this._internalOptions.Converters.Add(new ScopeKeyConverter());
