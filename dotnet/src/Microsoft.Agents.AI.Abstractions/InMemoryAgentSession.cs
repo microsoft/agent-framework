@@ -9,11 +9,11 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an abstract base class for an <see cref="AgentThread"/> that maintain all chat history in local memory.
+/// Provides an abstract base class for an <see cref="AgentSession"/> that maintain all chat history in local memory.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="InMemoryAgentThread"/> is designed for scenarios where chat history should be stored locally
+/// <see cref="InMemoryAgentSession"/> is designed for scenarios where chat history should be stored locally
 /// rather than in external services or databases. This approach provides high performance and simplicity while
 /// maintaining full control over the conversation data.
 /// </para>
@@ -23,65 +23,65 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// </remarks>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public abstract class InMemoryAgentThread : AgentThread
+public abstract class InMemoryAgentSession : AgentSession
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class.
+    /// Initializes a new instance of the <see cref="InMemoryAgentSession"/> class.
     /// </summary>
     /// <param name="chatHistoryProvider">
     /// An optional <see cref="InMemoryChatHistoryProvider"/> instance to use for storing chat messages.
     /// If <see langword="null"/>, a new empty <see cref="InMemoryChatHistoryProvider"/> will be created.
     /// </param>
     /// <remarks>
-    /// This constructor allows sharing of <see cref="ChatHistoryProvider"/> between threads or providing pre-configured
+    /// This constructor allows sharing of <see cref="ChatHistoryProvider"/> between sessions or providing pre-configured
     /// <see cref="ChatHistoryProvider"/> with specific reduction or processing logic.
     /// </remarks>
-    protected InMemoryAgentThread(InMemoryChatHistoryProvider? chatHistoryProvider = null)
+    protected InMemoryAgentSession(InMemoryChatHistoryProvider? chatHistoryProvider = null)
     {
         this.ChatHistoryProvider = chatHistoryProvider ?? [];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class.
+    /// Initializes a new instance of the <see cref="InMemoryAgentSession"/> class.
     /// </summary>
     /// <param name="messages">The initial messages to populate the conversation history.</param>
     /// <exception cref="ArgumentNullException"><paramref name="messages"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// This constructor is useful for initializing threads with existing conversation history or
+    /// This constructor is useful for initializing sessions with existing conversation history or
     /// for migrating conversations from other storage systems.
     /// </remarks>
-    protected InMemoryAgentThread(IEnumerable<ChatMessage> messages)
+    protected InMemoryAgentSession(IEnumerable<ChatMessage> messages)
     {
         this.ChatHistoryProvider = [.. messages];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class from previously serialized state.
+    /// Initializes a new instance of the <see cref="InMemoryAgentSession"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
+    /// <param name="serializedSessionState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="chatHistoryProviderFactory">
     /// Optional factory function to create the <see cref="InMemoryChatHistoryProvider"/> from its serialized state.
     /// If not provided, a default factory will be used that creates a basic <see cref="InMemoryChatHistoryProvider"/>.
     /// </param>
-    /// <exception cref="ArgumentException">The <paramref name="serializedThreadState"/> is not a JSON object.</exception>
-    /// <exception cref="JsonException">The <paramref name="serializedThreadState"/> is invalid or cannot be deserialized to the expected type.</exception>
+    /// <exception cref="ArgumentException">The <paramref name="serializedSessionState"/> is not a JSON object.</exception>
+    /// <exception cref="JsonException">The <paramref name="serializedSessionState"/> is invalid or cannot be deserialized to the expected type.</exception>
     /// <remarks>
     /// This constructor enables restoration of in-memory threads from previously saved state, allowing
     /// conversations to be resumed across application restarts or migrated between different instances.
     /// </remarks>
-    protected InMemoryAgentThread(
-        JsonElement serializedThreadState,
+    protected InMemoryAgentSession(
+        JsonElement serializedSessionState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         Func<JsonElement, JsonSerializerOptions?, InMemoryChatHistoryProvider>? chatHistoryProviderFactory = null)
     {
-        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        if (serializedSessionState.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
+            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedSessionState));
         }
 
-        var state = serializedThreadState.Deserialize(
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentThreadState))) as InMemoryAgentThreadState;
+        var state = serializedSessionState.Deserialize(
+            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentSessionState))) as InMemoryAgentSessionState;
 
         this.ChatHistoryProvider =
             chatHistoryProviderFactory?.Invoke(state?.ChatHistoryProviderState ?? default, jsonSerializerOptions) ??
@@ -102,12 +102,12 @@ public abstract class InMemoryAgentThread : AgentThread
     {
         var chatHistoryProviderState = this.ChatHistoryProvider.Serialize(jsonSerializerOptions);
 
-        var state = new InMemoryAgentThreadState
+        var state = new InMemoryAgentSessionState
         {
             ChatHistoryProviderState = chatHistoryProviderState,
         };
 
-        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentThreadState)));
+        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentSessionState)));
     }
 
     /// <inheritdoc/>
@@ -117,7 +117,7 @@ public abstract class InMemoryAgentThread : AgentThread
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay => $"Count = {this.ChatHistoryProvider.Count}";
 
-    internal sealed class InMemoryAgentThreadState
+    internal sealed class InMemoryAgentSessionState
     {
         public JsonElement? ChatHistoryProviderState { get; set; }
     }

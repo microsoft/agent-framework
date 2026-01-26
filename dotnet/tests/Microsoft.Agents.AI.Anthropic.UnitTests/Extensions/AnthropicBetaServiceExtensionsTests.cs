@@ -252,10 +252,10 @@ public sealed class AnthropicBetaServiceExtensionsTests
             defaultMaxTokens: 8192);
 
         // Invoke the agent to trigger the request
-        var thread = await agent.GetNewThreadAsync();
+        var session = await agent.GetNewSessionAsync();
         try
         {
-            await agent.RunAsync("Test message", thread);
+            await agent.RunAsync("Test message", session);
         }
         catch
         {

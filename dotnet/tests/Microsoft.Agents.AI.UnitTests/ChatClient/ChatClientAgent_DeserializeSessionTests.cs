@@ -8,12 +8,12 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Contains unit tests for the ChatClientAgent.DeserializeThread methods.
+/// Contains unit tests for the ChatClientAgent.DeserializeSession methods.
 /// </summary>
-public class ChatClientAgent_DeserializeThreadTests
+public class ChatClientAgent_DeserializeSessionTests
 {
     [Fact]
-    public async Task DeserializeThread_UsesAIContextProviderFactory_IfProvidedAsync()
+    public async Task DeserializeSession_UsesAIContextProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -36,17 +36,17 @@ public class ChatClientAgent_DeserializeThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var thread = await agent.DeserializeThreadAsync(json);
+        var session = await agent.DeserializeSessionAsync(json);
 
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockContextProvider.Object, typedThread.AIContextProvider);
+        Assert.IsType<ChatClientAgentSession>(session);
+        var typedSession = (ChatClientAgentSession)session;
+        Assert.Same(mockContextProvider.Object, typedSession.AIContextProvider);
     }
 
     [Fact]
-    public async Task DeserializeThread_UsesChatHistoryProviderFactory_IfProvidedAsync()
+    public async Task DeserializeSession_UsesChatHistoryProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -69,12 +69,12 @@ public class ChatClientAgent_DeserializeThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var thread = await agent.DeserializeThreadAsync(json);
+        var session = await agent.DeserializeSessionAsync(json);
 
         // Assert
         Assert.True(factoryCalled, "ChatHistoryProviderFactory was not called.");
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockChatHistoryProvider.Object, typedThread.ChatHistoryProvider);
+        Assert.IsType<ChatClientAgentSession>(session);
+        var typedSession = (ChatClientAgentSession)session;
+        Assert.Same(mockChatHistoryProvider.Object, typedSession.ChatHistoryProvider);
     }
 }

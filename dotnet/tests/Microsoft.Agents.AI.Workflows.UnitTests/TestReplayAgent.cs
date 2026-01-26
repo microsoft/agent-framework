@@ -45,21 +45,21 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
         return result;
     }
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-        => new(new ReplayAgentThread());
+    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        => new(new ReplayAgentSession());
 
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new ReplayAgentThread());
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new ReplayAgentSession());
 
     public static TestReplayAgent FromStrings(params string[] messages) =>
         new(ToChatMessages(messages));
 
     public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
 
-    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-        => this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
 
-    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string responseId = Guid.NewGuid().ToString("N");
         foreach (ChatMessage message in this.Messages)
@@ -101,5 +101,5 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
         return candidateMessages;
     }
 
-    private sealed class ReplayAgentThread() : InMemoryAgentThread();
+    private sealed class ReplayAgentSession() : InMemoryAgentSession();
 }

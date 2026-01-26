@@ -16,8 +16,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 {
     private readonly AIAgent _agent;
     private readonly AIAgentHostOptions _options;
-
-    private AgentThread? _thread;
+    private AgentSession? _session;
     private bool? _currentTurnEmitEvents;
 
     private AIContentExternalHandler<UserInputRequestContent, UserInputResponseContent>? _userInputHandler;
@@ -93,8 +92,8 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     public bool ShouldEmitStreamingEvents(bool? emitEvents)
         => emitEvents ?? this._options.EmitAgentUpdateEvents ?? false;
 
-    private async ValueTask<AgentThread> EnsureThreadAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
-        this._thread ??= await this._agent.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
+    private async ValueTask<AgentSession> EnsureSessionAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
+        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
 
     private const string UserInputRequestStateKey = nameof(_userInputHandler);
     private const string FunctionCallRequestStateKey = nameof(_functionCallHandler);
@@ -102,7 +101,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        AIAgentHostState state = new(this._thread?.Serialize(), this._currentTurnEmitEvents);
+        AIAgentHostState state = new(this._session?.Serialize(), this._currentTurnEmitEvents);
         Task coreStateTask = context.QueueStateUpdateAsync(AIAgentHostStateKey, state, cancellationToken: cancellationToken).AsTask();
         Task userInputRequestsTask = this._userInputHandler?.OnCheckpointingAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
         Task functionCallRequestsTask = this._functionCallHandler?.OnCheckpointingAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
@@ -120,8 +119,8 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         AIAgentHostState? state = await context.ReadStateAsync<AIAgentHostState>(AIAgentHostStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (state != null)
         {
-            this._thread = state.ThreadState.HasValue
-                         ? await this._agent.DeserializeThreadAsync(state.ThreadState.Value, cancellationToken: cancellationToken).ConfigureAwait(false)
+            this._session = state.ThreadState.HasValue
+                         ? await this._agent.DeserializeSessionAsync(state.ThreadState.Value, cancellationToken: cancellationToken).ConfigureAwait(false)
                          : null;
             this._currentTurnEmitEvents = state.CurrentTurnEmitEvents;
         }
@@ -175,7 +174,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             // Run the agent in streaming mode only when agent run update events are to be emitted.
             IAsyncEnumerable<AgentResponseUpdate> agentStream = this._agent.RunStreamingAsync(
                 messages,
-                await this.EnsureThreadAsync(context, cancellationToken).ConfigureAwait(false),
+                await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false),
                 cancellationToken: cancellationToken);
 
             List<AgentResponseUpdate> updates = [];
@@ -192,7 +191,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         {
             // Otherwise, run the agent in non-streaming mode.
             response = await this._agent.RunAsync(messages,
-                                                  await this.EnsureThreadAsync(context, cancellationToken).ConfigureAwait(false),
+                                                  await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false),
                                                   cancellationToken: cancellationToken)
                                         .ConfigureAwait(false);
 

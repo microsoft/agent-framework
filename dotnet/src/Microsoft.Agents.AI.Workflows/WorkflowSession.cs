@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
-internal sealed class WorkflowThread : AgentThread
+internal sealed class WorkflowSession : AgentSession
 {
     private readonly Workflow _workflow;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
@@ -24,7 +24,7 @@ internal sealed class WorkflowThread : AgentThread
     private readonly CheckpointManager _checkpointManager;
     private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
+    public WorkflowSession(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
@@ -40,7 +40,7 @@ internal sealed class WorkflowThread : AgentThread
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
     }
 
-    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
@@ -48,19 +48,19 @@ internal sealed class WorkflowThread : AgentThread
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
         JsonMarshaller marshaller = new(jsonSerializerOptions);
-        ThreadState threadState = marshaller.Marshal<ThreadState>(serializedThread);
+        SessionState sessionState = marshaller.Marshal<SessionState>(serializedSession);
 
-        this._inMemoryCheckpointManager = threadState.CheckpointManager;
+        this._inMemoryCheckpointManager = sessionState.CheckpointManager;
         if (this._inMemoryCheckpointManager is not null && checkpointManager is not null)
         {
-            // The thread was externalized with an in-memory checkpoint manager, but the caller is providing an external one.
-            throw new ArgumentException("Cannot provide an external checkpoint manager when deserializing a thread that " +
+            // The session was externalized with an in-memory checkpoint manager, but the caller is providing an external one.
+            throw new ArgumentException("Cannot provide an external checkpoint manager when deserializing a session that " +
                 "was serialized with an in-memory checkpoint manager.", nameof(checkpointManager));
         }
         else if (this._inMemoryCheckpointManager is null && checkpointManager is null)
         {
-            // The thread was externalized without an in-memory checkpoint manager, and the caller is not providing an external one.
-            throw new ArgumentException("An external checkpoint manager must be provided when deserializing a thread that " +
+            // The session was externalized without an in-memory checkpoint manager, and the caller is not providing an external one.
+            throw new ArgumentException("An external checkpoint manager must be provided when deserializing a session that " +
                 "was serialized without an in-memory checkpoint manager.", nameof(checkpointManager));
         }
         else
@@ -68,9 +68,9 @@ internal sealed class WorkflowThread : AgentThread
             this._checkpointManager = checkpointManager ?? new(this._inMemoryCheckpointManager!);
         }
 
-        this.RunId = threadState.RunId;
-        this.LastCheckpoint = threadState.LastCheckpoint;
-        this.ChatHistoryProvider = new WorkflowChatHistoryProvider(threadState.ChatHistoryProviderState);
+        this.RunId = sessionState.RunId;
+        this.LastCheckpoint = sessionState.LastCheckpoint;
+        this.ChatHistoryProvider = new WorkflowChatHistoryProvider(sessionState.ChatHistoryProviderState);
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
@@ -78,7 +78,7 @@ internal sealed class WorkflowThread : AgentThread
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonMarshaller marshaller = new(jsonSerializerOptions);
-        ThreadState info = new(
+        SessionState info = new(
             this.RunId,
             this.LastCheckpoint,
             this.ChatHistoryProvider.ExportStoreState(),
@@ -124,7 +124,7 @@ internal sealed class WorkflowThread : AgentThread
 
     private async ValueTask<Checkpointed<StreamingRun>> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
-        // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the thread,
+        // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the session,
         // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
@@ -251,7 +251,7 @@ internal sealed class WorkflowThread : AgentThread
     /// <inheritdoc/>
     public WorkflowChatHistoryProvider ChatHistoryProvider { get; }
 
-    internal sealed class ThreadState(
+    internal sealed class SessionState(
         string runId,
         CheckpointInfo? lastCheckpoint,
         WorkflowChatHistoryProvider.StoreState chatHistoryProviderState,

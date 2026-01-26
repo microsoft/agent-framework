@@ -58,20 +58,20 @@ AIAgent agent = new AzureOpenAIClient(
     });
 
 // Invoke the agent and output the text result.
-AgentThread thread = await agent.GetNewThreadAsync();
-Console.WriteLine(await agent.RunAsync("I need to pick up milk from the supermarket.", thread) + "\n");
-Console.WriteLine(await agent.RunAsync("I need to take Sally for soccer practice.", thread) + "\n");
-Console.WriteLine(await agent.RunAsync("I need to make a dentist appointment for Jimmy.", thread) + "\n");
-Console.WriteLine(await agent.RunAsync("I've taken Sally to soccer practice.", thread) + "\n");
+AgentSession session = await agent.GetNewSessionAsync();
+Console.WriteLine(await agent.RunAsync("I need to pick up milk from the supermarket.", session) + "\n");
+Console.WriteLine(await agent.RunAsync("I need to take Sally for soccer practice.", session) + "\n");
+Console.WriteLine(await agent.RunAsync("I need to make a dentist appointment for Jimmy.", session) + "\n");
+Console.WriteLine(await agent.RunAsync("I've taken Sally to soccer practice.", session) + "\n");
 
-// We can serialize the thread, and it will contain both the chat history and the data that each AI context provider serialized.
-JsonElement serializedThread = thread.Serialize();
+// We can serialize the session, and it will contain both the chat history and the data that each AI context provider serialized.
+JsonElement serializedSession = session.Serialize();
 // Let's print it to console to show the contents.
-Console.WriteLine(JsonSerializer.Serialize(serializedThread, options: new JsonSerializerOptions() { WriteIndented = true, IndentSize = 2 }) + "\n");
-// The serialized thread can be stored long term in a persistent store, but in this case we will just deserialize again and continue the conversation.
-thread = await agent.DeserializeThreadAsync(serializedThread);
+Console.WriteLine(JsonSerializer.Serialize(serializedSession, options: new JsonSerializerOptions() { WriteIndented = true, IndentSize = 2 }) + "\n");
+// The serialized session can be stored long term in a persistent store, but in this case we will just deserialize again and continue the conversation.
+session = await agent.DeserializeSessionAsync(serializedSession);
 
-Console.WriteLine(await agent.RunAsync("Considering my appointments, can you create a plan for my day that plans out when I should complete the items on my todo list?", thread) + "\n");
+Console.WriteLine(await agent.RunAsync("Considering my appointments, can you create a plan for my day that plans out when I should complete the items on my todo list?", session) + "\n");
 
 namespace SampleApp
 {

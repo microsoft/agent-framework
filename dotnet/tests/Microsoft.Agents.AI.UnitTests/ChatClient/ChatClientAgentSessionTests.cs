@@ -12,7 +12,7 @@ using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
-public class ChatClientAgentThreadTests
+public class ChatClientAgentSessionTests
 {
     #region Constructor and Property Tests
 
@@ -20,72 +20,72 @@ public class ChatClientAgentThreadTests
     public void ConstructorSetsDefaults()
     {
         // Arrange & Act
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
 
         // Assert
-        Assert.Null(thread.ConversationId);
-        Assert.Null(thread.ChatHistoryProvider);
+        Assert.Null(session.ConversationId);
+        Assert.Null(session.ChatHistoryProvider);
     }
 
     [Fact]
     public void SetConversationIdRoundtrips()
     {
         // Arrange
-        var thread = new ChatClientAgentThread();
-        const string ConversationId = "test-thread-id";
+        var session = new ChatClientAgentSession();
+        const string ConversationId = "test-session-id";
 
         // Act
-        thread.ConversationId = ConversationId;
+        session.ConversationId = ConversationId;
 
         // Assert
-        Assert.Equal(ConversationId, thread.ConversationId);
-        Assert.Null(thread.ChatHistoryProvider);
+        Assert.Equal(ConversationId, session.ConversationId);
+        Assert.Null(session.ChatHistoryProvider);
     }
 
     [Fact]
     public void SetChatHistoryProviderRoundtrips()
     {
         // Arrange
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
         var chatHistoryProvider = new InMemoryChatHistoryProvider();
 
         // Act
-        thread.ChatHistoryProvider = chatHistoryProvider;
+        session.ChatHistoryProvider = chatHistoryProvider;
 
         // Assert
-        Assert.Same(chatHistoryProvider, thread.ChatHistoryProvider);
-        Assert.Null(thread.ConversationId);
+        Assert.Same(chatHistoryProvider, session.ChatHistoryProvider);
+        Assert.Null(session.ConversationId);
     }
 
     [Fact]
     public void SetConversationIdThrowsWhenChatHistoryProviderIsSet()
     {
         // Arrange
-        var thread = new ChatClientAgentThread
+        var session = new ChatClientAgentSession
         {
             ChatHistoryProvider = new InMemoryChatHistoryProvider()
         };
 
         // Act & Assert
-        var exception = Assert.Throws<InvalidOperationException>(() => thread.ConversationId = "new-thread-id");
+        var exception = Assert.Throws<InvalidOperationException>(() => session.ConversationId = "new-session-id");
         Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
-        Assert.NotNull(thread.ChatHistoryProvider);
+        Assert.NotNull(session.ChatHistoryProvider);
     }
 
     [Fact]
     public void SetChatHistoryProviderThrowsWhenConversationIdIsSet()
     {
         // Arrange
-        var thread = new ChatClientAgentThread
+        var session = new ChatClientAgentSession
         {
-            ConversationId = "existing-thread-id"
+            ConversationId = "existing-session-id"
         };
         var provider = new InMemoryChatHistoryProvider();
 
         // Act & Assert
-        var exception = Assert.Throws<InvalidOperationException>(() => thread.ChatHistoryProvider = provider);
+        var exception = Assert.Throws<InvalidOperationException>(() => session.ChatHistoryProvider = provider);
         Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
-        Assert.NotNull(thread.ConversationId);
+        Assert.NotNull(session.ConversationId);
     }
 
     #endregion Constructor and Property Tests
@@ -103,12 +103,12 @@ public class ChatClientAgentThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act.
-        var thread = await ChatClientAgentThread.DeserializeAsync(json);
+        var session = await ChatClientAgentSession.DeserializeAsync(json);
 
         // Assert
-        Assert.Null(thread.ConversationId);
+        Assert.Null(session.ConversationId);
 
-        var chatHistoryProvider = thread.ChatHistoryProvider as InMemoryChatHistoryProvider;
+        var chatHistoryProvider = session.ChatHistoryProvider as InMemoryChatHistoryProvider;
         Assert.NotNull(chatHistoryProvider);
         Assert.Single(chatHistoryProvider);
         Assert.Equal("testAuthor", chatHistoryProvider[0].AuthorName);
@@ -125,11 +125,11 @@ public class ChatClientAgentThreadTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var thread = await ChatClientAgentThread.DeserializeAsync(json);
+        var session = await ChatClientAgentSession.DeserializeAsync(json);
 
         // Assert
-        Assert.Equal("TestConvId", thread.ConversationId);
-        Assert.Null(thread.ChatHistoryProvider);
+        Assert.Equal("TestConvId", session.ConversationId);
+        Assert.Null(session.ChatHistoryProvider);
     }
 
     [Fact]
@@ -145,11 +145,11 @@ public class ChatClientAgentThreadTests
         Mock<AIContextProvider> mockProvider = new();
 
         // Act
-        var thread = await ChatClientAgentThread.DeserializeAsync(json, aiContextProviderFactory: (_, _, _) => new(mockProvider.Object));
+        var session = await ChatClientAgentSession.DeserializeAsync(json, aiContextProviderFactory: (_, _, _) => new(mockProvider.Object));
 
         // Assert
-        Assert.Null(thread.ChatHistoryProvider);
-        Assert.Same(thread.AIContextProvider, mockProvider.Object);
+        Assert.Null(session.ChatHistoryProvider);
+        Assert.Same(session.AIContextProvider, mockProvider.Object);
     }
 
     [Fact]
@@ -157,10 +157,10 @@ public class ChatClientAgentThreadTests
     {
         // Arrange
         var invalidJson = JsonSerializer.Deserialize("[42]", TestJsonSerializerContext.Default.JsonElement);
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => ChatClientAgentThread.DeserializeAsync(invalidJson));
+        await Assert.ThrowsAsync<ArgumentException>(() => ChatClientAgentSession.DeserializeAsync(invalidJson));
     }
 
     #endregion Deserialize Tests
@@ -168,16 +168,16 @@ public class ChatClientAgentThreadTests
     #region Serialize Tests
 
     /// <summary>
-    /// Verify thread serialization to JSON when the thread has an id.
+    /// Verify session serialization to JSON when the session has an id.
     /// </summary>
     [Fact]
-    public void VerifyThreadSerializationWithId()
+    public void VerifySessionSerializationWithId()
     {
         // Arrange
-        var thread = new ChatClientAgentThread { ConversationId = "TestConvId" };
+        var session = new ChatClientAgentSession { ConversationId = "TestConvId" };
 
         // Act
-        var json = thread.Serialize();
+        var json = session.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -189,17 +189,17 @@ public class ChatClientAgentThreadTests
     }
 
     /// <summary>
-    /// Verify thread serialization to JSON when the thread has messages.
+    /// Verify session serialization to JSON when the session has messages.
     /// </summary>
     [Fact]
-    public void VerifyThreadSerializationWithMessages()
+    public void VerifySessionSerializationWithMessages()
     {
         // Arrange
         InMemoryChatHistoryProvider provider = [new(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }];
-        var thread = new ChatClientAgentThread { ChatHistoryProvider = provider };
+        var session = new ChatClientAgentSession { ChatHistoryProvider = provider };
 
         // Act
-        var json = thread.Serialize();
+        var json = session.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -224,7 +224,7 @@ public class ChatClientAgentThreadTests
     }
 
     [Fact]
-    public void VerifyThreadSerializationWithWithAIContextProvider()
+    public void VerifySessionSerializationWithWithAIContextProvider()
     {
         // Arrange
         Mock<AIContextProvider> mockProvider = new();
@@ -232,13 +232,13 @@ public class ChatClientAgentThreadTests
             .Setup(m => m.Serialize(It.IsAny<JsonSerializerOptions?>()))
             .Returns(JsonSerializer.SerializeToElement(["CP1"], TestJsonSerializerContext.Default.StringArray));
 
-        var thread = new ChatClientAgentThread
+        var session = new ChatClientAgentSession
         {
             AIContextProvider = mockProvider.Object
         };
 
         // Act
-        var json = thread.Serialize();
+        var json = session.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -250,13 +250,13 @@ public class ChatClientAgentThreadTests
     }
 
     /// <summary>
-    /// Verify thread serialization to JSON with custom options.
+    /// Verify session serialization to JSON with custom options.
     /// </summary>
     [Fact]
-    public void VerifyThreadSerializationWithCustomOptions()
+    public void VerifySessionSerializationWithCustomOptions()
     {
         // Arrange
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
         JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
@@ -268,10 +268,10 @@ public class ChatClientAgentThreadTests
         chatHistoryProviderMock
             .Setup(m => m.Serialize(options))
             .Returns(chatHistoryProviderStateElement);
-        thread.ChatHistoryProvider = chatHistoryProviderMock.Object;
+        session.ChatHistoryProvider = chatHistoryProviderMock.Object;
 
         // Act
-        var json = thread.Serialize(options);
+        var json = session.Serialize(options);
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -295,15 +295,15 @@ public class ChatClientAgentThreadTests
     public void GetService_RequestingAIContextProvider_ReturnsAIContextProvider()
     {
         // Arrange
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
         var mockProvider = new Mock<AIContextProvider>();
         mockProvider
             .Setup(m => m.GetService(It.Is<Type>(x => x == typeof(AIContextProvider)), null))
             .Returns(mockProvider.Object);
-        thread.AIContextProvider = mockProvider.Object;
+        session.AIContextProvider = mockProvider.Object;
 
         // Act
-        var result = thread.GetService(typeof(AIContextProvider));
+        var result = session.GetService(typeof(AIContextProvider));
 
         // Assert
         Assert.NotNull(result);
@@ -314,12 +314,12 @@ public class ChatClientAgentThreadTests
     public void GetService_RequestingChatHistoryProvider_ReturnsChatHistoryProvider()
     {
         // Arrange
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
         var chatHistoryProvider = new InMemoryChatHistoryProvider();
-        thread.ChatHistoryProvider = chatHistoryProvider;
+        session.ChatHistoryProvider = chatHistoryProvider;
 
         // Act
-        var result = thread.GetService(typeof(ChatHistoryProvider));
+        var result = session.GetService(typeof(ChatHistoryProvider));
 
         // Assert
         Assert.NotNull(result);

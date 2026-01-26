@@ -25,7 +25,7 @@ public static class AIAgentWithOpenAIExtensions
     /// </summary>
     /// <param name="agent">The AI agent to run.</param>
     /// <param name="messages">The collection of OpenAI chat messages to send to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="Task{ChatCompletion}"/> representing the asynchronous operation that returns a native OpenAI <see cref="ChatCompletion"/> response.</returns>
@@ -36,12 +36,12 @@ public static class AIAgentWithOpenAIExtensions
     /// This method converts the OpenAI chat messages to the Microsoft Extensions AI format using the appropriate conversion method,
     /// runs the agent with the converted message collection, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentResponseExtensions.AsOpenAIChatCompletion"/>.
     /// </remarks>
-    public static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        var response = await agent.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
+        var response = await agent.RunAsync([.. messages.AsChatMessages()], session, options, cancellationToken).ConfigureAwait(false);
 
         return response.AsOpenAIChatCompletion();
     }
@@ -51,7 +51,7 @@ public static class AIAgentWithOpenAIExtensions
     /// </summary>
     /// <param name="agent">The AI agent to run.</param>
     /// <param name="messages">The collection of OpenAI chat messages to send to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided message and agent response.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided message and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="Task{ChatCompletion}"/> representing the asynchronous operation that returns a native OpenAI <see cref="ChatCompletion"/> response.</returns>
@@ -62,12 +62,12 @@ public static class AIAgentWithOpenAIExtensions
     /// This method converts the OpenAI chat messages to the Microsoft Extensions AI format using the appropriate conversion method,
     /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentResponseExtensions.AsOpenAIChatCompletion"/>.
     /// </remarks>
-    public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        IAsyncEnumerable<AgentResponseUpdate> response = agent.RunStreamingAsync([.. messages.AsChatMessages()], thread, options, cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> response = agent.RunStreamingAsync([.. messages.AsChatMessages()], session, options, cancellationToken);
 
         return new AsyncStreamingChatCompletionUpdateCollectionResult(response);
     }
@@ -77,7 +77,7 @@ public static class AIAgentWithOpenAIExtensions
     /// </summary>
     /// <param name="agent">The AI agent to run.</param>
     /// <param name="messages">The collection of OpenAI response items to send to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="Task{ResponseResult}"/> representing the asynchronous operation that returns a native OpenAI <see cref="ResponseResult"/> response.</returns>
@@ -88,12 +88,12 @@ public static class AIAgentWithOpenAIExtensions
     /// This method converts the OpenAI response items to the Microsoft Extensions AI format using the appropriate conversion method,
     /// runs the agent with the converted message collection, and then extracts the native OpenAI <see cref="ResponseResult"/> from the response using <see cref="AgentResponseExtensions.AsOpenAIResponse"/>.
     /// </remarks>
-    public static async Task<ResponseResult> RunAsync(this AIAgent agent, IEnumerable<ResponseItem> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static async Task<ResponseResult> RunAsync(this AIAgent agent, IEnumerable<ResponseItem> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        var response = await agent.RunAsync(messages.AsChatMessages(), thread, options, cancellationToken).ConfigureAwait(false);
+        var response = await agent.RunAsync(messages.AsChatMessages(), session, options, cancellationToken).ConfigureAwait(false);
 
         return response.AsOpenAIResponse();
     }
@@ -103,7 +103,7 @@ public static class AIAgentWithOpenAIExtensions
     /// </summary>
     /// <param name="agent">The AI agent to run.</param>
     /// <param name="messages">The collection of OpenAI response items to send to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response updates.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response updates.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An <see cref="AsyncCollectionResult{StreamingResponseUpdate}"/> representing the asynchronous enumerable that yields native OpenAI <see cref="StreamingResponseUpdate"/> instances as they are streamed.</returns>
@@ -116,12 +116,12 @@ public static class AIAgentWithOpenAIExtensions
     /// The method attempts to extract <see cref="StreamingResponseUpdate"/> from the underlying response representation. If a raw update is not available,
     /// it is skipped because the OpenAI library does not currently expose model factory methods for creating such instances.
     /// </remarks>
-    public static AsyncCollectionResult<StreamingResponseUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<ResponseItem> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public static AsyncCollectionResult<StreamingResponseUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<ResponseItem> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
-        IAsyncEnumerable<AgentResponseUpdate> response = agent.RunStreamingAsync([.. messages.AsChatMessages()], thread, options, cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> response = agent.RunStreamingAsync([.. messages.AsChatMessages()], session, options, cancellationToken);
 
         return new AsyncStreamingResponseUpdateCollectionResult(response);
     }

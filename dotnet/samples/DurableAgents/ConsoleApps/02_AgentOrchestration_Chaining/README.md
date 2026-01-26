@@ -1,11 +1,11 @@
 # Single Agent Orchestration Sample
 
-This sample demonstrates how to use the durable agents extension to create a simple console app that orchestrates sequential calls to a single AI agent using the same conversation thread for context continuity.
+This sample demonstrates how to use the durable agents extension to create a simple console app that orchestrates sequential calls to a single AI agent using the same session for context continuity.
 
 ## Key Concepts Demonstrated
 
 - Orchestrating multiple interactions with the same agent in a deterministic order
-- Using the same `AgentThread` across multiple calls to maintain conversational context
+- Using the same `AgentSession` across multiple calls to maintain conversational context
 - Durable orchestration with automatic checkpointing and resumption from failures
 - Waiting for orchestration completion using `WaitForInstanceCompletionAsync`
 

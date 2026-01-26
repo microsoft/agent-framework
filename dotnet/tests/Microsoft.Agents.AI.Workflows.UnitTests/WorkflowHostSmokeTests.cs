@@ -32,32 +32,32 @@ public class WorkflowHostSmokeTests
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
     {
-        private sealed class Thread : InMemoryAgentThread
+        private sealed class Session : InMemoryAgentSession
         {
-            public Thread() { }
+            public Session() { }
 
-            public Thread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-                : base(serializedThread, jsonSerializerOptions)
+            public Session(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null)
+                : base(serializedSession, jsonSerializerOptions)
             { }
         }
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            return new(new Thread(serializedThread, jsonSerializerOptions));
+            return new(new Session(serializedSession, jsonSerializerOptions));
         }
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
         {
-            return new(new Thread());
+            return new(new Session());
         }
 
-        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+            return await this.RunStreamingAsync(messages, session, options, cancellationToken)
                              .ToAgentResponseAsync(cancellationToken);
         }
 
-        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             const string ErrorMessage = "Simulated agent failure.";
             if (failByThrowing)

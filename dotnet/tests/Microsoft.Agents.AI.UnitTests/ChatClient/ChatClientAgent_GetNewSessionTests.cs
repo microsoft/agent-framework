@@ -7,12 +7,12 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Contains unit tests for the ChatClientAgent.GetNewThreadAsync methods.
+/// Contains unit tests for the ChatClientAgent.GetNewSessionAsync methods.
 /// </summary>
-public class ChatClientAgent_GetNewThreadTests
+public class ChatClientAgent_GetNewSessionTests
 {
     [Fact]
-    public async Task GetNewThread_UsesAIContextProviderFactory_IfProvidedAsync()
+    public async Task GetNewSession_UsesAIContextProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -29,17 +29,17 @@ public class ChatClientAgent_GetNewThreadTests
         });
 
         // Act
-        var thread = await agent.GetNewThreadAsync();
+        var session = await agent.GetNewSessionAsync();
 
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockContextProvider.Object, typedThread.AIContextProvider);
+        Assert.IsType<ChatClientAgentSession>(session);
+        var typedSession = (ChatClientAgentSession)session;
+        Assert.Same(mockContextProvider.Object, typedSession.AIContextProvider);
     }
 
     [Fact]
-    public async Task GetNewThread_UsesChatHistoryProviderFactory_IfProvidedAsync()
+    public async Task GetNewSession_UsesChatHistoryProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -56,17 +56,17 @@ public class ChatClientAgent_GetNewThreadTests
         });
 
         // Act
-        var thread = await agent.GetNewThreadAsync();
+        var session = await agent.GetNewSessionAsync();
 
         // Assert
         Assert.True(factoryCalled, "ChatHistoryProviderFactory was not called.");
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockChatHistoryProvider.Object, typedThread.ChatHistoryProvider);
+        Assert.IsType<ChatClientAgentSession>(session);
+        var typedSession = (ChatClientAgentSession)session;
+        Assert.Same(mockChatHistoryProvider.Object, typedSession.ChatHistoryProvider);
     }
 
     [Fact]
-    public async Task GetNewThread_UsesChatHistoryProvider_FromTypedOverloadAsync()
+    public async Task GetNewSession_UsesChatHistoryProvider_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -74,16 +74,16 @@ public class ChatClientAgent_GetNewThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var thread = await agent.GetNewThreadAsync(mockChatHistoryProvider.Object);
+        var session = await agent.GetNewSessionAsync(mockChatHistoryProvider.Object);
 
         // Assert
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockChatHistoryProvider.Object, typedThread.ChatHistoryProvider);
+        Assert.IsType<ChatClientAgentSession>(session);
+        var typedSession = (ChatClientAgentSession)session;
+        Assert.Same(mockChatHistoryProvider.Object, typedSession.ChatHistoryProvider);
     }
 
     [Fact]
-    public async Task GetNewThread_UsesConversationId_FromTypedOverloadAsync()
+    public async Task GetNewSession_UsesConversationId_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -91,11 +91,11 @@ public class ChatClientAgent_GetNewThreadTests
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var thread = await agent.GetNewThreadAsync(TestConversationId);
+        var session = await agent.GetNewSessionAsync(TestConversationId);
 
         // Assert
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Equal(TestConversationId, typedThread.ConversationId);
+        Assert.IsType<ChatClientAgentSession>(session);
+        var typedSession = (ChatClientAgentSession)session;
+        Assert.Equal(TestConversationId, typedSession.ConversationId);
     }
 }

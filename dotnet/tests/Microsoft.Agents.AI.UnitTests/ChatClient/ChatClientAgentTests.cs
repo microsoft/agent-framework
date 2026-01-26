@@ -222,10 +222,10 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync works with existing thread and can retreive messages if the thread has a ChatHistoryProvider.
+    /// Verify that RunAsync works with existing session and can retreive messages if the session has a ChatHistoryProvider.
     /// </summary>
     [Fact]
-    public async Task RunAsyncRetrievesMessagesFromThreadWhenThreadHasChatHistoryProviderAsync()
+    public async Task RunAsyncRetrievesMessagesFromSessionWhenSessionHasChatHistoryProviderAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -241,11 +241,11 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
-        // Create a thread using the agent's GetNewThreadAsync method
-        var thread = await agent.GetNewThreadAsync();
+        // Create a session using the agent's GetNewSessionAsync method
+        var session = await agent.GetNewSessionAsync();
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "new message")], thread: thread);
+        await agent.RunAsync([new(ChatRole.User, "new message")], session: session);
 
         // Assert
         // Should contain: new message
@@ -356,8 +356,8 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockService.Object, options: new() { AIContextProviderFactory = (_, _) => new(mockProvider.Object), ChatOptions = new() { Instructions = "base instructions", Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
-        var thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        await agent.RunAsync(requestMessages, thread);
+        var session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync(requestMessages, session);
 
         // Assert
         // Should contain: base instructions, user message, context message, base function, context function
@@ -371,8 +371,8 @@ public partial class ChatClientAgentTests
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
 
-        // Verify that the thread was updated with the ai context provider, input and response messages
-        var chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(thread!.ChatHistoryProvider);
+        // Verify that the session was updated with the ai context provider, input and response messages
+        var chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(session!.ChatHistoryProvider);
         Assert.Equal(3, chatHistoryProvider.Count);
         Assert.Equal("user message", chatHistoryProvider[0].Text);
         Assert.Equal("context provider message", chatHistoryProvider[1].Text);
@@ -1296,11 +1296,11 @@ public partial class ChatClientAgentTests
         });
 
         // Act
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        await agent.RunStreamingAsync([new(ChatRole.User, "test")], thread).ToListAsync();
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        await agent.RunStreamingAsync([new(ChatRole.User, "test")], session).ToListAsync();
 
         // Assert
-        var chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(thread!.ChatHistoryProvider);
+        var chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(session!.ChatHistoryProvider);
         Assert.Equal(2, chatHistoryProvider.Count);
         Assert.Equal("test", chatHistoryProvider[0].Text);
         Assert.Equal("what?", chatHistoryProvider[1].Text);
@@ -1334,8 +1334,8 @@ public partial class ChatClientAgentTests
         });
 
         // Act & Assert
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync([new(ChatRole.User, "test")], thread).ToListAsync());
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync([new(ChatRole.User, "test")], session).ToListAsync());
         Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
     }
 
@@ -1391,8 +1391,8 @@ public partial class ChatClientAgentTests
             });
 
         // Act
-        var thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        var updates = agent.RunStreamingAsync(requestMessages, thread);
+        var session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        var updates = agent.RunStreamingAsync(requestMessages, session);
         _ = await updates.ToAgentResponseAsync();
 
         // Assert
@@ -1407,8 +1407,8 @@ public partial class ChatClientAgentTests
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
 
-        // Verify that the thread was updated with the input, ai context provider, and response messages
-        var chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(thread!.ChatHistoryProvider);
+        // Verify that the session was updated with the input, ai context provider, and response messages
+        var chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(session!.ChatHistoryProvider);
         Assert.Equal(3, chatHistoryProvider.Count);
         Assert.Equal("user message", chatHistoryProvider[0].Text);
         Assert.Equal("context provider message", chatHistoryProvider[1].Text);

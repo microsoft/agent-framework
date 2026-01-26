@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
-internal sealed record TestRequestAgentThreadState(JsonElement ThreadState, Dictionary<string, PortableValue> UnservicedRequests, HashSet<string> ServicedRequests, HashSet<string> PairedRequests);
+internal sealed record TestRequestAgentSessionState(JsonElement SessionState, Dictionary<string, PortableValue> UnservicedRequests, HashSet<string> ServicedRequests, HashSet<string> PairedRequests);
 
 public enum TestAgentRequestType
 {
@@ -24,29 +24,29 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 {
     public Random RNG { get; set; } = new Random(HashCode.Combine(requestType, nameof(TestRequestAgent)));
 
-    public AgentThread? LastThread { get; set; }
+    public AgentSession? LastSession { get; set; }
 
     protected override string? IdCore => id;
     public override string? Name => name;
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken)
+    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken)
         => new(requestType switch
         {
-            TestAgentRequestType.FunctionCall => new TestRequestAgentThread<FunctionCallContent, FunctionResultContent>(),
-            TestAgentRequestType.UserInputRequest => new TestRequestAgentThread<UserInputRequestContent, UserInputResponseContent>(),
+            TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
+            TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent>(),
             _ => throw new NotSupportedException(),
         });
 
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(requestType switch
         {
-            TestAgentRequestType.FunctionCall => new TestRequestAgentThread<FunctionCallContent, FunctionResultContent>(),
-            TestAgentRequestType.UserInputRequest => new TestRequestAgentThread<UserInputRequestContent, UserInputResponseContent>(),
+            TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
+            TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent>(),
             _ => throw new NotSupportedException(),
         });
 
-    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-        => this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
 
     private static int[] SampleIndicies(Random rng, int n, int c)
     {
@@ -67,29 +67,29 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     private async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync<TRequest, TResponse>(
                 IRequestResponseStrategy<TRequest, TResponse> strategy,
                 IEnumerable<ChatMessage> messages,
-                AgentThread? thread = null,
+                AgentSession? session = null,
                 AgentRunOptions? options = null,
                 [EnumeratorCancellation] CancellationToken cancellationToken = default)
                     where TRequest : AIContent
                     where TResponse : AIContent
     {
-        this.LastThread = thread ??= await this.GetNewThreadAsync(cancellationToken);
-        TestRequestAgentThread<TRequest, TResponse> traThread = ConvertThread<TRequest, TResponse>(thread);
+        this.LastSession = session ??= await this.GetNewSessionAsync(cancellationToken);
+        TestRequestAgentSession<TRequest, TResponse> traSessin = ConvertSession<TRequest, TResponse>(session);
 
-        if (traThread.HasSentRequests)
+        if (traSessin.HasSentRequests)
         {
             foreach (TResponse response in messages.SelectMany(message => message.Contents).OfType<TResponse>())
             {
-                strategy.ProcessResponse(response, traThread);
+                strategy.ProcessResponse(response, traSessin);
             }
 
-            if (traThread.UnservicedRequests.Count == 0)
+            if (traSessin.UnservicedRequests.Count == 0)
             {
                 yield return new(ChatRole.Assistant, "Done");
             }
             else
             {
-                yield return new(ChatRole.Assistant, $"Remaining: {traThread.UnservicedRequests.Count}");
+                yield return new(ChatRole.Assistant, $"Remaining: {traSessin.UnservicedRequests.Count}");
             }
         }
         else
@@ -107,12 +107,12 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
                 (string id, TRequest request) = requests[i];
                 if (servicedIndicies.Contains(i))
                 {
-                    traThread.PairedRequests.Add(id);
+                    traSessin.PairedRequests.Add(id);
                     pairedResponses.Add(strategy.CreatePairedResponse(request));
                 }
                 else
                 {
-                    traThread.UnservicedRequests.Add(id, request);
+                    traSessin.UnservicedRequests.Add(id, request);
                 }
 
                 yield return new(ChatRole.Assistant, [request]);
@@ -120,20 +120,20 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
             yield return new(ChatRole.Assistant, pairedResponses);
 
-            traThread.HasSentRequests = true;
+            traSessin.HasSentRequests = true;
         }
     }
 
-    private static TestRequestAgentThread<TRequest, TResponse> ConvertThread<TRequest, TResponse>(AgentThread thread)
+    private static TestRequestAgentSession<TRequest, TResponse> ConvertSession<TRequest, TResponse>(AgentSession session)
         where TRequest : AIContent
         where TResponse : AIContent
     {
-        if (thread is not TestRequestAgentThread<TRequest, TResponse> traThread)
+        if (session is not TestRequestAgentSession<TRequest, TResponse> traSession)
         {
-            throw new ArgumentException($"Bad AgentThread type: Expected {typeof(TestRequestAgentThread<TRequest, TResponse>)}, got {thread.GetType()}.", nameof(thread));
+            throw new ArgumentException($"Bad AgentSession type: Expected {typeof(TestRequestAgentSession<TRequest, TResponse>)}, got {session.GetType()}.", nameof(session));
         }
 
-        return traThread;
+        return traSession;
     }
 
     private sealed class FunctionCallStrategy : IRequestResponseStrategy<FunctionCallContent, FunctionResultContent>
@@ -153,19 +153,19 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             }
         }
 
-        public void ProcessResponse(FunctionResultContent response, TestRequestAgentThread<FunctionCallContent, FunctionResultContent> thread)
+        public void ProcessResponse(FunctionResultContent response, TestRequestAgentSession<FunctionCallContent, FunctionResultContent> session)
         {
-            if (thread.UnservicedRequests.TryGetValue(response.CallId, out FunctionCallContent? request))
+            if (session.UnservicedRequests.TryGetValue(response.CallId, out FunctionCallContent? request))
             {
                 response.Result.As<FunctionCallContent>().Should().Be(request);
-                thread.ServicedRequests.Add(response.CallId);
-                thread.UnservicedRequests.Remove(response.CallId);
+                session.ServicedRequests.Add(response.CallId);
+                session.UnservicedRequests.Remove(response.CallId);
             }
-            else if (thread.ServicedRequests.Contains(response.CallId))
+            else if (session.ServicedRequests.Contains(response.CallId))
             {
                 throw new InvalidOperationException($"Seeing duplicate response with id {response.CallId}");
             }
-            else if (thread.PairedRequests.Contains(response.CallId))
+            else if (session.PairedRequests.Contains(response.CallId))
             {
                 throw new InvalidOperationException($"Seeing explicit response to initially paired request with id {response.CallId}");
             }
@@ -198,9 +198,9 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             }
         }
 
-        public void ProcessResponse(UserInputResponseContent response, TestRequestAgentThread<UserInputRequestContent, UserInputResponseContent> thread)
+        public void ProcessResponse(UserInputResponseContent response, TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent> session)
         {
-            if (thread.UnservicedRequests.TryGetValue(response.Id, out UserInputRequestContent? request))
+            if (session.UnservicedRequests.TryGetValue(response.Id, out UserInputRequestContent? request))
             {
                 if (request is not FunctionApprovalRequestContent approvalRequest)
                 {
@@ -214,14 +214,14 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
                 approvalResponse.Approved.Should().BeTrue();
                 approvalResponse.FunctionCall.As<FunctionCallContent>().Should().Be(approvalRequest.FunctionCall);
-                thread.ServicedRequests.Add(response.Id);
-                thread.UnservicedRequests.Remove(response.Id);
+                session.ServicedRequests.Add(response.Id);
+                session.UnservicedRequests.Remove(response.Id);
             }
-            else if (thread.ServicedRequests.Contains(response.Id))
+            else if (session.ServicedRequests.Contains(response.Id))
             {
                 throw new InvalidOperationException($"Seeing duplicate response with id {response.Id}");
             }
-            else if (thread.PairedRequests.Contains(response.Id))
+            else if (session.PairedRequests.Contains(response.Id))
             {
                 throw new InvalidOperationException($"Seeing explicit response to initially paired request with id {response.Id}");
             }
@@ -239,15 +239,15 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         IEnumerable<(string, TRequest)> CreateRequests(int count);
         TResponse CreatePairedResponse(TRequest request);
 
-        void ProcessResponse(TResponse response, TestRequestAgentThread<TRequest, TResponse> thread);
+        void ProcessResponse(TResponse response, TestRequestAgentSession<TRequest, TResponse> session);
     }
 
-    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         return requestType switch
         {
-            TestAgentRequestType.FunctionCall => this.RunStreamingAsync(new FunctionCallStrategy(), messages, thread, options, cancellationToken),
-            TestAgentRequestType.UserInputRequest => this.RunStreamingAsync(new FunctionApprovalStrategy(), messages, thread, options, cancellationToken),
+            TestAgentRequestType.FunctionCall => this.RunStreamingAsync(new FunctionCallStrategy(), messages, session, options, cancellationToken),
+            TestAgentRequestType.UserInputRequest => this.RunStreamingAsync(new FunctionApprovalStrategy(), messages, session, options, cancellationToken),
             _ => throw new NotSupportedException($"Unknown AgentRequestType {requestType}"),
         };
     }
@@ -267,14 +267,14 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         where TRequest : AIContent
         where TResponse : AIContent
     {
-        this.LastThread.Should().NotBeNull();
-        TestRequestAgentThread<TRequest, TResponse> traThread = ConvertThread<TRequest, TResponse>(this.LastThread);
+        this.LastSession.Should().NotBeNull();
+        TestRequestAgentSession<TRequest, TResponse> traSession = ConvertSession<TRequest, TResponse>(this.LastSession);
 
-        requests.Should().HaveCount(traThread.UnservicedRequests.Count);
+        requests.Should().HaveCount(traSession.UnservicedRequests.Count);
         foreach (TRequest request in requests)
         {
             string requestId = RetrieveId(request);
-            traThread.UnservicedRequests.Should().ContainKey(requestId);
+            traSession.UnservicedRequests.Should().ContainKey(requestId);
             yield return strategy.CreatePairedResponse(request);
         }
     }
@@ -327,11 +327,11 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         }
     }
 
-    private sealed class TestRequestAgentThread<TRequest, TResponse> : InMemoryAgentThread
+    private sealed class TestRequestAgentSession<TRequest, TResponse> : InMemoryAgentSession
         where TRequest : AIContent
         where TResponse : AIContent
     {
-        public TestRequestAgentThread()
+        public TestRequestAgentSession()
         {
         }
 
@@ -341,17 +341,17 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         public HashSet<string> PairedRequests { get; } = new();
 
         private static JsonElement DeserializeAndExtractState(JsonElement serializedState,
-                                                              out TestRequestAgentThreadState state,
+                                                              out TestRequestAgentSessionState state,
                                                               JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            state = JsonSerializer.Deserialize<TestRequestAgentThreadState>(serializedState, jsonSerializerOptions)
-                 ?? throw new ArgumentException("Unable to deserialize thread state.");
+            state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(serializedState, jsonSerializerOptions)
+                 ?? throw new ArgumentException("Unable to deserialize session state.");
 
-            return state.ThreadState;
+            return state.SessionState;
         }
 
-        public TestRequestAgentThread(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(DeserializeAndExtractState(element, out TestRequestAgentThreadState state, jsonSerializerOptions))
+        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
+            : base(DeserializeAndExtractState(element, out TestRequestAgentSessionState state, jsonSerializerOptions))
         {
             this.UnservicedRequests = state.UnservicedRequests.ToDictionary(
                 keySelector: item => item.Key,
@@ -363,14 +363,14 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            JsonElement threadState = base.Serialize(jsonSerializerOptions);
+            JsonElement sessionState = base.Serialize(jsonSerializerOptions);
 
             Dictionary<string, PortableValue> portableUnservicedRequests =
                 this.UnservicedRequests.ToDictionary(
                     keySelector: item => item.Key,
                     elementSelector: item => new PortableValue(item.Value));
 
-            TestRequestAgentThreadState state = new(threadState, portableUnservicedRequests, this.ServicedRequests, this.PairedRequests);
+            TestRequestAgentSessionState state = new(sessionState, portableUnservicedRequests, this.ServicedRequests, this.PairedRequests);
 
             return JsonSerializer.SerializeToElement(state, jsonSerializerOptions);
         }

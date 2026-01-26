@@ -412,7 +412,7 @@ public class SampleSmokeTest
     internal async Task Test_RunSample_Step13aAsync(ExecutionEnvironment environment)
     {
         IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
-        AgentThread? thread = null;
+        AgentSession? session = null;
 
         await RunAndValidateAsync(1);
 
@@ -424,7 +424,7 @@ public class SampleSmokeTest
             using StringWriter writer = new();
             string input = $"[{step}] Hello, World!";
 
-            thread = await Step13EntryPoint.RunAsAgentAsync(writer, input, executionEnvironment, thread);
+            session = await Step13EntryPoint.RunAsAgentAsync(writer, input, executionEnvironment, session);
 
             string result = writer.ToString();
             string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);

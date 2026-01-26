@@ -52,17 +52,17 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
     /// Run the agent with the provided message and arguments.
     /// </summary>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatCompletion"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public virtual async Task<ChatCompletion> RunAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var response = await this.RunAsync(messages.AsChatMessages(), thread, options, cancellationToken).ConfigureAwait(false);
+        var response = await this.RunAsync(messages.AsChatMessages(), session, options, cancellationToken).ConfigureAwait(false);
 
         return response.AsOpenAIChatCompletion();
     }
@@ -71,26 +71,26 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
     /// Run the agent streaming with the provided message and arguments.
     /// </summary>
     /// <param name="messages">The messages to pass to the agent.</param>
-    /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatCompletion"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public virtual IAsyncEnumerable<StreamingChatCompletionUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var response = this.RunStreamingAsync(messages.AsChatMessages(), thread, options, cancellationToken);
+        var response = this.RunStreamingAsync(messages.AsChatMessages(), session, options, cancellationToken);
 
         return response.AsChatResponseUpdatesAsync().AsOpenAIStreamingChatCompletionUpdatesAsync(cancellationToken);
     }
 
     /// <inheritdoc/>
-    protected sealed override Task<AgentResponse> RunCoreAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.RunCoreAsync(messages, thread, options, cancellationToken);
+    protected sealed override Task<AgentResponse> RunCoreAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.RunCoreAsync(messages, session, options, cancellationToken);
 
     /// <inheritdoc/>
-    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.RunCoreStreamingAsync(messages, thread, options, cancellationToken);
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.RunCoreStreamingAsync(messages, session, options, cancellationToken);
 }

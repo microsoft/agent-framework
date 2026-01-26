@@ -40,6 +40,7 @@ members = [
     "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-foundry-local",
+    "agent-framework-github-copilot",
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-ollama",
@@ -352,6 +353,7 @@ all = [
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-declarative", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-github-copilot", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ollama", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -371,6 +373,7 @@ requires-dist = [
     { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
     { name = "agent-framework-declarative", marker = "extra == 'all'", editable = "packages/declarative" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
+    { name = "agent-framework-github-copilot", marker = "extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-lab", marker = "extra == 'all'", editable = "packages/lab" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-ollama", marker = "extra == 'all'", editable = "packages/ollama" },
@@ -461,6 +464,21 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "foundry-local-sdk", specifier = ">=0.5.1,<1" },
+]
+
+[[package]]
+name = "agent-framework-github-copilot"
+version = "1.0.0b260116"
+source = { editable = "packages/github_copilot" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "github-copilot-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "github-copilot-sdk", specifier = ">=0.1.0" },
 ]
 
 [[package]]
@@ -2233,6 +2251,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/53/e4/203a76fa2ef46cdb0a618295cc115220cbb874229d4d8721068335eb87f0/furl-2.1.4.tar.gz", hash = "sha256:877657501266c929269739fb5f5980534a41abd6bbabcb367c136d1d3b2a6015", size = 57526, upload-time = "2025-03-09T05:36:21.175Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/61/8c/dce3b1b7593858eba995b2dfdb833f872c7f863e3da92aab7128a6b11af4/furl-2.1.4-py2.py3-none-any.whl", hash = "sha256:da34d0b34e53ffe2d2e6851a7085a05d96922b5b578620a37377ff1dbeeb11c8", size = 27550, upload-time = "2025-03-09T05:36:19.928Z" },
+]
+
+[[package]]
+name = "github-copilot-sdk"
+version = "0.1.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dateutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/f4/3e8f7fde88c5491ce5d29818d850b9508868660cad5359a9352bb804364a/github_copilot_sdk-0.1.15.tar.gz", hash = "sha256:6f713fc80b282844344bc4aaa495f58f346d63cdc93d25df3bf7e1e8d0d4f20a", size = 89915, upload-time = "2026-01-22T04:25:20.18Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/be/1f1166914c2a769d43761b7da6a2137711e1cb2c8de77bf9c2da5c171ec7/github_copilot_sdk-0.1.15-py3-none-any.whl", hash = "sha256:64a45e4c63b4ae6a4863470f74d6cf6bcf2a94b8a6efa7dfbdc8bcea316c5e78", size = 31972, upload-time = "2026-01-22T04:25:18.652Z" },
 ]
 
 [[package]]

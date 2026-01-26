@@ -7,12 +7,12 @@ using Microsoft.Agents.AI;
 namespace AgentConformance.IntegrationTests.Support;
 
 /// <summary>
-/// Helper class to delete threads after tests.
+/// Helper class to delete sessions after tests.
 /// </summary>
-/// <param name="thread">The thread to delete.</param>
+/// <param name="session">The session to delete.</param>
 /// <param name="fixture">The fixture that provides agent specific capabilities.</param>
-internal sealed class ThreadCleanup(AgentThread thread, IAgentFixture fixture) : IAsyncDisposable
+internal sealed class SessionCleanup(AgentSession session, IAgentFixture fixture) : IAsyncDisposable
 {
     public async ValueTask DisposeAsync() =>
-        await fixture.DeleteThreadAsync(thread);
+        await fixture.DeleteSessionAsync(session);
 }

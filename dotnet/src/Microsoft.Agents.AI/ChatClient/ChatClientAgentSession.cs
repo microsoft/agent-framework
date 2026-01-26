@@ -13,14 +13,14 @@ namespace Microsoft.Agents.AI;
 /// Provides a thread implementation for use with <see cref="ChatClientAgent"/>.
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public sealed class ChatClientAgentThread : AgentThread
+public sealed class ChatClientAgentSession : AgentSession
 {
     private ChatHistoryProvider? _chatHistoryProvider;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentThread"/> class.
+    /// Initializes a new instance of the <see cref="ChatClientAgentSession"/> class.
     /// </summary>
-    internal ChatClientAgentThread()
+    internal ChatClientAgentSession()
     {
     }
 
@@ -59,8 +59,8 @@ public sealed class ChatClientAgentThread : AgentThread
 
             if (this._chatHistoryProvider is not null)
             {
-                // If we have a ChatHistoryProvider already, we shouldn't switch the thread to use a conversation id
-                // since it means that the thread contents will essentially be deleted, and the thread will not work
+                // If we have a ChatHistoryProvider already, we shouldn't switch the session to use a conversation id
+                // since it means that the session contents will essentially be deleted, and the session will not work
                 // with the original agent anymore.
                 throw new InvalidOperationException("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.");
             }
@@ -98,8 +98,8 @@ public sealed class ChatClientAgentThread : AgentThread
 
             if (!string.IsNullOrWhiteSpace(this.ConversationId))
             {
-                // If we have a conversation id already, we shouldn't switch the thread to use a ChatHistoryProvider
-                // since it means that the thread will not work with the original agent anymore.
+                // If we have a conversation id already, we shouldn't switch the session to use a ChatHistoryProvider
+                // since it means that the session will not work with the original agent anymore.
                 throw new InvalidOperationException("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.");
             }
 
@@ -113,9 +113,9 @@ public sealed class ChatClientAgentThread : AgentThread
     public AIContextProvider? AIContextProvider { get; internal set; }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="ChatClientAgentThread"/> class from previously serialized state.
+    /// Creates a new instance of the <see cref="ChatClientAgentSession"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
+    /// <param name="serializedSessionState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="chatHistoryProviderFactory">
     /// An optional factory function to create a custom <see cref="AI.ChatHistoryProvider"/> from its serialized state.
@@ -126,42 +126,42 @@ public sealed class ChatClientAgentThread : AgentThread
     /// If not provided, no context provider will be configured.
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A task representing the asynchronous operation. The task result contains the deserialized <see cref="ChatClientAgentThread"/>.</returns>
-    internal static async Task<ChatClientAgentThread> DeserializeAsync(
-        JsonElement serializedThreadState,
+    /// <returns>A task representing the asynchronous operation. The task result contains the deserialized <see cref="ChatClientAgentSession"/>.</returns>
+    internal static async Task<ChatClientAgentSession> DeserializeAsync(
+        JsonElement serializedSessionState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<ChatHistoryProvider>>? chatHistoryProviderFactory = null,
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<AIContextProvider>>? aiContextProviderFactory = null,
         CancellationToken cancellationToken = default)
     {
-        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        if (serializedSessionState.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
+            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedSessionState));
         }
 
-        var state = serializedThreadState.Deserialize(
-            AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+        var state = serializedSessionState.Deserialize(
+            AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(SessionState))) as SessionState;
 
-        var thread = new ChatClientAgentThread();
+        var session = new ChatClientAgentSession();
 
-        thread.AIContextProvider = aiContextProviderFactory is not null
+        session.AIContextProvider = aiContextProviderFactory is not null
             ? await aiContextProviderFactory.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions, cancellationToken).ConfigureAwait(false)
             : null;
 
-        if (state?.ConversationId is string threadId)
+        if (state?.ConversationId is string sessionId)
         {
-            thread.ConversationId = threadId;
+            session.ConversationId = sessionId;
 
             // Since we have an ID, we should not have a ChatHistoryProvider and we can return here.
-            return thread;
+            return session;
         }
 
-        thread._chatHistoryProvider =
+        session._chatHistoryProvider =
             chatHistoryProviderFactory is not null
                 ? await chatHistoryProviderFactory.Invoke(state?.ChatHistoryProviderState ?? default, jsonSerializerOptions, cancellationToken).ConfigureAwait(false)
                 : new InMemoryChatHistoryProvider(state?.ChatHistoryProviderState ?? default, jsonSerializerOptions); // default to an in-memory ChatHistoryProvider
 
-        return thread;
+        return session;
     }
 
     /// <inheritdoc/>
@@ -171,14 +171,14 @@ public sealed class ChatClientAgentThread : AgentThread
 
         JsonElement? aiContextProviderState = this.AIContextProvider?.Serialize(jsonSerializerOptions);
 
-        var state = new ThreadState
+        var state = new SessionState
         {
             ConversationId = this.ConversationId,
             ChatHistoryProviderState = chatHistoryProviderState is { ValueKind: not JsonValueKind.Undefined } ? chatHistoryProviderState : null,
             AIContextProviderState = aiContextProviderState is { ValueKind: not JsonValueKind.Undefined } ? aiContextProviderState : null,
         };
 
-        return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
+        return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(SessionState)));
     }
 
     /// <inheritdoc/>
@@ -194,7 +194,7 @@ public sealed class ChatClientAgentThread : AgentThread
         this._chatHistoryProvider is { } chatHistoryProvider ? $"ChatHistoryProvider = {chatHistoryProvider.GetType().Name}" :
         "Count = 0";
 
-    internal sealed class ThreadState
+    internal sealed class SessionState
     {
         public string? ConversationId { get; set; }
 
