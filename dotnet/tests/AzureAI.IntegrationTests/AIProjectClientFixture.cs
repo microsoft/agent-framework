@@ -48,12 +48,12 @@ public class AIProjectClientFixture : IChatClientAgentFixture
             return await this.GetChatHistoryFromResponsesChainAsync(chatClientThread.ConversationId);
         }
 
-        if (chatClientThread.MessageStore is null)
+        if (chatClientThread.ChatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await chatClientThread.MessageStore.InvokingAsync(new([]))).ToList();
+        return (await chatClientThread.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)

@@ -23,9 +23,9 @@ public static class CosmosDBChatExtensions
     /// <returns>The configured <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    [RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
-    [RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
-    public static ChatClientAgentOptions WithCosmosDBMessageStore(
+    [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
+    public static ChatClientAgentOptions WithCosmosDBChatHistoryProvider(
         this ChatClientAgentOptions options,
         string connectionString,
         string databaseId,
@@ -36,7 +36,7 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        options.ChatMessageStoreFactory = (context, ct) => new ValueTask<ChatMessageStore>(new CosmosChatMessageStore(connectionString, databaseId, containerId));
+        options.ChatHistoryProviderFactory = (context, ct) => new ValueTask<ChatHistoryProvider>(new CosmosChatHistoryProvider(connectionString, databaseId, containerId));
         return options;
     }
 
@@ -51,9 +51,9 @@ public static class CosmosDBChatExtensions
     /// <returns>The configured <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> or <paramref name="tokenCredential"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    [RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
-    [RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
-    public static ChatClientAgentOptions WithCosmosDBMessageStoreUsingManagedIdentity(
+    [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
+    public static ChatClientAgentOptions WithCosmosDBChatHistoryProviderUsingManagedIdentity(
         this ChatClientAgentOptions options,
         string accountEndpoint,
         string databaseId,
@@ -70,7 +70,7 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(tokenCredential));
         }
 
-        options.ChatMessageStoreFactory = (context, ct) => new ValueTask<ChatMessageStore>(new CosmosChatMessageStore(accountEndpoint, tokenCredential, databaseId, containerId));
+        options.ChatHistoryProviderFactory = (context, ct) => new ValueTask<ChatHistoryProvider>(new CosmosChatHistoryProvider(accountEndpoint, tokenCredential, databaseId, containerId));
         return options;
     }
 
@@ -84,9 +84,9 @@ public static class CosmosDBChatExtensions
     /// <returns>The configured <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    [RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
-    [RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
-    public static ChatClientAgentOptions WithCosmosDBMessageStore(
+    [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
+    public static ChatClientAgentOptions WithCosmosDBChatHistoryProvider(
         this ChatClientAgentOptions options,
         CosmosClient cosmosClient,
         string databaseId,
@@ -97,7 +97,7 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        options.ChatMessageStoreFactory = (context, ct) => new ValueTask<ChatMessageStore>(new CosmosChatMessageStore(cosmosClient, databaseId, containerId));
+        options.ChatHistoryProviderFactory = (context, ct) => new ValueTask<ChatHistoryProvider>(new CosmosChatHistoryProvider(cosmosClient, databaseId, containerId));
         return options;
     }
 }

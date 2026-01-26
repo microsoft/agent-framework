@@ -14,55 +14,54 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an in-memory implementation of <see cref="ChatMessageStore"/> with support for message reduction and collection semantics.
+/// Provides an in-memory implementation of <see cref="ChatHistoryProvider"/> with support for message reduction and collection semantics.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="InMemoryChatMessageStore"/> stores chat messages entirely in local memory, providing fast access and manipulation
-/// capabilities. It implements both <see cref="ChatMessageStore"/> for agent integration and <see cref="IList{ChatMessage}"/>
+/// <see cref="InMemoryChatHistoryProvider"/> stores chat messages entirely in local memory, providing fast access and manipulation
+/// capabilities. It implements both <see cref="ChatHistoryProvider"/> for agent integration and <see cref="IList{ChatMessage}"/>
 /// for direct collection manipulation.
 /// </para>
 /// <para>
-/// This store maintains all messages in memory. For long-running conversations or high-volume scenarios, consider using
+/// This <see cref="ChatHistoryProvider"/> maintains all messages in memory. For long-running conversations or high-volume scenarios, consider using
 /// message reduction strategies or alternative storage implementations.
 /// </para>
 /// </remarks>
 [DebuggerDisplay("Count = {Count}")]
 [DebuggerTypeProxy(typeof(DebugView))]
-public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>, IReadOnlyList<ChatMessage>
+public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider, IList<ChatMessage>, IReadOnlyList<ChatMessage>
 {
     private List<ChatMessage> _messages;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
+    /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class.
     /// </summary>
     /// <remarks>
-    /// This constructor creates a basic in-memory store without message reduction capabilities.
+    /// This constructor creates a basic in-memory <see cref="ChatHistoryProvider"/> without message reduction capabilities.
     /// Messages will be stored exactly as added without any automatic processing or reduction.
     /// </remarks>
-    public InMemoryChatMessageStore()
+    public InMemoryChatHistoryProvider()
     {
         this._messages = [];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class from previously serialized state.
+    /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the provider.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <exception cref="ArgumentException">The <paramref name="serializedStoreState"/> is not a valid JSON object or cannot be deserialized.</exception>
+    /// <exception cref="ArgumentException">The <paramref name="serializedState"/> is not a valid JSON object or cannot be deserialized.</exception>
     /// <remarks>
-    /// This constructor enables restoration of message stores from previously saved state, allowing
+    /// This constructor enables restoration of messages from previously saved state, allowing
     /// conversation history to be preserved across application restarts or migrated between instances.
-    /// The store will be configured with default settings and message reduction before retrieval.
     /// </remarks>
-    public InMemoryChatMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
-        : this(null, serializedStoreState, jsonSerializerOptions, ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+    public InMemoryChatHistoryProvider(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
+        : this(null, serializedState, jsonSerializerOptions, ChatReducerTriggerEvent.BeforeMessagesRetrieval)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class.
+    /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class.
     /// </summary>
     /// <param name="chatReducer">
     /// A <see cref="IChatReducer"/> instance used to process, reduce, or optimize chat messages.
@@ -77,29 +76,29 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     /// Message reducers enable automatic management of message storage by implementing strategies to
     /// keep memory usage under control while preserving important conversation context.
     /// </remarks>
-    public InMemoryChatMessageStore(IChatReducer chatReducer, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+    public InMemoryChatHistoryProvider(IChatReducer chatReducer, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
         : this(chatReducer, default, null, reducerTriggerEvent)
     {
         Throw.IfNull(chatReducer);
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryChatMessageStore"/> class, with an existing state from a serialized JSON element.
+    /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class, with an existing state from a serialized JSON element.
     /// </summary>
     /// <param name="chatReducer">An optional <see cref="IChatReducer"/> instance used to process or reduce chat messages. If null, no reduction logic will be applied.</param>
-    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the store.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the provider.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="reducerTriggerEvent">The event that should trigger the reducer invocation.</param>
-    public InMemoryChatMessageStore(IChatReducer? chatReducer, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+    public InMemoryChatHistoryProvider(IChatReducer? chatReducer, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, ChatReducerTriggerEvent reducerTriggerEvent = ChatReducerTriggerEvent.BeforeMessagesRetrieval)
     {
         this.ChatReducer = chatReducer;
         this.ReducerTriggerEvent = reducerTriggerEvent;
 
-        if (serializedStoreState.ValueKind is JsonValueKind.Object)
+        if (serializedState.ValueKind is JsonValueKind.Object)
         {
             var jso = jsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
-            var state = serializedStoreState.Deserialize(
-                jso.GetTypeInfo(typeof(StoreState))) as StoreState;
+            var state = serializedState.Deserialize(
+                jso.GetTypeInfo(typeof(State))) as State;
             if (state?.Messages is { } messages)
             {
                 this._messages = messages;
@@ -116,7 +115,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     public IChatReducer? ChatReducer { get; }
 
     /// <summary>
-    /// Gets the event that triggers the reducer invocation in this store.
+    /// Gets the event that triggers the reducer invocation in this provider.
     /// </summary>
     public ChatReducerTriggerEvent ReducerTriggerEvent { get; }
 
@@ -156,7 +155,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
             return;
         }
 
-        // Add request, AI context provider, and response messages to the store
+        // Add request, AI context provider, and response messages to the provider
         var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
         this._messages.AddRange(allNewMessages);
 
@@ -169,13 +168,13 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     /// <inheritdoc />
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        StoreState state = new()
+        State state = new()
         {
             Messages = this._messages,
         };
 
         var jso = jsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
-        return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(StoreState)));
+        return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(State)));
     }
 
     /// <inheritdoc />
@@ -218,13 +217,13 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     IEnumerator IEnumerable.GetEnumerator()
         => this.GetEnumerator();
 
-    internal sealed class StoreState
+    internal sealed class State
     {
         public List<ChatMessage> Messages { get; set; } = [];
     }
 
     /// <summary>
-    /// Defines the events that can trigger a reducer in the <see cref="InMemoryChatMessageStore"/>.
+    /// Defines the events that can trigger a reducer in the <see cref="InMemoryChatHistoryProvider"/>.
     /// </summary>
     public enum ChatReducerTriggerEvent
     {
@@ -235,15 +234,15 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
         AfterMessageAdded,
 
         /// <summary>
-        /// Trigger the reducer before messages are retrieved from the store.
+        /// Trigger the reducer before messages are retrieved from the provider.
         /// The reducer will process the messages before they are returned to the caller.
         /// </summary>
         BeforeMessagesRetrieval
     }
 
-    private sealed class DebugView(InMemoryChatMessageStore store)
+    private sealed class DebugView(InMemoryChatHistoryProvider provider)
     {
         [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-        public ChatMessage[] Items => store._messages.ToArray();
+        public ChatMessage[] Items => provider._messages.ToArray();
     }
 }

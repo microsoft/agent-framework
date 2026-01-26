@@ -10,67 +10,67 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 /// <summary>
-/// Contains tests for the <see cref="ChatMessageStore"/> class.
+/// Contains tests for the <see cref="ChatHistoryProvider"/> class.
 /// </summary>
-public class ChatMessageStoreTests
+public class ChatHistoryProviderTests
 {
     #region GetService Method Tests
 
     [Fact]
-    public void GetService_RequestingExactStoreType_ReturnsStore()
+    public void GetService_RequestingExactProviderType_ReturnsProvider()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(TestChatMessageStore));
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(TestChatHistoryProvider));
         Assert.NotNull(result);
-        Assert.Same(store, result);
+        Assert.Same(provider, result);
     }
 
     [Fact]
-    public void GetService_RequestingBaseStoreType_ReturnsStore()
+    public void GetService_RequestingBaseProviderType_ReturnsProvider()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(ChatMessageStore));
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(ChatHistoryProvider));
         Assert.NotNull(result);
-        Assert.Same(store, result);
+        Assert.Same(provider, result);
     }
 
     [Fact]
     public void GetService_RequestingUnrelatedType_ReturnsNull()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(string));
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(string));
         Assert.Null(result);
     }
 
     [Fact]
     public void GetService_WithServiceKey_ReturnsNull()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(TestChatMessageStore), "some-key");
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(TestChatHistoryProvider), "some-key");
         Assert.Null(result);
     }
 
     [Fact]
     public void GetService_WithNullServiceType_ThrowsArgumentNullException()
     {
-        var store = new TestChatMessageStore();
-        Assert.Throws<ArgumentNullException>(() => store.GetService(null!));
+        var provider = new TestChatHistoryProvider();
+        Assert.Throws<ArgumentNullException>(() => provider.GetService(null!));
     }
 
     [Fact]
     public void GetService_Generic_ReturnsCorrectType()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService<TestChatMessageStore>();
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService<TestChatHistoryProvider>();
         Assert.NotNull(result);
-        Assert.Same(store, result);
+        Assert.Same(provider, result);
     }
 
     [Fact]
     public void GetService_Generic_ReturnsNullForUnrelatedType()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService<string>();
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService<string>();
         Assert.Null(result);
     }
 
@@ -82,7 +82,7 @@ public class ChatMessageStoreTests
     public void InvokingContext_Constructor_ThrowsForNullMessages()
     {
         // Arrange & Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new ChatMessageStore.InvokingContext(null!));
+        Assert.Throws<ArgumentNullException>(() => new ChatHistoryProvider.InvokingContext(null!));
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class ChatMessageStoreTests
     {
         // Arrange
         var messages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
-        var context = new ChatMessageStore.InvokingContext(messages);
+        var context = new ChatHistoryProvider.InvokingContext(messages);
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => context.RequestMessages = null!);
@@ -102,7 +102,7 @@ public class ChatMessageStoreTests
         // Arrange
         var initialMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
         var newMessages = new List<ChatMessage> { new(ChatRole.User, "New message") };
-        var context = new ChatMessageStore.InvokingContext(initialMessages);
+        var context = new ChatHistoryProvider.InvokingContext(initialMessages);
 
         // Act
         context.RequestMessages = newMessages;
@@ -119,15 +119,7 @@ public class ChatMessageStoreTests
     public void InvokedContext_Constructor_ThrowsForNullRequestMessages()
     {
         // Arrange & Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new ChatMessageStore.InvokedContext(null!, []));
-    }
-
-    [Fact]
-    public void InvokedContext_Constructor_ThrowsForNullChatMessageStoreMessages()
-    {
-        // Arrange & Act & Assert
-        var messages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
-        Assert.Throws<ArgumentNullException>(() => new ChatMessageStore.InvokedContext(messages, null!));
+        Assert.Throws<ArgumentNullException>(() => new ChatHistoryProvider.InvokedContext(null!, []));
     }
 
     [Fact]
@@ -135,7 +127,7 @@ public class ChatMessageStoreTests
     {
         // Arrange
         var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
-        var context = new ChatMessageStore.InvokedContext(requestMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages, []);
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => context.RequestMessages = null!);
@@ -147,7 +139,7 @@ public class ChatMessageStoreTests
         // Arrange
         var initialMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
         var newMessages = new List<ChatMessage> { new(ChatRole.User, "New message") };
-        var context = new ChatMessageStore.InvokedContext(initialMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(initialMessages, []);
 
         // Act
         context.RequestMessages = newMessages;
@@ -157,29 +149,18 @@ public class ChatMessageStoreTests
     }
 
     [Fact]
-    public void InvokedContext_ChatMessageStoreMessages_SetterThrowsForNull()
+    public void InvokedContext_ChatHistoryProviderMessages_SetterRoundtrips()
     {
         // Arrange
         var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
-        var context = new ChatMessageStore.InvokedContext(requestMessages, []);
-
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => context.ChatMessageStoreMessages = null!);
-    }
-
-    [Fact]
-    public void InvokedContext_ChatMessageStoreMessages_SetterRoundtrips()
-    {
-        // Arrange
-        var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
-        var newStoreMessages = new List<ChatMessage> { new(ChatRole.System, "System message") };
-        var context = new ChatMessageStore.InvokedContext(requestMessages, []);
+        var newProviderMessages = new List<ChatMessage> { new(ChatRole.System, "System message") };
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages, []);
 
         // Act
-        context.ChatMessageStoreMessages = newStoreMessages;
+        context.ChatHistoryProviderMessages = newProviderMessages;
 
         // Assert
-        Assert.Same(newStoreMessages, context.ChatMessageStoreMessages);
+        Assert.Same(newProviderMessages, context.ChatHistoryProviderMessages);
     }
 
     [Fact]
@@ -188,7 +169,7 @@ public class ChatMessageStoreTests
         // Arrange
         var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
         var aiContextMessages = new List<ChatMessage> { new(ChatRole.System, "AI context message") };
-        var context = new ChatMessageStore.InvokedContext(requestMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages, []);
 
         // Act
         context.AIContextProviderMessages = aiContextMessages;
@@ -203,7 +184,7 @@ public class ChatMessageStoreTests
         // Arrange
         var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
         var responseMessages = new List<ChatMessage> { new(ChatRole.Assistant, "Response message") };
-        var context = new ChatMessageStore.InvokedContext(requestMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages, []);
 
         // Act
         context.ResponseMessages = responseMessages;
@@ -218,7 +199,7 @@ public class ChatMessageStoreTests
         // Arrange
         var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
         var exception = new InvalidOperationException("Test exception");
-        var context = new ChatMessageStore.InvokedContext(requestMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages, []);
 
         // Act
         context.InvokeException = exception;
@@ -229,7 +210,7 @@ public class ChatMessageStoreTests
 
     #endregion
 
-    private sealed class TestChatMessageStore : ChatMessageStore
+    private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
         public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
             => new(Array.Empty<ChatMessage>());
