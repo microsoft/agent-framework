@@ -37,20 +37,31 @@ public class Workflow
     }
 
     /// <summary>
-    /// Gets the condition functions for direct edges, keyed by (sourceId, targetId) tuple.
+    /// Gets a mapping of edge identifiers to their associated condition delegates.
     /// </summary>
-    /// <returns>A dictionary mapping edge connections to their condition functions (null if no condition).</returns>
-    /// <remarks>This method creates a new dictionary each time it is called to ensure thread safety.</remarks>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1024:Use properties where appropriate", Justification = "Method creates a new collection on each call.")]
-    public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> GetEdgeConditions()
+    /// <remarks>The returned dictionary includes only edges that have direct edge data. The condition
+    /// delegate can be used to determine whether the edge is active or valid for a given input. Edges without direct
+    /// edge data are not included in the result.</remarks>
+    /// <returns>A dictionary where each key is a tuple containing the source and target node identifiers, and each value is a
+    /// delegate that evaluates the condition for the corresponding edge. The value is <see langword="null"/> if the
+    /// edge has no associated condition.</returns>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1024:Use properties where appropriate", Justification = "<Pending>")]
+    public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> ReflectEdgeConditions()
     {
-        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> conditions = [];
-
-        foreach (KeyValuePair<string, HashSet<Edge>> edgeGroup in this.Edges)
+        int capacity = 0;
+        foreach (HashSet<Edge> edgeSet in this.Edges.Values)
         {
-            foreach (Edge edge in edgeGroup.Value)
+            capacity += edgeSet.Count;
+        }
+
+        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> conditions = new(capacity);
+
+        foreach (HashSet<Edge> edgeSet in this.Edges.Values)
+        {
+            foreach (Edge edge in edgeSet)
             {
-                if (edge.DirectEdgeData is DirectEdgeData directEdge)
+                DirectEdgeData? directEdge = edge.DirectEdgeData;
+                if (directEdge is not null)
                 {
                     conditions[(directEdge.SourceId, directEdge.SinkId)] = directEdge.Condition;
                 }

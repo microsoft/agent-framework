@@ -65,7 +65,7 @@ public static class WorkflowHelper
 
         Dictionary<string, ExecutorBinding> executors = workflow.ReflectExecutors();
         Dictionary<string, HashSet<EdgeInfo>> edges = workflow.ReflectEdges();
-        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> edgeConditions = workflow.GetEdgeConditions();
+        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> edgeConditions = workflow.ReflectEdgeConditions();
 
         WorkflowExecutionPlan plan = new();
 
