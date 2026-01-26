@@ -39,10 +39,10 @@ public sealed class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="ChatMessageStore"/>
-    /// which will be used to store chat messages for this agent.
+    /// Gets or sets a factory function to create an instance of <see cref="ChatHistoryProvider"/>
+    /// which will be used to provide chat history for this agent.
     /// </summary>
-    public Func<ChatMessageStoreFactoryContext, CancellationToken, ValueTask<ChatMessageStore>>? ChatMessageStoreFactory { get; set; }
+    public Func<ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>? ChatHistoryProviderFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
@@ -75,7 +75,7 @@ public sealed class ChatClientAgentOptions
             Name = this.Name,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatMessageStoreFactory = this.ChatMessageStoreFactory,
+            ChatHistoryProviderFactory = this.ChatHistoryProviderFactory,
             AIContextProviderFactory = this.AIContextProviderFactory,
         };
 
@@ -97,14 +97,14 @@ public sealed class ChatClientAgentOptions
     }
 
     /// <summary>
-    /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="ChatMessageStore"/>.
+    /// Context object passed to the <see cref="ChatHistoryProviderFactory"/> to create a new instance of <see cref="ChatHistoryProvider"/>.
     /// </summary>
-    public sealed class ChatMessageStoreFactoryContext
+    public sealed class ChatHistoryProviderFactoryContext
     {
         /// <summary>
-        /// Gets or sets the serialized state of the chat message store, if any.
+        /// Gets or sets the serialized state of the <see cref="ChatHistoryProvider"/>, if any.
         /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatMessageStore"/> is first created.</value>
+        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatHistoryProvider"/> is first created.</value>
         public JsonElement SerializedState { get; set; }
 
         /// <summary>

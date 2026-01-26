@@ -129,3 +129,95 @@ def test_collect_server_tools_with_mcp_tools_via_public_property() -> None:
     assert "regular_tool" in names
     assert "mcp_function" in names
     assert len(tools) == 2
+
+
+# Additional tests for tooling coverage
+
+
+def test_collect_server_tools_no_default_options() -> None:
+    """collect_server_tools returns empty list when agent has no default_options."""
+
+    class MockAgent:
+        pass
+
+    agent = MockAgent()
+    tools = collect_server_tools(agent)
+    assert tools == []
+
+
+def test_register_additional_client_tools_no_tools() -> None:
+    """register_additional_client_tools does nothing with None tools."""
+    mock_chat_client = MagicMock()
+    agent = ChatAgent(chat_client=mock_chat_client)
+
+    # Should not raise
+    register_additional_client_tools(agent, None)
+
+
+def test_register_additional_client_tools_no_chat_client() -> None:
+    """register_additional_client_tools does nothing when agent has no chat_client."""
+    from agent_framework_ag_ui._orchestration._tooling import register_additional_client_tools
+
+    class MockAgent:
+        pass
+
+    agent = MockAgent()
+    tools = [DummyTool("x")]
+
+    # Should not raise
+    register_additional_client_tools(agent, tools)
+
+
+def test_merge_tools_no_client_tools() -> None:
+    """merge_tools returns None when no client tools."""
+    server = [DummyTool("a")]
+    result = merge_tools(server, None)
+    assert result is None
+
+
+def test_merge_tools_all_duplicates() -> None:
+    """merge_tools returns None when all client tools duplicate server tools."""
+    server = [DummyTool("a"), DummyTool("b")]
+    client = [DummyTool("a"), DummyTool("b")]
+    result = merge_tools(server, client)
+    assert result is None
+
+
+def test_merge_tools_empty_server() -> None:
+    """merge_tools works with empty server tools."""
+    server: list = []
+    client = [DummyTool("a"), DummyTool("b")]
+    result = merge_tools(server, client)
+    assert result is not None
+    assert len(result) == 2
+
+
+def test_merge_tools_with_approval_tools_no_client() -> None:
+    """merge_tools returns server tools when they have approval mode even without client tools."""
+
+    class ApprovalTool:
+        def __init__(self, name: str):
+            self.name = name
+            self.approval_mode = "always_require"
+
+    server = [ApprovalTool("write_doc")]
+    result = merge_tools(server, None)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].name == "write_doc"
+
+
+def test_merge_tools_with_approval_tools_all_duplicates() -> None:
+    """merge_tools returns server tools with approval mode even when client duplicates."""
+
+    class ApprovalTool:
+        def __init__(self, name: str):
+            self.name = name
+            self.approval_mode = "always_require"
+
+    server = [ApprovalTool("write_doc")]
+    client = [DummyTool("write_doc")]  # Same name as server
+    result = merge_tools(server, client)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].approval_mode == "always_require"

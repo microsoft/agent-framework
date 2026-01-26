@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
-namespace Microsoft.Agents.AI.UnitTests.ChatClient;
+namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Contains unit tests for the ChatClientAgent.DeserializeThread methods.
@@ -46,25 +46,25 @@ public class ChatClientAgent_DeserializeThreadTests
     }
 
     [Fact]
-    public async Task DeserializeThread_UsesChatMessageStoreFactory_IfProvidedAsync()
+    public async Task DeserializeThread_UsesChatHistoryProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
-        var mockMessageStore = new Mock<ChatMessageStore>();
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>();
         var factoryCalled = false;
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
             ChatOptions = new() { Instructions = "Test instructions" },
-            ChatMessageStoreFactory = (_, _) =>
+            ChatHistoryProviderFactory = (_, _) =>
             {
                 factoryCalled = true;
-                return new ValueTask<ChatMessageStore>(mockMessageStore.Object);
+                return new ValueTask<ChatHistoryProvider>(mockChatHistoryProvider.Object);
             }
         });
 
         var json = JsonSerializer.Deserialize("""
             {
-                "storeState": { }
+                "chatHistoryProviderState": { }
             }
             """, TestJsonSerializerContext.Default.JsonElement);
 
@@ -72,9 +72,9 @@ public class ChatClientAgent_DeserializeThreadTests
         var thread = await agent.DeserializeThreadAsync(json);
 
         // Assert
-        Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
+        Assert.True(factoryCalled, "ChatHistoryProviderFactory was not called.");
         Assert.IsType<ChatClientAgentThread>(thread);
         var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockMessageStore.Object, typedThread.MessageStore);
+        Assert.Same(mockChatHistoryProvider.Object, typedThread.ChatHistoryProvider);
     }
 }

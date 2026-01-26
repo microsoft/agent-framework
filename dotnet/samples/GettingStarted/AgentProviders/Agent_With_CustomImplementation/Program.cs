@@ -45,18 +45,18 @@ namespace SampleApp
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatMessageStore.InvokingContext(messages);
-            var storeMessages = await typedThread.MessageStore.InvokingAsync(invokingContext, cancellationToken);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var storeMessages = await typedThread.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
-            var invokedContext = new ChatMessageStore.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
-            await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
+            await typedThread.ChatHistoryProvider.InvokedAsync(invokedContext, cancellationToken);
 
             return new AgentResponse
             {
@@ -77,18 +77,18 @@ namespace SampleApp
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatMessageStore.InvokingContext(messages);
-            var storeMessages = await typedThread.MessageStore.InvokingAsync(invokingContext, cancellationToken);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var storeMessages = await typedThread.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
-            var invokedContext = new ChatMessageStore.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
-            await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
+            await typedThread.ChatHistoryProvider.InvokedAsync(invokedContext, cancellationToken);
 
             foreach (var message in responseMessages)
             {
