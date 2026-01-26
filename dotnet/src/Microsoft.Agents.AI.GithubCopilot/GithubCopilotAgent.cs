@@ -156,7 +156,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             copilotSession = await this._copilotClient.ResumeSessionAsync(
                 typedSession.SessionId,
-                this.CreateResumeConfig(streaming: true),
+                this.CreateResumeConfig(),
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -270,7 +270,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         }
     }
 
-    private ResumeSessionConfig CreateResumeConfig(bool streaming = false)
+    private ResumeSessionConfig CreateResumeConfig()
     {
         return new ResumeSessionConfig
         {
@@ -281,7 +281,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             CustomAgents = this._sessionConfig?.CustomAgents,
             SkillDirectories = this._sessionConfig?.SkillDirectories,
             DisabledSkills = this._sessionConfig?.DisabledSkills,
-            Streaming = streaming,
+            Streaming = true
         };
     }
 
@@ -296,7 +296,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         {
             AgentId = this.Id,
             MessageId = deltaEvent.Data?.MessageId,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = deltaEvent.Timestamp
         };
     }
 
@@ -312,7 +312,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             AgentId = this.Id,
             ResponseId = assistantMessage.Data?.MessageId,
             MessageId = assistantMessage.Data?.MessageId,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = assistantMessage.Timestamp
         };
     }
 
@@ -351,19 +351,19 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         if (usageEvent.Data.CacheWriteTokens is double cacheWriteTokens)
         {
             additionalCounts ??= [];
-            additionalCounts["CacheWriteTokens"] = (long)cacheWriteTokens;
+            additionalCounts[nameof(AssistantUsageData.CacheWriteTokens)] = (long)cacheWriteTokens;
         }
 
         if (usageEvent.Data.Cost is double cost)
         {
             additionalCounts ??= [];
-            additionalCounts["Cost"] = (long)cost;
+            additionalCounts[nameof(AssistantUsageData.Cost)] = (long)cost;
         }
 
         if (usageEvent.Data.Duration is double duration)
         {
             additionalCounts ??= [];
-            additionalCounts["Duration"] = (long)duration;
+            additionalCounts[nameof(AssistantUsageData.Duration)] = (long)duration;
         }
 
         return additionalCounts;
