@@ -105,107 +105,12 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         => new(new GithubCopilotAgentSession(serializedSession, jsonSerializerOptions));
 
     /// <inheritdoc/>
-    protected override async Task<AgentResponse> RunCoreAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-    {
-        _ = Throw.IfNull(messages);
-
-        // Ensure we have a valid session
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
-        if (session is not GithubCopilotAgentSession typedSession)
-        {
-            throw new InvalidOperationException(
-                $"The provided session type {session.GetType()} is not compatible with the agent. Only GitHub Copilot agent created sessions are supported.");
-        }
-
-        // Ensure the client is started
-        await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
-
-        // Create or resume a session
-        CopilotSession copilotSession;
-        if (typedSession.SessionId is not null)
-        {
-            copilotSession = await this._copilotClient.ResumeSessionAsync(
-                typedSession.SessionId,
-                this.CreateResumeConfig(),
-                cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            copilotSession = await this._copilotClient.CreateSessionAsync(this._sessionConfig, cancellationToken).ConfigureAwait(false);
-            typedSession.SessionId = copilotSession.SessionId;
-        }
-
-        try
-        {
-            // Prepare to collect response
-            List<ChatMessage> responseMessages = [];
-            TaskCompletionSource<bool> completionSource = new();
-
-            // Subscribe to session events
-            IDisposable subscription = copilotSession.On(evt =>
-            {
-                switch (evt)
-                {
-                    case AssistantMessageEvent assistantMessage:
-                        responseMessages.Add(this.ConvertToChatMessage(assistantMessage));
-                        break;
-
-                    case SessionIdleEvent:
-                        completionSource.TrySetResult(true);
-                        break;
-
-                    case SessionErrorEvent errorEvent:
-                        completionSource.TrySetException(new InvalidOperationException(
-                            $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}"));
-                        break;
-                }
-            });
-
-            List<string> tempFiles = [];
-            try
-            {
-                // Build prompt from text content
-                string prompt = string.Join("\n", messages.Select(m => m.Text));
-
-                // Handle DataContent as attachments
-                List<UserMessageDataAttachmentsItem>? attachments = await ProcessDataContentAttachmentsAsync(
-                    messages,
-                    tempFiles,
-                    cancellationToken).ConfigureAwait(false);
-
-                // Send the message with attachments
-                MessageOptions messageOptions = new() { Prompt = prompt };
-                if (attachments is not null)
-                {
-                    messageOptions.Attachments = [.. attachments];
-                }
-
-                await copilotSession.SendAsync(messageOptions, cancellationToken).ConfigureAwait(false);
-
-                // Wait for completion
-                await completionSource.Task.ConfigureAwait(false);
-
-                return new AgentResponse(responseMessages)
-                {
-                    AgentId = this.Id,
-                    ResponseId = responseMessages.LastOrDefault()?.MessageId,
-                };
-            }
-            finally
-            {
-                subscription.Dispose();
-                CleanupTempFiles(tempFiles);
-            }
-        }
-        finally
-        {
-            await copilotSession.DisposeAsync().ConfigureAwait(false);
-        }
-    }
+        => RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
 
     /// <inheritdoc/>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
@@ -377,15 +282,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             SkillDirectories = this._sessionConfig?.SkillDirectories,
             DisabledSkills = this._sessionConfig?.DisabledSkills,
             Streaming = streaming,
-        };
-    }
-
-    private ChatMessage ConvertToChatMessage(AssistantMessageEvent assistantMessage)
-    {
-        return new ChatMessage(ChatRole.Assistant, assistantMessage.Data?.Content ?? string.Empty)
-        {
-            MessageId = assistantMessage.Data?.MessageId,
-            CreatedAt = DateTimeOffset.UtcNow
         };
     }
 
