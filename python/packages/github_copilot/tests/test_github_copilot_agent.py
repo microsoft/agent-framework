@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,6 +55,7 @@ def mock_client(mock_session: MagicMock) -> MagicMock:
     client.start = AsyncMock()
     client.stop = AsyncMock(return_value=[])
     client.create_session = AsyncMock(return_value=mock_session)
+    client.resume_session = AsyncMock(return_value=mock_session)
     return client
 
 
@@ -168,16 +170,12 @@ class TestGithubCopilotAgentLifecycle:
         mock_client.start.assert_called_once()
 
     async def test_stop_cleans_up(self, mock_client: MagicMock, mock_session: MagicMock) -> None:
-        """Test that stop cleans up sessions and client."""
+        """Test that stop resets started state."""
         agent = GithubCopilotAgent(client=mock_client)
         await agent.start()
 
-        mock_client.create_session.return_value = mock_session
-        await agent._get_or_create_session(AgentThread())  # type: ignore
-
         await agent.stop()
 
-        mock_session.destroy.assert_called_once()
         assert agent._started is False  # type: ignore
 
     async def test_context_manager(self, mock_client: MagicMock) -> None:
@@ -417,13 +415,13 @@ class TestGithubCopilotAgentRunStream:
 class TestGithubCopilotAgentSessionManagement:
     """Test cases for session management."""
 
-    async def test_session_reuse(
+    async def test_session_resumed_for_same_thread(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
     ) -> None:
-        """Test that sessions are reused for the same thread."""
+        """Test that subsequent calls on the same thread resume the session."""
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GithubCopilotAgent(client=mock_client)
@@ -433,6 +431,7 @@ class TestGithubCopilotAgentSessionManagement:
         await agent.run("World", thread=thread)
 
         mock_client.create_session.assert_called_once()
+        mock_client.resume_session.assert_called_once_with(mock_session.session_id, unittest.mock.ANY)
 
     async def test_session_config_includes_model(
         self,
@@ -484,6 +483,58 @@ class TestGithubCopilotAgentSessionManagement:
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
         assert config["streaming"] is True
+
+    async def test_resume_session_with_existing_service_thread_id(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that session is resumed when thread has a service_thread_id."""
+        agent = GithubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        thread = AgentThread()
+        thread.service_thread_id = "existing-session-id"
+
+        await agent._get_or_create_session(thread)  # type: ignore
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_called_once()
+        call_args = mock_client.resume_session.call_args
+        assert call_args[0][0] == "existing-session-id"
+
+    async def test_resume_session_includes_tools_and_permissions(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that resumed session config includes tools and permission handler."""
+        from copilot.types import PermissionRequest, PermissionRequestResult
+
+        def my_handler(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+            return PermissionRequestResult(kind="approved")
+
+        def my_tool(arg: str) -> str:
+            """A test tool."""
+            return arg
+
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            client=mock_client,
+            tools=[my_tool],
+            default_options={"on_permission_request": my_handler},
+        )
+        await agent.start()
+
+        thread = AgentThread()
+        thread.service_thread_id = "existing-session-id"
+
+        await agent._get_or_create_session(thread)  # type: ignore
+
+        mock_client.resume_session.assert_called_once()
+        call_args = mock_client.resume_session.call_args
+        config = call_args[0][1]
+        assert "tools" in config
+        assert "on_permission_request" in config
 
 
 class TestGithubCopilotAgentToolConversion:

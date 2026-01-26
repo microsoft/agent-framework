@@ -28,6 +28,7 @@ from copilot.types import (
     CopilotClientOptions,
     PermissionRequest,
     PermissionRequestResult,
+    ResumeSessionConfig,
     SessionConfig,
     ToolInvocation,
     ToolResult,
@@ -177,7 +178,6 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         self._client = client
         self._owns_client = client is None
-        self._sessions: dict[str, CopilotSession] = {}
 
         # Parse options
         opts: dict[str, Any] = dict(default_options) if default_options else {}
@@ -246,20 +246,10 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
     async def stop(self) -> None:
         """Stop the Copilot client and clean up resources.
 
-        This method destroys all active sessions created by this agent and stops
-        the Copilot client. It is called automatically when using the agent as
-        an async context manager.
-
-        Note:
-            Only sessions created by this agent instance (stored in self._sessions)
-            are destroyed. Sessions created elsewhere are not affected.
+        Stops the Copilot client if owned by this agent. The client handles
+        session cleanup internally. Called automatically when using the agent
+        as an async context manager.
         """
-        for session in self._sessions.values():
-            with contextlib.suppress(Exception):
-                await session.destroy()
-
-        self._sessions.clear()
-
         if self._client and self._owns_client:
             with contextlib.suppress(Exception):
                 await self._client.stop()
@@ -476,8 +466,20 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if not self._client:
             raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
 
-        if thread.service_thread_id and thread.service_thread_id in self._sessions:
-            return self._sessions[thread.service_thread_id]
+        try:
+            if thread.service_thread_id:
+                return await self._resume_session(thread.service_thread_id, streaming)
+
+            session = await self._create_session(streaming)
+            thread.service_thread_id = session.session_id
+            return session
+        except Exception as ex:
+            raise ServiceException(f"Failed to create GitHub Copilot session: {ex}") from ex
+
+    async def _create_session(self, streaming: bool) -> CopilotSession:
+        """Create a new Copilot session."""
+        if not self._client:
+            raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
 
         config: SessionConfig = {"streaming": streaming}
 
@@ -493,10 +495,19 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if self._permission_handler:
             config["on_permission_request"] = self._permission_handler
 
-        try:
-            session = await self._client.create_session(config)
-            thread.service_thread_id = session.session_id
-            self._sessions[session.session_id] = session
-            return session
-        except Exception as ex:
-            raise ServiceException(f"Failed to create GitHub Copilot session: {ex}") from ex
+        return await self._client.create_session(config)
+
+    async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
+        """Resume an existing Copilot session by ID."""
+        if not self._client:
+            raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
+
+        config: ResumeSessionConfig = {"streaming": streaming}
+
+        if self._tools:
+            config["tools"] = self._prepare_tools(self._tools)
+
+        if self._permission_handler:
+            config["on_permission_request"] = self._permission_handler
+
+        return await self._client.resume_session(session_id, config)

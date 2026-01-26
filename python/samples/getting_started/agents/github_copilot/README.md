@@ -2,14 +2,7 @@
 
 This directory contains examples demonstrating how to use the `GithubCopilotAgent` from the Microsoft Agent Framework.
 
-## Examples
-
-| File | Description |
-|------|-------------|
-| [`github_copilot_basic.py`](github_copilot_basic.py) | The simplest way to create an agent using `GithubCopilotAgent`. Demonstrates both streaming and non-streaming responses with function tools. |
-| [`github_copilot_with_shell.py`](github_copilot_with_shell.py) | Shows how to enable shell command execution permissions. Demonstrates running system commands like listing files and getting system information. |
-| [`github_copilot_with_file_operations.py`](github_copilot_with_file_operations.py) | Shows how to enable file read and write permissions. Demonstrates reading file contents and creating new files. |
-| [`github_copilot_with_multiple_permissions.py`](github_copilot_with_multiple_permissions.py) | Shows how to combine multiple permission types for complex tasks that require shell, read, and write access. |
+> **Security Note**: These examples demonstrate various permission types (shell, read, write, url). Only enable permissions that are necessary for your use case. Each permission grants the agent additional capabilities that could affect your system.
 
 ## Prerequisites
 
@@ -31,82 +24,13 @@ The following environment variables can be configured:
 | `GITHUB_COPILOT_TIMEOUT` | Request timeout in seconds | `60` |
 | `GITHUB_COPILOT_LOG_LEVEL` | CLI log level | `info` |
 
-## Permission Kinds
+## Examples
 
-The following permission kinds can be approved via `on_permission_request`:
-
-| Permission | Description |
-|------------|-------------|
-| `shell` | Execute shell commands on the system |
-| `read` | Read files from the filesystem |
-| `write` | Write or create files on the filesystem |
-| `mcp` | Use MCP (Model Context Protocol) servers |
-| `url` | Fetch content from URLs |
-
-**Security Note**: Only enable permissions that are necessary for your use case. Each permission grants the agent additional capabilities that could affect your system.
-
-## Usage Patterns
-
-### Basic Usage (No Permissions)
-
-```python
-from agent_framework.github import GithubCopilotAgent
-
-async with GithubCopilotAgent() as agent:
-    response = await agent.run("Hello!")
-```
-
-### With Custom Tools
-
-```python
-from typing import Annotated
-
-from agent_framework.github import GithubCopilotAgent
-from pydantic import Field
-
-def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
-) -> str:
-    """Get the weather for a given location."""
-    return f"The weather in {location} is sunny."
-
-async with GithubCopilotAgent(tools=[get_weather]) as agent:
-    response = await agent.run("What's the weather in Seattle?")
-```
-
-### With Permissions
-
-Implement a permission handler to approve specific actions:
-
-```python
-from agent_framework.github import GithubCopilotAgent
-from copilot.types import PermissionRequest, PermissionRequestResult
-
-def my_permission_handler(
-    request: PermissionRequest,
-    context: dict[str, str],
-) -> PermissionRequestResult:
-    kind = request.get("kind")
-    print(f"Permission requested: {kind}")
-
-    # Implement your approval logic here
-    if kind == "shell":
-        return PermissionRequestResult(kind="approved")
-    return PermissionRequestResult(kind="denied-interactively-by-user")
-
-async with GithubCopilotAgent(
-    default_options={"on_permission_request": my_permission_handler}
-) as agent:
-    response = await agent.run("List Python files")
-```
-
-## Running the Examples
-
-Each example can be run independently:
-
-```bash
-python github_copilot_basic.py
-python github_copilot_with_shell.py
-python github_copilot_with_file_operations.py
-python github_copilot_with_multiple_permissions.py
-```
+| File | Description |
+|------|-------------|
+| [`github_copilot_basic.py`](github_copilot_basic.py) | The simplest way to create an agent using `GithubCopilotAgent`. Demonstrates both streaming and non-streaming responses with function tools. |
+| [`github_copilot_with_session.py`](github_copilot_with_session.py) | Shows session management with automatic creation, persistence via thread objects, and resuming sessions by ID. |
+| [`github_copilot_with_shell.py`](github_copilot_with_shell.py) | Shows how to enable shell command execution permissions. Demonstrates running system commands like listing files and getting system information. |
+| [`github_copilot_with_file_operations.py`](github_copilot_with_file_operations.py) | Shows how to enable file read and write permissions. Demonstrates reading file contents and creating new files. |
+| [`github_copilot_with_url.py`](github_copilot_with_url.py) | Shows how to enable URL fetching permissions. Demonstrates fetching and processing web content. |
+| [`github_copilot_with_multiple_permissions.py`](github_copilot_with_multiple_permissions.py) | Shows how to combine multiple permission types for complex tasks that require shell, read, and write access. |
