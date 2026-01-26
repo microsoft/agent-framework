@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" />
-    <PackageReference Include="StreamJsonRpc" />
   </ItemGroup>
 
   <ItemGroup>
