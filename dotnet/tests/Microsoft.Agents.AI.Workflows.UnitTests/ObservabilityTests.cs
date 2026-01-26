@@ -394,4 +394,68 @@ public sealed class ObservabilityTests : IDisposable
 
         return builder.WithOpenTelemetry(configure: opts => opts.DisableMessageSend = true).Build();
     }
+
+    [Fact]
+    public async Task EnableSensitiveData_LogsExecutorInputAndOutputAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var executorActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
+
+        executorActivity.Should().NotBeNull("ExecutorProcess activity should be created.");
+
+        var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().ContainKey(Tags.ExecutorInput, "Input should be logged when EnableSensitiveData is true.");
+        tags.Should().ContainKey(Tags.ExecutorOutput, "Output should be logged when EnableSensitiveData is true.");
+        tags[Tags.ExecutorInput].Should().Contain("hello", "Input should contain the input value.");
+        tags[Tags.ExecutorOutput].Should().Contain("HELLO", "Output should contain the transformed value.");
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_Disabled_DoesNotLogInputOutputAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act - EnableSensitiveData is false by default
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry().Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var executorActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
+
+        executorActivity.Should().NotBeNull("ExecutorProcess activity should be created.");
+
+        var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().NotContainKey(Tags.ExecutorInput, "Input should NOT be logged when EnableSensitiveData is false.");
+        tags.Should().NotContainKey(Tags.ExecutorOutput, "Output should NOT be logged when EnableSensitiveData is false.");
+    }
 }
