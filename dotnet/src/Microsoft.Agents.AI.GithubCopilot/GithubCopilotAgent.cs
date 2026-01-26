@@ -60,24 +60,24 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="instructions">Optional instructions to append as a system message.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
+    /// <param name="instructions">Optional instructions to append as a system message.</param>
     public GithubCopilotAgent(
         CopilotClient copilotClient,
         IList<AITool>? tools,
         bool ownsClient = false,
         string? id = null,
-        string? instructions = null,
         string? name = null,
-        string? description = null)
+        string? description = null,
+        string? instructions = null)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions),
             ownsClient,
             id,
-            name,
-            description)
+            name ?? "GitHub Copilot Agent",
+            description ?? "An AI agent powered by GitHub Copilot SDK")
     {
     }
 
@@ -411,23 +411,30 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
+    private static readonly Dictionary<string, string> MediaTypeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["image/png"] = ".png",
+        ["image/jpeg"] = ".jpg",
+        ["image/jpg"] = ".jpg",
+        ["image/gif"] = ".gif",
+        ["image/webp"] = ".webp",
+        ["image/svg+xml"] = ".svg",
+        ["text/plain"] = ".txt",
+        ["text/html"] = ".html",
+        ["text/markdown"] = ".md",
+        ["application/json"] = ".json",
+        ["application/xml"] = ".xml",
+        ["application/pdf"] = ".pdf"
+    };
+
     private static string GetExtensionForMediaType(string? mediaType)
     {
-        return (mediaType?.ToUpperInvariant()) switch
+        if (string.IsNullOrEmpty(mediaType))
         {
-            "IMAGE/PNG" => ".png",
-            "IMAGE/JPEG" or "IMAGE/JPG" => ".jpg",
-            "IMAGE/GIF" => ".gif",
-            "IMAGE/WEBP" => ".webp",
-            "IMAGE/SVG+XML" => ".svg",
-            "TEXT/PLAIN" => ".txt",
-            "TEXT/HTML" => ".html",
-            "TEXT/MARKDOWN" => ".md",
-            "APPLICATION/JSON" => ".json",
-            "APPLICATION/XML" => ".xml",
-            "APPLICATION/PDF" => ".pdf",
-            _ => ".dat"
-        };
+            return ".dat";
+        }
+
+        return MediaTypeExtensions.TryGetValue(mediaType, out string? extension) ? extension : ".dat";
     }
 
     private static async Task<List<UserMessageDataAttachmentsItem>?> ProcessDataContentAttachmentsAsync(
@@ -443,7 +450,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 if (content is DataContent dataContent)
                 {
                     // Write DataContent to a temp file
-                    string tempFilePath = Path.Combine(Path.GetTempPath(), $"copilot_data_{Guid.NewGuid()}{GetExtensionForMediaType(dataContent.MediaType)}");
+                    string tempFilePath = Path.Combine(Path.GetTempPath(), $"agentframework_copilot_data_{Guid.NewGuid()}{GetExtensionForMediaType(dataContent.MediaType)}");
                     await File.WriteAllBytesAsync(tempFilePath, dataContent.Data.ToArray(), cancellationToken).ConfigureAwait(false);
                     tempFiles.Add(tempFilePath);
 

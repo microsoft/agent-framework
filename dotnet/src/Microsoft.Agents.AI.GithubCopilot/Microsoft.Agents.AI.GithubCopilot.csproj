@@ -27,8 +27,4 @@
     <Description>Provides Microsoft Agent Framework support for GitHub Copilot SDK.</Description>
   </PropertyGroup>
 
-  <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.GithubCopilot.UnitTests" />
-  </ItemGroup>
-
 </Project>

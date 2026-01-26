@@ -65,8 +65,8 @@ AIAgent agent = copilotClient.AsAIAgent(
     description: "A helpful AI assistant powered by GitHub Copilot"
 );
 
-// Use the agent
-AgentResponse response = await agent.RunAsync("What is the weather like today?");
+// Use the agent - ask it to write code for us
+AgentResponse response = await agent.RunAsync("Write a small .NET 10 C# hello world single file application");
 Console.WriteLine(response);
 ```
 
