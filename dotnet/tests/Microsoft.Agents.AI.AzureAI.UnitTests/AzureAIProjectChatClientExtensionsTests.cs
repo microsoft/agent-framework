@@ -2941,12 +2941,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// </summary>
     private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
-        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(ChatHistoryProvider.InvokingContext context, CancellationToken cancellationToken = default)
+        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             return new ValueTask<IEnumerable<ChatMessage>>(Array.Empty<ChatMessage>());
         }
 
-        public override ValueTask InvokedAsync(ChatHistoryProvider.InvokedContext context, CancellationToken cancellationToken = default)
+        public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             return default;
         }
