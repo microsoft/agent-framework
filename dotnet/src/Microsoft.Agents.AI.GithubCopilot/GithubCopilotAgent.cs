@@ -83,57 +83,57 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-        => new(new GithubCopilotAgentThread());
+    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        => new(new GithubCopilotAgentSession());
 
     /// <summary>
-    /// Get a new <see cref="AgentThread"/> instance using an existing session id, to continue that conversation.
+    /// Get a new <see cref="AgentSession"/> instance using an existing session id, to continue that conversation.
     /// </summary>
     /// <param name="sessionId">The session id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public ValueTask<AgentThread> GetNewThreadAsync(string sessionId)
-        => new(new GithubCopilotAgentThread() { SessionId = sessionId });
+    /// <returns>A new <see cref="AgentSession"/> instance.</returns>
+    public ValueTask<AgentSession> GetNewSessionAsync(string sessionId)
+        => new(new GithubCopilotAgentSession() { SessionId = sessionId });
 
     /// <inheritdoc/>
-    public override ValueTask<AgentThread> DeserializeThreadAsync(
-        JsonElement serializedThread,
+    public override ValueTask<AgentSession> DeserializeSessionAsync(
+        JsonElement serializedSession,
         JsonSerializerOptions? jsonSerializerOptions = null,
         CancellationToken cancellationToken = default)
-        => new(new GithubCopilotAgentThread(serializedThread, jsonSerializerOptions));
+        => new(new GithubCopilotAgentSession(serializedSession, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        // Ensure we have a valid thread
-        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
-        if (thread is not GithubCopilotAgentThread typedThread)
+        // Ensure we have a valid session
+        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not GithubCopilotAgentSession typedSession)
         {
             throw new InvalidOperationException(
-                $"The provided thread type {thread.GetType()} is not compatible with the agent. Only GitHub Copilot agent created threads are supported.");
+                $"The provided session type {session.GetType()} is not compatible with the agent. Only GitHub Copilot agent created sessions are supported.");
         }
 
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
         // Create or resume a session
-        CopilotSession session;
-        if (typedThread.SessionId is not null)
+        CopilotSession copilotSession;
+        if (typedSession.SessionId is not null)
         {
-            session = await this._copilotClient.ResumeSessionAsync(
-                typedThread.SessionId,
+            copilotSession = await this._copilotClient.ResumeSessionAsync(
+                typedSession.SessionId,
                 this.CreateResumeConfig(),
                 cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            session = await this._copilotClient.CreateSessionAsync(this._sessionConfig, cancellationToken).ConfigureAwait(false);
-            typedThread.SessionId = session.SessionId;
+            copilotSession = await this._copilotClient.CreateSessionAsync(this._sessionConfig, cancellationToken).ConfigureAwait(false);
+            typedSession.SessionId = copilotSession.SessionId;
         }
 
         try
@@ -143,7 +143,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             TaskCompletionSource<bool> completionSource = new();
 
             // Subscribe to session events
-            IDisposable subscription = session.On(evt =>
+            IDisposable subscription = copilotSession.On(evt =>
             {
                 switch (evt)
                 {
@@ -181,7 +181,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                     messageOptions.Attachments = [.. attachments];
                 }
 
-                await session.SendAsync(messageOptions, cancellationToken).ConfigureAwait(false);
+                await copilotSession.SendAsync(messageOptions, cancellationToken).ConfigureAwait(false);
 
                 // Wait for completion
                 await completionSource.Task.ConfigureAwait(false);
@@ -200,25 +200,25 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         }
         finally
         {
-            await session.DisposeAsync().ConfigureAwait(false);
+            await copilotSession.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     /// <inheritdoc/>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        // Ensure we have a valid thread
-        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
-        if (thread is not GithubCopilotAgentThread typedThread)
+        // Ensure we have a valid session
+        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not GithubCopilotAgentSession typedSession)
         {
             throw new InvalidOperationException(
-                $"The provided thread type {thread.GetType()} is not compatible with the agent. Only GitHub Copilot agent created threads are supported.");
+                $"The provided session type {session.GetType()} is not compatible with the agent. Only GitHub Copilot agent created sessions are supported.");
         }
 
         // Ensure the client is started
@@ -243,18 +243,18 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             }
             : new SessionConfig { Streaming = true };
 
-        CopilotSession session;
-        if (typedThread.SessionId is not null)
+        CopilotSession copilotSession;
+        if (typedSession.SessionId is not null)
         {
-            session = await this._copilotClient.ResumeSessionAsync(
-                typedThread.SessionId,
+            copilotSession = await this._copilotClient.ResumeSessionAsync(
+                typedSession.SessionId,
                 this.CreateResumeConfig(streaming: true),
                 cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            session = await this._copilotClient.CreateSessionAsync(sessionConfig, cancellationToken).ConfigureAwait(false);
-            typedThread.SessionId = session.SessionId;
+            copilotSession = await this._copilotClient.CreateSessionAsync(sessionConfig, cancellationToken).ConfigureAwait(false);
+            typedSession.SessionId = copilotSession.SessionId;
         }
 
         try
@@ -262,7 +262,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             Channel<AgentResponseUpdate> channel = Channel.CreateUnbounded<AgentResponseUpdate>();
 
             // Subscribe to session events
-            using IDisposable subscription = session.On(evt =>
+            using IDisposable subscription = copilotSession.On(evt =>
             {
                 switch (evt)
                 {
@@ -314,7 +314,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                     messageOptions.Attachments = [.. attachments];
                 }
 
-                await session.SendAsync(messageOptions, cancellationToken).ConfigureAwait(false);
+                await copilotSession.SendAsync(messageOptions, cancellationToken).ConfigureAwait(false);
                 // Yield updates as they arrive
                 await foreach (AgentResponseUpdate update in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
                 {
@@ -329,7 +329,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         }
         finally
         {
-            await session.DisposeAsync().ConfigureAwait(false);
+            await copilotSession.DisposeAsync().ConfigureAwait(false);
         }
     }
 

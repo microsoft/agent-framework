@@ -55,22 +55,22 @@ public sealed class GithubCopilotAgentTests
     }
 
     [Fact]
-    public async Task GetNewThreadAsync_ReturnsGithubCopilotAgentThreadAsync()
+    public async Task GetNewSessionAsync_ReturnsGithubCopilotAgentSessionAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
-        var thread = await agent.GetNewThreadAsync();
+        var session = await agent.GetNewSessionAsync();
 
         // Assert
-        Assert.NotNull(thread);
-        Assert.IsType<GithubCopilotAgentThread>(thread);
+        Assert.NotNull(session);
+        Assert.IsType<GithubCopilotAgentSession>(session);
     }
 
     [Fact]
-    public async Task GetNewThreadAsync_WithSessionId_ReturnsThreadWithSessionIdAsync()
+    public async Task GetNewSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
@@ -78,12 +78,12 @@ public sealed class GithubCopilotAgentTests
         const string TestSessionId = "test-session-id";
 
         // Act
-        var thread = await agent.GetNewThreadAsync(TestSessionId);
+        var session = await agent.GetNewSessionAsync(TestSessionId);
 
         // Assert
-        Assert.NotNull(thread);
-        var typedThread = Assert.IsType<GithubCopilotAgentThread>(thread);
-        Assert.Equal(TestSessionId, typedThread.SessionId);
+        Assert.NotNull(session);
+        var typedSession = Assert.IsType<GithubCopilotAgentSession>(session);
+        Assert.Equal(TestSessionId, typedSession.SessionId);
     }
 
     [Fact]

@@ -5,9 +5,9 @@ using System.Text.Json;
 namespace Microsoft.Agents.AI.GithubCopilot;
 
 /// <summary>
-/// Represents a thread for a GitHub Copilot agent conversation.
+/// Represents a session for a GitHub Copilot agent conversation.
 /// </summary>
-public sealed class GithubCopilotAgentThread : AgentThread
+public sealed class GithubCopilotAgentSession : AgentSession
 {
     /// <summary>
     /// Gets or sets the session ID for the GitHub Copilot conversation.
@@ -15,18 +15,18 @@ public sealed class GithubCopilotAgentThread : AgentThread
     public string? SessionId { get; internal set; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GithubCopilotAgentThread"/> class.
+    /// Initializes a new instance of the <see cref="GithubCopilotAgentSession"/> class.
     /// </summary>
-    internal GithubCopilotAgentThread()
+    internal GithubCopilotAgentSession()
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GithubCopilotAgentThread"/> class from serialized data.
+    /// Initializes a new instance of the <see cref="GithubCopilotAgentSession"/> class from serialized data.
     /// </summary>
     /// <param name="serializedThread">The serialized thread data.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serialization options.</param>
-    internal GithubCopilotAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    internal GithubCopilotAgentSession(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         // The JSON serialization uses camelCase
         if (serializedThread.TryGetProperty("sessionId", out JsonElement sessionIdElement))
