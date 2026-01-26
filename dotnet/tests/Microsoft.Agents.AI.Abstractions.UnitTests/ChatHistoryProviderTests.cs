@@ -10,73 +10,73 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 /// <summary>
-/// Contains tests for the <see cref="ChatMessageStore"/> class.
+/// Contains tests for the <see cref="ChatHistoryProvider"/> class.
 /// </summary>
-public class ChatMessageStoreTests
+public class ChatHistoryProviderTests
 {
     #region GetService Method Tests
 
     [Fact]
-    public void GetService_RequestingExactStoreType_ReturnsStore()
+    public void GetService_RequestingExactProviderType_ReturnsProvider()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(TestChatMessageStore));
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(TestChatHistoryProvider));
         Assert.NotNull(result);
-        Assert.Same(store, result);
+        Assert.Same(provider, result);
     }
 
     [Fact]
-    public void GetService_RequestingBaseStoreType_ReturnsStore()
+    public void GetService_RequestingBaseProviderType_ReturnsProvider()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(ChatMessageStore));
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(ChatHistoryProvider));
         Assert.NotNull(result);
-        Assert.Same(store, result);
+        Assert.Same(provider, result);
     }
 
     [Fact]
     public void GetService_RequestingUnrelatedType_ReturnsNull()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(string));
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(string));
         Assert.Null(result);
     }
 
     [Fact]
     public void GetService_WithServiceKey_ReturnsNull()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService(typeof(TestChatMessageStore), "some-key");
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService(typeof(TestChatHistoryProvider), "some-key");
         Assert.Null(result);
     }
 
     [Fact]
     public void GetService_WithNullServiceType_ThrowsArgumentNullException()
     {
-        var store = new TestChatMessageStore();
-        Assert.Throws<ArgumentNullException>(() => store.GetService(null!));
+        var provider = new TestChatHistoryProvider();
+        Assert.Throws<ArgumentNullException>(() => provider.GetService(null!));
     }
 
     [Fact]
     public void GetService_Generic_ReturnsCorrectType()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService<TestChatMessageStore>();
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService<TestChatHistoryProvider>();
         Assert.NotNull(result);
-        Assert.Same(store, result);
+        Assert.Same(provider, result);
     }
 
     [Fact]
     public void GetService_Generic_ReturnsNullForUnrelatedType()
     {
-        var store = new TestChatMessageStore();
-        var result = store.GetService<string>();
+        var provider = new TestChatHistoryProvider();
+        var result = provider.GetService<string>();
         Assert.Null(result);
     }
 
     #endregion
 
-    private sealed class TestChatMessageStore : ChatMessageStore
+    private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
         public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
             => new(Array.Empty<ChatMessage>());

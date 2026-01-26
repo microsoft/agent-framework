@@ -11,33 +11,33 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// A <see cref="ChatMessageStore"/> decorator that allows filtering the messages
-/// passed into and out of an inner <see cref="ChatMessageStore"/>.
+/// A <see cref="ChatHistoryProvider"/> decorator that allows filtering the messages
+/// passed into and out of an inner <see cref="ChatHistoryProvider"/>.
 /// </summary>
-public sealed class ChatMessageStoreMessageFilter : ChatMessageStore
+public sealed class ChatHistoryProviderMessageFilter : ChatHistoryProvider
 {
-    private readonly ChatMessageStore _innerChatMessageStore;
+    private readonly ChatHistoryProvider _innerProvider;
     private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? _invokingMessagesFilter;
     private readonly Func<InvokedContext, InvokedContext>? _invokedMessagesFilter;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ChatMessageStoreMessageFilter"/> class.
+    /// Initializes a new instance of the <see cref="ChatHistoryProviderMessageFilter"/> class.
     /// </summary>
     /// <remarks>Use this constructor to customize how messages are filtered before and after invocation by
-    /// providing appropriate filter functions. If no filters are provided, the message store operates without
+    /// providing appropriate filter functions. If no filters are provided, the <see cref="ChatHistoryProvider"/> operates without
     /// additional filtering.</remarks>
-    /// <param name="innerChatMessageStore">The underlying chat message store to be wrapped. Cannot be null.</param>
-    /// <param name="invokingMessagesFilter">An optional filter function to apply to messages before they are invoked. If null, no filter is applied at this
-    /// stage.</param>
-    /// <param name="invokedMessagesFilter">An optional filter function to apply to the invocation context after messages have been invoked. If null, no
+    /// <param name="innerProvider">The underlying <see cref="ChatHistoryProvider"/> to be wrapped. Cannot be null.</param>
+    /// <param name="invokingMessagesFilter">An optional filter function to apply to messages provided by the <see cref="ChatHistoryProvider"/>
+    /// before they are used by the agent. If null, no filter is applied at this stage.</param>
+    /// <param name="invokedMessagesFilter">An optional filter function to apply to the invocation context after messages have been produced. If null, no
     /// filter is applied at this stage.</param>
-    /// <exception cref="ArgumentNullException">Thrown if innerChatMessageStore is null.</exception>
-    public ChatMessageStoreMessageFilter(
-        ChatMessageStore innerChatMessageStore,
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="innerProvider"/> is null.</exception>
+    public ChatHistoryProviderMessageFilter(
+        ChatHistoryProvider innerProvider,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? invokingMessagesFilter = null,
         Func<InvokedContext, InvokedContext>? invokedMessagesFilter = null)
     {
-        this._innerChatMessageStore = Throw.IfNull(innerChatMessageStore);
+        this._innerProvider = Throw.IfNull(innerProvider);
 
         if (invokingMessagesFilter == null && invokedMessagesFilter == null)
         {
@@ -51,7 +51,7 @@ public sealed class ChatMessageStoreMessageFilter : ChatMessageStore
     /// <inheritdoc />
     public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var messages = await this._innerChatMessageStore.InvokingAsync(context, cancellationToken).ConfigureAwait(false);
+        var messages = await this._innerProvider.InvokingAsync(context, cancellationToken).ConfigureAwait(false);
         return this._invokingMessagesFilter != null ? this._invokingMessagesFilter(messages) : messages;
     }
 
@@ -63,12 +63,12 @@ public sealed class ChatMessageStoreMessageFilter : ChatMessageStore
             context = this._invokedMessagesFilter(context);
         }
 
-        return this._innerChatMessageStore.InvokedAsync(context, cancellationToken);
+        return this._innerProvider.InvokedAsync(context, cancellationToken);
     }
 
     /// <inheritdoc />
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        return this._innerChatMessageStore.Serialize(jsonSerializerOptions);
+        return this._innerProvider.Serialize(jsonSerializerOptions);
     }
 }

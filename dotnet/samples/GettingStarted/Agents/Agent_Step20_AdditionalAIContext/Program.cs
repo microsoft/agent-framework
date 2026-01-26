@@ -45,7 +45,7 @@ AIAgent agent = new AzureOpenAIClient(
         You manage a TODO list for the user. When the user has completed one of the tasks it can be removed from the TODO list. Only provide the list of TODO items if asked.
         You remind users of upcoming calendar events when the user interacts with you.
         """ },
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore()
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider()
             // Use WithAIContextProviderMessageRemoval, so that we don't store the messages from the AI context provider in the chat history.
             // You may want to store these messages, depending on their content and your requirements.
             .WithAIContextProviderMessageRemoval()),

@@ -1550,10 +1550,11 @@ async def _auto_invoke_function(
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
     # Filter out internal framework kwargs before passing to tools.
+    # conversation_id is an internal tracking ID that should not be forwarded to tools.
     runtime_kwargs: dict[str, Any] = {
         key: value
         for key, value in (custom_args or {}).items()
-        if key not in {"_function_middleware_pipeline", "middleware"}
+        if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
     }
     try:
         args = tool.input_model.model_validate(parsed_args)
@@ -1689,6 +1690,11 @@ async def _try_execute_function_calls(
 
     tool_map = _get_tool_map(tools)
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
+    logger.debug(
+        "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
+        list(tool_map.keys()),
+        approval_tools,
+    )
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
     additional_tool_names = [tool.name for tool in config.additional_tools] if config.additional_tools else []
     # check if any are calling functions that need approval
@@ -1696,7 +1702,15 @@ async def _try_execute_function_calls(
     approval_needed = False
     declaration_only_flag = False
     for fcc in function_calls:
+        fcc_name = getattr(fcc, "name", None)
+        logger.debug(
+            "Checking function call: type=%s, name=%s, in approval_tools=%s",
+            fcc.type,
+            fcc_name,
+            fcc_name in approval_tools,
+        )
         if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
+            logger.debug("Approval needed for function: %s", fcc.name)
             approval_needed = True
             break
         if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
@@ -1706,6 +1720,7 @@ async def _try_execute_function_calls(
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
+        logger.debug("Returning function_approval_request contents")
         return (
             [
                 Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
@@ -2154,6 +2169,17 @@ def _handle_function_calls_streaming_response(
 
                 # we load the tools here, since middleware might have changed them compared to before calling func.
                 tools = _extract_tools(options)
+                fc_count = len(function_calls) if function_calls else 0
+                logger.debug(
+                    "Streaming: tools extracted=%s, function_calls=%d",
+                    tools is not None,
+                    fc_count,
+                )
+                if tools:
+                    for t in tools if isinstance(tools, list) else [tools]:
+                        t_name = getattr(t, "name", "unknown")
+                        t_approval = getattr(t, "approval_mode", None)
+                        logger.debug("  Tool %s: approval_mode=%s", t_name, t_approval)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function

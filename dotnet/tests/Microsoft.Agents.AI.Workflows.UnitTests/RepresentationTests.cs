@@ -85,7 +85,7 @@ public class RepresentationTests
     [Fact]
     public async Task Test_SpecializedExecutor_InfosAsync()
     {
-        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
+        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent(), new()));
         await RunExecutorBindingInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 
