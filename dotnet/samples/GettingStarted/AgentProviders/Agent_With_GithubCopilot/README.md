@@ -69,7 +69,7 @@ Console.WriteLine(response);
 To get streaming responses:
 
 ```csharp
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a Python function to calculate Fibonacci numbers"))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a C# function to calculate Fibonacci numbers"))
 {
     Console.Write(update.Text);
 }
