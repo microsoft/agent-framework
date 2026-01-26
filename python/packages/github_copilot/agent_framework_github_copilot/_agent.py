@@ -26,6 +26,7 @@ from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import SessionEvent, SessionEventType
 from copilot.types import (
     CopilotClientOptions,
+    MCPServerConfig,
     PermissionRequest,
     PermissionRequestResult,
     ResumeSessionConfig,
@@ -77,6 +78,12 @@ class GithubCopilotOptions(TypedDict, total=False):
     Called when Copilot requests permission to perform an action (shell, read, write, etc.).
     Takes a PermissionRequest and context dict, returns PermissionRequestResult.
     If not provided, all permission requests will be denied by default.
+    """
+
+    mcp_servers: dict[str, MCPServerConfig]
+    """MCP (Model Context Protocol) server configurations.
+    A dictionary mapping server names to their configurations.
+    Supports both local (stdio) and remote (HTTP/SSE) servers.
     """
 
 
@@ -187,6 +194,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         timeout = opts.pop("timeout", None)
         log_level = opts.pop("log_level", None)
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
+        mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
 
         try:
             self._settings = GithubCopilotSettings(
@@ -203,6 +211,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         self._instructions = instructions
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
+        self._mcp_servers = mcp_servers
         self._default_options = opts
         self._started = False
 
@@ -495,6 +504,9 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         if self._permission_handler:
             config["on_permission_request"] = self._permission_handler
 
+        if self._mcp_servers:
+            config["mcp_servers"] = self._mcp_servers
+
         return await self._client.create_session(config)
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
@@ -509,5 +521,8 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         if self._permission_handler:
             config["on_permission_request"] = self._permission_handler
+
+        if self._mcp_servers:
+            config["mcp_servers"] = self._mcp_servers
 
         return await self._client.resume_session(session_id, config)

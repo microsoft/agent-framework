@@ -33,4 +33,5 @@ The following environment variables can be configured:
 | [`github_copilot_with_shell.py`](github_copilot_with_shell.py) | Shows how to enable shell command execution permissions. Demonstrates running system commands like listing files and getting system information. |
 | [`github_copilot_with_file_operations.py`](github_copilot_with_file_operations.py) | Shows how to enable file read and write permissions. Demonstrates reading file contents and creating new files. |
 | [`github_copilot_with_url.py`](github_copilot_with_url.py) | Shows how to enable URL fetching permissions. Demonstrates fetching and processing web content. |
+| [`github_copilot_with_mcp.py`](github_copilot_with_mcp.py) | Shows how to configure MCP (Model Context Protocol) servers, including local (stdio) and remote (HTTP) servers. |
 | [`github_copilot_with_multiple_permissions.py`](github_copilot_with_multiple_permissions.py) | Shows how to combine multiple permission types for complex tasks that require shell, read, and write access. |

@@ -537,6 +537,97 @@ class TestGithubCopilotAgentSessionManagement:
         assert "on_permission_request" in config
 
 
+class TestGithubCopilotAgentMCPServers:
+    """Test cases for MCP server configuration."""
+
+    async def test_mcp_servers_passed_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that mcp_servers are passed through to create_session config."""
+        from copilot.types import MCPServerConfig
+
+        mcp_servers: dict[str, MCPServerConfig] = {
+            "filesystem": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+                "tools": ["*"],
+            },
+            "remote": {
+                "type": "http",
+                "url": "https://example.com/mcp",
+                "tools": ["*"],
+            },
+        }
+
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            client=mock_client,
+            default_options={"mcp_servers": mcp_servers},
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert "mcp_servers" in config
+        assert "filesystem" in config["mcp_servers"]
+        assert "remote" in config["mcp_servers"]
+        assert config["mcp_servers"]["filesystem"]["command"] == "npx"
+        assert config["mcp_servers"]["remote"]["url"] == "https://example.com/mcp"
+
+    async def test_mcp_servers_passed_to_resume_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that mcp_servers are passed through to resume_session config."""
+        from copilot.types import MCPServerConfig
+
+        mcp_servers: dict[str, MCPServerConfig] = {
+            "test-server": {
+                "type": "stdio",
+                "command": "echo",
+                "args": ["hello"],
+                "tools": ["*"],
+            },
+        }
+
+        agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            client=mock_client,
+            default_options={"mcp_servers": mcp_servers},
+        )
+        await agent.start()
+
+        thread = AgentThread()
+        thread.service_thread_id = "existing-session-id"
+
+        await agent._get_or_create_session(thread)  # type: ignore
+
+        mock_client.resume_session.assert_called_once()
+        call_args = mock_client.resume_session.call_args
+        config = call_args[0][1]
+        assert "mcp_servers" in config
+        assert "test-server" in config["mcp_servers"]
+
+    async def test_session_config_excludes_mcp_servers_when_not_set(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that session config does not include mcp_servers when not set."""
+        agent = GithubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentThread())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert "mcp_servers" not in config
+
+
 class TestGithubCopilotAgentToolConversion:
     """Test cases for tool conversion."""
 
