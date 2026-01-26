@@ -43,4 +43,13 @@ public record ExternalResponse(RequestPortInfo PortInfo, string RequestId, Porta
     /// <param name="targetType">The type to which the data should be cast or converted.</param>
     /// <returns>The data cast to the specified type, or null if the data cannot be cast to the specified type.</returns>
     public object? DataAs(Type targetType) => this.Data.AsType(targetType);
+
+    /// <summary>
+    /// Attempts to retrieve the underlying data as the specified type.
+    /// </summary>
+    /// <param name="targetType">The type to which the data should be cast or converted.</param>
+    /// <param name="value">When this method returns <see langword="true"/>, contains the value of type
+    /// <paramref name="targetType"/> if the data is available and compatible.</param>
+    /// <returns>true if the data is present and can be cast to <paramref name="targetType"/>; otherwise, false.</returns>
+    public bool DataIs(Type targetType, [NotNullWhen(true)] out object? value) => this.Data.IsType(targetType, out value);
 }
