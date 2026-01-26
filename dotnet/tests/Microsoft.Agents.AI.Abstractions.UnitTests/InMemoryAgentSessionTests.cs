@@ -9,9 +9,9 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 /// <summary>
-/// Contains tests for <see cref="InMemoryAgentThread"/>.
+/// Contains tests for <see cref="InMemoryAgentSession"/>.
 /// </summary>
-public class InMemoryAgentThreadTests
+public class InMemoryAgentSessionTests
 {
     #region Constructor and Property Tests
 
@@ -19,11 +19,11 @@ public class InMemoryAgentThreadTests
     public void Constructor_SetsDefaultChatHistoryProvider()
     {
         // Arrange & Act
-        var thread = new TestInMemoryAgentThread();
+        var session = new TestInMemoryAgentSession();
 
         // Assert
-        Assert.NotNull(thread.GetChatHistoryProvider());
-        Assert.Empty(thread.GetChatHistoryProvider());
+        Assert.NotNull(session.GetChatHistoryProvider());
+        Assert.Empty(session.GetChatHistoryProvider());
     }
 
     [Fact]
@@ -33,12 +33,12 @@ public class InMemoryAgentThreadTests
         InMemoryChatHistoryProvider provider = [new(ChatRole.User, "Hello")];
 
         // Act
-        var thread = new TestInMemoryAgentThread(provider);
+        var session = new TestInMemoryAgentSession(provider);
 
         // Assert
-        Assert.Same(provider, thread.GetChatHistoryProvider());
-        Assert.Single(thread.GetChatHistoryProvider());
-        Assert.Equal("Hello", thread.GetChatHistoryProvider()[0].Text);
+        Assert.Same(provider, session.GetChatHistoryProvider());
+        Assert.Single(session.GetChatHistoryProvider());
+        Assert.Equal("Hello", session.GetChatHistoryProvider()[0].Text);
     }
 
     [Fact]
@@ -48,12 +48,12 @@ public class InMemoryAgentThreadTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "Hi") };
 
         // Act
-        var thread = new TestInMemoryAgentThread(messages);
+        var session = new TestInMemoryAgentSession(messages);
 
         // Assert
-        Assert.NotNull(thread.GetChatHistoryProvider());
-        Assert.Single(thread.GetChatHistoryProvider());
-        Assert.Equal("Hi", thread.GetChatHistoryProvider()[0].Text);
+        Assert.NotNull(session.GetChatHistoryProvider());
+        Assert.Single(session.GetChatHistoryProvider());
+        Assert.Equal("Hi", session.GetChatHistoryProvider()[0].Text);
     }
 
     [Fact]
@@ -62,16 +62,16 @@ public class InMemoryAgentThreadTests
         // Arrange
         InMemoryChatHistoryProvider provider = [new(ChatRole.User, "TestMsg")];
         var providerState = provider.Serialize();
-        var threadStateWrapper = new InMemoryAgentThread.InMemoryAgentThreadState { ChatHistoryProviderState = providerState };
-        var json = JsonSerializer.SerializeToElement(threadStateWrapper, TestJsonSerializerContext.Default.InMemoryAgentThreadState);
+        var sessionStateWrapper = new InMemoryAgentSession.InMemoryAgentSessionState { ChatHistoryProviderState = providerState };
+        var json = JsonSerializer.SerializeToElement(sessionStateWrapper, TestJsonSerializerContext.Default.InMemoryAgentSessionState);
 
         // Act
-        var thread = new TestInMemoryAgentThread(json);
+        var session = new TestInMemoryAgentSession(json);
 
         // Assert
-        Assert.NotNull(thread.GetChatHistoryProvider());
-        Assert.Single(thread.GetChatHistoryProvider());
-        Assert.Equal("TestMsg", thread.GetChatHistoryProvider()[0].Text);
+        Assert.NotNull(session.GetChatHistoryProvider());
+        Assert.Single(session.GetChatHistoryProvider());
+        Assert.Equal("TestMsg", session.GetChatHistoryProvider()[0].Text);
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class InMemoryAgentThreadTests
         var invalidJson = JsonSerializer.SerializeToElement(42, TestJsonSerializerContext.Default.Int32);
 
         // Act & Assert
-        Assert.Throws<ArgumentException>(() => new TestInMemoryAgentThread(invalidJson));
+        Assert.Throws<ArgumentException>(() => new TestInMemoryAgentSession(invalidJson));
     }
 
     #endregion
@@ -92,10 +92,10 @@ public class InMemoryAgentThreadTests
     public void Serialize_ReturnsCorrectJson_WhenMessagesExist()
     {
         // Arrange
-        var thread = new TestInMemoryAgentThread([new(ChatRole.User, "TestContent")]);
+        var session = new TestInMemoryAgentSession([new(ChatRole.User, "TestContent")]);
 
         // Act
-        var json = thread.Serialize();
+        var json = session.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -111,10 +111,10 @@ public class InMemoryAgentThreadTests
     public void Serialize_ReturnsEmptyMessages_WhenNoMessages()
     {
         // Arrange
-        var thread = new TestInMemoryAgentThread();
+        var session = new TestInMemoryAgentSession();
 
         // Act
-        var json = thread.Serialize();
+        var json = session.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -133,23 +133,23 @@ public class InMemoryAgentThreadTests
     public void GetService_RequestingChatHistoryProvider_ReturnsChatHistoryProvider()
     {
         // Arrange
-        var thread = new TestInMemoryAgentThread();
+        var session = new TestInMemoryAgentSession();
 
         // Act & Assert
-        Assert.NotNull(thread.GetService(typeof(ChatHistoryProvider)));
-        Assert.Same(thread.GetChatHistoryProvider(), thread.GetService(typeof(ChatHistoryProvider)));
-        Assert.Same(thread.GetChatHistoryProvider(), thread.GetService(typeof(InMemoryChatHistoryProvider)));
+        Assert.NotNull(session.GetService(typeof(ChatHistoryProvider)));
+        Assert.Same(session.GetChatHistoryProvider(), session.GetService(typeof(ChatHistoryProvider)));
+        Assert.Same(session.GetChatHistoryProvider(), session.GetService(typeof(InMemoryChatHistoryProvider)));
     }
 
     #endregion
 
     // Sealed test subclass to expose protected members for testing
-    private sealed class TestInMemoryAgentThread : InMemoryAgentThread
+    private sealed class TestInMemoryAgentSession : InMemoryAgentSession
     {
-        public TestInMemoryAgentThread() { }
-        public TestInMemoryAgentThread(InMemoryChatHistoryProvider? provider) : base(provider) { }
-        public TestInMemoryAgentThread(IEnumerable<ChatMessage> messages) : base(messages) { }
-        public TestInMemoryAgentThread(JsonElement serializedThreadState) : base(serializedThreadState) { }
+        public TestInMemoryAgentSession() { }
+        public TestInMemoryAgentSession(InMemoryChatHistoryProvider? provider) : base(provider) { }
+        public TestInMemoryAgentSession(IEnumerable<ChatMessage> messages) : base(messages) { }
+        public TestInMemoryAgentSession(JsonElement serializedSessionState) : base(serializedSessionState) { }
         public InMemoryChatHistoryProvider GetChatHistoryProvider() => this.ChatHistoryProvider;
     }
 }

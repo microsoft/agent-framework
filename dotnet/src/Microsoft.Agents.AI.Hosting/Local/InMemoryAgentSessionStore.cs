@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
-/// Provides an in-memory implementation of <see cref="AgentThreadStore"/> for development and testing scenarios.
+/// Provides an in-memory implementation of <see cref="AgentSessionStore"/> for development and testing scenarios.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// <list type="bullet">
 /// <item><description>Single-instance development scenarios</description></item>
 /// <item><description>Testing and prototyping</description></item>
-/// <item><description>Scenarios where thread persistence across restarts is not required</description></item>
+/// <item><description>Scenarios where session persistence across restarts is not required</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -25,28 +25,28 @@ namespace Microsoft.Agents.AI.Hosting;
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
 /// </remarks>
-public sealed class InMemoryAgentThreadStore : AgentThreadStore
+public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
     private readonly ConcurrentDictionary<string, JsonElement> _threads = new();
 
     /// <inheritdoc/>
-    public override ValueTask SaveThreadAsync(AIAgent agent, string conversationId, AgentThread thread, CancellationToken cancellationToken = default)
+    public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
-        this._threads[key] = thread.Serialize();
+        this._threads[key] = session.Serialize();
         return default;
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
-        JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread) ? existingThread : null;
+        JsonElement? sessionContent = this._threads.TryGetValue(key, out var existingSession) ? existingSession : null;
 
-        return threadContent switch
+        return sessionContent switch
         {
-            null => await agent.GetNewThreadAsync(cancellationToken).ConfigureAwait(false),
-            _ => await agent.DeserializeThreadAsync(threadContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
+            null => await agent.GetNewSessionAsync(cancellationToken).ConfigureAwait(false),
+            _ => await agent.DeserializeSessionAsync(sessionContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
         };
     }
 

@@ -21,7 +21,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
     #region ConversationId Tests
 
     /// <summary>
-    /// Verify that RunAsync does not throw when providing a ConversationId via both AgentThread and
+    /// Verify that RunAsync does not throw when providing a ConversationId via both AgentSession and
     /// via ChatOptions and the two are the same.
     /// </summary>
     [Fact]
@@ -38,15 +38,15 @@ public class ChatClientAgent_ChatHistoryManagementTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
-        ChatClientAgentThread thread = new() { ConversationId = "ConvId" };
+        ChatClientAgentSession? session = new() { ConversationId = "ConvId" };
 
         // Act & Assert
-        var response = await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions));
+        var response = await agent.RunAsync([new(ChatRole.User, "test")], session, options: new ChatClientAgentRunOptions(chatOptions));
         Assert.NotNull(response);
     }
 
     /// <summary>
-    /// Verify that RunAsync throws when providing a ConversationId via both AgentThread and
+    /// Verify that RunAsync throws when providing a ConversationId via both AgentSession and
     /// via ChatOptions and the two are different.
     /// </summary>
     [Fact]
@@ -58,14 +58,14 @@ public class ChatClientAgent_ChatHistoryManagementTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
-        ChatClientAgentThread thread = new() { ConversationId = "ThreadId" };
+        ChatClientAgentSession? session = new() { ConversationId = "ThreadId" };
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session, options: new ChatClientAgentRunOptions(chatOptions)));
     }
 
     /// <summary>
-    /// Verify that RunAsync clones the ChatOptions when providing a thread with a ConversationId and a ChatOptions.
+    /// Verify that RunAsync clones the ChatOptions when providing a session with a ConversationId and a ChatOptions.
     /// </summary>
     [Fact]
     public async Task RunAsync_ClonesChatOptions_ToAddConversationIdAsync()
@@ -81,20 +81,20 @@ public class ChatClientAgent_ChatHistoryManagementTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
-        ChatClientAgentThread thread = new() { ConversationId = "ConvId" };
+        ChatClientAgentSession? session = new() { ConversationId = "ConvId" };
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new ChatClientAgentRunOptions(chatOptions));
+        await agent.RunAsync([new(ChatRole.User, "test")], session, options: new ChatClientAgentRunOptions(chatOptions));
 
         // Assert
         Assert.Null(chatOptions.ConversationId);
     }
 
     /// <summary>
-    /// Verify that RunAsync throws if a thread is provided that uses a conversation id already, but the service does not return one on invoke.
+    /// Verify that RunAsync throws if a session is provided that uses a conversation id already, but the service does not return one on invoke.
     /// </summary>
     [Fact]
-    public async Task RunAsync_Throws_ForMissingConversationIdWithConversationIdThreadAsync()
+    public async Task RunAsync_Throws_ForMissingConversationIdWithConversationIdSessionAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -106,17 +106,17 @@ public class ChatClientAgent_ChatHistoryManagementTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
-        ChatClientAgentThread thread = new() { ConversationId = "ConvId" };
+        ChatClientAgentSession? session = new() { ConversationId = "ConvId" };
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
     }
 
     /// <summary>
-    /// Verify that RunAsync sets the ConversationId on the thread when the service returns one.
+    /// Verify that RunAsync sets the ConversationId on the session when the service returns one.
     /// </summary>
     [Fact]
-    public async Task RunAsync_SetsConversationIdOnThread_WhenReturnedByChatClientAsync()
+    public async Task RunAsync_SetsConversationIdOnSession_WhenReturnedByChatClientAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -126,13 +126,13 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
-        ChatClientAgentThread thread = new();
+        ChatClientAgentSession? session = new();
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "test")], thread);
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
-        Assert.Equal("ConvId", thread.ConversationId);
+        Assert.Equal("ConvId", session.ConversationId);
     }
 
     #endregion
@@ -158,11 +158,11 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        await agent.RunAsync([new(ChatRole.User, "test")], thread);
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
-        InMemoryChatHistoryProvider chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(thread!.ChatHistoryProvider);
+        InMemoryChatHistoryProvider chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(session!.ChatHistoryProvider);
         Assert.Equal(2, chatHistoryProvider.Count);
         Assert.Equal("test", chatHistoryProvider[0].Text);
         Assert.Equal("response", chatHistoryProvider[1].Text);
@@ -200,11 +200,11 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        await agent.RunAsync([new(ChatRole.User, "test")], thread);
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
-        Assert.IsType<ChatHistoryProvider>(thread!.ChatHistoryProvider, exactMatch: false);
+        Assert.IsType<ChatHistoryProvider>(session!.ChatHistoryProvider, exactMatch: false);
         mockService.Verify(
             x => x.GetResponseAsync(
                 It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Count() == 2 && msgs.Any(m => m.Text == "Existing Chat History") && msgs.Any(m => m.Text == "test")),
@@ -248,11 +248,11 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread));
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
 
         // Assert
-        Assert.IsType<ChatHistoryProvider>(thread!.ChatHistoryProvider, exactMatch: false);
+        Assert.IsType<ChatHistoryProvider>(session!.ChatHistoryProvider, exactMatch: false);
         mockChatHistoryProvider.Verify(s => s.InvokedAsync(
             It.Is<ChatHistoryProvider.InvokedContext>(x => x.RequestMessages.Count() == 1 && x.ResponseMessages == null && x.InvokeException!.Message == "Test Error"),
             It.IsAny<CancellationToken>()),
@@ -282,8 +282,8 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act & Assert
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
-        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], thread));
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
         Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
     }
 
@@ -335,13 +335,13 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentThread? thread = await agent.GetNewThreadAsync() as ChatClientAgentThread;
+        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
         AdditionalPropertiesDictionary additionalProperties = new();
         additionalProperties.Add(mockOverrideChatHistoryProvider.Object);
-        await agent.RunAsync([new(ChatRole.User, "test")], thread, options: new AgentRunOptions { AdditionalProperties = additionalProperties });
+        await agent.RunAsync([new(ChatRole.User, "test")], session, options: new AgentRunOptions { AdditionalProperties = additionalProperties });
 
         // Assert
-        Assert.Same(mockFactoryChatHistoryProvider.Object, thread!.ChatHistoryProvider);
+        Assert.Same(mockFactoryChatHistoryProvider.Object, session!.ChatHistoryProvider);
         mockService.Verify(
             x => x.GetResponseAsync(
                 It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Count() == 2 && msgs.Any(m => m.Text == "Existing Chat History") && msgs.Any(m => m.Text == "test")),

@@ -19,7 +19,7 @@ internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : 
     public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
-        string? threadId = null,
+        string? sessionId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         OpenAIClientOptions options = new()

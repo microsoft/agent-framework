@@ -61,12 +61,12 @@ public sealed class RedisStreamResponseHandler : IAgentResponseHandler
         DurableAgentContext context = DurableAgentContext.Current
             ?? throw new InvalidOperationException("DurableAgentContext.Current is not set. This handler must be used within a durable agent context.");
 
-        // Get conversation ID from the current thread context, which is only available in the context of
+        // Get conversation ID from the current session context, which is only available in the context of
         // a durable agent execution.
-        string conversationId = context.CurrentThread.GetService<AgentSessionId>().ToString();
+        string conversationId = context.CurrentSession.GetService<AgentSessionId>().ToString();
         if (string.IsNullOrEmpty(conversationId))
         {
-            throw new InvalidOperationException("Unable to determine conversation ID from the current thread.");
+            throw new InvalidOperationException("Unable to determine conversation ID from the current session.");
         }
 
         string streamKey = GetStreamKey(conversationId);

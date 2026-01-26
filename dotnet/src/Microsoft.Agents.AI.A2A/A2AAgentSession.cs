@@ -6,23 +6,23 @@ using System.Text.Json;
 namespace Microsoft.Agents.AI.A2A;
 
 /// <summary>
-/// Thread for A2A based agents.
+/// Session for A2A based agents.
 /// </summary>
-public sealed class A2AAgentThread : AgentThread
+public sealed class A2AAgentSession : AgentSession
 {
-    internal A2AAgentThread()
+    internal A2AAgentSession()
     {
     }
 
-    internal A2AAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
+    internal A2AAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        if (serializedThreadState.ValueKind != JsonValueKind.Object)
+        if (serializedSessionState.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("The serialized thread state must be a JSON object.", nameof(serializedThreadState));
+            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedSessionState));
         }
 
-        var state = serializedThreadState.Deserialize(
-            A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(A2AAgentThreadState))) as A2AAgentThreadState;
+        var state = serializedSessionState.Deserialize(
+            A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(A2AAgentSessionState))) as A2AAgentSessionState;
 
         if (state?.ContextId is string contextId)
         {
@@ -48,16 +48,16 @@ public sealed class A2AAgentThread : AgentThread
     /// <inheritdoc/>
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        var state = new A2AAgentThreadState
+        var state = new A2AAgentSessionState
         {
             ContextId = this.ContextId,
             TaskId = this.TaskId
         };
 
-        return JsonSerializer.SerializeToElement(state, A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(A2AAgentThreadState)));
+        return JsonSerializer.SerializeToElement(state, A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(A2AAgentSessionState)));
     }
 
-    internal sealed class A2AAgentThreadState
+    internal sealed class A2AAgentSessionState
     {
         public string? ContextId { get; set; }
 

@@ -10,10 +10,10 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// An agent thread implementation for durable agents.
 /// </summary>
 [DebuggerDisplay("{SessionId}")]
-public sealed class DurableAgentThread : AgentThread
+public sealed class DurableAgentSession : AgentSession
 {
     [JsonConstructor]
-    internal DurableAgentThread(AgentSessionId sessionId)
+    internal DurableAgentSession(AgentSessionId sessionId)
     {
         this.SessionId = sessionId;
     }
@@ -30,18 +30,18 @@ public sealed class DurableAgentThread : AgentThread
     {
         return JsonSerializer.SerializeToElement(
             this,
-            DurableAgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(DurableAgentThread)));
+            DurableAgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(DurableAgentSession)));
     }
 
     /// <summary>
-    /// Deserializes a DurableAgentThread from JSON.
+    /// Deserializes a DurableAgentSession from JSON.
     /// </summary>
-    /// <param name="serializedThread">The serialized thread data.</param>
+    /// <param name="serializedSession">The serialized thread data.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
-    /// <returns>The deserialized DurableAgentThread.</returns>
-    internal static DurableAgentThread Deserialize(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    /// <returns>The deserialized DurableAgentSession.</returns>
+    internal static DurableAgentSession Deserialize(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        if (!serializedThread.TryGetProperty("sessionId", out JsonElement sessionIdElement) ||
+        if (!serializedSession.TryGetProperty("sessionId", out JsonElement sessionIdElement) ||
             sessionIdElement.ValueKind != JsonValueKind.String)
         {
             throw new JsonException("Invalid or missing sessionId property.");
@@ -49,7 +49,7 @@ public sealed class DurableAgentThread : AgentThread
 
         string sessionIdString = sessionIdElement.GetString() ?? throw new JsonException("sessionId property is null.");
         AgentSessionId sessionId = AgentSessionId.Parse(sessionIdString);
-        return new DurableAgentThread(sessionId);
+        return new DurableAgentSession(sessionId);
     }
 
     /// <inheritdoc/>

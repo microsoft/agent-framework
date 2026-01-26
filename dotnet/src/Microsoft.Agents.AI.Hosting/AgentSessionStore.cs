@@ -13,33 +13,33 @@ namespace Microsoft.Agents.AI.Hosting;
 /// allowing conversations to be resumed across HTTP requests, application restarts,
 /// or different service instances in hosted scenarios.
 /// </remarks>
-public abstract class AgentThreadStore
+public abstract class AgentSessionStore
 {
     /// <summary>
-    /// Saves a serialized agent thread to persistent storage.
+    /// Saves a serialized agent session to persistent storage.
     /// </summary>
-    /// <param name="agent">The agent that owns this thread.</param>
-    /// <param name="conversationId">The unique identifier for the conversation/thread.</param>
-    /// <param name="thread">The thread to save.</param>
+    /// <param name="agent">The agent that owns this session.</param>
+    /// <param name="conversationId">The unique identifier for the conversation/session.</param>
+    /// <param name="session">The session to save.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task that represents the asynchronous save operation.</returns>
-    public abstract ValueTask SaveThreadAsync(
+    public abstract ValueTask SaveSessionAsync(
         AIAgent agent,
         string conversationId,
-        AgentThread thread,
+        AgentSession session,
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Retrieves a serialized agent thread from persistent storage.
+    /// Retrieves a serialized agent session from persistent storage.
     /// </summary>
-    /// <param name="agent">The agent that owns this thread.</param>
-    /// <param name="conversationId">The unique identifier for the conversation/thread to retrieve.</param>
+    /// <param name="agent">The agent that owns this session.</param>
+    /// <param name="conversationId">The unique identifier for the conversation/session to retrieve.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>
     /// A task that represents the asynchronous retrieval operation.
-    /// The task result contains the serialized thread state, or <see langword="null"/> if not found.
+    /// The task result contains the serialized session state, or <see langword="null"/> if not found.
     /// </returns>
-    public abstract ValueTask<AgentThread> GetThreadAsync(
+    public abstract ValueTask<AgentSession> GetSessionAsync(
         AIAgent agent,
         string conversationId,
         CancellationToken cancellationToken = default);
