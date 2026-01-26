@@ -571,6 +571,592 @@ public sealed class PersistentAgentsClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that AsAIAgent with Response and ChatOptions throws ArgumentNullException when response is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithNullResponseAndChatOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.AsAIAgent(persistentAgentResponse: null!, chatOptions: new ChatOptions()));
+
+        Assert.Equal("persistentAgentResponse", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with PersistentAgent and ChatOptions throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithNullClientAndChatOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123"}"""))!;
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            ((PersistentAgentsClient)null!).AsAIAgent(persistentAgent, chatOptions: new ChatOptions()));
+
+        Assert.Equal("persistentAgentsClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with PersistentAgent and ChatOptions throws ArgumentNullException when persistentAgent is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithNullPersistentAgentAndChatOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.AsAIAgent((PersistentAgent)null!, chatOptions: new ChatOptions()));
+
+        Assert.Equal("persistentAgentMetadata", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with Response and ChatOptions propagates instructions from agent metadata when chatOptions is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithResponseAndNullChatOptions_UsesAgentInstructions()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent", "instructions": "Agent Instructions"}"""))!;
+        Response<PersistentAgent> response = Response.FromValue(persistentAgent, new FakeResponse());
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(response, chatOptions: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Agent Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with Response and ChatOptions uses agent instructions when chatOptions.Instructions is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithResponseAndChatOptionsWithNullInstructions_UsesAgentInstructions()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent", "instructions": "Agent Instructions"}"""))!;
+        Response<PersistentAgent> response = Response.FromValue(persistentAgent, new FakeResponse());
+        var chatOptions = new ChatOptions { Instructions = null };
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(response, chatOptions);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Agent Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with Response and ChatOptions does not override chatOptions instructions when set.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithResponseAndChatOptionsWithInstructions_UsesChatOptionsInstructions()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent", "instructions": "Agent Instructions"}"""))!;
+        Response<PersistentAgent> response = Response.FromValue(persistentAgent, new FakeResponse());
+        var chatOptions = new ChatOptions { Instructions = "ChatOptions Instructions" };
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(response, chatOptions);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("ChatOptions Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with PersistentAgent and ChatOptions applies clientFactory correctly.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithPersistentAgentChatOptionsAndClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent"}"""))!;
+        TestChatClient? testChatClient = null;
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(
+            persistentAgent,
+            chatOptions: null,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with options throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptionsAndNullOptions_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+
+        // Act & Assert
+        ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            client.GetAIAgentAsync("agent_abc123", (ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with options uses agent instructions when options.ChatOptions.Instructions is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithOptionsAndNullChatOptionsInstructions_UsesAgentInstructions()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Agent Name", "instructions": "Agent Instructions"}"""))!;
+        var options = new ChatClientAgentOptions { ChatOptions = new ChatOptions { Instructions = null } };
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(persistentAgent, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Agent Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedCodeInterpreterTool properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedCodeInterpreterTool_CreatesAgentWithToolAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [new HostedCodeInterpreterTool()]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedCodeInterpreterTool with HostedFileContent input properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedCodeInterpreterToolAndHostedFileContent_CreatesAgentWithToolResourcesAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        var codeInterpreterTool = new HostedCodeInterpreterTool
+        {
+            Inputs = [new HostedFileContent("test-file-id")]
+        };
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [codeInterpreterTool]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedFileSearchTool properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedFileSearchTool_CreatesAgentWithToolAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [new HostedFileSearchTool()]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedFileSearchTool with HostedVectorStoreContent input properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedFileSearchToolAndHostedVectorStoreContent_CreatesAgentWithToolResourcesAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        var fileSearchTool = new HostedFileSearchTool
+        {
+            MaximumResultCount = 10,
+            Inputs = [new HostedVectorStoreContent("test-vector-store-id")]
+        };
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [fileSearchTool]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedWebSearchTool with connectionId properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedWebSearchToolAndConnectionId_CreatesAgentWithToolAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        var webSearchTool = new HostedWebSearchTool(new Dictionary<string, object?>
+        {
+            { "connectionId", "test-connection-id" }
+        });
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [webSearchTool]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedWebSearchTool without connectionId falls to default case.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedWebSearchToolWithoutConnectionId_FallsToDefaultCaseAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        var webSearchTool = new HostedWebSearchTool();
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [webSearchTool]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with function tools properly categorizes them as other tools.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithFunctionTools_CategorizesAsOtherToolsAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        AIFunction testFunction = AIFunctionFactory.Create(() => "test", "TestFunction", "A test function");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [testFunction]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with multiple tools including functions properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithMixedTools_CreatesAgentWithAllToolsAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+        AIFunction testFunction = AIFunctionFactory.Create(() => "test", "TestFunction", "A test function");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [new HostedCodeInterpreterTool(), new HostedFileSearchTool(), testFunction]
+            }
+        };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with Response and Options throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithNullClientResponseAndOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123"}"""))!;
+        Response<PersistentAgent> response = Response.FromValue(persistentAgent, new FakeResponse());
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            ((PersistentAgentsClient)null!).AsAIAgent(response, options));
+
+        Assert.Equal("persistentAgentsClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with PersistentAgent and Options throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithNullClientPersistentAgentAndOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123"}"""))!;
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            ((PersistentAgentsClient)null!).AsAIAgent(persistentAgent, options));
+
+        Assert.Equal("persistentAgentsClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with PersistentAgent and Options applies clientFactory correctly.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithPersistentAgentOptionsAndClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent"}"""))!;
+        var options = new ChatClientAgentOptions { Name = "Test Agent" };
+        TestChatClient? testChatClient = null;
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(
+            persistentAgent,
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with Response and Options applies clientFactory correctly.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithResponseOptionsAndClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent"}"""))!;
+        Response<PersistentAgent> response = Response.FromValue(persistentAgent, new FakeResponse());
+        var options = new ChatClientAgentOptions { Name = "Test Agent" };
+        TestChatClient? testChatClient = null;
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(
+            response,
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with Response and ChatOptions applies clientFactory correctly.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithResponseChatOptionsAndClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        PersistentAgent persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent"}"""))!;
+        Response<PersistentAgent> response = Response.FromValue(persistentAgent, new FakeResponse());
+        TestChatClient? testChatClient = null;
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(
+            response,
+            chatOptions: null,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with options and clientFactory applies the factory correctly.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptionsAndClientFactory_AppliesFactoryCorrectlyAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        TestChatClient? testChatClient = null;
+        var options = new ChatClientAgentOptions { Name = "Test Agent" };
+
+        // Act
+        ChatClientAgent agent = await client.GetAIAgentAsync(
+            agentId: "test-agent-id",
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with options and services passes services correctly.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptionsAndServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+        var options = new ChatClientAgentOptions { Name = "Test Agent" };
+
+        // Act
+        ChatClientAgent agent = await client.GetAIAgentAsync("agent_abc123", options, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        IChatClient? chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        FunctionInvokingChatClient? functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with options and services passes services correctly.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithOptionsAndServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        PersistentAgentsClient client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+        const string Model = "test-model";
+        var options = new ChatClientAgentOptions { Name = "Test Agent" };
+
+        // Act
+        ChatClientAgent agent = await client.CreateAIAgentAsync(Model, options, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        IChatClient? chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        FunctionInvokingChatClient? functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
     /// Uses reflection to access the FunctionInvocationServices property which is not public.
     /// </summary>
     private static IServiceProvider? GetFunctionInvocationServices(FunctionInvokingChatClient client)

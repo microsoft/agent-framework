@@ -37,7 +37,7 @@ internal sealed class WorkflowThread : AgentThread
         this._checkpointManager = checkpointManager ?? new(this._inMemoryCheckpointManager = new());
 
         this.RunId = Throw.IfNullOrEmpty(runId);
-        this.MessageStore = new WorkflowMessageStore();
+        this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
     }
 
     public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
@@ -70,7 +70,7 @@ internal sealed class WorkflowThread : AgentThread
 
         this.RunId = threadState.RunId;
         this.LastCheckpoint = threadState.LastCheckpoint;
-        this.MessageStore = new WorkflowMessageStore(threadState.MessageStoreState);
+        this.ChatHistoryProvider = new WorkflowChatHistoryProvider(threadState.ChatHistoryProviderState);
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
@@ -81,7 +81,7 @@ internal sealed class WorkflowThread : AgentThread
         ThreadState info = new(
             this.RunId,
             this.LastCheckpoint,
-            this.MessageStore.ExportStoreState(),
+            this.ChatHistoryProvider.ExportStoreState(),
             this._inMemoryCheckpointManager);
 
         return marshaller.Marshal(info);
@@ -100,7 +100,7 @@ internal sealed class WorkflowThread : AgentThread
             RawRepresentation = raw
         };
 
-        this.MessageStore.AddMessages(update.ToChatMessage());
+        this.ChatHistoryProvider.AddMessages(update.ToChatMessage());
 
         return update;
     }
@@ -117,7 +117,7 @@ internal sealed class WorkflowThread : AgentThread
             RawRepresentation = raw
         };
 
-        this.MessageStore.AddMessages(update.ToChatMessage());
+        this.ChatHistoryProvider.AddMessages(update.ToChatMessage());
 
         return update;
     }
@@ -156,7 +156,7 @@ internal sealed class WorkflowThread : AgentThread
         try
         {
             this.LastResponseId = Guid.NewGuid().ToString("N");
-            List<ChatMessage> messages = this.MessageStore.GetFromBookmark().ToList();
+            List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark().ToList();
 
 #pragma warning disable CA2007 // Analyzer misfiring and not seeing .ConfigureAwait(false) below.
             await using Checkpointed<StreamingRun> checkpointed =
@@ -240,7 +240,7 @@ internal sealed class WorkflowThread : AgentThread
         finally
         {
             // Do we want to try to undo the step, and not update the bookmark?
-            this.MessageStore.UpdateBookmark();
+            this.ChatHistoryProvider.UpdateBookmark();
         }
     }
 
@@ -249,17 +249,17 @@ internal sealed class WorkflowThread : AgentThread
     public string RunId { get; }
 
     /// <inheritdoc/>
-    public WorkflowMessageStore MessageStore { get; }
+    public WorkflowChatHistoryProvider ChatHistoryProvider { get; }
 
     internal sealed class ThreadState(
         string runId,
         CheckpointInfo? lastCheckpoint,
-        WorkflowMessageStore.StoreState messageStoreState,
+        WorkflowChatHistoryProvider.StoreState chatHistoryProviderState,
         InMemoryCheckpointManager? checkpointManager = null)
     {
         public string RunId { get; } = runId;
         public CheckpointInfo? LastCheckpoint { get; } = lastCheckpoint;
-        public WorkflowMessageStore.StoreState MessageStoreState { get; } = messageStoreState;
+        public WorkflowChatHistoryProvider.StoreState ChatHistoryProviderState { get; } = chatHistoryProviderState;
         public InMemoryCheckpointManager? CheckpointManager { get; } = checkpointManager;
     }
 }
