@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
@@ -19,11 +20,17 @@ public static class OpenTelemetryWorkflowBuilderExtensions
     /// <param name="builder">The <see cref="WorkflowBuilder"/> to which OpenTelemetry support will be added.</param>
     /// <param name="sourceName">
     /// An optional source name that will be used to identify telemetry data from this workflow.
-    /// If not specified, a default source name will be used.
+    /// If not specified, a default source name will be used. This parameter is ignored when
+    /// <paramref name="activitySource"/> is provided.
     /// </param>
     /// <param name="configure">
     /// An optional callback that provides additional configuration of the <see cref="WorkflowTelemetryOptions"/> instance.
     /// This allows for fine-tuning telemetry behavior such as enabling sensitive data collection.
+    /// </param>
+    /// <param name="activitySource">
+    /// An optional <see cref="ActivitySource"/> to use for telemetry. If provided, this activity source will be used
+    /// directly and the caller retains ownership (responsible for disposal). If <see langword="null"/>, a new
+    /// activity source will be created using <paramref name="sourceName"/>.
     /// </param>
     /// <returns>The <see cref="WorkflowBuilder"/> with OpenTelemetry instrumentation enabled, enabling method chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
@@ -53,7 +60,8 @@ public static class OpenTelemetryWorkflowBuilderExtensions
     public static WorkflowBuilder WithOpenTelemetry(
         this WorkflowBuilder builder,
         string? sourceName = null,
-        Action<WorkflowTelemetryOptions>? configure = null)
+        Action<WorkflowTelemetryOptions>? configure = null,
+        ActivitySource? activitySource = null)
     {
         Throw.IfNull(builder);
 
@@ -61,7 +69,7 @@ public static class OpenTelemetryWorkflowBuilderExtensions
         configure?.Invoke(options);
 
         string effectiveSourceName = string.IsNullOrEmpty(sourceName) ? DefaultSourceName : sourceName!;
-        WorkflowTelemetryContext context = new(effectiveSourceName, options);
+        WorkflowTelemetryContext context = new(effectiveSourceName, options, activitySource);
 
         builder.SetTelemetryContext(context);
 

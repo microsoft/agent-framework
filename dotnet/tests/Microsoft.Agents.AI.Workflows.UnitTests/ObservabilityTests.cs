@@ -203,4 +203,41 @@ public sealed class ObservabilityTests : IDisposable
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");
     }
+
+    [Fact]
+    public async Task WithOpenTelemetry_UsesProvidedActivitySourceAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        using var userActivitySource = new ActivitySource("UserProvidedSource");
+
+        // Set up a separate listener for the user-provided source
+        ConcurrentBag<Activity> userActivities = [];
+        using var userListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "UserProvidedSource",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity => userActivities.Add(activity),
+        };
+        ActivitySource.AddActivityListener(userListener);
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        var workflow = builder.WithOpenTelemetry(activitySource: userActivitySource).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = userActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotBeEmpty("Activities should be created with user-provided ActivitySource.");
+        capturedActivities.Should().OnlyContain(
+            a => a.Source.Name == "UserProvidedSource",
+            "All activities should come from the user-provided ActivitySource.");
+    }
 }
