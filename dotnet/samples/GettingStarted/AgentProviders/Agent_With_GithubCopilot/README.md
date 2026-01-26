@@ -40,7 +40,7 @@ using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
 
 // Create and start a Copilot client
-await using CopilotClient copilotClient = new(new CopilotClientOptions());
+await using CopilotClient copilotClient = new();
 await copilotClient.StartAsync();
 
 // Create session configuration with specific model

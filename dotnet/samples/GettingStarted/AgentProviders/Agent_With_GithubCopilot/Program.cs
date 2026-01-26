@@ -17,8 +17,8 @@ static Task<PermissionRequestResult> PromptPermission(PermissionRequest request,
     return Task.FromResult(new PermissionRequestResult { Kind = kind });
 }
 
-// Create and start a Copilot client (AutoStart defaults to true)
-await using CopilotClient copilotClient = new(new CopilotClientOptions());
+// Create and start a Copilot client
+await using CopilotClient copilotClient = new();
 await copilotClient.StartAsync();
 
 // Create an agent with a session config that enables permission handling
