@@ -458,4 +458,72 @@ public sealed class ObservabilityTests : IDisposable
         tags.Should().NotContainKey(Tags.ExecutorInput, "Input should NOT be logged when EnableSensitiveData is false.");
         tags.Should().NotContainKey(Tags.ExecutorOutput, "Output should NOT be logged when EnableSensitiveData is false.");
     }
+
+    [Fact]
+    public async Task EnableSensitiveData_LogsMessageSendContentAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var messageSendActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
+
+        messageSendActivity.Should().NotBeNull("MessageSend activity should be created.");
+
+        var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().ContainKey(Tags.MessageContent, "Message content should be logged when EnableSensitiveData is true.");
+        tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should be logged.");
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_Disabled_DoesNotLogMessageContentAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        // Act - EnableSensitiveData is false by default
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        var workflow = builder.WithOpenTelemetry().Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        await Task.Delay(100);
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var messageSendActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
+
+        messageSendActivity.Should().NotBeNull("MessageSend activity should be created.");
+
+        var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().NotContainKey(Tags.MessageContent, "Message content should NOT be logged when EnableSensitiveData is false.");
+        tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should still be logged.");
+    }
 }

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 
 namespace Microsoft.Agents.AI.Workflows.Observability;
 
@@ -93,18 +95,49 @@ internal sealed class WorkflowTelemetryContext
     }
 
     /// <summary>
-    /// Starts an executor process activity if enabled.
+    /// Starts an executor process activity if enabled, with all standard tags set.
     /// </summary>
-    /// <param name="executorId">The executor identifier to include in the activity name.</param>
+    /// <param name="executorId">The executor identifier.</param>
+    /// <param name="executorType">The executor type name.</param>
+    /// <param name="messageType">The message type name.</param>
+    /// <param name="message">The input message. Logged only when <see cref="WorkflowTelemetryOptions.EnableSensitiveData"/> is true.</param>
     /// <returns>An activity if executor process telemetry is enabled, otherwise null.</returns>
-    public Activity? StartExecutorProcessActivity(string executorId)
+    public Activity? StartExecutorProcessActivity(string executorId, string? executorType, string messageType, object? message)
     {
         if (this.Options.DisableExecutorProcess)
         {
             return null;
         }
 
-        return this.ActivitySource?.StartActivity(ActivityNames.ExecutorProcess + " " + executorId);
+        Activity? activity = this.ActivitySource?.StartActivity(ActivityNames.ExecutorProcess + " " + executorId);
+        if (activity is null)
+        {
+            return null;
+        }
+
+        activity.SetTag(Tags.ExecutorId, executorId)
+            .SetTag(Tags.ExecutorType, executorType)
+            .SetTag(Tags.MessageType, messageType);
+
+        if (this.Options.EnableSensitiveData)
+        {
+            activity.SetTag(Tags.ExecutorInput, SerializeForTelemetry(message));
+        }
+
+        return activity;
+    }
+
+    /// <summary>
+    /// Sets the executor output tag on an activity when sensitive data logging is enabled.
+    /// </summary>
+    /// <param name="activity">The activity to set the output on.</param>
+    /// <param name="output">The output value to log.</param>
+    public void SetExecutorOutput(Activity? activity, object? output)
+    {
+        if (activity is not null && this.Options.EnableSensitiveData)
+        {
+            activity.SetTag(Tags.ExecutorOutput, SerializeForTelemetry(output));
+        }
     }
 
     /// <summary>
@@ -122,16 +155,55 @@ internal sealed class WorkflowTelemetryContext
     }
 
     /// <summary>
-    /// Starts a message send activity if enabled.
+    /// Starts a message send activity if enabled, with all standard tags set.
     /// </summary>
+    /// <param name="sourceId">The source executor identifier.</param>
+    /// <param name="targetId">The target executor identifier, if any.</param>
+    /// <param name="message">The message being sent. Logged only when <see cref="WorkflowTelemetryOptions.EnableSensitiveData"/> is true.</param>
     /// <returns>An activity if message send telemetry is enabled, otherwise null.</returns>
-    public Activity? StartMessageSendActivity()
+    public Activity? StartMessageSendActivity(string sourceId, string? targetId, object? message)
     {
         if (this.Options.DisableMessageSend)
         {
             return null;
         }
 
-        return this.ActivitySource?.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        Activity? activity = this.ActivitySource?.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        if (activity is null)
+        {
+            return null;
+        }
+
+        activity.SetTag(Tags.MessageSourceId, sourceId);
+        if (targetId is not null)
+        {
+            activity.SetTag(Tags.MessageTargetId, targetId);
+        }
+
+        if (this.Options.EnableSensitiveData)
+        {
+            activity.SetTag(Tags.MessageContent, SerializeForTelemetry(message));
+        }
+
+        return activity;
+    }
+
+    [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
+    private static string? SerializeForTelemetry(object? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Serialize(value, value.GetType());
+        }
+        catch (JsonException)
+        {
+            return $"[Unserializable: {value.GetType().FullName}]";
+        }
     }
 }

@@ -17,6 +17,7 @@ internal static class Tags
     public const string ExecutorInput = "executor.input";
     public const string ExecutorOutput = "executor.output";
     public const string MessageType = "message.type";
+    public const string MessageContent = "message.content";
     public const string EdgeGroupType = "edge_group.type";
     public const string MessageSourceId = "message.source_id";
     public const string MessageTargetId = "message.target_id";

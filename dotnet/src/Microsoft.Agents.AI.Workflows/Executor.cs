@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -122,16 +121,8 @@ public abstract class Executor : IIdentified
 
     internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
-        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id);
-        activity?.SetTag(Tags.ExecutorId, this.Id)
-            .SetTag(Tags.ExecutorType, this.GetType().FullName)
-            .SetTag(Tags.MessageType, messageType.TypeName)
-            .CreateSourceLinks(context.TraceContext);
-
-        if (activity is not null && telemetryContext.Options.EnableSensitiveData)
-        {
-            activity.SetTag(Tags.ExecutorInput, SerializeForTelemetry(message));
-        }
+        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
+        activity?.CreateSourceLinks(context.TraceContext);
 
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
 
@@ -166,10 +157,7 @@ public abstract class Executor : IIdentified
             return null; // Void result.
         }
 
-        if (activity is not null && telemetryContext.Options.EnableSensitiveData)
-        {
-            activity.SetTag(Tags.ExecutorOutput, SerializeForTelemetry(result.Result));
-        }
+        telemetryContext.SetExecutorOutput(activity, result.Result);
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
         if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)
@@ -244,25 +232,6 @@ public abstract class Executor : IIdentified
         }
 
         return false;
-    }
-
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
-    private static string? SerializeForTelemetry(object? value)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Serialize(value, value.GetType());
-        }
-        catch (JsonException)
-        {
-            return $"[Unserializable: {value.GetType().FullName}]";
-        }
     }
 }
 
