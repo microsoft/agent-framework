@@ -19,7 +19,7 @@ from durabletask import TaskHubGrpcWorker
 from agent_framework.azure import DurableAIAgentWorker
 
 # Create the worker
-with DurableTaskSchedulerWorker(...) as worker:
+with TaskHubGrpcWorker(...) as worker:
     
     # Register the agent worker wrapper
     agent_worker = DurableAIAgentWorker(worker)

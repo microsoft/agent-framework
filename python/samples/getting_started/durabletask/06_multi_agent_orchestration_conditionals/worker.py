@@ -207,16 +207,6 @@ def get_worker(
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
-    """Create a configured DurableTaskSchedulerWorker.
-    
-    Args:
-        taskhub: Task hub name (defaults to TASKHUB env var or "default")
-        endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
-        log_handler: Optional logging handler
-        
-    Returns:
-        Configured DurableTaskSchedulerWorker instance
-    """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
     
