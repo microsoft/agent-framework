@@ -23,7 +23,7 @@ public sealed class CopilotClientExtensionsTests
         const string TestDescription = "This is a test agent description";
 
         // Act
-        var agent = copilotClient.AsAIAgent(id: TestId, name: TestName, description: TestDescription);
+        var agent = copilotClient.AsAIAgent(ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -40,7 +40,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = copilotClient.AsAIAgent();
+        var agent = copilotClient.AsAIAgent(ownsClient: false, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -54,7 +54,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient? copilotClient = null;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => copilotClient!.AsAIAgent());
+        Assert.Throws<ArgumentNullException>(() => copilotClient!.AsAIAgent(sessionConfig: null));
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = copilotClient.AsAIAgent(ownsClient: true);
+        var agent = copilotClient.AsAIAgent(ownsClient: true, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -79,7 +79,7 @@ public sealed class CopilotClientExtensionsTests
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = copilotClient.AsAIAgent(tools);
+        var agent = copilotClient.AsAIAgent(tools: tools);
 
         // Assert
         Assert.NotNull(agent);

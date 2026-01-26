@@ -39,14 +39,8 @@ You can customize the agent by providing additional configuration:
 using GitHub.Copilot.SDK;
 using Microsoft.Agents.AI;
 
-// Create a Copilot client with custom options
-await using CopilotClient copilotClient = new(new CopilotClientOptions
-{
-    CliPath = "/custom/path/to/copilot",  // Custom CLI path
-    LogLevel = "debug",                    // Enable debug logging
-    AutoStart = true
-});
-
+// Create and start a Copilot client
+await using CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = true });
 await copilotClient.StartAsync();
 
 // Create session configuration with specific model
@@ -75,7 +69,7 @@ Console.WriteLine(response);
 To get streaming responses:
 
 ```csharp
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me a story"))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a Python function to calculate Fibonacci numbers"))
 {
     Console.Write(update.Text);
 }

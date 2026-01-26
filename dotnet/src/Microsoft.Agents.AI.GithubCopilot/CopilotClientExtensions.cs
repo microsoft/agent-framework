@@ -50,24 +50,24 @@ public static class CopilotClientExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client.
     /// </summary>
     /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
-    /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
+    /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
     public static AIAgent AsAIAgent(
         this CopilotClient client,
-        IList<AITool>? tools,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
         string? description = null,
+        IList<AITool>? tools = null,
         string? instructions = null)
     {
         Throw.IfNull(client);
 
-        return new GithubCopilotAgent(client, tools, ownsClient, id, name, description, instructions);
+        return new GithubCopilotAgent(client, ownsClient, id, name, description, tools, instructions);
     }
 }

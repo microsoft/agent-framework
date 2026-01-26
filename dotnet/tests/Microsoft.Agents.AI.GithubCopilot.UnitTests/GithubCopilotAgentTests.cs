@@ -23,7 +23,7 @@ public sealed class GithubCopilotAgentTests
         const string TestDescription = "test-description";
 
         // Act
-        var agent = new GithubCopilotAgent(copilotClient, id: TestId, name: TestName, description: TestDescription);
+        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
@@ -35,7 +35,7 @@ public sealed class GithubCopilotAgentTests
     public void Constructor_WithNullCopilotClient_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent(null!));
+        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent(copilotClient: null!, sessionConfig: null));
     }
 
     [Fact]
@@ -45,13 +45,13 @@ public sealed class GithubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = new GithubCopilotAgent(copilotClient);
+        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Assert
         Assert.NotNull(agent.Id);
         Assert.NotEmpty(agent.Id);
-        Assert.Null(agent.Name);
-        Assert.Null(agent.Description);
+        Assert.Equal("GitHub Copilot Agent", agent.Name);
+        Assert.Equal("An AI agent powered by GitHub Copilot", agent.Description);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public sealed class GithubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GithubCopilotAgent(copilotClient);
+        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
         var thread = await agent.GetNewThreadAsync();
@@ -74,7 +74,7 @@ public sealed class GithubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GithubCopilotAgent(copilotClient);
+        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
         // Act
@@ -94,7 +94,7 @@ public sealed class GithubCopilotAgentTests
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = new GithubCopilotAgent(copilotClient, tools);
+        var agent = new GithubCopilotAgent(copilotClient, tools: tools);
 
         // Assert
         Assert.NotNull(agent);

@@ -57,19 +57,19 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
-    /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
+    /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
     public GithubCopilotAgent(
         CopilotClient copilotClient,
-        IList<AITool>? tools,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
         string? description = null,
+        IList<AITool>? tools = null,
         string? instructions = null)
         : this(
             copilotClient,
@@ -77,7 +77,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             ownsClient,
             id,
             name ?? "GitHub Copilot Agent",
-            description ?? "An AI agent powered by GitHub Copilot SDK")
+            description ?? "An AI agent powered by GitHub Copilot")
     {
     }
 
@@ -411,7 +411,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
-    private static readonly Dictionary<string, string> MediaTypeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> s_mediaTypeExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ["image/png"] = ".png",
         ["image/jpeg"] = ".jpg",
@@ -429,12 +429,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
     private static string GetExtensionForMediaType(string? mediaType)
     {
-        if (string.IsNullOrEmpty(mediaType))
-        {
-            return ".dat";
-        }
-
-        return MediaTypeExtensions.TryGetValue(mediaType, out string? extension) ? extension : ".dat";
+        return mediaType is not null && s_mediaTypeExtensions.TryGetValue(mediaType, out string? extension) ? extension : ".dat";
     }
 
     private static async Task<List<UserMessageDataAttachmentsItem>?> ProcessDataContentAttachmentsAsync(
