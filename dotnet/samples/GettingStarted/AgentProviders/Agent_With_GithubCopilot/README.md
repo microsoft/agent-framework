@@ -46,7 +46,7 @@ await copilotClient.StartAsync();
 // Create session configuration with specific model
 SessionConfig sessionConfig = new()
 {
-    Model = "gpt-4",
+    Model = "claude-opus-4.5",
     Streaming = false
 };
 

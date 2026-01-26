@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
@@ -258,10 +259,10 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
         try
         {
-            System.Threading.Channels.Channel<AgentResponseUpdate> channel = System.Threading.Channels.Channel.CreateUnbounded<AgentResponseUpdate>();
+            Channel<AgentResponseUpdate> channel = Channel.CreateUnbounded<AgentResponseUpdate>();
 
             // Subscribe to session events
-            IDisposable subscription = session.On(evt =>
+            using IDisposable subscription = session.On(evt =>
             {
                 switch (evt)
                 {
@@ -273,6 +274,10 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
                         break;
 
+                    case AssistantUsageEvent usageEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
+                        break;
+
                     case SessionIdleEvent:
                         channel.Writer.TryComplete();
                         break;
@@ -281,6 +286,11 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                         Exception exception = new InvalidOperationException(
                             $"Session error: {errorEvent.Data?.Message ?? "Unknown error"}");
                         channel.Writer.TryComplete(exception);
+                        break;
+
+                    default:
+                        // Handle all other event types by storing as RawRepresentation
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(evt));
                         break;
                 }
             });
@@ -305,7 +315,6 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
                 }
 
                 await session.SendAsync(messageOptions, cancellationToken).ConfigureAwait(false);
-
                 // Yield updates as they arrive
                 await foreach (AgentResponseUpdate update in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
                 {
@@ -379,7 +388,12 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageDeltaEvent deltaEvent)
     {
-        return new AgentResponseUpdate(ChatRole.Assistant, [new TextContent(deltaEvent.Data?.DeltaContent ?? string.Empty)])
+        TextContent textContent = new(deltaEvent.Data?.DeltaContent ?? string.Empty)
+        {
+            RawRepresentation = deltaEvent
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [textContent])
         {
             AgentId = this.Id,
             MessageId = deltaEvent.Data?.MessageId,
@@ -389,12 +403,53 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
     {
-        return new AgentResponseUpdate(ChatRole.Assistant, [new TextContent(assistantMessage.Data?.Content ?? string.Empty)])
+        TextContent textContent = new(assistantMessage.Data?.Content ?? string.Empty)
+        {
+            RawRepresentation = assistantMessage
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [textContent])
         {
             AgentId = this.Id,
             ResponseId = assistantMessage.Data?.MessageId,
             MessageId = assistantMessage.Data?.MessageId,
             CreatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)
+    {
+        UsageDetails usageDetails = new()
+        {
+            InputTokenCount = (int?)(usageEvent.Data?.InputTokens),
+            OutputTokenCount = (int?)(usageEvent.Data?.OutputTokens),
+            TotalTokenCount = (int?)((usageEvent.Data?.InputTokens ?? 0) + (usageEvent.Data?.OutputTokens ?? 0))
+        };
+
+        UsageContent usageContent = new(usageDetails)
+        {
+            RawRepresentation = usageEvent
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [usageContent])
+        {
+            AgentId = this.Id,
+            CreatedAt = usageEvent.Timestamp
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(SessionEvent sessionEvent)
+    {
+        // Handle arbitrary events by storing as RawRepresentation
+        AIContent content = new()
+        {
+            RawRepresentation = sessionEvent
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = sessionEvent.Timestamp
         };
     }
 
