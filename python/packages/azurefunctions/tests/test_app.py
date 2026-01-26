@@ -650,7 +650,6 @@ class TestErrorHandling:
 
         mock_context = Mock()
         mock_context.operation_name = "run"
-        mock_context.operation_name = "run"
         mock_context.get_input.side_effect = Exception("Input error")
         mock_context.get_state.return_value = None
 

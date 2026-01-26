@@ -41,6 +41,7 @@ members = [
     "agent-framework-devui",
     "agent-framework-durabletask",
     "agent-framework-foundry-local",
+    "agent-framework-github-copilot",
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-ollama",
@@ -356,6 +357,7 @@ all = [
     { name = "agent-framework-declarative", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-durabletask", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-github-copilot", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ollama", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -376,6 +378,7 @@ requires-dist = [
     { name = "agent-framework-declarative", marker = "extra == 'all'", editable = "packages/declarative" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
     { name = "agent-framework-durabletask", marker = "extra == 'all'", editable = "packages/durabletask" },
+    { name = "agent-framework-github-copilot", marker = "extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-lab", marker = "extra == 'all'", editable = "packages/lab" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-ollama", marker = "extra == 'all'", editable = "packages/ollama" },
@@ -491,6 +494,21 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "foundry-local-sdk", specifier = ">=0.5.1,<1" },
+]
+
+[[package]]
+name = "agent-framework-github-copilot"
+version = "1.0.0b260116"
+source = { editable = "packages/github_copilot" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "github-copilot-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "github-copilot-sdk", specifier = ">=0.1.0" },
 ]
 
 [[package]]
@@ -1408,7 +1426,7 @@ name = "clr-loader"
 version = "0.2.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
+    { name = "cffi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/18/24/c12faf3f61614b3131b5c98d3bf0d376b49c7feaa73edca559aeb2aee080/clr_loader-0.2.10.tar.gz", hash = "sha256:81f114afbc5005bafc5efe5af1341d400e22137e275b042a8979f3feb9fc9446", size = 83605, upload-time = "2026-01-03T23:13:06.984Z" }
 wheels = [
@@ -1916,7 +1934,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -2304,6 +2322,20 @@ wheels = [
 ]
 
 [[package]]
+name = "github-copilot-sdk"
+version = "0.1.18"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dateutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/00/be64b9b33015d5e79fb5e5e95d871484e79a907b3792935b855ab40308ce/github_copilot_sdk-0.1.18.tar.gz", hash = "sha256:b2d56d40c0f48e81f2899d32fb4a8d2b8df22620913547da93fddf9b2f368e9e", size = 81318, upload-time = "2026-01-24T18:09:57.617Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ae/0f/f832b32bca9d89a26a2b810c69fdc37ac925e34855ee93a11bb3d90ca2b7/github_copilot_sdk-0.1.18-py3-none-any.whl", hash = "sha256:99cfdf4d4d0da6d92d5bf36a952546157785df83d6b0783b3f7a8e93a2762171", size = 33740, upload-time = "2026-01-24T18:09:55.696Z" },
+]
+
+[[package]]
 name = "google-api-core"
 version = "2.29.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2321,15 +2353,16 @@ wheels = [
 
 [[package]]
 name = "google-auth"
-version = "2.47.0"
+version = "2.48.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyasn1-modules", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "rsa", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/3c/ec64b9a275ca22fa1cd3b6e77fefcf837b0732c890aa32d2bd21313d9b33/google_auth-2.47.0.tar.gz", hash = "sha256:833229070a9dfee1a353ae9877dcd2dec069a8281a4e72e72f77d4a70ff945da", size = 323719, upload-time = "2026-01-06T21:55:31.045Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/41/242044323fbd746615884b1c16639749e73665b718209946ebad7ba8a813/google_auth-2.48.0.tar.gz", hash = "sha256:4f7e706b0cd3208a3d940a19a822c37a476ddba5450156c3e6624a71f7c841ce", size = 326522, upload-time = "2026-01-26T19:22:47.157Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/18/79e9008530b79527e0d5f79e7eef08d3b179b7f851cfd3a2f27822fbdfa9/google_auth-2.47.0-py3-none-any.whl", hash = "sha256:c516d68336bfde7cf0da26aab674a36fedcf04b37ac4edd59c597178760c3498", size = 234867, upload-time = "2026-01-06T21:55:28.6Z" },
+    { url = "https://files.pythonhosted.org/packages/83/1d/d6466de3a5249d35e832a52834115ca9d1d0de6abc22065f049707516d47/google_auth-2.48.0-py3-none-any.whl", hash = "sha256:2e2a537873d449434252a9632c28bfc268b0adb1e53f9fb62afc5333a975903f", size = 236499, upload-time = "2026-01-26T19:22:45.099Z" },
 ]
 
 [[package]]
@@ -4656,8 +4689,8 @@ name = "powerfx"
 version = "0.0.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
-    { name = "pythonnet", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
+    { name = "cffi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pythonnet", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9f/fb/6c4bf87e0c74ca1c563921ce89ca1c5785b7576bca932f7255cdf81082a7/powerfx-0.0.34.tar.gz", hash = "sha256:956992e7afd272657ed16d80f4cad24ec95d9e4a79fb9dfa4a068a09e136af32", size = 3237555, upload-time = "2025-12-22T15:50:59.682Z" }
 wheels = [
@@ -5324,7 +5357,7 @@ name = "pythonnet"
 version = "3.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "clr-loader", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
+    { name = "clr-loader", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9a/d6/1afd75edd932306ae9bd2c2d961d603dc2b52fcec51b04afea464f1f6646/pythonnet-3.0.5.tar.gz", hash = "sha256:48e43ca463941b3608b32b4e236db92d8d40db4c58a75ace902985f76dac21cf", size = 239212, upload-time = "2024-12-13T08:30:44.393Z" }
 wheels = [
