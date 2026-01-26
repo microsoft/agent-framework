@@ -54,12 +54,13 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class with tools.
+    /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
+    /// <param name="instructions">Optional instructions to append as a system message.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     public GithubCopilotAgent(
@@ -67,11 +68,12 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
         IList<AITool>? tools,
         bool ownsClient = false,
         string? id = null,
+        string? instructions = null,
         string? name = null,
         string? description = null)
         : this(
             copilotClient,
-            tools is { Count: > 0 } ? new SessionConfig { Tools = tools.OfType<AIFunction>().ToList() } : null,
+            GetSessionConfig(tools, instructions),
             ownsClient,
             id,
             name,
@@ -394,6 +396,19 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
             MessageId = assistantMessage.Data?.MessageId,
             CreatedAt = DateTimeOffset.UtcNow
         };
+    }
+
+    private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
+    {
+        List<AIFunction>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunction>().ToList() : null;
+        SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
+
+        if (mappedTools is null && systemMessage is null)
+        {
+            return null;
+        }
+
+        return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
     private static string GetExtensionForMediaType(string? mediaType)
