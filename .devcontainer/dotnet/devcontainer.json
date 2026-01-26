@@ -1,11 +1,15 @@
 {
   "name": "C# (.NET)",
-  "image": "mcr.microsoft.com/devcontainers/dotnet:10.0",
+  //"image": "mcr.microsoft.com/devcontainers/dotnet",
+  // Workaround for https://github.com/devcontainers/images/issues/1752
+  "build": {
+    "dockerfile": "dotnet.Dockerfile"
+  },
   "features": {
-    "ghcr.io/devcontainers/features/dotnet:2.4.0": {},
+    "ghcr.io/devcontainers/features/dotnet:2.4.2": {},
     "ghcr.io/devcontainers/features/powershell:1.5.1": {},
-    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {}
+    "ghcr.io/devcontainers/features/azure-cli:1.2.9": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2.14.0": {}
   },
   "workspaceFolder": "/workspaces/agent-framework/dotnet/",
   "customizations": {
