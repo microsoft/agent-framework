@@ -64,7 +64,7 @@ internal static class Step13EntryPoint
                 {
                     foreach (ChatMessage message in messages)
                     {
-                        writer.WriteLine($"{output.SourceId}: {message.Text}");
+                        writer.WriteLine($"{output.ExecutorId}: {message.Text}");
                     }
                 }
                 else
