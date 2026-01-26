@@ -10,15 +10,21 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public sealed class WorkflowOutputEvent : WorkflowEvent
 {
-    internal WorkflowOutputEvent(object data, string sourceId) : base(data)
+    internal WorkflowOutputEvent(object data, string executorId) : base(data)
     {
-        this.SourceId = sourceId;
+        this.ExecutorId = executorId;
     }
 
     /// <summary>
     /// The unique identifier of the executor that yielded this output.
     /// </summary>
-    public string SourceId { get; }
+    public string ExecutorId { get; }
+
+    /// <summary>
+    /// The unique identifier of the executor that yielded this output.
+    /// </summary>
+    [Obsolete("Use ExecutorId instead.")]
+    public string SourceId => this.ExecutorId;
 
     /// <summary>
     /// Determines whether the underlying data is of the specified type or a derived type.
