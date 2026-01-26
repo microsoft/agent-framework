@@ -42,4 +42,20 @@ public sealed class WorkflowExecutionPlan
     /// Gets whether this workflow has any Fan-In points.
     /// </summary>
     public bool HasFanIn => this.Levels.Any(l => l.IsFanIn);
+
+    /// <summary>
+    /// Gets or sets whether this workflow contains cycles requiring iterative message-driven execution.
+    /// </summary>
+    public bool HasCycles { get; set; }
+
+    /// <summary>
+    /// Gets the back-edges that create cycles in the workflow graph.
+    /// These edges are excluded from topological level computation but are followed during message-driven execution.
+    /// </summary>
+    public List<(string SourceId, string TargetId)> BackEdges { get; } = [];
+
+    /// <summary>
+    /// Gets or sets the starting executor ID for the workflow.
+    /// </summary>
+    public string StartExecutorId { get; set; } = string.Empty;
 }

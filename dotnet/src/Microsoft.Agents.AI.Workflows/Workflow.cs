@@ -45,7 +45,6 @@ public class Workflow
     /// <returns>A dictionary where each key is a tuple containing the source and target node identifiers, and each value is a
     /// delegate that evaluates the condition for the corresponding edge. The value is <see langword="null"/> if the
     /// edge has no associated condition.</returns>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1024:Use properties where appropriate", Justification = "<Pending>")]
     public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> ReflectEdgeConditions()
     {
         int capacity = 0;

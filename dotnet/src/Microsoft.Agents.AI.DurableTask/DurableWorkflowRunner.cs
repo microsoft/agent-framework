@@ -191,69 +191,434 @@ public class DurableWorkflowRunner
         ILogger logger)
     {
         WorkflowExecutionPlan plan = WorkflowHelper.GetExecutionPlan(workflow);
-        Dictionary<string, string> results = new(plan.Levels.Sum(l => l.Executors.Count));
+
+        // Use message-driven execution for all workflows
+        // This approach naturally handles both DAGs and cyclic workflows
+        return await this.ExecuteMessageDrivenAsync(context, workflow, plan, initialInput, logger).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Executes a workflow using message-driven execution.
+    /// Messages are routed through edges dynamically, naturally supporting both DAGs and cycles.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    private async Task<string> ExecuteMessageDrivenAsync(
+        TaskOrchestrationContext context,
+        Workflow workflow,
+        WorkflowExecutionPlan plan,
+        string initialInput,
+        ILogger logger)
+    {
+        const int MaxSupersteps = 100;
+
+        // Message queues per executor - stores (message, inputTypeName) tuples
+        Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues = [];
+
+        // Last result from each executor (for edge condition evaluation and final result)
+        Dictionary<string, string> lastResults = [];
 
         // Track accumulated events and shared state
         DurableWorkflowCustomStatus customStatus = new();
         Dictionary<string, string> sharedState = [];
 
-        foreach (WorkflowExecutionLevel level in plan.Levels)
+        // Get executor bindings for creating WorkflowExecutorInfo
+        Dictionary<string, ExecutorBinding> executorBindings = workflow.ReflectExecutors();
+
+        // Initialize: queue input to start executor (initial input is a string)
+        EnqueueMessage(messageQueues, plan.StartExecutorId, initialInput, typeof(string).FullName);
+
+        int superstep = 0;
+        bool haltRequested = false;
+        string? finalOutput = null;
+
+        while (superstep < MaxSupersteps && !haltRequested)
         {
-            // Filter executors based on edge conditions from their predecessors
-            List<WorkflowExecutorInfo> eligibleExecutors = GetEligibleExecutors(level.Executors, results, plan, logger);
+            superstep++;
 
-            if (eligibleExecutors.Count == 0)
+            // Collect all executors with pending messages
+            List<string> activeExecutors = messageQueues
+                .Where(kv => kv.Value.Count > 0)
+                .Select(kv => kv.Key)
+                .ToList();
+
+            if (activeExecutors.Count == 0)
             {
-                // No eligible executors at this level, continue to next level
-                continue;
+                break; // No more work
             }
 
-            if (eligibleExecutors.Count == 1)
-            {
-                WorkflowExecutorInfo executorInfo = eligibleExecutors[0];
-                string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                string rawResult = await this.ExecuteExecutorAsync(context, executorInfo, input, logger, customStatus, sharedState).ConfigureAwait(true);
-                results[executorInfo.ExecutorId] = UnwrapActivityResult(rawResult, customStatus, sharedState);
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates, expensive evaluation
+            logger.LogDebug("Superstep {Step}: {Count} active executor(s): {Executors}",
+                superstep, activeExecutors.Count, string.Join(", ", activeExecutors));
+#pragma warning restore CA1848, CA1873
 
-                // Update custom status with any new events
-                UpdateCustomStatus(context, customStatus);
-            }
-            else
+            // Process each active executor
+            foreach (string executorId in activeExecutors)
             {
-                // For parallel execution, each activity gets a snapshot of the current state
-                // State updates are merged after all activities complete
-                Task<(string Id, string Result)>[] tasks = new Task<(string Id, string Result)>[eligibleExecutors.Count];
-                for (int i = 0; i < eligibleExecutors.Count; i++)
+                Queue<(string Message, string? InputTypeName)> queue = messageQueues[executorId];
+
+                // Process all messages for this executor in this superstep
+                while (queue.Count > 0)
                 {
-                    WorkflowExecutorInfo executorInfo = eligibleExecutors[i];
-                    string input = GetExecutorInput(executorInfo.ExecutorId, initialInput, results, plan);
-                    tasks[i] = this.ExecuteExecutorWithIdAsync(context, executorInfo, input, logger, customStatus, sharedState);
+                    (string input, string? inputTypeName) = queue.Dequeue();
+
+                    // Create executor info
+                    WorkflowExecutorInfo executorInfo = CreateExecutorInfo(executorId, executorBindings);
+
+                    // Execute the activity with type information
+                    string rawResult = await this.ExecuteExecutorAsync(
+                        context, executorInfo, input, inputTypeName, logger, customStatus, sharedState).ConfigureAwait(true);
+
+                    (string result, List<SentMessageInfo> sentMessages) = UnwrapActivityResult(rawResult, customStatus, sharedState);
+                    lastResults[executorId] = result;
+
+                    // Check for explicit halt request (via RequestHaltAsync)
+                    if (CheckForHalt(customStatus, executorId))
+                    {
+                        haltRequested = true;
+                        finalOutput = result;
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+                        logger.LogDebug("Halt requested by executor {ExecutorId}", executorId);
+#pragma warning restore CA1848, CA1873
+                        break;
+                    }
+
+                    // Route messages sent via SendMessageAsync (takes priority for void-returning executors)
+                    if (sentMessages.Count > 0)
+                    {
+                        foreach (SentMessageInfo sentMessage in sentMessages)
+                        {
+                            if (!string.IsNullOrEmpty(sentMessage.Message))
+                            {
+                                // Route to successors with the sent message's type
+                                RouteMessageToSuccessors(
+                                    executorId, sentMessage.Message, sentMessage.TypeName, plan, messageQueues, logger);
+                            }
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(result))
+                    {
+                        // Route executor's return value to successor executors via edges (for non-void executors)
+                        RouteMessageToSuccessors(
+                            executorId, result, plan, messageQueues, logger);
+                    }
                 }
 
-                (string Id, string Result)[] completedTasks = await Task.WhenAll(tasks).ConfigureAwait(true);
-                foreach ((string id, string rawResult) in completedTasks)
+                if (haltRequested)
                 {
-                    results[id] = UnwrapActivityResult(rawResult, customStatus, sharedState);
+                    break;
                 }
-
-                // Update custom status with any new events
-                UpdateCustomStatus(context, customStatus);
             }
+
+            UpdateCustomStatus(context, customStatus);
         }
 
-        return GetFinalResult(plan, results);
+        if (superstep >= MaxSupersteps)
+        {
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+            logger.LogWarning("Workflow reached maximum superstep limit ({MaxSteps})", MaxSupersteps);
+#pragma warning restore CA1848, CA1873
+        }
+
+        // Return final output or last result from output executors
+        return finalOutput ?? GetMessageDrivenFinalResult(workflow, lastResults, customStatus);
     }
 
     /// <summary>
-    /// Unwraps an activity result, extracting state updates, events, and returning the actual result.
+    /// Enqueues a message to an executor's message queue with type information.
+    /// </summary>
+    private static void EnqueueMessage(
+        Dictionary<string, Queue<(string Message, string? InputTypeName)>> queues,
+        string executorId,
+        string message,
+        string? inputTypeName)
+    {
+        if (!queues.TryGetValue(executorId, out Queue<(string, string?)>? queue))
+        {
+            queue = new Queue<(string, string?)>();
+            queues[executorId] = queue;
+        }
+
+        queue.Enqueue((message, inputTypeName));
+    }
+
+    /// <summary>
+    /// Creates a WorkflowExecutorInfo for the given executor ID.
+    /// </summary>
+    private static WorkflowExecutorInfo CreateExecutorInfo(
+        string executorId,
+        Dictionary<string, ExecutorBinding> executorBindings)
+    {
+        if (!executorBindings.TryGetValue(executorId, out ExecutorBinding? binding))
+        {
+            throw new InvalidOperationException($"Executor '{executorId}' not found in workflow bindings.");
+        }
+
+        bool isAgentic = WorkflowHelper.IsAgentExecutorType(binding.ExecutorType);
+        RequestPort? requestPort = (binding is RequestPortBinding rpb) ? rpb.Port : null;
+
+        return new WorkflowExecutorInfo(executorId, isAgentic, requestPort);
+    }
+
+    /// <summary>
+    /// Checks if the workflow should halt based on halt request events.
+    /// Note: YieldOutputAsync does NOT halt the workflow - it just yields intermediate output.
+    /// Only explicit RequestHaltAsync calls should halt the workflow.
+    /// </summary>
+    private static bool CheckForHalt(
+        DurableWorkflowCustomStatus customStatus,
+        string executorId)
+    {
+        // Look for explicit halt request events from this executor
+        for (int i = customStatus.Events.Count - 1; i >= 0; i--)
+        {
+            string eventJson = customStatus.Events[i];
+
+            // Check for DurableHaltRequestedEvent - this is the ONLY event that should halt
+            if (eventJson.Contains("DurableHaltRequestedEvent", StringComparison.Ordinal) &&
+                eventJson.Contains(executorId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Routes a message through edges to successor executors.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    private static void RouteMessageToSuccessors(
+        string sourceId,
+        string message,
+        WorkflowExecutionPlan plan,
+        Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues,
+        ILogger logger)
+    {
+        if (!plan.Successors.TryGetValue(sourceId, out List<string>? successors))
+        {
+            return; // No outgoing edges
+        }
+
+        // Get the output type of the source executor to pass as input type to successors
+        plan.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType);
+        string? inputTypeName = sourceOutputType?.FullName;
+
+        foreach (string sinkId in successors)
+        {
+            // Check edge condition
+            if (plan.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? condition)
+                && condition is not null)
+            {
+                try
+                {
+                    // Deserialize the message for condition evaluation
+                    object? messageObj = DeserializeForCondition(message, sourceOutputType);
+
+                    if (!condition(messageObj))
+                    {
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+                        logger.LogDebug("Edge {Source} -> {Sink}: condition returned false, skipping",
+                            sourceId, sinkId);
+#pragma warning restore CA1848, CA1873
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+                    logger.LogWarning(ex, "Failed to evaluate condition for edge {Source} -> {Sink}, skipping",
+                        sourceId, sinkId);
+#pragma warning restore CA1848, CA1873
+                    continue;
+                }
+            }
+
+            // Queue message to successor with type information
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+            logger.LogDebug("Edge {Source} -> {Sink}: routing message", sourceId, sinkId);
+#pragma warning restore CA1848, CA1873
+            EnqueueMessage(messageQueues, sinkId, message, inputTypeName);
+        }
+    }
+
+    /// <summary>
+    /// Routes a message through edges to successor executors, with an explicit type name for the message.
+    /// Used for messages sent via SendMessageAsync.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2057", Justification = "Type resolution for workflow message types.")]
+    private static void RouteMessageToSuccessors(
+        string sourceId,
+        string message,
+        string? explicitTypeName,
+        WorkflowExecutionPlan plan,
+        Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues,
+        ILogger logger)
+    {
+        if (!plan.Successors.TryGetValue(sourceId, out List<string>? successors))
+        {
+            return; // No outgoing edges
+        }
+
+        // Use explicit type name if provided, otherwise fall back to executor output type
+        string? inputTypeName = explicitTypeName;
+        Type? messageType = null;
+
+        if (!string.IsNullOrEmpty(explicitTypeName))
+        {
+            messageType = Type.GetType(explicitTypeName);
+        }
+
+        if (messageType is null && plan.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType))
+        {
+            messageType = sourceOutputType;
+            inputTypeName = sourceOutputType?.FullName;
+        }
+
+        foreach (string sinkId in successors)
+        {
+            // Check edge condition
+            if (plan.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? condition)
+                && condition is not null)
+            {
+                try
+                {
+                    // Deserialize the message for condition evaluation
+                    object? messageObj = DeserializeForCondition(message, messageType);
+
+                    if (!condition(messageObj))
+                    {
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+                        logger.LogDebug("Edge {Source} -> {Sink}: condition returned false, skipping",
+                            sourceId, sinkId);
+#pragma warning restore CA1848, CA1873
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+                    logger.LogWarning(ex, "Failed to evaluate condition for edge {Source} -> {Sink}, skipping",
+                        sourceId, sinkId);
+#pragma warning restore CA1848, CA1873
+                    continue;
+                }
+            }
+
+            // Queue message to successor with type information
+#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
+            logger.LogDebug("Edge {Source} -> {Sink}: routing sent message (type: {TypeName})", sourceId, sinkId, inputTypeName);
+#pragma warning restore CA1848, CA1873
+            EnqueueMessage(messageQueues, sinkId, message, inputTypeName);
+        }
+    }
+
+    /// <summary>
+    /// Gets the final result for a message-driven workflow execution.
+    /// Checks yielded outputs first (from YieldOutputAsync calls), then falls back to executor results.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing event types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing event types.")]
+    private static string GetMessageDrivenFinalResult(
+        Workflow workflow,
+        Dictionary<string, string> lastResults,
+        DurableWorkflowCustomStatus customStatus)
+    {
+        // First, check for yielded outputs from YieldOutputAsync calls (most recent first)
+        // These take priority as they represent explicit workflow outputs
+        string? yieldedOutput = GetLastYieldedOutput(customStatus);
+        if (!string.IsNullOrEmpty(yieldedOutput))
+        {
+            return yieldedOutput;
+        }
+
+        HashSet<string> outputExecutors = workflow.ReflectOutputExecutors();
+
+        // If specific output executors are defined, use their results
+        if (outputExecutors.Count > 0)
+        {
+            List<string> outputResults = [];
+            foreach (string outputExecutorId in outputExecutors)
+            {
+                if (lastResults.TryGetValue(outputExecutorId, out string? result) && !string.IsNullOrEmpty(result))
+                {
+                    outputResults.Add(result);
+                }
+            }
+
+            if (outputResults.Count > 0)
+            {
+                return outputResults.Count == 1
+                    ? outputResults[0]
+                    : string.Join("\n---\n", outputResults);
+            }
+        }
+
+        // Otherwise, return the last non-empty result from any executor
+        return lastResults.Values.LastOrDefault(v => !string.IsNullOrEmpty(v)) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Extracts the most recent yielded output from the custom status events.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing event types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing event types.")]
+    private static string? GetLastYieldedOutput(DurableWorkflowCustomStatus customStatus)
+    {
+        // Look for DurableYieldedOutputEvent in events (most recent first)
+        for (int i = customStatus.Events.Count - 1; i >= 0; i--)
+        {
+            string eventJson = customStatus.Events[i];
+
+            if (eventJson.Contains("DurableYieldedOutputEvent", StringComparison.Ordinal))
+            {
+                try
+                {
+                    // Parse the wrapper to get the inner Data
+                    using JsonDocument doc = JsonDocument.Parse(eventJson);
+                    if (doc.RootElement.TryGetProperty("Data", out JsonElement dataElement))
+                    {
+                        string? dataJson = dataElement.GetString();
+                        if (dataJson is not null)
+                        {
+                            using JsonDocument dataDoc = JsonDocument.Parse(dataJson);
+                            if (dataDoc.RootElement.TryGetProperty("Output", out JsonElement outputElement))
+                            {
+                                // The output could be a string or a serialized object
+                                return outputElement.ValueKind == JsonValueKind.String
+                                    ? outputElement.GetString()
+                                    : outputElement.GetRawText();
+                            }
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Continue to next event if parsing fails
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Unwraps an activity result, extracting state updates, events, sent messages, and returning the actual result.
     /// </summary>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing known wrapper type.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing known wrapper type.")]
-    private static string UnwrapActivityResult(string rawResult, DurableWorkflowCustomStatus customStatus, Dictionary<string, string> sharedState)
+    private static (string Result, List<SentMessageInfo> SentMessages) UnwrapActivityResult(
+        string rawResult,
+        DurableWorkflowCustomStatus customStatus,
+        Dictionary<string, string> sharedState)
     {
         if (string.IsNullOrEmpty(rawResult))
         {
-            return rawResult;
+            return (rawResult, []);
         }
 
         try
@@ -261,9 +626,9 @@ public class DurableWorkflowRunner
             // Try to deserialize as DurableActivityOutput
             DurableActivityOutput? output = JsonSerializer.Deserialize<DurableActivityOutput>(rawResult);
 
-            // Check if this is actually a DurableActivityOutput (has Result property set or state updates)
+            // Check if this is actually a DurableActivityOutput (has Result property set or state updates or sent messages)
             // This distinguishes it from other JSON objects that would deserialize with default/empty values
-            if (output is not null && (output.Result is not null || output.StateUpdates.Count > 0 || output.ClearedScopes.Count > 0 || output.Events.Count > 0))
+            if (output is not null && (output.Result is not null || output.StateUpdates.Count > 0 || output.ClearedScopes.Count > 0 || output.Events.Count > 0 || output.SentMessages.Count > 0))
             {
                 // Apply cleared scopes first
                 foreach (string clearedScope in output.ClearedScopes)
@@ -298,7 +663,7 @@ public class DurableWorkflowRunner
                     customStatus.Events.AddRange(output.Events);
                 }
 
-                return output.Result ?? string.Empty;
+                return (output.Result ?? string.Empty, output.SentMessages);
             }
         }
         catch (JsonException)
@@ -306,7 +671,7 @@ public class DurableWorkflowRunner
             // Not a wrapped result, return as-is
         }
 
-        return rawResult;
+        return (rawResult, []);
     }
 
     /// <summary>
@@ -364,7 +729,7 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Wrapper for activity input that includes shared state.
+    /// Wrapper for activity input that includes shared state and type information.
     /// </summary>
     internal sealed class ActivityInputWithState
     {
@@ -374,81 +739,14 @@ public class DurableWorkflowRunner
         public string? Input { get; set; }
 
         /// <summary>
+        /// Gets or sets the assembly-qualified type name of the input, used for proper deserialization.
+        /// </summary>
+        public string? InputTypeName { get; set; }
+
+        /// <summary>
         /// Gets or sets the shared state dictionary.
         /// </summary>
         public Dictionary<string, string> State { get; set; } = [];
-    }
-
-    /// <summary>
-    /// Filters executors based on their incoming edge conditions.
-    /// An executor is eligible if all its incoming edges have conditions that evaluate to true,
-    /// or if the edges have no conditions.
-    /// </summary>
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
-    private static List<WorkflowExecutorInfo> GetEligibleExecutors(
-        List<WorkflowExecutorInfo> executors,
-        Dictionary<string, string> results,
-        WorkflowExecutionPlan plan,
-        ILogger logger)
-    {
-        List<WorkflowExecutorInfo> eligible = new(executors.Count);
-
-        foreach (WorkflowExecutorInfo executorInfo in executors)
-        {
-            if (!plan.Predecessors.TryGetValue(executorInfo.ExecutorId, out List<string>? predecessors) || predecessors.Count == 0)
-            {
-                // Root executor (no predecessors) is always eligible
-                eligible.Add(executorInfo);
-                continue;
-            }
-
-            // Check if any predecessor's edge condition allows this executor to run
-            bool isEligible = false;
-            foreach (string predecessorId in predecessors)
-            {
-                // Get the condition for this edge (predecessor -> current executor)
-                if (!plan.EdgeConditions.TryGetValue((predecessorId, executorInfo.ExecutorId), out Func<object?, bool>? condition) || condition is null)
-                {
-                    // No condition registered for this edge or edge has no condition, always eligible
-                    isEligible = true;
-                    break;
-                }
-
-                // Evaluate the condition using the predecessor's result
-                if (results.TryGetValue(predecessorId, out string? predecessorResult))
-                {
-                    try
-                    {
-                        // Get the predecessor's output type for proper deserialization
-                        plan.ExecutorOutputTypes.TryGetValue(predecessorId, out Type? predecessorOutputType);
-
-                        // Deserialize the predecessor result to the expected type for condition evaluation
-                        object? resultObject = DeserializeForCondition(predecessorResult, predecessorOutputType);
-                        if (condition(resultObject))
-                        {
-                            isEligible = true;
-                            break;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "Failed to evaluate condition for edge from '{PredecessorId}' to '{ExecutorId}'", predecessorId, executorInfo.ExecutorId);
-                    }
-                }
-            }
-
-            if (isEligible)
-            {
-                eligible.Add(executorInfo);
-            }
-            else
-            {
-                logger.LogExecutorSkipped(executorInfo.ExecutorId);
-            }
-        }
-
-        return eligible;
     }
 
     /// <summary>
@@ -479,24 +777,13 @@ public class DurableWorkflowRunner
         }
     }
 
-    private async Task<(string Id, string Result)> ExecuteExecutorWithIdAsync(
-        TaskOrchestrationContext context,
-        WorkflowExecutorInfo executorInfo,
-        string input,
-        ILogger logger,
-        DurableWorkflowCustomStatus customStatus,
-        Dictionary<string, string> sharedState)
-    {
-        string result = await this.ExecuteExecutorAsync(context, executorInfo, input, logger, customStatus, sharedState).ConfigureAwait(true);
-        return (executorInfo.ExecutorId, result);
-    }
-
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing known wrapper type.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing known wrapper type.")]
     private async Task<string> ExecuteExecutorAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         string input,
+        string? inputTypeName,
         ILogger logger,
         DurableWorkflowCustomStatus customStatus,
         Dictionary<string, string> sharedState)
@@ -512,10 +799,11 @@ public class DurableWorkflowRunner
             string executorName = WorkflowNamingHelper.GetExecutorName(executorInfo.ExecutorId);
             string triggerName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
 
-            // Wrap input with shared state for the activity
+            // Wrap input with shared state and type information for the activity
             ActivityInputWithState inputWithState = new()
             {
                 Input = input,
+                InputTypeName = inputTypeName,
                 State = new Dictionary<string, string>(sharedState) // Pass a copy of the state
             };
 
@@ -579,55 +867,5 @@ public class DurableWorkflowRunner
         AgentThread thread = await agent.GetNewThreadAsync();
         AgentResponse response = await agent.RunAsync(input, thread);
         return response.Text;
-    }
-
-    private static string GetExecutorInput(
-        string executorId,
-        string initialInput,
-        Dictionary<string, string> results,
-        WorkflowExecutionPlan plan)
-    {
-        if (!plan.Predecessors.TryGetValue(executorId, out List<string>? predecessors) || predecessors.Count == 0)
-        {
-            return initialInput;
-        }
-
-        if (predecessors.Count == 1)
-        {
-            return results.TryGetValue(predecessors[0], out string? result) ? result : initialInput;
-        }
-
-        List<string> aggregated = new(predecessors.Count);
-        foreach (string predecessorId in predecessors)
-        {
-            if (results.TryGetValue(predecessorId, out string? result))
-            {
-                aggregated.Add(result);
-            }
-        }
-
-        return SerializeToJson(aggregated);
-    }
-
-    private static string GetFinalResult(WorkflowExecutionPlan plan, Dictionary<string, string> results)
-    {
-        WorkflowExecutionLevel lastLevel = plan.Levels[^1];
-        List<WorkflowExecutorInfo> lastExecutors = lastLevel.Executors;
-
-        if (lastExecutors.Count == 1)
-        {
-            return results.TryGetValue(lastExecutors[0].ExecutorId, out string? singleResult) ? singleResult : string.Empty;
-        }
-
-        List<string> finalResults = new(lastExecutors.Count);
-        foreach (WorkflowExecutorInfo executor in lastExecutors)
-        {
-            if (results.TryGetValue(executor.ExecutorId, out string? result))
-            {
-                finalResults.Add(result);
-            }
-        }
-
-        return string.Join("\n---\n", finalResults);
     }
 }

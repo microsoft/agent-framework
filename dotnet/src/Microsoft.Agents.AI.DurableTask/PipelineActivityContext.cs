@@ -41,6 +41,12 @@ internal sealed class PipelineActivityContext : IWorkflowContext
     /// </summary>
     public HashSet<string> ClearedScopes { get; } = [];
 
+    /// <summary>
+    /// Gets the messages sent during activity execution via SendMessageAsync.
+    /// Each entry is (serializedMessage, typeName).
+    /// </summary>
+    public List<(string Message, string TypeName)> SentMessages { get; } = [];
+
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
     {
@@ -53,7 +59,20 @@ internal sealed class PipelineActivityContext : IWorkflowContext
     }
 
     /// <inheritdoc/>
-    public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default) => default;
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing workflow message types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing workflow message types.")]
+    public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
+    {
+        if (message is not null)
+        {
+            // Capture the message and its type for routing in the orchestrator
+            string serializedMessage = JsonSerializer.Serialize(message, message.GetType());
+            string typeName = message.GetType().FullName ?? message.GetType().Name;
+            this.SentMessages.Add((serializedMessage, typeName));
+        }
+
+        return default;
+    }
 
     /// <inheritdoc/>
     public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)

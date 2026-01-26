@@ -56,6 +56,7 @@ public static class WorkflowHelper
     /// Analyzes the workflow and returns an execution plan that supports Fan-Out/Fan-In patterns.
     /// Executors at the same level can be executed in parallel (Fan-Out).
     /// Fan-In points are identified where multiple executors converge.
+    /// Cyclic workflows are detected and marked for message-driven execution.
     /// </summary>
     /// <param name="workflow">The workflow instance to analyze.</param>
     /// <returns>An execution plan with parallel execution levels.</returns>
@@ -67,12 +68,14 @@ public static class WorkflowHelper
         Dictionary<string, HashSet<EdgeInfo>> edges = workflow.ReflectEdges();
         Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> edgeConditions = workflow.ReflectEdgeConditions();
 
-        WorkflowExecutionPlan plan = new();
+        WorkflowExecutionPlan plan = new()
+        {
+            StartExecutorId = workflow.StartExecutorId
+        };
 
         // Build adjacency lists (successors and predecessors)
         Dictionary<string, List<string>> successors = new(executors.Count);
         Dictionary<string, List<string>> predecessors = new(executors.Count);
-        int[] inDegree = new int[executors.Count];
         Dictionary<string, int> executorIndex = new(executors.Count);
 
         // Initialize all executors and extract their output types
@@ -97,12 +100,35 @@ public static class WorkflowHelper
             {
                 foreach (string sinkId in edge.Connection.SinkIds)
                 {
-                    if (executorIndex.TryGetValue(sinkId, out int sinkIdx))
+                    if (executorIndex.ContainsKey(sinkId))
                     {
                         sourceSuccessors.Add(sinkId);
                         predecessors[sinkId].Add(sourceId);
-                        inDegree[sinkIdx]++;
                     }
+                }
+            }
+        }
+
+        // Detect back-edges using DFS from start executor
+        HashSet<(string Source, string Target)> backEdges = DetectBackEdges(workflow.StartExecutorId, successors);
+
+        // Mark cycles in plan
+        plan.HasCycles = backEdges.Count > 0;
+        foreach ((string source, string target) in backEdges)
+        {
+            plan.BackEdges.Add((source, target));
+        }
+
+        // Calculate in-degrees, EXCLUDING back-edges
+        int[] inDegree = new int[executors.Count];
+        foreach (string executorId in executors.Keys)
+        {
+            foreach (string pred in predecessors[executorId])
+            {
+                // Only count edge if it's NOT a back-edge
+                if (!backEdges.Contains((pred, executorId)))
+                {
+                    inDegree[executorIndex[executorId]]++;
                 }
             }
         }
@@ -150,15 +176,23 @@ public static class WorkflowHelper
                 RequestPort? requestPort = (executorBinding is RequestPortBinding rpb) ? rpb.Port : null;
                 levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic, requestPort));
 
-                // Check Fan-In for this executor
-                if (predecessors[executorId].Count > 1)
+                // Check Fan-In for this executor (excluding back-edges)
+                int nonBackEdgePredecessors = predecessors[executorId]
+                    .Count(pred => !backEdges.Contains((pred, executorId)));
+                if (nonBackEdgePredecessors > 1)
                 {
                     isFanIn = true;
                 }
 
-                // Decrement in-degree of all successors and enqueue those ready for next level
+                // Decrement in-degree of all successors (excluding back-edges) and enqueue those ready for next level
                 foreach (string successor in successors[executorId])
                 {
+                    // Skip back-edges for topological ordering
+                    if (backEdges.Contains((executorId, successor)))
+                    {
+                        continue;
+                    }
+
                     int successorIdx = executorIndex[successor];
                     if (--inDegree[successorIdx] == 0)
                     {
@@ -172,7 +206,7 @@ public static class WorkflowHelper
             currentLevel = nextLevel;
         }
 
-        // Handle cycle detection: if not all executors were processed, there's a cycle
+        // Handle any remaining executors not processed (shouldn't happen if back-edge detection is correct)
         if (processedCount < executors.Count)
         {
             List<WorkflowExecutorInfo> remainingExecutors = [];
@@ -194,6 +228,60 @@ public static class WorkflowHelper
         }
 
         return plan;
+    }
+
+    /// <summary>
+    /// Detects back-edges in the graph using DFS.
+    /// A back-edge is an edge that points to an ancestor in the DFS tree (creates a cycle).
+    /// </summary>
+    /// <param name="startId">The starting executor ID for DFS traversal.</param>
+    /// <param name="successors">The adjacency list mapping each executor to its successors.</param>
+    /// <returns>A set of back-edges as (source, target) tuples.</returns>
+    private static HashSet<(string Source, string Target)> DetectBackEdges(
+        string startId,
+        Dictionary<string, List<string>> successors)
+    {
+        HashSet<(string, string)> backEdges = [];
+        HashSet<string> visited = [];
+        HashSet<string> inStack = []; // Nodes in current DFS path
+
+        void Dfs(string nodeId)
+        {
+            visited.Add(nodeId);
+            inStack.Add(nodeId);
+
+            if (successors.TryGetValue(nodeId, out List<string>? neighbors))
+            {
+                foreach (string neighbor in neighbors)
+                {
+                    if (inStack.Contains(neighbor))
+                    {
+                        // Edge to ancestor in current path = back-edge (creates cycle)
+                        backEdges.Add((nodeId, neighbor));
+                    }
+                    else if (!visited.Contains(neighbor))
+                    {
+                        Dfs(neighbor);
+                    }
+                }
+            }
+
+            inStack.Remove(nodeId);
+        }
+
+        // Start DFS from the workflow's start executor
+        Dfs(startId);
+
+        // Handle any disconnected components (shouldn't happen in valid workflows, but for safety)
+        foreach (string nodeId in successors.Keys)
+        {
+            if (!visited.Contains(nodeId))
+            {
+                Dfs(nodeId);
+            }
+        }
+
+        return backEdges;
     }
 
     /// <summary>

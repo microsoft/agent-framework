@@ -92,36 +92,39 @@ async Task RunWorkflowWithStreamingAsync(string orderId, Workflow workflow, Dura
     // WatchStreamAsync yields events as they're emitted by executors
     await foreach (WorkflowEvent evt in run.WatchStreamAsync())
     {
+        // Always print the event type name
+        Console.WriteLine($"  Event: {evt.GetType().Name}");
+
         switch (evt)
         {
             // Custom domain events (emitted via AddEventAsync)
             case OrderLookupStartedEvent e:
-                WriteColored($"  [Lookup] Looking up order {e.OrderId}", ConsoleColor.Cyan);
+                WriteColored($"    [Lookup] Looking up order {e.OrderId}", ConsoleColor.Cyan);
                 break;
             case OrderFoundEvent e:
-                WriteColored($"  [Lookup] Found: {e.Order.Customer.Name}", ConsoleColor.Cyan);
+                WriteColored($"    [Lookup] Found: {e.Order.Customer.Name}", ConsoleColor.Cyan);
                 break;
             case CancellationProgressEvent e:
-                WriteColored($"  [Cancel] {e.PercentComplete}% - {e.Status}", ConsoleColor.Yellow);
+                WriteColored($"    [Cancel] {e.PercentComplete}% - {e.Status}", ConsoleColor.Yellow);
                 break;
             case OrderCancelledEvent e:
-                WriteColored("  [Cancel] Done", ConsoleColor.Yellow);
+                WriteColored("    [Cancel] Done", ConsoleColor.Yellow);
                 break;
             case EmailSentEvent e:
-                WriteColored($"  [Email] Sent to {e.Email}", ConsoleColor.Magenta);
+                WriteColored($"    [Email] Sent to {e.Email}", ConsoleColor.Magenta);
                 break;
 
             // Yielded outputs (emitted via YieldOutputAsync)
             case DurableYieldedOutputEvent e:
-                WriteColored($"  [Output] {e.ExecutorId}", ConsoleColor.DarkGray);
+                WriteColored($"    [Output] {e.ExecutorId}", ConsoleColor.DarkGray);
                 break;
 
             // Workflow completion
             case DurableWorkflowCompletedEvent e:
-                WriteColored($"Completed: {e.Result}", ConsoleColor.Green);
+                WriteColored($"  Completed: {e.Result}", ConsoleColor.Green);
                 break;
             case DurableWorkflowFailedEvent e:
-                WriteColored($"Failed: {e.ErrorMessage}", ConsoleColor.Red);
+                WriteColored($"  Failed: {e.ErrorMessage}", ConsoleColor.Red);
                 break;
         }
     }

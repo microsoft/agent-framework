@@ -201,7 +201,8 @@ public static class DurableWorkflowServiceCollectionExtensions
         // Create executor instance from binding
         Executor executor = await binding.FactoryAsync!("activity-run").ConfigureAwait(false);
 
-        Type inputType = executor.InputTypes.FirstOrDefault() ?? typeof(string);
+        // Determine the input type - prefer the provided type name, fall back to first supported type
+        Type inputType = ResolveInputType(inputWithState?.InputTypeName, executor.InputTypes);
         object typedInput = DeserializeInput(executorInput, inputType);
 
         // Create a pipeline context that has access to shared state and executor
@@ -213,16 +214,50 @@ public static class DurableWorkflowServiceCollectionExtensions
             workflowContext,
             CancellationToken.None).ConfigureAwait(false);
 
-        // Always return wrapped output with state updates, events, and result
+        // Always return wrapped output with state updates, events, sent messages, and result
         DurableActivityOutput output = new()
         {
             Result = SerializeResult(result),
             StateUpdates = workflowContext.StateUpdates,
             ClearedScopes = [.. workflowContext.ClearedScopes],
-            Events = workflowContext.Events.ConvertAll(SerializeEvent)
+            Events = workflowContext.Events.ConvertAll(SerializeEvent),
+            SentMessages = workflowContext.SentMessages.ConvertAll(m => new SentMessageInfo { Message = m.Message, TypeName = m.TypeName })
         };
 
         return JsonSerializer.Serialize(output);
+    }
+
+    /// <summary>
+    /// Resolves the input type from the provided type name, or falls back to the first supported type.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Type resolution for registered executor types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2057:TypeGetType", Justification = "Type resolution for registered executor types.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Type resolution for registered executor types.")]
+    private static Type ResolveInputType(string? inputTypeName, ISet<Type> supportedTypes)
+    {
+        if (!string.IsNullOrEmpty(inputTypeName))
+        {
+            // Try to find a matching type in the supported types
+            foreach (Type supportedType in supportedTypes)
+            {
+                if (supportedType.AssemblyQualifiedName == inputTypeName ||
+                    supportedType.FullName == inputTypeName ||
+                    supportedType.Name == inputTypeName)
+                {
+                    return supportedType;
+                }
+            }
+
+            // Try to load the type directly (for types not in supported types)
+            Type? resolvedType = Type.GetType(inputTypeName);
+            if (resolvedType is not null)
+            {
+                return resolvedType;
+            }
+        }
+
+        // Fall back to first supported type or string
+        return supportedTypes.FirstOrDefault() ?? typeof(string);
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Deserializing known wrapper type.")]
@@ -357,6 +392,11 @@ internal sealed class DurableActivityInput
     public string? Input { get; set; }
 
     /// <summary>
+    /// Gets or sets the assembly-qualified type name of the input, used for proper deserialization.
+    /// </summary>
+    public string? InputTypeName { get; set; }
+
+    /// <summary>
     /// Gets or sets the shared state dictionary (scope-prefixed key -> serialized value).
     /// </summary>
     public Dictionary<string, string> State { get; set; } = [];
@@ -386,4 +426,26 @@ internal sealed class DurableActivityOutput
     /// Gets or sets the serialized workflow events emitted during activity execution.
     /// </summary>
     public List<string> Events { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets messages sent via SendMessageAsync during activity execution.
+    /// Each entry is a tuple of (serializedMessage, typeName).
+    /// </summary>
+    public List<SentMessageInfo> SentMessages { get; set; } = [];
+}
+
+/// <summary>
+/// Information about a message sent via SendMessageAsync.
+/// </summary>
+internal sealed class SentMessageInfo
+{
+    /// <summary>
+    /// Gets or sets the serialized message content.
+    /// </summary>
+    public string? Message { get; set; }
+
+    /// <summary>
+    /// Gets or sets the full type name of the message.
+    /// </summary>
+    public string? TypeName { get; set; }
 }
