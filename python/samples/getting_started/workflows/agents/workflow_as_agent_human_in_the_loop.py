@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
 
 # Ensure local getting_started package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
@@ -104,7 +105,7 @@ async def main() -> None:
         .register_executor(
             lambda: Worker(
                 id="sub-worker",
-                chat_client=OpenAIChatClient(),
+                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
             ),
             name="worker",
         )
