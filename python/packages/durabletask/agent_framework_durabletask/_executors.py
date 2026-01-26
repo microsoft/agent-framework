@@ -306,6 +306,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
         agent_response = None
 
         for attempt in range(1, self.max_poll_retries + 1):
+            # Initial sleep is intentional - give the entity time to process before first poll
             time.sleep(self.poll_interval_seconds)
 
             agent_response = self._poll_entity_for_response(entity_id, correlation_id)
