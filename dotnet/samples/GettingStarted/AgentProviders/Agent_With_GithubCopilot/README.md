@@ -50,7 +50,7 @@ await using CopilotClient copilotClient = new(new CopilotClientOptions
 await copilotClient.StartAsync();
 
 // Create session configuration with specific model
-var sessionConfig = new SessionConfig
+SessionConfig sessionConfig = new()
 {
     Model = "gpt-4",
     Streaming = false
@@ -75,7 +75,7 @@ Console.WriteLine(response);
 To get streaming responses:
 
 ```csharp
-await foreach (var update in agent.RunStreamingAsync("Tell me a story"))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me a story"))
 {
     Console.Write(update.Text);
 }
