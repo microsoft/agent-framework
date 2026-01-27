@@ -2,7 +2,6 @@
 
 using System.Diagnostics;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
