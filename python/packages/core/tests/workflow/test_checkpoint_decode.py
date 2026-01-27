@@ -3,7 +3,10 @@
 from dataclasses import dataclass  # noqa: I001
 from typing import Any, cast
 
+
 from agent_framework._workflows._checkpoint_encoding import (
+    DATACLASS_MARKER,
+    MODEL_MARKER,
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
@@ -126,3 +129,110 @@ def test_encode_decode_nested_structures() -> None:
     assert response.data == "first response"
     assert isinstance(response.original_request, SampleRequest)
     assert response.original_request.request_id == "req-1"
+
+
+def test_encode_allows_marker_key_without_value_key() -> None:
+    """Test that encoding a dict with only the marker key (no 'value') is allowed."""
+    dict_with_marker_only = {
+        MODEL_MARKER: "some.module:FakeClass",
+        "other_key": "test",
+    }
+    encoded = encode_checkpoint_value(dict_with_marker_only)
+    assert MODEL_MARKER in encoded
+    assert "other_key" in encoded
+
+
+def test_encode_allows_value_key_without_marker_key() -> None:
+    """Test that encoding a dict with only 'value' key (no marker) is allowed."""
+    dict_with_value_only = {
+        "value": {"data": "test"},
+        "other_key": "test",
+    }
+    encoded = encode_checkpoint_value(dict_with_value_only)
+    assert "value" in encoded
+    assert "other_key" in encoded
+
+
+def test_encode_allows_marker_with_value_key() -> None:
+    """Test that encoding a dict with marker and 'value' keys is allowed.
+
+    This is allowed because legitimate encoded data may contain these keys,
+    and security is enforced at deserialization time by validating class types.
+    """
+    dict_with_both = {
+        MODEL_MARKER: "some.module:SomeClass",
+        "value": {"data": "test"},
+        "strategy": "to_dict",
+    }
+    encoded = encode_checkpoint_value(dict_with_both)
+    assert MODEL_MARKER in encoded
+    assert "value" in encoded
+
+
+class NotADataclass:
+    """A regular class that is not a dataclass."""
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def get_value(self) -> str:
+        return self.value
+
+
+class NotAModel:
+    """A regular class that does not support the model protocol."""
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def get_value(self) -> str:
+        return self.value
+
+
+def test_decode_rejects_non_dataclass_with_dataclass_marker() -> None:
+    """Test that decode returns raw value when marked class is not a dataclass."""
+    # Manually construct a payload that claims NotADataclass is a dataclass
+    fake_payload = {
+        DATACLASS_MARKER: f"{NotADataclass.__module__}:{NotADataclass.__name__}",
+        "value": {"value": "test_value"},
+    }
+
+    decoded = decode_checkpoint_value(fake_payload)
+
+    # Should return the raw decoded value, not an instance of NotADataclass
+    assert isinstance(decoded, dict)
+    assert decoded["value"] == "test_value"
+
+
+def test_decode_rejects_non_model_with_model_marker() -> None:
+    """Test that decode returns raw value when marked class doesn't support model protocol."""
+    # Manually construct a payload that claims NotAModel supports the model protocol
+    fake_payload = {
+        MODEL_MARKER: f"{NotAModel.__module__}:{NotAModel.__name__}",
+        "strategy": "to_dict",
+        "value": {"value": "test_value"},
+    }
+
+    decoded = decode_checkpoint_value(fake_payload)
+
+    # Should return the raw decoded value, not an instance of NotAModel
+    assert isinstance(decoded, dict)
+    assert decoded["value"] == "test_value"
+
+
+def test_encode_allows_nested_dict_with_marker_keys() -> None:
+    """Test that encoding allows nested dicts containing marker patterns.
+
+    Security is enforced at deserialization time, not serialization time,
+    so legitimate encoded data can contain markers at any nesting level.
+    """
+    nested_data = {
+        "outer": {
+            MODEL_MARKER: "some.module:SomeClass",
+            "value": {"data": "test"},
+        }
+    }
+
+    encoded = encode_checkpoint_value(nested_data)
+    assert "outer" in encoded
+    assert MODEL_MARKER in encoded["outer"]

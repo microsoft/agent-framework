@@ -112,17 +112,10 @@ internal sealed class RequestInfoExecutor : Executor
 
     public async ValueTask<ExternalResponse?> HandleAsync(ExternalResponse message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(message);
-        Throw.IfNull(message.Data);
-
-        if (message.PortInfo.PortId != this.Port.Id)
+        if (!this.Port.IsResponsePort(message))
         {
             return null;
         }
-
-        object data = message.DataAs(this.Port.Response) ??
-            throw new InvalidOperationException(
-                $"Message type {message.Data.TypeId} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
 
         if (this._allowWrapped && this._wrappedRequests.TryGetValue(message.RequestId, out ExternalRequest? originalRequest))
         {
@@ -131,6 +124,11 @@ internal sealed class RequestInfoExecutor : Executor
         else
         {
             await context.SendMessageAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!message.Data.IsType(this.Port.Response, out object? data))
+        {
+            throw this.Port.CreateExceptionForType(message);
         }
 
         await context.SendMessageAsync(data, cancellationToken: cancellationToken).ConfigureAwait(false);

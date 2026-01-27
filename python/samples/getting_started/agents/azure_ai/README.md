@@ -36,6 +36,7 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_ai_with_memory_search.py`](azure_ai_with_memory_search.py) | Shows how to use memory search functionality with Azure AI agents for conversation persistence. Demonstrates creating memory stores and enabling agents to search through conversation history. |
 | [`azure_ai_with_microsoft_fabric.py`](azure_ai_with_microsoft_fabric.py) | Shows how to use Microsoft Fabric with Azure AI agents to query Fabric data sources and provide responses based on data analysis. Requires a Microsoft Fabric connection configured in your Azure AI project. |
 | [`azure_ai_with_openapi.py`](azure_ai_with_openapi.py) | Shows how to integrate OpenAPI specifications with Azure AI agents using dictionary-based tool configuration. Demonstrates using external REST APIs for dynamic data lookup. |
+| [`azure_ai_with_reasoning.py`](azure_ai_with_reasoning.py) | Shows how to enable reasoning for a model that supports it. |
 | [`azure_ai_with_web_search.py`](azure_ai_with_web_search.py) | Shows how to use the `HostedWebSearchTool` with Azure AI agents to perform web searches and retrieve up-to-date information from the internet. |
 
 ## Environment Variables

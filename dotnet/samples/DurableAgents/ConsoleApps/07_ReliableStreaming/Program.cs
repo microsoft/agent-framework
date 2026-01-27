@@ -304,9 +304,9 @@ if (string.IsNullOrWhiteSpace(prompt) || prompt.Equals("exit", StringComparison.
     return;
 }
 
-// Create a new agent thread
-AgentThread thread = await agentProxy.GetNewThreadAsync();
-AgentSessionId sessionId = thread.GetService<AgentSessionId>();
+// Create a new agent session
+AgentSession session = await agentProxy.GetNewSessionAsync();
+AgentSessionId sessionId = session.GetService<AgentSessionId>();
 string conversationId = sessionId.ToString();
 
 Console.ForegroundColor = ConsoleColor.Green;
@@ -316,7 +316,7 @@ Console.ResetColor();
 
 // Run the agent in the background
 DurableAgentRunOptions options = new() { IsFireAndForget = true };
-await agentProxy.RunAsync(prompt, thread, options, CancellationToken.None);
+await agentProxy.RunAsync(prompt, session, options, CancellationToken.None);
 
 bool streamCompleted = false;
 while (!streamCompleted)

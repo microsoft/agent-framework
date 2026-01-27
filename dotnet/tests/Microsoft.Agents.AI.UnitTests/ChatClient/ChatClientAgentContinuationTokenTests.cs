@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.UnitTests.ChatClient;
+namespace Microsoft.Agents.AI.UnitTests;
 
 public class ChatClientAgentContinuationTokenTests
 {

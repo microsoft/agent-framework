@@ -83,8 +83,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(EdgeConnection))]
 
     // Workflow-as-Agent
-    [JsonSerializable(typeof(WorkflowMessageStore.StoreState))]
-    [JsonSerializable(typeof(WorkflowThread.ThreadState))]
+    [JsonSerializable(typeof(WorkflowChatHistoryProvider.StoreState))]
+    [JsonSerializable(typeof(WorkflowSession.SessionState))]
 
     // Message Types
     [JsonSerializable(typeof(ChatMessage))]
@@ -93,7 +93,7 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(TurnToken))]
 
     // Built-in Executor State Types
-    [JsonSerializable(typeof(AIAgentHostExecutor))]
+    [JsonSerializable(typeof(AIAgentHostState))]
 
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]

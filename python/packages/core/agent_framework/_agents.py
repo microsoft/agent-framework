@@ -89,8 +89,10 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         if value is None:
             continue
         if key == "tools" and result.get("tools"):
-            # Combine tool lists
-            result["tools"] = list(result["tools"]) + list(value)
+            # Combine tool lists, avoiding duplicates by name
+            existing_names = {getattr(t, "name", None) for t in result["tools"]}
+            unique_new = [t for t in value if getattr(t, "name", None) not in existing_names]
+            result["tools"] = list(result["tools"]) + unique_new
         elif key == "logit_bias" and result.get("logit_bias"):
             # Merge logit_bias dicts
             result["logit_bias"] = {**result["logit_bias"], **value}

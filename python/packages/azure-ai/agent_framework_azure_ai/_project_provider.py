@@ -195,6 +195,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         opts = dict(default_options) if default_options else {}
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
+        reasoning = opts.get("reasoning")
 
         args: dict[str, Any] = {"model": resolved_model}
 
@@ -206,6 +207,8 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             )
         if rai_config:
             args["rai_config"] = rai_config
+        if reasoning:
+            args["reasoning"] = reasoning
 
         # Normalize tools and separate MCP tools from other tools
         normalized_tools = normalize_tools(tools)

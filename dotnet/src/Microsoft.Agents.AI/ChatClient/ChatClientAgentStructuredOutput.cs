@@ -16,11 +16,11 @@ namespace Microsoft.Agents.AI;
 public sealed partial class ChatClientAgent
 {
     /// <summary>
-    /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread, and requesting a response of the specified type <typeparamref name="T"/>.
+    /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the session, and requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
-    /// <param name="thread">
-    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
-    /// The thread will be updated with any response messages generated during invocation.
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with any response messages generated during invocation.
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
@@ -31,24 +31,24 @@ public sealed partial class ChatClientAgent
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <remarks>
-    /// This overload is useful when the agent has sufficient context from previous messages in the thread
+    /// This overload is useful when the agent has sufficient context from previous messages in the session
     /// or from its initial configuration to generate a meaningful response without additional input.
     /// </remarks>
     public Task<ChatClientAgentResponse<T>> RunAsync<T>(
-        AgentThread? thread = null,
+        AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
         bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>([], thread, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>([], session, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a text message from the user, requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
     /// <param name="message">The user message to send to the agent.</param>
-    /// <param name="thread">
-    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
-    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with the input message and any response messages generated during invocation.
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
@@ -65,7 +65,7 @@ public sealed partial class ChatClientAgent
     /// </remarks>
     public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         string message,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
         bool? useJsonSchemaResponseFormat = null,
@@ -73,16 +73,16 @@ public sealed partial class ChatClientAgent
     {
         _ = Throw.IfNullOrWhitespace(message);
 
-        return this.RunAsync<T>(new ChatMessage(ChatRole.User, message), thread, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
+        return this.RunAsync<T>(new ChatMessage(ChatRole.User, message), session, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
     }
 
     /// <summary>
     /// Runs the agent with a single chat message, requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
     /// <param name="message">The chat message to send to the agent.</param>
-    /// <param name="thread">
-    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
-    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with the input message and any response messages generated during invocation.
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
@@ -95,7 +95,7 @@ public sealed partial class ChatClientAgent
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         ChatMessage message,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
         bool? useJsonSchemaResponseFormat = null,
@@ -103,16 +103,16 @@ public sealed partial class ChatClientAgent
     {
         _ = Throw.IfNull(message);
 
-        return this.RunAsync<T>([message], thread, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
+        return this.RunAsync<T>([message], session, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
     }
 
     /// <summary>
     /// Runs the agent with a collection of chat messages, requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
     /// <param name="messages">The collection of messages to send to the agent for processing.</param>
-    /// <param name="thread">
-    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
-    /// The thread will be updated with the input messages and any response messages generated during invocation.
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with the input messages and any response messages generated during invocation.
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
@@ -131,12 +131,12 @@ public sealed partial class ChatClientAgent
     /// </para>
     /// <para>
     /// The messages are processed in the order provided and become part of the conversation history.
-    /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
+    /// The agent's response will also be added to <paramref name="session"/> if one is provided.
     /// </para>
     /// </remarks>
     public Task<ChatClientAgentResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
         bool? useJsonSchemaResponseFormat = null,
@@ -160,6 +160,6 @@ public sealed partial class ChatClientAgent
             };
         }
 
-        return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
+        return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, session, options, cancellationToken);
     }
 }

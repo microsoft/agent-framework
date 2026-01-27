@@ -1056,6 +1056,70 @@ class TestMCPToolEndpoint:
             with pytest.raises(RuntimeError, match="Agent execution failed"):
                 await app._handle_mcp_tool_invocation("TestAgent", context, client)
 
+    async def test_handle_mcp_tool_invocation_ignores_agent_name_in_thread_id(self) -> None:
+        """Test that MCP tool invocation uses the agent_name parameter, not the name from thread_id."""
+        mock_agent = Mock()
+        mock_agent.name = "PlantAdvisor"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Thread ID contains a different agent name (@StockAdvisor@poc123)
+        # but we're invoking PlantAdvisor - it should use PlantAdvisor's entity
+        context = json.dumps({"arguments": {"query": "test query", "threadId": "@StockAdvisor@test123"}})
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            await app._handle_mcp_tool_invocation("PlantAdvisor", context, client)
+
+            # Verify signal_entity was called with PlantAdvisor's entity, not StockAdvisor's
+            client.signal_entity.assert_called_once()
+            call_args = client.signal_entity.call_args
+            entity_id = call_args[0][0]
+
+            # Entity name should be dafx-PlantAdvisor, not dafx-StockAdvisor
+            assert entity_id.name == "dafx-PlantAdvisor"
+            assert entity_id.key == "test123"
+
+    async def test_handle_mcp_tool_invocation_uses_plain_thread_id_as_key(self) -> None:
+        """Test that a plain thread_id (not in @name@key format) is used as-is for the key."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Plain thread_id without @name@key format
+        context = json.dumps({"arguments": {"query": "test query", "threadId": "simple-thread-123"}})
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+            client.signal_entity.assert_called_once()
+            call_args = client.signal_entity.call_args
+            entity_id = call_args[0][0]
+
+            assert entity_id.name == "dafx-TestAgent"
+            assert entity_id.key == "simple-thread-123"
+
     def test_health_check_includes_mcp_tool_enabled(self) -> None:
         """Test that health check endpoint includes mcp_tool_enabled field."""
         mock_agent = Mock()
