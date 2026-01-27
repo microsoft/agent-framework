@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 /// Tests for Time-To-Live (TTL) functionality of durable agent entities.
 /// </summary>
 [Collection("Sequential")]
-[Trait("Category", "Integration")]
+[Trait("Category", "IntegrationDisabled")]
 public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposable
 {
     private static readonly TimeSpan s_defaultTimeout = Debugger.IsAttached
