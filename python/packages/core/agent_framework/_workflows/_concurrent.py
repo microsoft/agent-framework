@@ -525,29 +525,14 @@ class ConcurrentBuilder:
 
         return executors
 
-    def build(self) -> Workflow:
-        r"""Build and validate the concurrent workflow.
+    def _to_builder(self) -> tuple["WorkflowBuilder", str, list[str]]:
+        """Build the internal WorkflowBuilder without calling build().
 
-        Wiring pattern:
-        - Dispatcher (internal) fans out the input to all `participants`
-        - Fan-in collects `AgentExecutorResponse` objects from all participants
-        - If request info is enabled, the orchestration emits a request info event with outputs from all participants
-            before sending the outputs to the aggregator
-        - Aggregator yields output and the workflow becomes idle. The output is either:
-          - list[ChatMessage] (default aggregator: one user + one assistant per agent)
-          - custom payload from the provided aggregator
+        This is used for workflow composition via WorkflowBuilder.add_workflow().
 
         Returns:
-            Workflow: a ready-to-run workflow instance
-
-        Raises:
-            ValueError: if no participants were defined
-
-        Example:
-
-        .. code-block:: python
-
-            workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
+            A tuple of (WorkflowBuilder, start_executor_id, terminal_executor_ids).
+            The terminal executor is the aggregator.
         """
         if not self._participants and not self._participant_factories:
             raise ValueError(
@@ -579,4 +564,31 @@ class ConcurrentBuilder:
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 
+        return builder, dispatcher.id, [aggregator.id]
+
+    def build(self) -> Workflow:
+        r"""Build and validate the concurrent workflow.
+
+        Wiring pattern:
+        - Dispatcher (internal) fans out the input to all `participants`
+        - Fan-in collects `AgentExecutorResponse` objects from all participants
+        - If request info is enabled, the orchestration emits a request info event with outputs from all participants
+            before sending the outputs to the aggregator
+        - Aggregator yields output and the workflow becomes idle. The output is either:
+          - list[ChatMessage] (default aggregator: one user + one assistant per agent)
+          - custom payload from the provided aggregator
+
+        Returns:
+            Workflow: a ready-to-run workflow instance
+
+        Raises:
+            ValueError: if no participants were defined
+
+        Example:
+
+        .. code-block:: python
+
+            workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
+        """
+        builder, _, _ = self._to_builder()
         return builder.build()

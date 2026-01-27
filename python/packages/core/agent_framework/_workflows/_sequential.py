@@ -275,17 +275,14 @@ class SequentialBuilder:
 
         return executors
 
-    def build(self) -> Workflow:
-        """Build and validate the sequential workflow.
+    def _to_builder(self) -> tuple["WorkflowBuilder", str, list[str]]:
+        """Build the internal WorkflowBuilder without calling build().
 
-        Wiring pattern:
-        - _InputToConversation normalizes the initial input into list[ChatMessage]
-        - For each participant in order:
-            - If Agent (or AgentExecutor): pass conversation to the agent, then optionally
-              route through a request info interceptor, then convert response to conversation
-              via _ResponseToConversation
-            - Else (custom Executor): pass conversation directly to the executor
-        - _EndWithConversation yields the final conversation and the workflow becomes idle
+        This is used for workflow composition via WorkflowBuilder.add_workflow().
+
+        Returns:
+            A tuple of (WorkflowBuilder, start_executor_id, terminal_executor_ids).
+            The terminal executor is the end executor.
         """
         if not self._participants and not self._participant_factories:
             raise ValueError(
@@ -320,4 +317,19 @@ class SequentialBuilder:
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 
+        return builder, input_conv.id, [end.id]
+
+    def build(self) -> Workflow:
+        """Build and validate the sequential workflow.
+
+        Wiring pattern:
+        - _InputToConversation normalizes the initial input into list[ChatMessage]
+        - For each participant in order:
+            - If Agent (or AgentExecutor): pass conversation to the agent, then optionally
+              route through a request info interceptor, then convert response to conversation
+              via _ResponseToConversation
+            - Else (custom Executor): pass conversation directly to the executor
+        - _EndWithConversation yields the final conversation and the workflow becomes idle
+        """
+        builder, _, _ = self._to_builder()
         return builder.build()

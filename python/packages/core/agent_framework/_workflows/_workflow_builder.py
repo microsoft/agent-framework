@@ -4,7 +4,7 @@ import logging
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from typing_extensions import deprecated
 
@@ -40,6 +40,19 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _WorkflowMapping:
+    """Internal mapping of a merged workflow's logical ID to its entry/exit points.
+
+    Args:
+        entry: The actual executor ID of the workflow's entry point.
+        exits: List of actual executor IDs of the workflow's exit points.
+    """
+
+    entry: str
+    exits: list[str]
 
 
 @dataclass
@@ -188,6 +201,9 @@ class WorkflowBuilder:
             | _FanInEdgeRegistration
         ] = []
         self._executor_registry: dict[str, Callable[[], Executor]] = {}
+
+        # Workflow composition: maps logical workflow IDs to their entry/exit points
+        self._workflow_mappings: dict[str, _WorkflowMapping] = {}
 
     # Agents auto-wrapped by builder now always stream incremental updates.
 
@@ -520,7 +536,12 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and isinstance(target, str):
             # Both are names; defer resolution to build time
-            self._edge_registry.append(_EdgeRegistration(source=source, target=target, condition=condition))
+            # Resolve workflow logical IDs: source uses exit point, target uses entry point
+            resolved_source = self._resolve_workflow_exit(source)
+            resolved_target = self._resolve_workflow_entry(target)
+            self._edge_registry.append(
+                _EdgeRegistration(source=resolved_source, target=resolved_target, condition=condition)
+            )
             return self
 
         # Both are Executor/AgentProtocol instances; wrap and add now
@@ -599,7 +620,10 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and all(isinstance(t, str) for t in targets):
             # Both are names; defer resolution to build time
-            self._edge_registry.append(_FanOutEdgeRegistration(source=source, targets=list(targets)))  # type: ignore
+            # Resolve workflow logical IDs: source uses exit point, targets use entry points
+            resolved_source = self._resolve_workflow_exit(source)
+            resolved_targets = [self._resolve_workflow_entry(t) for t in targets]  # type: ignore[arg-type]
+            self._edge_registry.append(_FanOutEdgeRegistration(source=resolved_source, targets=resolved_targets))
             return self
 
         # Both are Executor/AgentProtocol instances; wrap and add now
@@ -698,7 +722,17 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and all(isinstance(case.target, str) for case in cases):
             # Source is a name; defer resolution to build time
-            self._edge_registry.append(_SwitchCaseEdgeGroupRegistration(source=source, cases=list(cases)))  # type: ignore
+            # Resolve workflow logical IDs
+            resolved_source = self._resolve_workflow_exit(source)
+            resolved_cases: list[Case | Default] = []
+            for case in cases:
+                target_str = cast(str, case.target)
+                resolved_target = self._resolve_workflow_entry(target_str)
+                if isinstance(case, Default):
+                    resolved_cases.append(Default(target=resolved_target))
+                else:
+                    resolved_cases.append(Case(condition=case.condition, target=resolved_target))
+            self._edge_registry.append(_SwitchCaseEdgeGroupRegistration(source=resolved_source, cases=resolved_cases))
             return self
 
         # Source is an Executor/AgentProtocol instance; wrap and add now
@@ -810,10 +844,13 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and all(isinstance(t, str) for t in targets):
             # Both are names; defer resolution to build time
+            # Resolve workflow logical IDs: source uses exit point, targets use entry points
+            resolved_source = self._resolve_workflow_exit(source)
+            resolved_targets = [self._resolve_workflow_entry(t) for t in targets]  # type: ignore[arg-type]
             self._edge_registry.append(
                 _MultiSelectionEdgeGroupRegistration(
-                    source=source,
-                    targets=list(targets),  # type: ignore
+                    source=resolved_source,
+                    targets=resolved_targets,
                     selection_func=selection_func,
                 )
             )
@@ -895,7 +932,10 @@ class WorkflowBuilder:
 
         if all(isinstance(s, str) for s in sources) and isinstance(target, str):
             # Both are names; defer resolution to build time
-            self._edge_registry.append(_FanInEdgeRegistration(sources=list(sources), target=target))  # type: ignore
+            # Resolve workflow logical IDs: sources use exit points, target uses entry point
+            resolved_sources = [self._resolve_workflow_exit(s) for s in sources]  # type: ignore[arg-type]
+            resolved_target = self._resolve_workflow_entry(target)
+            self._edge_registry.append(_FanInEdgeRegistration(sources=resolved_sources, target=resolved_target))
             return self
 
         # Both are Executor/AgentProtocol instances; wrap and add now
@@ -1030,7 +1070,8 @@ class WorkflowBuilder:
             logger.warning(f"Overwriting existing start executor: {start_id} for the workflow.")
 
         if isinstance(executor, str):
-            self._start_executor = executor
+            # Resolve workflow logical ID to entry point
+            self._start_executor = self._resolve_workflow_entry(executor)
         else:
             wrapped = self._maybe_wrap_agent(executor)  # type: ignore[arg-type]
             self._start_executor = wrapped
@@ -1140,6 +1181,226 @@ class WorkflowBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
+    def add_workflow(
+        self,
+        source: Any,
+        *,
+        id: str,
+    ) -> Self:
+        """Merge an orchestration pattern or workflow builder into this builder.
+
+        This method enables workflow composition by inlining executors from high-level
+        orchestration builders (ConcurrentBuilder, SequentialBuilder, etc.) or other
+        WorkflowBuilder instances into this builder.
+
+        The provided `id` becomes a logical identifier that can be used with
+        ``add_edge()`` and ``set_start_executor()``. The framework automatically
+        resolves these logical IDs to the actual entry/exit points of the merged
+        workflow.
+
+        Args:
+            source: An orchestration builder (ConcurrentBuilder, SequentialBuilder, etc.)
+                or another WorkflowBuilder instance.
+            id: Logical identifier for the merged workflow. Used with ``add_edge()``
+                and ``set_start_executor()``. Internal executor IDs are prefixed with
+                this id (e.g., "analysis/dispatcher").
+
+        Returns:
+            Self for method chaining.
+
+        Raises:
+            ValueError: If the source doesn't have a ``_to_builder()`` method or if
+                the id conflicts with an existing registered name.
+
+        Example:
+            Compose two high-level orchestration patterns:
+
+            .. code-block:: python
+
+                from agent_framework import (
+                    ConcurrentBuilder,
+                    SequentialBuilder,
+                    WorkflowBuilder,
+                )
+
+                # Create high-level patterns
+                analysis = ConcurrentBuilder().participants([agent1, agent2])
+                summary = SequentialBuilder().participants([summarizer])
+
+                # Compose them together
+                workflow = (
+                    WorkflowBuilder()
+                    .add_workflow(analysis, id="analysis")
+                    .add_workflow(summary, id="summary")
+                    .add_edge("analysis", "summary")  # Framework resolves entry/exit
+                    .set_start_executor("analysis")  # Framework knows entry point
+                    .build()
+                )
+
+            Add pre/post-processing to a high-level pattern:
+
+            .. code-block:: python
+
+                workflow = (
+                    WorkflowBuilder()
+                    .register_executor(Preprocessor, name="preprocess")
+                    .add_workflow(analysis_builder, id="analysis")
+                    .register_executor(Postprocessor, name="postprocess")
+                    .add_edge("preprocess", "analysis")
+                    .add_edge("analysis", "postprocess")
+                    .set_start_executor("preprocess")
+                    .build()
+                )
+        """
+        # Check for ID conflicts
+        if id in self._executor_registry:
+            raise ValueError(f"Workflow ID '{id}' conflicts with an existing registered executor name.")
+        if id in self._workflow_mappings:
+            raise ValueError(f"Workflow ID '{id}' has already been used.")
+
+        # Extract the builder and entry/exit information from the source
+        if hasattr(source, "_to_builder"):
+            inner_builder, start_id, terminal_ids = source._to_builder()
+        elif isinstance(source, WorkflowBuilder):
+            # For WorkflowBuilder, we need to extract its structure
+            inner_builder = source
+            if inner_builder._start_executor is None:
+                raise ValueError("Source WorkflowBuilder must have a start executor set.")
+            if isinstance(inner_builder._start_executor, str):
+                start_id = inner_builder._start_executor
+            else:
+                start_id = inner_builder._start_executor.id
+            # For raw WorkflowBuilder, we don't know the terminal executors
+            # The user will need to use explicit IDs or rely on validation
+            terminal_ids = []
+        else:
+            raise ValueError(
+                f"Source must be an orchestration builder (ConcurrentBuilder, SequentialBuilder, etc.) "
+                f"or a WorkflowBuilder. Got {type(source).__name__}."
+            )
+
+        # Merge executors from the inner builder with prefixed IDs
+        for exec_id, executor in inner_builder._executors.items():
+            prefixed_id = f"{id}/{exec_id}"
+            # Clone the executor with a new ID
+            cloned = executor._clone_with_id(prefixed_id)
+            self._executors[prefixed_id] = cloned
+            # Note: Internal edge groups are already included in inner_builder._edge_groups
+            # and will be prefixed and copied below
+
+        # Copy edge groups with prefixed IDs
+        for edge_group in inner_builder._edge_groups:
+            prefixed_group = edge_group._with_prefix(id)
+            self._edge_groups.append(prefixed_group)
+
+        # Copy executor registry with prefixed names
+        for name, factory in inner_builder._executor_registry.items():
+            prefixed_name = f"{id}/{name}"
+
+            def make_prefixed_factory(original_factory: Callable[[], Executor], prefix: str) -> Callable[[], Executor]:
+                def factory_fn() -> Executor:
+                    executor = original_factory()
+                    return executor._clone_with_id(f"{prefix}/{executor.id}")
+
+                return factory_fn
+
+            self._executor_registry[prefixed_name] = make_prefixed_factory(factory, id)
+
+        # Copy edge registry with prefixed IDs
+        for registration in inner_builder._edge_registry:
+            prefixed_reg = self._prefix_edge_registration(registration, id)
+            self._edge_registry.append(prefixed_reg)
+
+        # Track the workflow mapping for logical ID resolution
+        prefixed_start = f"{id}/{start_id}"
+        prefixed_terminals = [f"{id}/{tid}" for tid in terminal_ids]
+        self._workflow_mappings[id] = _WorkflowMapping(entry=prefixed_start, exits=prefixed_terminals)
+
+        return self
+
+    def _prefix_edge_registration(
+        self,
+        registration: _EdgeRegistration
+        | _FanOutEdgeRegistration
+        | _SwitchCaseEdgeGroupRegistration
+        | _MultiSelectionEdgeGroupRegistration
+        | _FanInEdgeRegistration,
+        prefix: str,
+    ) -> (
+        _EdgeRegistration
+        | _FanOutEdgeRegistration
+        | _SwitchCaseEdgeGroupRegistration
+        | _MultiSelectionEdgeGroupRegistration
+        | _FanInEdgeRegistration
+    ):
+        """Create a copy of an edge registration with prefixed IDs."""
+        match registration:
+            case _EdgeRegistration(source, target, condition):
+                return _EdgeRegistration(
+                    source=f"{prefix}/{source}",
+                    target=f"{prefix}/{target}",
+                    condition=condition,
+                )
+            case _FanOutEdgeRegistration(source, targets):
+                return _FanOutEdgeRegistration(
+                    source=f"{prefix}/{source}",
+                    targets=[f"{prefix}/{t}" for t in targets],
+                )
+            case _FanInEdgeRegistration(sources, target):
+                return _FanInEdgeRegistration(
+                    sources=[f"{prefix}/{s}" for s in sources],
+                    target=f"{prefix}/{target}",
+                )
+            case _SwitchCaseEdgeGroupRegistration(source, cases):
+                prefixed_cases: list[Case | Default] = []
+                for case in cases:
+                    if isinstance(case, Default):
+                        prefixed_cases.append(Default(target=f"{prefix}/{case.target}"))
+                    else:
+                        prefixed_cases.append(Case(condition=case.condition, target=f"{prefix}/{case.target}"))
+                return _SwitchCaseEdgeGroupRegistration(
+                    source=f"{prefix}/{source}",
+                    cases=prefixed_cases,
+                )
+            case _MultiSelectionEdgeGroupRegistration(source, targets, selection_func):
+                return _MultiSelectionEdgeGroupRegistration(
+                    source=f"{prefix}/{source}",
+                    targets=[f"{prefix}/{t}" for t in targets],
+                    selection_func=selection_func,
+                )
+            case _:
+                raise ValueError(f"Unknown edge registration type: {type(registration)}")
+
+    def _resolve_workflow_entry(self, id: str) -> str:
+        """Resolve a logical workflow ID to its entry point executor ID.
+
+        If the ID is a workflow logical ID, returns the entry point.
+        Otherwise, returns the ID unchanged.
+        """
+        if id in self._workflow_mappings:
+            return self._workflow_mappings[id].entry
+        return id
+
+    def _resolve_workflow_exit(self, id: str) -> str:
+        """Resolve a logical workflow ID to its exit point executor ID.
+
+        If the ID is a workflow logical ID, returns the single exit point.
+        Raises if the workflow has multiple exit points.
+        Otherwise, returns the ID unchanged.
+        """
+        if id in self._workflow_mappings:
+            mapping = self._workflow_mappings[id]
+            if len(mapping.exits) == 0:
+                raise ValueError(
+                    f"Workflow '{id}' has no known exit points. Use explicit executor IDs like '{id}/<executor_id>'."
+                )
+            if len(mapping.exits) != 1:
+                raise ValueError(
+                    f"Workflow '{id}' has {len(mapping.exits)} exit points. Use explicit IDs: {mapping.exits}"
+                )
+            return mapping.exits[0]
+        return id
+
     def _resolve_edge_registry(
         self,
     ) -> tuple[Executor, list[Executor], list[EdgeGroup]]:
@@ -1150,6 +1411,9 @@ class WorkflowBuilder:
         start_executor: Executor | None = None
         if isinstance(self._start_executor, Executor):
             start_executor = self._start_executor
+        elif isinstance(self._start_executor, str) and self._start_executor in self._executors:
+            # Start executor is from a merged workflow (via add_workflow)
+            start_executor = self._executors[self._start_executor]
 
         # Maps registered factory names to created executor instances for edge resolution
         factory_name_to_instance: dict[str, Executor] = {}
@@ -1170,10 +1434,14 @@ class WorkflowBuilder:
             factory_name_to_instance[name] = instance
 
         def _get_executor(name: str) -> Executor:
-            """Helper to get executor by the registered name. Raises if not found."""
-            if name not in factory_name_to_instance:
-                raise ValueError(f"Factory '{name}' has not been registered.")
-            return factory_name_to_instance[name]
+            """Helper to get executor by the registered name or prefixed ID. Raises if not found."""
+            # First check factory name to instance (from executor registry)
+            if name in factory_name_to_instance:
+                return factory_name_to_instance[name]
+            # Then check direct executors (from add_workflow)
+            if name in self._executors:
+                return self._executors[name]
+            raise ValueError(f"Factory '{name}' has not been registered.")
 
         for registration in self._edge_registry:
             match registration:
