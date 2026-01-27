@@ -1083,10 +1083,10 @@ def test_enable_instrumentation_function(monkeypatch):
     """Test enable_instrumentation function enables instrumentation."""
     import importlib
 
-    import agent_framework.observability as observability
-
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
     monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
     importlib.reload(observability)
 
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
@@ -1099,10 +1099,10 @@ def test_enable_instrumentation_with_sensitive_data(monkeypatch):
     """Test enable_instrumentation function with sensitive_data parameter."""
     import importlib
 
-    import agent_framework.observability as observability
-
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
     monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
     importlib.reload(observability)
 
     observability.enable_instrumentation(enable_sensitive_data=True)
@@ -1218,9 +1218,9 @@ def test_workflow_tracer_disabled(monkeypatch):
 
     from opentelemetry import trace
 
-    import agent_framework.observability as observability
-
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+
+    observability = importlib.import_module("agent_framework.observability")
     importlib.reload(observability)
 
     tracer = observability.workflow_tracer()
@@ -1697,6 +1697,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent instrumentation captures exceptions."""
+    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class FailingAgent(AgentProtocol):
@@ -1728,8 +1729,9 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
             raise RuntimeError("Agent failed")
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
+            # yield before raise to make this an async generator
+            yield AgentResponseUpdate(text="", role=Role.ASSISTANT)
             raise RuntimeError("Agent failed")
-            yield  # Make it a generator
 
     decorated_agent = use_agent_instrumentation(FailingAgent)
     agent = decorated_agent()
@@ -2100,20 +2102,26 @@ def test_get_token_usage_histogram():
 # region Test capture_exception
 
 
-def test_capture_exception():
+def test_capture_exception(span_exporter: InMemorySpanExporter):
     """Test capture_exception adds exception info to span."""
-    from unittest.mock import Mock
+    from time import time_ns
 
-    from agent_framework.observability import capture_exception
+    from opentelemetry.trace import StatusCode
 
-    mock_span = Mock()
-    exception = ValueError("Test error")
-    timestamp = 12345
+    from agent_framework.observability import capture_exception, get_tracer
 
-    capture_exception(span=mock_span, exception=exception, timestamp=timestamp)
+    span_exporter.clear()
+    tracer = get_tracer()
 
-    mock_span.set_status.assert_called_once()
-    mock_span.record_exception.assert_called_once()
+    with tracer.start_as_current_span("test_span") as span:
+        exception = ValueError("Test error")
+        capture_exception(span=span, exception=exception, timestamp=time_ns())
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].status.status_code == StatusCode.ERROR
+    # Verify exception was recorded
+    assert len(spans[0].events) > 0
 
 
 # region Test _get_span
@@ -2177,14 +2185,17 @@ def test_get_span_attributes_with_agent_info():
 
 
 def test_capture_response(span_exporter: InMemorySpanExporter):
-    """Test _capture_response records to histograms."""
-    from unittest.mock import Mock
+    """Test _capture_response sets span attributes and records to histograms."""
+    from agent_framework.observability import OtelAttr, _capture_response, get_tracer
 
-    from agent_framework.observability import OtelAttr, _capture_response
+    span_exporter.clear()
+    tracer = get_tracer()
 
-    mock_span = Mock()
-    mock_token_histogram = Mock()
-    mock_duration_histogram = Mock()
+    # Create real histograms
+    from agent_framework.observability import _get_duration_histogram, _get_token_usage_histogram
+
+    token_histogram = _get_token_usage_histogram()
+    duration_histogram = _get_duration_histogram()
 
     attrs = {
         "gen_ai.request.model": "test-model",
@@ -2192,12 +2203,16 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
         OtelAttr.OUTPUT_TOKENS: 50,
     }
 
-    _capture_response(
-        span=mock_span,
-        attributes=attrs,
-        token_usage_histogram=mock_token_histogram,
-        operation_duration_histogram=mock_duration_histogram,
-    )
+    with tracer.start_as_current_span("test_span") as span:
+        _capture_response(
+            span=span,
+            attributes=attrs,
+            token_usage_histogram=token_histogram,
+            operation_duration_histogram=duration_histogram,
+        )
 
-    # Token histogram should be called for input and output tokens
-    assert mock_token_histogram.record.call_count >= 0  # May or may not be called depending on implementation
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    # Verify attributes were set on the span
+    assert spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
+    assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
