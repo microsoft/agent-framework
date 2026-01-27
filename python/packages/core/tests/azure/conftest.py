@@ -31,7 +31,7 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         override_env_param_dict = {}
 
     env_vars = {
-        "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.com",
+        "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.openai.azure.com",
         "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "test_chat_deployment",
         "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME": "test_chat_deployment",
         "AZURE_OPENAI_TEXT_DEPLOYMENT_NAME": "test_text_deployment",

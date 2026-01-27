@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 import pytest
 from azure.identity import AzureCliCredential
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 from pytest import param
 
@@ -119,6 +120,22 @@ def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) ->
         )
 
 
+def test_check_model_presence_sets_model(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that _check_model_presence sets model from deployment_name."""
+    client = AzureOpenAIResponsesClient()
+    options: dict[str, Any] = {}
+    client._check_model_presence(options)  # type: ignore
+    assert options["model"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+
+
+def test_check_model_presence_preserves_existing_model(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that _check_model_presence does not override an existing model."""
+    client = AzureOpenAIResponsesClient()
+    options: dict[str, Any] = {"model": "custom-model"}
+    client._check_model_presence(options)  # type: ignore
+    assert options["model"] == "custom-model"
+
+
 def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
@@ -138,6 +155,59 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         assert dumped_settings["default_headers"][key] == value
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
     assert "User-Agent" not in dumped_settings["default_headers"]
+
+
+def test_responses_client_uses_custom_base_url_when_provided() -> None:
+    """Test that a custom base_url is used directly when provided."""
+    custom_base_url = "https://custom.example.com/my/path/"
+
+    client = AzureOpenAIResponsesClient(
+        deployment_name="gpt-4o",
+        base_url=custom_base_url,
+        api_key="test-key",
+    )
+
+    assert client.client is not None
+    assert isinstance(client.client, AsyncOpenAI)
+    assert str(client.client.base_url) == custom_base_url
+
+
+def test_responses_client_constructs_v1_url_for_openai_azure_com_endpoint() -> None:
+    """Test v1 URL construction for .openai.azure.com endpoints."""
+    client = AzureOpenAIResponsesClient(
+        deployment_name="gpt-4o",
+        endpoint="https://my-resource.openai.azure.com",
+        api_key="test-key",
+    )
+
+    assert client.client is not None
+    assert isinstance(client.client, AsyncOpenAI)
+    assert str(client.client.base_url) == "https://my-resource.openai.azure.com/openai/v1/"
+
+
+def test_responses_client_constructs_v1_url_for_services_ai_azure_com_endpoint() -> None:
+    """Test v1 URL construction for .services.ai.azure.com endpoints."""
+    client = AzureOpenAIResponsesClient(
+        deployment_name="gpt-4o",
+        endpoint="https://my-resource.services.ai.azure.com",
+        api_key="test-key",
+    )
+
+    assert client.client is not None
+    assert isinstance(client.client, AsyncOpenAI)
+    assert str(client.client.base_url) == "https://my-resource.services.ai.azure.com/openai/v1/"
+
+
+def test_responses_client_raises_error_for_non_standard_endpoint() -> None:
+    """Test that non-standard endpoints raise an error."""
+    with pytest.raises(ServiceInitializationError) as exc_info:
+        AzureOpenAIResponsesClient(
+            deployment_name="gpt-4o",
+            endpoint="https://api.openai.com",
+            api_key="test-key",
+        )
+
+    assert "Please provide an endpoint or a base_url" in str(exc_info.value)
 
 
 # region Integration Tests

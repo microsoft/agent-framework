@@ -3,11 +3,11 @@
 import json
 import logging
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Generic, TypedDict
 
 from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import ValidationError
@@ -152,13 +152,12 @@ class AzureOpenAIChatClient(
         deployment_name: str | None = None,
         endpoint: str | None = None,
         base_url: str | None = None,
-        api_version: str | None = None,
         ad_token: str | None = None,
-        ad_token_provider: AsyncAzureADTokenProvider | None = None,
+        ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
         credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
-        async_client: AsyncAzureOpenAI | None = None,
+        async_client: AsyncOpenAI | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
@@ -176,11 +175,9 @@ class AzureOpenAIChatClient(
                 in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
             base_url: The deployment base URL. If provided will override the value
-                in the env vars or .env file.
+                in the env vars or .env file. For standard Azure endpoints, /openai/v1/ is
+                appended automatically.
                 Can also be set via environment variable AZURE_OPENAI_BASE_URL.
-            api_version: The deployment API version. If provided will override the value
-                in the env vars or .env file.
-                Can also be set via environment variable AZURE_OPENAI_API_VERSION.
             ad_token: The Azure Active Directory token.
             ad_token_provider: The Azure Active Directory token provider.
             token_endpoint: The token endpoint to request an Azure token.
@@ -236,7 +233,6 @@ class AzureOpenAIChatClient(
                 base_url=base_url,  # type: ignore
                 endpoint=endpoint,  # type: ignore
                 chat_deployment_name=deployment_name,
-                api_version=api_version,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
                 token_endpoint=token_endpoint,
@@ -254,7 +250,6 @@ class AzureOpenAIChatClient(
             deployment_name=azure_openai_settings.chat_deployment_name,
             endpoint=azure_openai_settings.endpoint,
             base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
             api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
