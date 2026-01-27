@@ -157,6 +157,9 @@ public abstract class Executor : IIdentified
             return null; // Void result.
         }
 
+        // Output is not available if executor does not return anything, in which case
+        // messages sent in the handlers of this executor will be set in the message
+        // send activities.
         telemetryContext.SetExecutorOutput(activity, result.Result);
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
