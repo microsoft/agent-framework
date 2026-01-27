@@ -50,7 +50,8 @@ def analyze_content(
     return f"Analyzing content for: {query}"
 
 
-@tool
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def summarize_document(
     length: Annotated[str, "Desired summary length: 'brief', 'medium', or 'detailed'"] = "medium",
 ) -> str:
@@ -58,7 +59,7 @@ def summarize_document(
     return f"Generating {length} summary of the document..."
 
 
-@tool
+@tool(approval_mode="never_require")
 def extract_key_points(
     max_points: Annotated[int, "Maximum number of key points to extract"] = 5,
 ) -> str:

@@ -2,6 +2,10 @@
 
 This folder contains examples demonstrating how to use local tools with the Agent Framework. Local tools allow agents to interact with external systems, perform computations, and execute custom logic.
 
+Note: Several examples set `approval_mode="never_require"` to keep the samples concise. For production scenarios,
+keep `approval_mode="always_require"` unless you are confident in the tool behavior and approval flow. See
+`function_tool_with_approval.py` and `function_tool_with_approval_and_threads.py` for end-to-end approval handling.
+
 ## Examples
 
 | File | Description |
@@ -36,7 +40,7 @@ This folder contains examples demonstrating how to use local tools with the Agen
 from agent_framework import tool
 from typing import Annotated
 
-@tool
+@tool(approval_mode="never_require")
 def my_tool(param: Annotated[str, "Description"]) -> str:
     """Tool description for the AI."""
     return f"Result: {param}"

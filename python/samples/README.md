@@ -292,6 +292,12 @@ These samples demonstrate durable agent hosting using the Durable Task Scheduler
 
 ## Tools
 
+Note: Many tool samples set `approval_mode="never_require"` to keep the examples concise. For production scenarios,
+keep `approval_mode="always_require"` unless you are confident in the tool behavior and approval flow. See
+`getting_started/tools/function_tool_with_approval.py` and
+`getting_started/tools/function_tool_with_approval_and_threads.py`, plus the workflow approval samples in
+`getting_started/workflows/tool-approval/`, for end-to-end approval handling.
+
 | File | Description |
 |------|-------------|
 | [`getting_started/tools/function_tool_declaration_only.py`](./getting_started/tools/function_tool_declaration_only.py) | Function declarations without implementations for testing agent reasoning |

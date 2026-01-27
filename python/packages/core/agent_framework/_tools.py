@@ -33,7 +33,7 @@ from typing import (
     runtime_checkable,
 )
 
-from opentelemetry.metrics import Histogram
+from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
 
 from ._logging import get_logger
@@ -68,7 +68,9 @@ else:
 if sys.version_info >= (3, 13):
     from typing import TypeVar as TypeVarWithDefaults  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar as TypeVarWithDefaults  # type: ignore[import] # pragma: no cover
+    from typing_extensions import (
+        TypeVar as TypeVarWithDefaults,  # type: ignore[import] # pragma: no cover
+    )
 
 logger = get_logger()
 
@@ -97,14 +99,6 @@ TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 
 ArgsT = TypeVarWithDefaults("ArgsT", bound=BaseModel, default=BaseModel)
 ReturnT = TypeVarWithDefaults("ReturnT", default=Any)
-
-
-class _NoOpHistogram:
-    def record(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - trivial
-        return None
-
-
-_NOOP_HISTOGRAM = _NoOpHistogram()
 
 
 def _parse_inputs(
@@ -549,7 +543,7 @@ def _default_histogram() -> Histogram:
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
     if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
-        return _NOOP_HISTOGRAM  # type: ignore[return-value]
+        return NoOpHistogram()  # type: ignore[return-value]
     meter = get_meter()
     try:
         return meter.create_histogram(
@@ -588,7 +582,7 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
 
 
             # Using the decorator with string annotations
-            @tool
+            @tool(approval_mode="never_require")
             def get_weather(
                 location: Annotated[str, "The city name"],
                 unit: Annotated[str, "Temperature unit"] = "celsius",
@@ -637,7 +631,7 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
             name: The name of the function.
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
-                Default is that approval is not needed.
+                Default is that approval is required.
             max_invocations: The maximum number of times this function can be invoked.
                 If None, there is no limit. Should be at least 1.
             max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
@@ -658,8 +652,8 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
         self.func = func
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
-        self._cached_parameters: dict[str, Any] | None = None  # Cache for model_json_schema()
-        self.approval_mode = approval_mode or "never_require"
+        self._cached_parameters: dict[str, Any] | None = None
+        self.approval_mode = approval_mode or "always_require"
         if max_invocations is not None and max_invocations < 1:
             raise ValueError("max_invocations must be at least 1 or None.")
         if max_invocation_exceptions is not None and max_invocation_exceptions < 1:
@@ -965,8 +959,6 @@ def _parse_annotation(annotation: Any) -> Any:
 def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
     """Create a Pydantic model from a function's signature."""
     # Unwrap FunctionTool objects to get the underlying function
-    from agent_framework._tools import FunctionTool
-
     if isinstance(func, FunctionTool):
         func = func.func  # type: ignore[assignment]
 
@@ -1272,7 +1264,7 @@ def tool(
         description: A description of the function. If not provided, the function's
             docstring will be used.
         approval_mode: Whether or not approval is required to run this tool.
-            Default is that approval is not needed.
+            Default is that approval is required.
         max_invocations: The maximum number of times this function can be invoked.
             If None, there is no limit, should be at least 1.
         max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
@@ -1293,7 +1285,7 @@ def tool(
             from typing import Annotated
 
 
-            @tool
+            @tool(approval_mode="never_require")
             def tool_example(
                 arg1: Annotated[str, "The first argument"],
                 arg2: Annotated[int, "The second argument"],
@@ -1319,7 +1311,7 @@ def tool(
 
 
             # Async functions are also supported
-            @tool
+            @tool(approval_mode="never_require")
             async def async_get_weather(location: str) -> str:
                 '''Get weather asynchronously.'''
                 # Simulate async operation

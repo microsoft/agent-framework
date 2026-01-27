@@ -53,14 +53,15 @@ Prerequisites:
 """
 
 
-@tool
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_current_date() -> str:
     """Get the current date in YYYY-MM-DD format."""
     # For demonstration purposes, we return a fixed date.
     return "2025-11-07"
 
 
-@tool
+@tool(approval_mode="never_require")
 def get_team_members_email_addresses() -> list[dict[str, str]]:
     """Get the email addresses of team members."""
     # In a real implementation, this might query a database or directory service.
@@ -92,7 +93,7 @@ def get_team_members_email_addresses() -> list[dict[str, str]]:
     ]
 
 
-@tool
+@tool(approval_mode="never_require")
 def get_my_information() -> dict[str, str]:
     """Get my personal information."""
     return {

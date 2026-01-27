@@ -32,7 +32,8 @@ Prerequisites:
 
 
 # Define tools that accept custom context via **kwargs
-@tool
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_user_data(
     query: Annotated[str, Field(description="What user data to retrieve")],
     **kwargs: Any,
@@ -49,7 +50,7 @@ def get_user_data(
     return f"Retrieved data for user {user_name} with {access_level} access: {query}"
 
 
-@tool
+@tool(approval_mode="never_require")
 def call_api(
     endpoint_name: Annotated[str, Field(description="Name of the API endpoint to call")],
     **kwargs: Any,

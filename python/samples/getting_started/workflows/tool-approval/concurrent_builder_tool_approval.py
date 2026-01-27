@@ -45,7 +45,8 @@ Prerequisites:
 
 
 # 1. Define market data tools (no approval required)
-@tool
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""
     # Mock data for demonstration
@@ -54,7 +55,7 @@ def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     return f"{symbol.upper()}: ${price:.2f}"
 
 
-@tool
+@tool(approval_mode="never_require")
 def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get market sentiment analysis for a stock."""
     # Mock sentiment data
@@ -78,7 +79,7 @@ def execute_trade(
     return f"Trade executed: {action.upper()} {quantity} shares of {symbol.upper()}"
 
 
-@tool
+@tool(approval_mode="never_require")
 def get_portfolio_balance() -> str:
     """Get current portfolio balance and available funds."""
     return "Portfolio: $50,000 invested, $10,000 cash available. Holdings: AAPL, GOOGL, MSFT."

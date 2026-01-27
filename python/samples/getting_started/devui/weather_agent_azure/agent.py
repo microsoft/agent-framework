@@ -98,6 +98,8 @@ async def atlantis_location_filter_middleware(
     await next(context)
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
@@ -107,6 +109,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
+@tool(approval_mode="never_require")
 def get_forecast(
     location: Annotated[str, "The location to get the forecast for."],
     days: Annotated[int, "Number of days for forecast"] = 3,

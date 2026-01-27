@@ -51,7 +51,8 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # Define tool with @tool decorator (automatic schema inference)
-    @tool
+    # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+    @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get the weather for a location.
 

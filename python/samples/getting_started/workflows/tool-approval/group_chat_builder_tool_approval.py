@@ -44,13 +44,14 @@ Prerequisites:
 
 
 # 1. Define tools for different agents
-@tool
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def run_tests(test_suite: Annotated[str, "Name of the test suite to run"]) -> str:
     """Run automated tests for the application."""
     return f"Test suite '{test_suite}' completed: 47 passed, 0 failed, 0 skipped"
 
 
-@tool
+@tool(approval_mode="never_require")
 def check_staging_status() -> str:
     """Check the current status of the staging environment."""
     return "Staging environment: Healthy, Version 2.3.0 deployed, All services running"
@@ -65,7 +66,7 @@ def deploy_to_production(
     return f"Production deployment complete: Version {version}, Components: {components}"
 
 
-@tool
+@tool(approval_mode="never_require")
 def create_rollback_plan(version: Annotated[str, "The version being deployed"]) -> str:
     """Create a rollback plan for the deployment."""
     return (

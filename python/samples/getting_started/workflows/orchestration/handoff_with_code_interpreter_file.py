@@ -41,6 +41,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
+    tool,
 )
 from azure.identity.aio import AzureCliCredential
 

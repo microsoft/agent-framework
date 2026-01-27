@@ -20,7 +20,8 @@ It shows how to handle function call approvals without using threads.
 conditions = ["sunny", "cloudy", "raining", "snowing", "clear"]
 
 
-@tool
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(location: Annotated[str, "The city and state, e.g. San Francisco, CA"]) -> str:
     """Get the current weather for a given location."""
     # Simulate weather data

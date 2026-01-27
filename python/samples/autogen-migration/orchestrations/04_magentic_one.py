@@ -63,6 +63,7 @@ async def run_agent_framework() -> None:
         MagenticBuilder,
         MagenticFinalResultEvent,
         MagenticOrchestratorMessageEvent,
+        tool,
     )
     from agent_framework.openai import OpenAIChatClient
 

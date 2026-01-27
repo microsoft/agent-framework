@@ -11,6 +11,7 @@ from agent_framework import (
     GroupChatBuilder,
     Role,
     WorkflowOutputEvent,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
