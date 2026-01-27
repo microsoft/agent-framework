@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -21,7 +22,7 @@ from agent_framework._middleware import FunctionInvocationContext, FunctionMiddl
 async def test_base_client_with_function_calling(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -57,7 +58,7 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
 async def test_base_client_with_function_calling_resets(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -99,7 +100,7 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
 async def test_base_client_with_streaming_function_calling(chat_client_base: ChatClientProtocol):
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -142,7 +143,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: ChatC
 
     exec_counter = 0
 
-    @tool(name="start_todo_investigation")
+    @tool(name="start_todo_investigation", approval_mode="never_require")
     def ai_func(user_query: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -199,7 +200,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Cha
 
     exec_counter = 0
 
-    @tool(name="start_threaded_investigation")
+    @tool(name="start_threaded_investigation", approval_mode="never_require")
     def ai_func(user_query: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -319,7 +320,7 @@ async def test_function_invocation_scenarios(
         # Simulate a service-side thread with conversation_id
         conversation_id = "test-thread-123"
 
-    @tool(name="no_approval_func")
+    @tool(name="no_approval_func", approval_mode="never_require")
     def func_no_approval(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -745,7 +746,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
     """Test that MAX_ITERATIONS in additional_properties limits function call loops."""
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -814,7 +815,7 @@ async def test_function_invocation_config_enabled_false(chat_client_base: ChatCl
 async def test_function_invocation_config_max_consecutive_errors(chat_client_base: ChatClientProtocol):
     """Test that max_consecutive_errors_per_request limits error retries."""
 
-    @tool(name="error_function")
+    @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
         raise ValueError("Function error")
 
@@ -996,7 +997,7 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Cha
 async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: ChatClientProtocol):
     """Test that include_detailed_errors=False returns generic error messages."""
 
-    @tool(name="error_function")
+    @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should not appear")
 
@@ -1030,7 +1031,7 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
 async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: ChatClientProtocol):
     """Test that include_detailed_errors=True returns detailed error information."""
 
-    @tool(name="error_function")
+    @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should appear")
 
@@ -1100,7 +1101,7 @@ async def test_function_invocation_config_validation_max_consecutive_errors():
 async def test_argument_validation_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
     """Test that argument validation errors include details when include_detailed_errors=True."""
 
-    @tool(name="typed_function")
+    @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
@@ -1134,7 +1135,7 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
 async def test_argument_validation_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
     """Test that argument validation errors are generic when include_detailed_errors=False."""
 
-    @tool(name="typed_function")
+    @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
@@ -1547,14 +1548,14 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Chat
 
     exec_order = []
 
-    @tool(name="func1")
+    @tool(name="func1", approval_mode="never_require")
     async def func1(arg1: str) -> str:
         exec_order.append("func1_start")
         await asyncio.sleep(0.01)  # Small delay
         exec_order.append("func1_end")
         return f"Result1 {arg1}"
 
-    @tool(name="func2")
+    @tool(name="func2", approval_mode="never_require")
     async def func2(arg1: str) -> str:
         exec_order.append("func2_start")
         await asyncio.sleep(0.01)  # Small delay
@@ -1591,6 +1592,7 @@ async def test_callable_function_converted_to_tool(chat_client_base: ChatClientP
     """Test that plain callable functions are converted to FunctionTool."""
     exec_counter = 0
 
+    @tool(approval_mode="never_require")
     def plain_function(arg1: str) -> str:
         """A plain function without decorator."""
         nonlocal exec_counter
@@ -1621,7 +1623,7 @@ async def test_callable_function_converted_to_tool(chat_client_base: ChatClientP
 async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
     """Test that conversation_id is properly handled and messages are cleared."""
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def test_func(arg1: str) -> str:
         return f"Result {arg1}"
 
@@ -1653,7 +1655,7 @@ async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
 async def test_function_result_appended_to_existing_assistant_message(chat_client_base: ChatClientProtocol):
     """Test that function results are appended to existing assistant message when appropriate."""
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def test_func(arg1: str) -> str:
         return f"Result {arg1}"
 
@@ -1685,7 +1687,7 @@ async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtoco
 
     call_count = 0
 
-    @tool(name="sometimes_fails")
+    @tool(name="sometimes_fails", approval_mode="never_require")
     def sometimes_fails(arg1: str) -> str:
         nonlocal call_count
         call_count += 1
@@ -1777,7 +1779,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: ChatClientProtoc
     """Test that MAX_ITERATIONS in streaming mode limits function call loops."""
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -1829,7 +1831,7 @@ async def test_streaming_function_invocation_config_enabled_false(chat_client_ba
     """Test that setting enabled=False disables function invocation in streaming mode."""
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -1857,7 +1859,7 @@ async def test_streaming_function_invocation_config_enabled_false(chat_client_ba
 async def test_streaming_function_invocation_config_max_consecutive_errors(chat_client_base: ChatClientProtocol):
     """Test that max_consecutive_errors_per_request limits error retries in streaming mode."""
 
-    @tool(name="error_function")
+    @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
         raise ValueError("Function error")
 
@@ -1920,7 +1922,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_f
     """Test that terminate_on_unknown_calls=False returns error message for unknown functions in streaming mode."""
     exec_counter = 0
 
-    @tool(name="known_function")
+    @tool(name="known_function", approval_mode="never_require")
     def known_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -1963,7 +1965,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
     """Test that terminate_on_unknown_calls=True stops execution on unknown functions in streaming mode."""
     exec_counter = 0
 
-    @tool(name="known_function")
+    @tool(name="known_function", approval_mode="never_require")
     def known_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -1996,7 +1998,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
 async def test_streaming_function_invocation_config_include_detailed_errors_true(chat_client_base: ChatClientProtocol):
     """Test that include_detailed_errors=True returns detailed error information in streaming mode."""
 
-    @tool(name="error_function")
+    @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should appear")
 
@@ -2036,7 +2038,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
 ):
     """Test that include_detailed_errors=False returns generic error messages in streaming mode."""
 
-    @tool(name="error_function")
+    @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should not appear")
 
@@ -2074,7 +2076,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
 async def test_streaming_argument_validation_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
     """Test that argument validation errors include details when include_detailed_errors=True in streaming mode."""
 
-    @tool(name="typed_function")
+    @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
@@ -2112,7 +2114,7 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
 async def test_streaming_argument_validation_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
     """Test that argument validation errors are generic when include_detailed_errors=False in streaming mode."""
 
-    @tool(name="typed_function")
+    @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
@@ -2149,18 +2151,17 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
 
 async def test_streaming_multiple_function_calls_parallel_execution(chat_client_base: ChatClientProtocol):
     """Test that multiple function calls are executed in parallel in streaming mode."""
-    import asyncio
 
     exec_order = []
 
-    @tool(name="func1")
+    @tool(name="func1", approval_mode="never_require")
     async def func1(arg1: str) -> str:
         exec_order.append("func1_start")
         await asyncio.sleep(0.01)  # Small delay
         exec_order.append("func1_end")
         return f"Result1 {arg1}"
 
-    @tool(name="func2")
+    @tool(name="func2", approval_mode="never_require")
     async def func2(arg1: str) -> str:
         exec_order.append("func2_start")
         await asyncio.sleep(0.01)  # Small delay
@@ -2238,7 +2239,7 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: ChatCli
 
     call_count = 0
 
-    @tool(name="sometimes_fails")
+    @tool(name="sometimes_fails", approval_mode="never_require")
     def sometimes_fails(arg1: str) -> str:
         nonlocal call_count
         call_count += 1
@@ -2306,7 +2307,7 @@ async def test_terminate_loop_single_function_call(chat_client_base: ChatClientP
     """Test that terminate_loop=True exits the function calling loop after single function call."""
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1
@@ -2367,13 +2368,13 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     normal_call_count = 0
     terminating_call_count = 0
 
-    @tool(name="normal_function")
+    @tool(name="normal_function", approval_mode="never_require")
     def normal_func(arg1: str) -> str:
         nonlocal normal_call_count
         normal_call_count += 1
         return f"Normal {arg1}"
 
-    @tool(name="terminating_function")
+    @tool(name="terminating_function", approval_mode="never_require")
     def terminating_func(arg1: str) -> str:
         nonlocal terminating_call_count
         terminating_call_count += 1
@@ -2423,7 +2424,7 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: C
     """Test that terminate_loop=True exits the streaming function calling loop."""
     exec_counter = 0
 
-    @tool(name="test_function")
+    @tool(name="test_function", approval_mode="never_require")
     def ai_func(arg1: str) -> str:
         nonlocal exec_counter
         exec_counter += 1

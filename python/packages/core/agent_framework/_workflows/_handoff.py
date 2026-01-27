@@ -351,13 +351,13 @@ class HandoffAgentExecutor(AgentExecutor):
         """Construct the synthetic handoff tool that signals routing to `target_id`."""
         tool_name = get_handoff_tool_name(target_id)
         doc = description or f"Handoff to the {target_id} agent."
-        # Note: approval_mode is intentionally NOT set for handoff tools.
-        # Handoff tools are framework-internal signals that trigger routing logic,
-        # not actual function executions. They are automatically intercepted by
+        # Note: approval_mode is set to "never_require" for handoff tools because
+        # they are framework-internal signals that trigger routing logic, not
+        # actual function executions. They are automatically intercepted by
         # _AutoHandoffMiddleware which short-circuits execution and provides synthetic
         # results, so the function body never actually runs in practice.
 
-        @tool(name=tool_name, description=doc)
+        @tool(name=tool_name, description=doc, approval_mode="never_require")
         def _handoff_tool(context: str | None = None) -> str:
             """Return a deterministic acknowledgement that encodes the target alias."""
             return f"Handoff to {target_id}"

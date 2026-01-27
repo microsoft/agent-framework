@@ -977,7 +977,7 @@ def mock_chat_client():
     return MockChatClient()
 
 
-@tool(name="no_approval_tool", description="Tool that doesn't require approval")
+@tool(name="no_approval_tool", description="Tool that doesn't require approval", approval_mode="never_require")
 def no_approval_tool(x: int) -> int:
     """A tool that doesn't require approval."""
     return x * 2

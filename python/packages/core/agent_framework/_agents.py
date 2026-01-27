@@ -496,6 +496,7 @@ class BaseAgent(SerializationMixin):
             description=tool_description,
             func=agent_wrapper,
             input_model=input_model,  # type: ignore
+            approval_mode="never_require",
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool

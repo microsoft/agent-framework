@@ -564,7 +564,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
 
     captured: dict[str, Any] = {}
 
-    @tool(name="echo_thread_info")
+    @tool(name="echo_thread_info", approval_mode="never_require")
     def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
         thread = kwargs.get("thread")
         captured["has_thread"] = thread is not None

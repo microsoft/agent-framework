@@ -28,7 +28,7 @@ from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
 _received_kwargs: list[dict[str, Any]] = []
 
 
-@tool
+@tool(approval_mode="never_require")
 def tool_with_kwargs(
     action: Annotated[str, "The action to perform"],
     **kwargs: Any,

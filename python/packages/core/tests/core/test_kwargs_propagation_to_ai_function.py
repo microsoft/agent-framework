@@ -21,7 +21,7 @@ class TestKwargsPropagationToFunctionTool:
         """Test that kwargs passed to get_response() are available in @tool **kwargs."""
         captured_kwargs: dict[str, Any] = {}
 
-        @tool
+        @tool(approval_mode="never_require")
         def capture_kwargs_tool(x: int, **kwargs: Any) -> str:
             """A tool that captures kwargs for testing."""
             captured_kwargs.update(kwargs)
@@ -78,7 +78,7 @@ class TestKwargsPropagationToFunctionTool:
     async def test_kwargs_not_forwarded_to_tool_without_kwargs(self) -> None:
         """Test that kwargs are NOT forwarded to @tool that doesn't accept **kwargs."""
 
-        @tool
+        @tool(approval_mode="never_require")
         def simple_tool(x: int) -> str:
             """A simple tool without **kwargs."""
             # This should not receive any extra kwargs
@@ -120,7 +120,7 @@ class TestKwargsPropagationToFunctionTool:
         """Test that kwargs don't leak between different function call invocations."""
         invocation_kwargs: list[dict[str, Any]] = []
 
-        @tool
+        @tool(approval_mode="never_require")
         def tracking_tool(name: str, **kwargs: Any) -> str:
             """A tool that tracks kwargs from each invocation."""
             invocation_kwargs.append(dict(kwargs))
@@ -173,7 +173,7 @@ class TestKwargsPropagationToFunctionTool:
         """Test that kwargs propagate to @tool in streaming mode."""
         captured_kwargs: dict[str, Any] = {}
 
-        @tool
+        @tool(approval_mode="never_require")
         def streaming_capture_tool(value: str, **kwargs: Any) -> str:
             """A tool that captures kwargs during streaming."""
             captured_kwargs.update(kwargs)

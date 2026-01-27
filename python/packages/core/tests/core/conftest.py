@@ -68,7 +68,7 @@ def ai_tool() -> ToolProtocol:
 def tool_tool() -> ToolProtocol:
     """Returns a executable ToolProtocol."""
 
-    @tool
+    @tool(approval_mode="never_require")
     def simple_function(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y

@@ -528,7 +528,7 @@ def create_mock_ai_function(name: str, description: str = "A mock function") -> 
     def mock_func(arg: str) -> str:
         return f"Result from {name}: {arg}"
 
-    return FunctionTool(func=mock_func, name=name, description=description)
+    return FunctionTool(func=mock_func, name=name, description=description, approval_mode="never_require")
 
 
 async def test_provider_create_agent_with_mcp_tool(
