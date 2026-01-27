@@ -2280,3 +2280,279 @@ def test_prepare_function_call_results_text_content_with_non_string_text():
 
 
 # endregion
+
+
+# region Test Content._add_usage_content
+
+
+def test_content_add_usage_content():
+    """Test adding two usage content instances combines their usage details."""
+    usage1 = Content(
+        type="usage",
+        usage_details={"input_token_count": 100, "output_token_count": 50},
+        raw_representation="raw1",
+    )
+    usage2 = Content(
+        type="usage",
+        usage_details={"input_token_count": 200, "output_token_count": 100},
+        raw_representation="raw2",
+    )
+
+    result = usage1 + usage2
+
+    assert result.type == "usage"
+    assert result.usage_details["input_token_count"] == 300
+    assert result.usage_details["output_token_count"] == 150
+    # Raw representations should be combined
+    assert isinstance(result.raw_representation, list)
+    assert "raw1" in result.raw_representation
+    assert "raw2" in result.raw_representation
+
+
+def test_content_add_usage_content_with_none_raw_representation():
+    """Test adding usage content when one has None raw_representation."""
+    usage1 = Content(
+        type="usage",
+        usage_details={"input_token_count": 100},
+        raw_representation=None,
+    )
+    usage2 = Content(
+        type="usage",
+        usage_details={"output_token_count": 50},
+        raw_representation="raw2",
+    )
+
+    result = usage1 + usage2
+
+    assert result.raw_representation == "raw2"
+
+
+def test_content_add_usage_content_non_integer_values():
+    """Test adding usage content with non-integer values."""
+    usage1 = Content(
+        type="usage",
+        usage_details={"model": "gpt-4", "count": 10},
+    )
+    usage2 = Content(
+        type="usage",
+        usage_details={"model": "gpt-3.5", "count": 20},
+    )
+
+    result = usage1 + usage2
+
+    # Non-integer "model" should take first non-None value
+    assert result.usage_details["model"] == "gpt-4"
+    # Integer "count" should be summed
+    assert result.usage_details["count"] == 30
+
+
+# endregion
+
+
+# region Test Content.has_top_level_media_type
+
+
+def test_content_has_top_level_media_type():
+    """Test has_top_level_media_type returns correct boolean."""
+    image = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+
+    assert image.has_top_level_media_type("image") is True
+    assert image.has_top_level_media_type("IMAGE") is True  # Case insensitive
+    assert image.has_top_level_media_type("audio") is False
+
+
+def test_content_has_top_level_media_type_no_slash():
+    """Test has_top_level_media_type when media_type has no slash."""
+    content = Content(type="data", media_type="text")
+
+    assert content.has_top_level_media_type("text") is True
+
+
+def test_content_has_top_level_media_type_raises_without_media_type():
+    """Test has_top_level_media_type raises ContentError when no media_type."""
+    content = Content(type="text", text="hello")
+
+    with raises(ContentError, match="no media_type found"):
+        content.has_top_level_media_type("text")
+
+
+# endregion
+
+
+# region Test Content.parse_arguments
+
+
+def test_content_parse_arguments_none():
+    """Test parse_arguments returns None when arguments is None."""
+    content = Content(type="function_call", call_id="1", name="test", arguments=None)
+
+    assert content.parse_arguments() is None
+
+
+def test_content_parse_arguments_empty_string():
+    """Test parse_arguments returns empty dict for empty string."""
+    content = Content(type="function_call", call_id="1", name="test", arguments="")
+
+    assert content.parse_arguments() == {}
+
+
+def test_content_parse_arguments_valid_json():
+    """Test parse_arguments parses valid JSON string."""
+    content = Content(type="function_call", call_id="1", name="test", arguments='{"key": "value"}')
+
+    result = content.parse_arguments()
+    assert result == {"key": "value"}
+
+
+def test_content_parse_arguments_non_dict_json():
+    """Test parse_arguments wraps non-dict JSON in 'raw' key."""
+    content = Content(type="function_call", call_id="1", name="test", arguments='"just a string"')
+
+    result = content.parse_arguments()
+    # The JSON is parsed, and if it's not a dict, wrapped in 'raw'
+    assert result == {"raw": "just a string"}
+
+
+def test_content_parse_arguments_invalid_json():
+    """Test parse_arguments wraps invalid JSON in 'raw' key."""
+    content = Content(type="function_call", call_id="1", name="test", arguments="not json at all")
+
+    result = content.parse_arguments()
+    assert result == {"raw": "not json at all"}
+
+
+def test_content_parse_arguments_dict_passthrough():
+    """Test parse_arguments passes through dict arguments."""
+    args = {"key": "value", "num": 42}
+    content = Content(type="function_call", call_id="1", name="test", arguments=args)
+
+    result = content.parse_arguments()
+    assert result == args
+
+
+# endregion
+
+
+# region Test _get_data_bytes_as_str
+
+
+def test_get_data_bytes_as_str_non_data_uri():
+    """Test _get_data_bytes_as_str returns None for non-data URIs."""
+    from agent_framework._types import _get_data_bytes_as_str
+
+    content = Content(type="uri", uri="https://example.com/image.png")
+    assert _get_data_bytes_as_str(content) is None
+
+
+def test_get_data_bytes_as_str_no_base64():
+    """Test _get_data_bytes_as_str raises for non-base64 data URI."""
+    from agent_framework._types import _get_data_bytes_as_str
+
+    content = Content(type="uri", uri="data:text/plain,hello")
+    with raises(ContentError, match="base64 encoding"):
+        _get_data_bytes_as_str(content)
+
+
+def test_get_data_bytes_as_str_valid():
+    """Test _get_data_bytes_as_str extracts base64 data."""
+    from agent_framework._types import _get_data_bytes_as_str
+
+    data = base64.b64encode(b"hello").decode()
+    content = Content(type="uri", uri=f"data:text/plain;base64,{data}")
+    result = _get_data_bytes_as_str(content)
+    assert result == data
+
+
+# endregion
+
+
+# region Test _get_data_bytes
+
+
+def test_get_data_bytes_decodes_base64():
+    """Test _get_data_bytes decodes base64 data correctly."""
+    from agent_framework._types import _get_data_bytes
+
+    original = b"hello world"
+    data = base64.b64encode(original).decode()
+    content = Content(type="uri", uri=f"data:text/plain;base64,{data}")
+
+    result = _get_data_bytes(content)
+    assert result == original
+
+
+def test_get_data_bytes_invalid_base64():
+    """Test _get_data_bytes raises for invalid base64."""
+    from agent_framework._types import _get_data_bytes
+
+    content = Content(type="uri", uri="data:text/plain;base64,!!invalid!!")
+    with raises(ContentError, match="Failed to decode"):
+        _get_data_bytes(content)
+
+
+# endregion
+
+
+# region Test _parse_content_list
+
+
+def test_parse_content_list_with_content_objects():
+    """Test _parse_content_list passes through Content objects."""
+    from agent_framework._types import _parse_content_list
+
+    content = Content(type="text", text="hello")
+    result = _parse_content_list([content])
+
+    assert len(result) == 1
+    assert result[0] is content
+
+
+def test_parse_content_list_with_dicts():
+    """Test _parse_content_list converts dicts to Content."""
+    from agent_framework._types import _parse_content_list
+
+    result = _parse_content_list([{"type": "text", "text": "hello"}])
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+
+
+def test_parse_content_list_with_mixed_valid_invalid():
+    """Test _parse_content_list handles a mix of valid and Content objects."""
+    from agent_framework._types import _parse_content_list
+
+    content = Content(type="text", text="hello")
+    # Pass a mix of Content object and dict
+    result = _parse_content_list([content, {"type": "text", "text": "world"}])
+
+    assert len(result) == 2
+    assert result[0].text == "hello"
+    assert result[1].text == "world"
+
+
+# endregion
+
+
+# region Test _validate_uri
+
+
+def test_validate_uri_known_schema():
+    """Test _validate_uri accepts known URI schemas."""
+    from agent_framework._types import _validate_uri
+
+    result = _validate_uri("https://example.com/file.txt", "text/plain")
+    assert result.get("uri") == "https://example.com/file.txt"
+
+
+def test_validate_uri_data_uri():
+    """Test _validate_uri handles data URIs."""
+    from agent_framework._types import _validate_uri
+
+    data = base64.b64encode(b"test").decode()
+    uri = f"data:text/plain;base64,{data}"
+    result = _validate_uri(uri, None)
+    assert "uri" in result
+
+
+# endregion

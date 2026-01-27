@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 from pytest import raises
 
 from agent_framework import (
@@ -695,3 +696,172 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
     assert captured_options[0]["tool_choice"] == "auto"
+
+
+# region Test _merge_options
+
+
+def test_merge_options_basic():
+    """Test _merge_options merges two dicts with override precedence."""
+    from agent_framework._agents import _merge_options
+
+    base = {"key1": "value1", "key2": "value2"}
+    override = {"key2": "new_value2", "key3": "value3"}
+
+    result = _merge_options(base, override)
+
+    assert result["key1"] == "value1"
+    assert result["key2"] == "new_value2"
+    assert result["key3"] == "value3"
+
+
+def test_merge_options_none_values_ignored():
+    """Test _merge_options ignores None values in override."""
+    from agent_framework._agents import _merge_options
+
+    base = {"key1": "value1"}
+    override = {"key1": None, "key2": "value2"}
+
+    result = _merge_options(base, override)
+
+    assert result["key1"] == "value1"  # None didn't override
+    assert result["key2"] == "value2"
+
+
+def test_merge_options_tools_combined():
+    """Test _merge_options combines tool lists without duplicates."""
+    from agent_framework._agents import _merge_options
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    tool1 = MockTool("tool1")
+    tool2 = MockTool("tool2")
+    tool3 = MockTool("tool1")  # Duplicate name
+
+    base = {"tools": [tool1]}
+    override = {"tools": [tool2, tool3]}
+
+    result = _merge_options(base, override)
+
+    # Should have tool1 and tool2, but not duplicate tool3
+    assert len(result["tools"]) == 2
+    tool_names = [t.name for t in result["tools"]]
+    assert "tool1" in tool_names
+    assert "tool2" in tool_names
+
+
+def test_merge_options_logit_bias_merged():
+    """Test _merge_options merges logit_bias dicts."""
+    from agent_framework._agents import _merge_options
+
+    base = {"logit_bias": {"token1": 1.0}}
+    override = {"logit_bias": {"token2": 2.0}}
+
+    result = _merge_options(base, override)
+
+    assert result["logit_bias"]["token1"] == 1.0
+    assert result["logit_bias"]["token2"] == 2.0
+
+
+def test_merge_options_metadata_merged():
+    """Test _merge_options merges metadata dicts."""
+    from agent_framework._agents import _merge_options
+
+    base = {"metadata": {"key1": "value1"}}
+    override = {"metadata": {"key2": "value2"}}
+
+    result = _merge_options(base, override)
+
+    assert result["metadata"]["key1"] == "value1"
+    assert result["metadata"]["key2"] == "value2"
+
+
+def test_merge_options_instructions_concatenated():
+    """Test _merge_options concatenates instructions."""
+    from agent_framework._agents import _merge_options
+
+    base = {"instructions": "First instruction."}
+    override = {"instructions": "Second instruction."}
+
+    result = _merge_options(base, override)
+
+    assert "First instruction." in result["instructions"]
+    assert "Second instruction." in result["instructions"]
+    assert "\n" in result["instructions"]
+
+
+# endregion
+
+
+# region Test _sanitize_agent_name
+
+
+def test_sanitize_agent_name_none():
+    """Test _sanitize_agent_name returns None for None input."""
+    from agent_framework._agents import _sanitize_agent_name
+
+    assert _sanitize_agent_name(None) is None
+
+
+def test_sanitize_agent_name_valid():
+    """Test _sanitize_agent_name returns valid names unchanged."""
+    from agent_framework._agents import _sanitize_agent_name
+
+    assert _sanitize_agent_name("valid_name") == "valid_name"
+    assert _sanitize_agent_name("ValidName123") == "ValidName123"
+
+
+def test_sanitize_agent_name_replaces_invalid_chars():
+    """Test _sanitize_agent_name replaces invalid characters."""
+    from agent_framework._agents import _sanitize_agent_name
+
+    result = _sanitize_agent_name("Agent Name!")
+    # Should replace spaces and special chars with underscores
+    assert " " not in result
+    assert "!" not in result
+
+
+# endregion
+
+
+# region Test AgentProtocol.get_new_thread
+
+
+@pytest.mark.asyncio
+async def test_agent_get_new_thread(chat_client_base, ai_function_tool):
+    """Test that get_new_thread returns a new AgentThread."""
+    agent = ChatAgent(chat_client=chat_client_base, tools=[ai_function_tool])
+
+    thread = agent.get_new_thread()
+
+    assert thread is not None
+    assert isinstance(thread, AgentThread)
+
+
+# endregion
+
+
+# region Test ChatAgent initialization edge cases
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_raises_with_both_conversation_id_and_store():
+    """Test ChatAgent raises error with both conversation_id and chat_message_store_factory."""
+    from unittest.mock import MagicMock
+
+    from agent_framework.exceptions import AgentInitializationError
+
+    mock_client = MagicMock()
+    mock_store_factory = MagicMock()
+
+    with pytest.raises(AgentInitializationError, match="Cannot specify both"):
+        ChatAgent(
+            chat_client=mock_client,
+            default_options={"conversation_id": "test_id"},
+            chat_message_store_factory=mock_store_factory,
+        )
+
+
+# endregion
