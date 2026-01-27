@@ -37,9 +37,9 @@ The `DeploymentGroupChatManager` implements custom speaker selection logic:
 
 ### Approval Handling
 
-The sample demonstrates two-phase execution:
-1. **Phase 1**: Run workflow until approval is needed
-2. **Phase 2**: Handle approval requests and resume workflow
+The sample demonstrates continuous event-driven execution with inline approval handling:
+- The workflow runs in a single event loop.
+- When an approval-required tool is invoked, the loop surfaces an approval request, processes the (simulated) human response, and then continues execution without starting a separate phase.
 
 ## Prerequisites
 
