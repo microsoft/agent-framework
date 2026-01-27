@@ -6,6 +6,9 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask;
 using Microsoft.Extensions.Logging;
 
+#pragma warning disable CA1848 // Use LoggerMessage delegates
+#pragma warning disable CA1873 // Expensive evaluation
+
 namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
@@ -247,10 +250,11 @@ public class DurableWorkflowRunner
                 break; // No more work
             }
 
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates, expensive evaluation
-            logger.LogDebug("Superstep {Step}: {Count} active executor(s): {Executors}",
-                superstep, activeExecutors.Count, string.Join(", ", activeExecutors));
-#pragma warning restore CA1848, CA1873
+            logger.LogDebug(
+            "Superstep {Step}: {Count} active executor(s): {Executors}",
+            superstep,
+            activeExecutors.Count,
+            string.Join(", ", activeExecutors));
 
             // Process each active executor
             foreach (string executorId in activeExecutors)
@@ -277,9 +281,7 @@ public class DurableWorkflowRunner
                     {
                         haltRequested = true;
                         finalOutput = result;
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
                         logger.LogDebug("Halt requested by executor {ExecutorId}", executorId);
-#pragma warning restore CA1848, CA1873
                         break;
                     }
 
@@ -315,9 +317,7 @@ public class DurableWorkflowRunner
 
         if (superstep >= MaxSupersteps)
         {
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
             logger.LogWarning("Workflow reached maximum superstep limit ({MaxSteps})", MaxSupersteps);
-#pragma warning restore CA1848, CA1873
         }
 
         // Return final output or last result from output executors
@@ -388,6 +388,11 @@ public class DurableWorkflowRunner
     /// <summary>
     /// Routes a message through edges to successor executors.
     /// </summary>
+    /// <param name="sourceId">The source executor ID.</param>
+    /// <param name="message">The serialized message to route.</param>
+    /// <param name="plan">The workflow execution plan.</param>
+    /// <param name="messageQueues">The message queues for each executor.</param>
+    /// <param name="logger">The logger instance.</param>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
     private static void RouteMessageToSuccessors(
@@ -397,55 +402,12 @@ public class DurableWorkflowRunner
         Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues,
         ILogger logger)
     {
-        if (!plan.Successors.TryGetValue(sourceId, out List<string>? successors))
-        {
-            return; // No outgoing edges
-        }
-
-        // Get the output type of the source executor to pass as input type to successors
         plan.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType);
-        string? inputTypeName = sourceOutputType?.FullName;
-
-        foreach (string sinkId in successors)
-        {
-            // Check edge condition
-            if (plan.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? condition)
-                && condition is not null)
-            {
-                try
-                {
-                    // Deserialize the message for condition evaluation
-                    object? messageObj = DeserializeForCondition(message, sourceOutputType);
-
-                    if (!condition(messageObj))
-                    {
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
-                        logger.LogDebug("Edge {Source} -> {Sink}: condition returned false, skipping",
-                            sourceId, sinkId);
-#pragma warning restore CA1848, CA1873
-                        continue;
-                    }
-                }
-                catch (Exception ex)
-                {
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
-                    logger.LogWarning(ex, "Failed to evaluate condition for edge {Source} -> {Sink}, skipping",
-                        sourceId, sinkId);
-#pragma warning restore CA1848, CA1873
-                    continue;
-                }
-            }
-
-            // Queue message to successor with type information
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
-            logger.LogDebug("Edge {Source} -> {Sink}: routing message", sourceId, sinkId);
-#pragma warning restore CA1848, CA1873
-            EnqueueMessage(messageQueues, sinkId, message, inputTypeName);
-        }
+        RouteMessageToSuccessorsCore(sourceId, message, sourceOutputType?.FullName, sourceOutputType, plan, messageQueues, logger);
     }
 
     /// <summary>
-    /// Routes a message through edges to successor executors, with an explicit type name for the message.
+    /// Routes a message through edges to successor executors, with an explicit type name.
     /// Used for messages sent via SendMessageAsync.
     /// </summary>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
@@ -459,19 +421,8 @@ public class DurableWorkflowRunner
         Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues,
         ILogger logger)
     {
-        if (!plan.Successors.TryGetValue(sourceId, out List<string>? successors))
-        {
-            return; // No outgoing edges
-        }
-
-        // Use explicit type name if provided, otherwise fall back to executor output type
+        Type? messageType = !string.IsNullOrEmpty(explicitTypeName) ? Type.GetType(explicitTypeName) : null;
         string? inputTypeName = explicitTypeName;
-        Type? messageType = null;
-
-        if (!string.IsNullOrEmpty(explicitTypeName))
-        {
-            messageType = Type.GetType(explicitTypeName);
-        }
 
         if (messageType is null && plan.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType))
         {
@@ -479,41 +430,74 @@ public class DurableWorkflowRunner
             inputTypeName = sourceOutputType?.FullName;
         }
 
+        RouteMessageToSuccessorsCore(sourceId, message, inputTypeName, messageType, plan, messageQueues, logger);
+    }
+
+    /// <summary>
+    /// Core implementation for routing messages to successors.
+    /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    private static void RouteMessageToSuccessorsCore(
+        string sourceId,
+        string message,
+        string? inputTypeName,
+        Type? messageType,
+        WorkflowExecutionPlan plan,
+        Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues,
+        ILogger logger)
+    {
+        if (!plan.Successors.TryGetValue(sourceId, out List<string>? successors))
+        {
+            return;
+        }
+
         foreach (string sinkId in successors)
         {
-            // Check edge condition
-            if (plan.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? condition)
-                && condition is not null)
+            if (!TryEvaluateEdgeCondition(sourceId, sinkId, message, messageType, plan, logger))
             {
-                try
-                {
-                    // Deserialize the message for condition evaluation
-                    object? messageObj = DeserializeForCondition(message, messageType);
-
-                    if (!condition(messageObj))
-                    {
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
-                        logger.LogDebug("Edge {Source} -> {Sink}: condition returned false, skipping",
-                            sourceId, sinkId);
-#pragma warning restore CA1848, CA1873
-                        continue;
-                    }
-                }
-                catch (Exception ex)
-                {
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
-                    logger.LogWarning(ex, "Failed to evaluate condition for edge {Source} -> {Sink}, skipping",
-                        sourceId, sinkId);
-#pragma warning restore CA1848, CA1873
-                    continue;
-                }
+                continue;
             }
 
-            // Queue message to successor with type information
-#pragma warning disable CA1848, CA1873 // Use LoggerMessage delegates
-            logger.LogDebug("Edge {Source} -> {Sink}: routing sent message (type: {TypeName})", sourceId, sinkId, inputTypeName);
-#pragma warning restore CA1848, CA1873
+            logger.LogDebug("Edge {Source} -> {Sink}: routing message", sourceId, sinkId);
             EnqueueMessage(messageQueues, sinkId, message, inputTypeName);
+        }
+    }
+
+    /// <summary>
+    /// Evaluates an edge condition if one exists.
+    /// </summary>
+    /// <returns>True if the message should be routed (no condition or condition passed); false otherwise.</returns>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
+    private static bool TryEvaluateEdgeCondition(
+        string sourceId,
+        string sinkId,
+        string message,
+        Type? messageType,
+        WorkflowExecutionPlan plan,
+        ILogger logger)
+    {
+        if (!plan.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? condition) || condition is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            object? messageObj = DeserializeForCondition(message, messageType);
+            if (!condition(messageObj))
+            {
+                logger.LogDebug("Edge {Source} -> {Sink}: condition returned false, skipping", sourceId, sinkId);
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to evaluate condition for edge {Source} -> {Sink}, skipping", sourceId, sinkId);
+            return false;
         }
     }
 
@@ -623,55 +607,76 @@ public class DurableWorkflowRunner
 
         try
         {
-            // Try to deserialize as DurableActivityOutput
             DurableActivityOutput? output = JsonSerializer.Deserialize<DurableActivityOutput>(rawResult);
 
-            // Check if this is actually a DurableActivityOutput (has Result property set or state updates or sent messages)
-            // This distinguishes it from other JSON objects that would deserialize with default/empty values
-            if (output is not null && (output.Result is not null || output.StateUpdates.Count > 0 || output.ClearedScopes.Count > 0 || output.Events.Count > 0 || output.SentMessages.Count > 0))
+            if (output is null || !IsValidActivityOutput(output))
             {
-                // Apply cleared scopes first
-                foreach (string clearedScope in output.ClearedScopes)
-                {
-                    string scopePrefix = clearedScope == "__default__" ? "__default__:" : $"{clearedScope}:";
-                    List<string> keysToRemove = sharedState.Keys
-                        .Where(k => k.StartsWith(scopePrefix, StringComparison.Ordinal))
-                        .ToList();
-
-                    foreach (string key in keysToRemove)
-                    {
-                        sharedState.Remove(key);
-                    }
-                }
-
-                // Apply state updates
-                foreach (KeyValuePair<string, string?> update in output.StateUpdates)
-                {
-                    if (update.Value is null)
-                    {
-                        sharedState.Remove(update.Key);
-                    }
-                    else
-                    {
-                        sharedState[update.Key] = update.Value;
-                    }
-                }
-
-                // Add events to the accumulated list
-                if (output.Events.Count > 0)
-                {
-                    customStatus.Events.AddRange(output.Events);
-                }
-
-                return (output.Result ?? string.Empty, output.SentMessages);
+                return (rawResult, []);
             }
+
+            ApplyClearedScopes(output.ClearedScopes, sharedState);
+            ApplyStateUpdates(output.StateUpdates, sharedState);
+
+            if (output.Events.Count > 0)
+            {
+                customStatus.Events.AddRange(output.Events);
+            }
+
+            return (output.Result ?? string.Empty, output.SentMessages);
         }
         catch (JsonException)
         {
-            // Not a wrapped result, return as-is
+            return (rawResult, []);
         }
+    }
 
-        return (rawResult, []);
+    /// <summary>
+    /// Checks if the deserialized output is a valid DurableActivityOutput (not just default values).
+    /// </summary>
+    private static bool IsValidActivityOutput(DurableActivityOutput output)
+    {
+        return output.Result is not null
+            || output.StateUpdates.Count > 0
+            || output.ClearedScopes.Count > 0
+            || output.Events.Count > 0
+            || output.SentMessages.Count > 0;
+    }
+
+    /// <summary>
+    /// Clears all state entries matching the specified scopes.
+    /// </summary>
+    private static void ApplyClearedScopes(List<string> clearedScopes, Dictionary<string, string> sharedState)
+    {
+        foreach (string clearedScope in clearedScopes)
+        {
+            string scopePrefix = clearedScope == "__default__" ? "__default__:" : $"{clearedScope}:";
+            List<string> keysToRemove = sharedState.Keys
+                .Where(k => k.StartsWith(scopePrefix, StringComparison.Ordinal))
+                .ToList();
+
+            foreach (string key in keysToRemove)
+            {
+                sharedState.Remove(key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies state updates to the shared state dictionary.
+    /// </summary>
+    private static void ApplyStateUpdates(Dictionary<string, string?> stateUpdates, Dictionary<string, string> sharedState)
+    {
+        foreach (KeyValuePair<string, string?> update in stateUpdates)
+        {
+            if (update.Value is null)
+            {
+                sharedState.Remove(update.Key);
+            }
+            else
+            {
+                sharedState[update.Key] = update.Value;
+            }
+        }
     }
 
     /// <summary>
@@ -684,32 +689,6 @@ public class DurableWorkflowRunner
         {
             context.SetCustomStatus(customStatus);
         }
-    }
-
-    /// <summary>
-    /// Wrapper for activity output that includes state updates and events.
-    /// </summary>
-    internal sealed class ActivityOutputWithState
-    {
-        /// <summary>
-        /// Gets or sets the serialized result of the activity.
-        /// </summary>
-        public string? Result { get; set; }
-
-        /// <summary>
-        /// Gets or sets state updates made during activity execution.
-        /// </summary>
-        public Dictionary<string, string?> StateUpdates { get; set; } = [];
-
-        /// <summary>
-        /// Gets or sets scopes that were cleared during activity execution.
-        /// </summary>
-        public List<string> ClearedScopes { get; set; } = [];
-
-        /// <summary>
-        /// Gets or sets the serialized workflow events emitted during activity execution.
-        /// </summary>
-        public List<string> Events { get; set; } = [];
     }
 
     /// <summary>
