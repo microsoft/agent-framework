@@ -62,6 +62,7 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
             return;
         }
 
+        Console.WriteLine("Sending back for refining");
         await context.SendMessageAsync(feedback, cancellationToken: cancellationToken);
         this._attempts++;
     }

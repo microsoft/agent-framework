@@ -103,31 +103,31 @@ internal static partial class Logs
 
     [LoggerMessage(
         EventId = 12,
-        Level = LogLevel.Debug,
+        Level = LogLevel.Information,
         Message = "Attempting to run workflow: {WorkflowName}")]
     public static partial void LogAttemptingToRunWorkflow(this ILogger logger, string workflowName);
 
     [LoggerMessage(
         EventId = 13,
-        Level = LogLevel.Debug,
+        Level = LogLevel.Warning,
         Message = "Running workflow: {WorkflowName}")]
     public static partial void LogRunningWorkflow(this ILogger logger, string? workflowName);
 
     [LoggerMessage(
         EventId = 14,
-        Level = LogLevel.Debug,
+        Level = LogLevel.Warning,
         Message = "Attempting to execute activity in workflow '{WorkflowName}' for executor '{ExecutorName}'")]
     public static partial void LogAttemptingToExecuteActivity(this ILogger logger, string workflowName, string executorName);
 
     [LoggerMessage(
         EventId = 15,
-        Level = LogLevel.Debug,
+        Level = LogLevel.Warning,
         Message = "Executing activity for executor '{ExecutorId}' of type '{ExecutorType}'")]
     public static partial void LogExecutingActivity(this ILogger logger, string executorId, string executorType);
 
     [LoggerMessage(
         EventId = 16,
-        Level = LogLevel.Debug,
+        Level = LogLevel.Warning,
         Message = "Activity executed for executor '{ExecutorId}' with result: {Result}")]
     public static partial void LogActivityExecuted(this ILogger logger, string executorId, string result);
 

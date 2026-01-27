@@ -18,6 +18,17 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <param name="Input">The serialized input data that was passed to the RequestPort.</param>
 /// <param name="RequestType">The full type name of the request type.</param>
 /// <param name="ResponseType">The full type name of the expected response type.</param>
+/// <remarks>
+/// <para>
+/// This status is set when a workflow reaches a human-in-the-loop point (RequestPort executor).
+/// External actors can query this status to:
+/// </para>
+/// <list type="bullet">
+/// <item><description>Discover which event name to raise</description></item>
+/// <item><description>See the input/context that prompted the request</description></item>
+/// <item><description>Understand the expected request and response types for proper serialization</description></item>
+/// </list>
+/// </remarks>
 public sealed record PendingExternalEventStatus(
     string EventName,
     string Input,
@@ -27,6 +38,25 @@ public sealed record PendingExternalEventStatus(
 /// <summary>
 /// Represents the complete custom status for a durable workflow orchestration.
 /// </summary>
+/// <remarks>
+/// <para>
+/// This status object is serialized and stored as the orchestration's custom status,
+/// making it visible in the Durable Task dashboard and queryable via the client API.
+/// </para>
+/// <para>
+/// It serves two primary purposes:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// <strong>Event Accumulation:</strong> Collects workflow events (yields, halts, etc.) emitted
+/// by executors during the workflow run for final result determination.
+/// </description></item>
+/// <item><description>
+/// <strong>HITL Status:</strong> Indicates when the workflow is waiting for external input,
+/// including the event name to raise and context about the request.
+/// </description></item>
+/// </list>
+/// </remarks>
 public sealed class DurableWorkflowCustomStatus
 {
     /// <summary>
@@ -44,6 +74,116 @@ public sealed class DurableWorkflowCustomStatus
 /// Core workflow runner that executes workflow orchestrations using Durable Tasks.
 /// This class contains the core workflow execution logic independent of the hosting environment.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Architecture Overview:</strong>
+/// </para>
+/// <para>
+/// The DurableWorkflowRunner implements a message-driven execution model that naturally supports
+/// both directed acyclic graphs (DAGs) and cyclic workflows. Each executor in the workflow is
+/// treated as a message processor that receives input, executes logic, and routes output to successors.
+/// </para>
+/// <para>
+/// <strong>Execution Flow:</strong>
+/// </para>
+/// <list type="number">
+/// <item>
+/// <description>
+/// <strong>Initialization:</strong> The workflow starts by queueing the initial input to the start executor.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Superstep Processing:</strong> In each superstep, all executors with pending messages are processed.
+/// This continues until no messages remain or a halt is requested.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Activity Execution:</strong> Each executor runs as a Durable Task activity. The activity receives
+/// wrapped input containing the message, type information, and shared workflow state.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Result Unwrapping:</strong> Activity results are unwrapped to extract the actual result,
+/// state updates, workflow events, and any messages sent via <c>SendMessageAsync</c>.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Message Routing:</strong> Results are routed to successor executors based on workflow edges.
+/// Edge conditions are evaluated to determine if a message should be forwarded.
+/// </description>
+/// </item>
+/// </list>
+/// <para>
+/// <strong>Key Data Structures:</strong>
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>
+/// <strong>Message Queues:</strong> Each executor has a queue of pending messages (input + type information).
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Shared State:</strong> A dictionary of scope-prefixed key-value pairs shared across executors.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Custom Status:</strong> Tracks workflow events and pending external event info for observability.
+/// </description>
+/// </item>
+/// </list>
+/// <para>
+/// <strong>Executor Types:</strong>
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>
+/// <strong>Regular Executors:</strong> Run as Durable Task activities. Can return values or use <c>SendMessageAsync</c>.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Agent Executors:</strong> AI agents that run via Durable Entities for stateful conversations.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Request Port Executors:</strong> Human-in-the-loop points that wait for external events.
+/// </description>
+/// </item>
+/// </list>
+/// <para>
+/// <strong>Input/Output Flow:</strong>
+/// </para>
+/// <code>
+/// ┌─────────────────────────────────────────────────────────────────────────────────┐
+/// │ Orchestrator (DurableWorkflowRunner)                                            │
+/// │                                                                                 │
+/// │  ┌─────────────┐    ActivityInputWithState     ┌─────────────────────────────┐  │
+/// │  │ Message     │ ──────────────────────────▶  │ Activity                     │  │
+/// │  │ Queue       │    {Input, InputTypeName,    │ (ExecuteActivityAsync)       │  │
+/// │  │             │     State}                   │                              │  │
+/// │  │             │                              │ - Deserialize input          │  │
+/// │  │             │                              │ - Execute executor logic     │  │
+/// │  │             │                              │ - Collect state updates      │  │
+/// │  │             │    DurableActivityOutput     │ - Collect events             │  │
+/// │  │             │ ◀──────────────────────────  │ - Collect sent messages      │  │
+/// │  └─────────────┘    {Result, StateUpdates,    └─────────────────────────────┘  │
+/// │         │            ClearedScopes, Events,                                     │
+/// │         │            SentMessages}                                              │
+/// │         ▼                                                                       │
+/// │  ┌─────────────┐                                                                │
+/// │  │ Route to    │ ── Evaluate edge conditions ──▶ Queue to successor executors  │
+/// │  │ Successors  │                                                                │
+/// │  └─────────────┘                                                                │
+/// └─────────────────────────────────────────────────────────────────────────────────┘
+/// </code>
+/// </remarks>
 public class DurableWorkflowRunner
 {
     /// <summary>
@@ -95,7 +235,7 @@ public class DurableWorkflowRunner
 
         logger.LogRunningWorkflow(workflow.Name);
 
-        return await this.ExecuteWorkflowLevelsAsync(context, workflow, input, logger).ConfigureAwait(true);
+        return await this.ExecuteWorkflowAsync(context, workflow, input, logger).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -123,13 +263,11 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Serializes a list of strings to JSON.
+    /// Serializes a list of strings to JSON using source-generated serialization.
     /// </summary>
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing known types.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing known types.")]
     protected static string SerializeToJson(List<string> values)
     {
-        return JsonSerializer.Serialize(values);
+        return JsonSerializer.Serialize(values, DurableWorkflowJsonContext.Default.ListString);
     }
 
     /// <summary>
@@ -187,7 +325,21 @@ public class DurableWorkflowRunner
             ?? throw new InvalidOperationException($"Failed to deserialize input to type '{targetType.Name}'.");
     }
 
-    private async Task<string> ExecuteWorkflowLevelsAsync(
+    /// <summary>
+    /// Executes a workflow by building an execution plan and delegating to message-driven execution.
+    /// </summary>
+    /// <param name="context">The Durable Task orchestration context.</param>
+    /// <param name="workflow">The workflow definition to execute.</param>
+    /// <param name="initialInput">The initial input string to pass to the start executor.</param>
+    /// <param name="logger">The replay-safe logger for orchestration logging.</param>
+    /// <returns>The final result of the workflow execution.</returns>
+    /// <remarks>
+    /// This method serves as the entry point for workflow execution after the workflow has been
+    /// resolved from the orchestration name. It builds a <see cref="WorkflowExecutionPlan"/> that
+    /// contains the graph structure (successors, predecessors), edge conditions, and executor
+    /// output types needed for message routing.
+    /// </remarks>
+    private async Task<string> ExecuteWorkflowAsync(
         TaskOrchestrationContext context,
         Workflow workflow,
         string initialInput,
@@ -195,18 +347,51 @@ public class DurableWorkflowRunner
     {
         WorkflowExecutionPlan plan = WorkflowHelper.GetExecutionPlan(workflow);
 
-        // Use message-driven execution for all workflows
+        // Use superstep-based execution for all workflows
         // This approach naturally handles both DAGs and cyclic workflows
-        return await this.ExecuteMessageDrivenAsync(context, workflow, plan, initialInput, logger).ConfigureAwait(true);
+        return await this.RunSuperstepLoopAsync(context, workflow, plan, initialInput, logger).ConfigureAwait(true);
     }
 
     /// <summary>
-    /// Executes a workflow using message-driven execution.
-    /// Messages are routed through edges dynamically, naturally supporting both DAGs and cycles.
+    /// Runs the workflow execution loop using superstep-based processing.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method implements a Bulk Synchronous Parallel (BSP) style execution where each "superstep"
+    /// processes all pending messages for all active executors. The workflow terminates when:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>No more messages are pending (natural completion)</description></item>
+    /// <item><description>An executor calls <c>RequestHaltAsync</c> (explicit halt)</description></item>
+    /// <item><description>Maximum superstep limit is reached (safety limit)</description></item>
+    /// </list>
+    /// <para>
+    /// <strong>Message Routing Rules:</strong>
+    /// </para>
+    /// <list type="number">
+    /// <item>
+    /// <description>
+    /// Messages sent via <c>SendMessageAsync</c> take priority and include explicit type information.
+    /// This is the primary mechanism for void-returning executors.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
+    /// If no messages were sent explicitly, the executor's return value is routed to successors.
+    /// The type information comes from <see cref="WorkflowExecutionPlan.ExecutorOutputTypes"/>.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
+    /// Edge conditions are evaluated before routing. If a condition returns false, the message
+    /// is not forwarded to that particular successor.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
-    private async Task<string> ExecuteMessageDrivenAsync(
+    private async Task<string> RunSuperstepLoopAsync(
         TaskOrchestrationContext context,
         Workflow workflow,
         WorkflowExecutionPlan plan,
@@ -270,14 +455,14 @@ public class DurableWorkflowRunner
                     WorkflowExecutorInfo executorInfo = CreateExecutorInfo(executorId, executorBindings);
 
                     // Execute the activity with type information
-                    string rawResult = await this.ExecuteExecutorAsync(
+                    string rawResult = await this.DispatchExecutorAsync(
                         context, executorInfo, input, inputTypeName, logger, customStatus, sharedState).ConfigureAwait(true);
 
                     (string result, List<SentMessageInfo> sentMessages) = UnwrapActivityResult(rawResult, customStatus, sharedState);
                     lastResults[executorId] = result;
 
                     // Check for explicit halt request (via RequestHaltAsync)
-                    if (CheckForHalt(customStatus, executorId))
+                    if (HasHaltBeenRequested(customStatus, executorId))
                     {
                         haltRequested = true;
                         finalOutput = result;
@@ -321,12 +506,20 @@ public class DurableWorkflowRunner
         }
 
         // Return final output or last result from output executors
-        return finalOutput ?? GetMessageDrivenFinalResult(workflow, lastResults, customStatus);
+        return finalOutput ?? DetermineFinalResult(workflow, lastResults, customStatus);
     }
 
     /// <summary>
     /// Enqueues a message to an executor's message queue with type information.
     /// </summary>
+    /// <param name="queues">The dictionary of message queues, keyed by executor ID.</param>
+    /// <param name="executorId">The target executor ID to queue the message for.</param>
+    /// <param name="message">The serialized message content.</param>
+    /// <param name="inputTypeName">The full type name of the message, used for deserialization hints.</param>
+    /// <remarks>
+    /// Creates a new queue for the executor if one doesn't exist. Messages are processed
+    /// in FIFO order during each superstep.
+    /// </remarks>
     private static void EnqueueMessage(
         Dictionary<string, Queue<(string Message, string? InputTypeName)>> queues,
         string executorId,
@@ -343,8 +536,16 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Creates a WorkflowExecutorInfo for the given executor ID.
+    /// Creates a <see cref="WorkflowExecutorInfo"/> for the given executor ID.
     /// </summary>
+    /// <param name="executorId">The executor ID to look up.</param>
+    /// <param name="executorBindings">The dictionary of executor bindings from the workflow.</param>
+    /// <returns>A <see cref="WorkflowExecutorInfo"/> containing metadata about the executor.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the executor ID is not found in bindings.</exception>
+    /// <remarks>
+    /// This method determines the executor type (agentic vs regular) and extracts request port
+    /// information for human-in-the-loop executors.
+    /// </remarks>
     private static WorkflowExecutorInfo CreateExecutorInfo(
         string executorId,
         Dictionary<string, ExecutorBinding> executorBindings)
@@ -362,10 +563,21 @@ public class DurableWorkflowRunner
 
     /// <summary>
     /// Checks if the workflow should halt based on halt request events.
-    /// Note: YieldOutputAsync does NOT halt the workflow - it just yields intermediate output.
-    /// Only explicit RequestHaltAsync calls should halt the workflow.
     /// </summary>
-    private static bool CheckForHalt(
+    /// <param name="customStatus">The custom status containing accumulated workflow events.</param>
+    /// <param name="executorId">The executor ID that just completed execution.</param>
+    /// <returns><c>true</c> if a halt was requested; otherwise, <c>false</c>.</returns>
+    /// <remarks>
+    /// <para>
+    /// Only <c>DurableHaltRequestedEvent</c> triggers a halt. Note that <c>YieldOutputAsync</c>
+    /// does NOT halt the workflow - it just yields intermediate output that can be used as
+    /// the final result if no other output is produced.
+    /// </para>
+    /// <para>
+    /// Events are searched in reverse order (most recent first) for efficiency.
+    /// </para>
+    /// </remarks>
+    private static bool HasHaltBeenRequested(
         DurableWorkflowCustomStatus customStatus,
         string executorId)
     {
@@ -434,8 +646,22 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Core implementation for routing messages to successors.
+    /// Core implementation for routing messages to successor executors.
     /// </summary>
+    /// <param name="sourceId">The source executor ID that produced the message.</param>
+    /// <param name="message">The serialized message content to route.</param>
+    /// <param name="inputTypeName">The type name to pass to successors for deserialization.</param>
+    /// <param name="messageType">The resolved <see cref="Type"/> for edge condition evaluation.</param>
+    /// <param name="plan">The workflow execution plan containing the graph structure.</param>
+    /// <param name="messageQueues">The message queues to enqueue messages into.</param>
+    /// <param name="logger">The logger for debug output.</param>
+    /// <remarks>
+    /// For each successor of the source executor, this method:
+    /// <list type="number">
+    /// <item><description>Evaluates the edge condition (if any)</description></item>
+    /// <item><description>Enqueues the message if the condition passes or no condition exists</description></item>
+    /// </list>
+    /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
     private static void RouteMessageToSuccessorsCore(
@@ -465,9 +691,22 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Evaluates an edge condition if one exists.
+    /// Evaluates an edge condition if one exists for the given source-sink pair.
     /// </summary>
-    /// <returns>True if the message should be routed (no condition or condition passed); false otherwise.</returns>
+    /// <param name="sourceId">The source executor ID.</param>
+    /// <param name="sinkId">The target (sink) executor ID.</param>
+    /// <param name="message">The serialized message to evaluate.</param>
+    /// <param name="messageType">The type to deserialize the message to for condition evaluation.</param>
+    /// <param name="plan">The execution plan containing edge conditions.</param>
+    /// <param name="logger">The logger for debug/warning output.</param>
+    /// <returns>
+    /// <c>true</c> if the message should be routed (no condition exists or condition passed);
+    /// <c>false</c> if the condition returned false or evaluation failed.
+    /// </returns>
+    /// <remarks>
+    /// Edge conditions are user-defined predicates that filter which messages flow through an edge.
+    /// If evaluation throws an exception, the edge is skipped (fail-safe behavior) and a warning is logged.
+    /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
     private static bool TryEvaluateEdgeCondition(
@@ -485,7 +724,7 @@ public class DurableWorkflowRunner
 
         try
         {
-            object? messageObj = DeserializeForCondition(message, messageType);
+            object? messageObj = DeserializeMessageForCondition(message, messageType);
             if (!condition(messageObj))
             {
                 logger.LogDebug("Edge {Source} -> {Sink}: condition returned false, skipping", sourceId, sinkId);
@@ -502,12 +741,28 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Gets the final result for a message-driven workflow execution.
-    /// Checks yielded outputs first (from YieldOutputAsync calls), then falls back to executor results.
+    /// Determines the final result for a workflow execution.
     /// </summary>
+    /// <param name="workflow">The workflow definition.</param>
+    /// <param name="lastResults">Dictionary of last results from each executor.</param>
+    /// <param name="customStatus">The custom status containing workflow events.</param>
+    /// <returns>The final workflow result string.</returns>
+    /// <remarks>
+    /// <para>
+    /// Result priority (highest to lowest):
+    /// </para>
+    /// <list type="number">
+    /// <item><description>Most recent <c>YieldOutputAsync</c> call (explicit workflow output)</description></item>
+    /// <item><description>Results from designated output executors (via <c>WithOutputFrom</c>)</description></item>
+    /// <item><description>Last non-empty result from any executor</description></item>
+    /// </list>
+    /// <para>
+    /// If multiple output executors are defined, their results are joined with <c>\n---\n</c>.
+    /// </para>
+    /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing event types.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing event types.")]
-    private static string GetMessageDrivenFinalResult(
+    private static string DetermineFinalResult(
         Workflow workflow,
         Dictionary<string, string> lastResults,
         DurableWorkflowCustomStatus customStatus)
@@ -549,6 +804,23 @@ public class DurableWorkflowRunner
     /// <summary>
     /// Extracts the most recent yielded output from the custom status events.
     /// </summary>
+    /// <param name="customStatus">The custom status containing serialized workflow events.</param>
+    /// <returns>The yielded output string, or <c>null</c> if no yield event was found.</returns>
+    /// <remarks>
+    /// <para>
+    /// Searches for <c>DurableYieldedOutputEvent</c> in reverse order (most recent first).
+    /// The event structure is:
+    /// </para>
+    /// <code>
+    /// {
+    ///   "TypeName": "...DurableYieldedOutputEvent...",
+    ///   "Data": "{\"Output\": \"actual output value\"}"
+    /// }
+    /// </code>
+    /// <para>
+    /// The output can be either a string or a serialized object (returned as raw JSON).
+    /// </para>
+    /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing event types.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing event types.")]
     private static string? GetLastYieldedOutput(DurableWorkflowCustomStatus customStatus)
@@ -591,10 +863,30 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Unwraps an activity result, extracting state updates, events, sent messages, and returning the actual result.
+    /// Unwraps an activity result, extracting state updates, events, sent messages, and the actual result.
     /// </summary>
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing known wrapper type.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing known wrapper type.")]
+    /// <param name="rawResult">The raw JSON string returned from the activity.</param>
+    /// <param name="customStatus">The custom status to append events to.</param>
+    /// <param name="sharedState">The shared state dictionary to apply updates to.</param>
+    /// <returns>
+    /// A tuple containing the executor's result and any messages sent via <c>SendMessageAsync</c>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Activities return a <see cref="DurableActivityOutput"/> wrapper containing:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><strong>Result:</strong> The serialized return value of the executor</description></item>
+    /// <item><description><strong>StateUpdates:</strong> Key-value pairs to add/update/remove from shared state</description></item>
+    /// <item><description><strong>ClearedScopes:</strong> Scope prefixes to bulk-remove from shared state</description></item>
+    /// <item><description><strong>Events:</strong> Workflow events (yield, halt, etc.) to propagate</description></item>
+    /// <item><description><strong>SentMessages:</strong> Messages sent via <c>SendMessageAsync</c></description></item>
+    /// </list>
+    /// <para>
+    /// If the raw result is not a valid <see cref="DurableActivityOutput"/>, it's returned as-is
+    /// (backward compatibility for activities that return plain values).
+    /// </para>
+    /// </remarks>
     private static (string Result, List<SentMessageInfo> SentMessages) UnwrapActivityResult(
         string rawResult,
         DurableWorkflowCustomStatus customStatus,
@@ -607,7 +899,7 @@ public class DurableWorkflowRunner
 
         try
         {
-            DurableActivityOutput? output = JsonSerializer.Deserialize<DurableActivityOutput>(rawResult);
+            DurableActivityOutput? output = JsonSerializer.Deserialize(rawResult, DurableWorkflowJsonContext.Default.DurableActivityOutput);
 
             if (output is null || !IsValidActivityOutput(output))
             {
@@ -631,8 +923,14 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Checks if the deserialized output is a valid DurableActivityOutput (not just default values).
+    /// Checks if the deserialized output is a valid <see cref="DurableActivityOutput"/> (not just default values).
     /// </summary>
+    /// <param name="output">The deserialized output to validate.</param>
+    /// <returns><c>true</c> if the output has any meaningful content; otherwise, <c>false</c>.</returns>
+    /// <remarks>
+    /// This check distinguishes actual activity output from arbitrary JSON that happened to
+    /// deserialize successfully but with all default/empty values.
+    /// </remarks>
     private static bool IsValidActivityOutput(DurableActivityOutput output)
     {
         return output.Result is not null
@@ -645,6 +943,17 @@ public class DurableWorkflowRunner
     /// <summary>
     /// Clears all state entries matching the specified scopes.
     /// </summary>
+    /// <param name="clearedScopes">The list of scope names to clear.</param>
+    /// <param name="sharedState">The shared state dictionary to modify.</param>
+    /// <remarks>
+    /// <para>
+    /// State keys are prefixed with their scope (e.g., <c>myScope:keyName</c>).
+    /// The special scope <c>__default__</c> is used for keys without an explicit scope.
+    /// </para>
+    /// <para>
+    /// Clearing a scope removes all keys that start with <c>{scope}:</c>.
+    /// </para>
+    /// </remarks>
     private static void ApplyClearedScopes(List<string> clearedScopes, Dictionary<string, string> sharedState)
     {
         foreach (string clearedScope in clearedScopes)
@@ -664,6 +973,12 @@ public class DurableWorkflowRunner
     /// <summary>
     /// Applies state updates to the shared state dictionary.
     /// </summary>
+    /// <param name="stateUpdates">The updates to apply (key -> value, where null value means delete).</param>
+    /// <param name="sharedState">The shared state dictionary to modify.</param>
+    /// <remarks>
+    /// A <c>null</c> value in the updates dictionary signals that the key should be removed
+    /// from the shared state, enabling executors to delete state entries.
+    /// </remarks>
     private static void ApplyStateUpdates(Dictionary<string, string?> stateUpdates, Dictionary<string, string> sharedState)
     {
         foreach (KeyValuePair<string, string?> update in stateUpdates)
@@ -682,6 +997,17 @@ public class DurableWorkflowRunner
     /// <summary>
     /// Updates the orchestration custom status with current events and pending event info.
     /// </summary>
+    /// <param name="context">The orchestration context to set the status on.</param>
+    /// <param name="customStatus">The custom status object containing events and pending event info.</param>
+    /// <remarks>
+    /// The custom status is visible in the Durable Task dashboard and can be queried via the
+    /// Durable Task client. It includes:
+    /// <list type="bullet">
+    /// <item><description>Accumulated workflow events from all executors</description></item>
+    /// <item><description>Pending external event info when waiting for human-in-the-loop input</description></item>
+    /// </list>
+    /// Only updates if there's meaningful content to report.
+    /// </remarks>
     private static void UpdateCustomStatus(TaskOrchestrationContext context, DurableWorkflowCustomStatus customStatus)
     {
         // Only update if there are events or a pending event
@@ -692,48 +1018,20 @@ public class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Wrapper for serialized workflow events that includes type information for proper deserialization.
+    /// Deserializes a JSON message string into an object for edge condition evaluation.
     /// </summary>
-    public sealed class SerializedWorkflowEvent
-    {
-        /// <summary>
-        /// Gets or sets the assembly-qualified type name of the event.
-        /// </summary>
-        public string? TypeName { get; set; }
-
-        /// <summary>
-        /// Gets or sets the serialized JSON data of the event.
-        /// </summary>
-        public string? Data { get; set; }
-    }
-
-    /// <summary>
-    /// Wrapper for activity input that includes shared state and type information.
-    /// </summary>
-    internal sealed class ActivityInputWithState
-    {
-        /// <summary>
-        /// Gets or sets the serialized executor input.
-        /// </summary>
-        public string? Input { get; set; }
-
-        /// <summary>
-        /// Gets or sets the assembly-qualified type name of the input, used for proper deserialization.
-        /// </summary>
-        public string? InputTypeName { get; set; }
-
-        /// <summary>
-        /// Gets or sets the shared state dictionary.
-        /// </summary>
-        public Dictionary<string, string> State { get; set; } = [];
-    }
-
-    /// <summary>
-    /// Deserializes a JSON string result into an object for condition evaluation.
-    /// </summary>
+    /// <param name="json">The JSON string to deserialize.</param>
+    /// <param name="targetType">The target type to deserialize to, or <c>null</c> to deserialize as <see cref="object"/>.</param>
+    /// <returns>
+    /// The deserialized object, or the original string if deserialization fails (graceful fallback).
+    /// </returns>
+    /// <remarks>
+    /// This method is used to prepare the message for edge condition predicates.
+    /// If the JSON is invalid, it returns the raw string to allow conditions to handle string inputs.
+    /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
-    private static object? DeserializeForCondition(string json, Type? targetType)
+    private static object? DeserializeMessageForCondition(string json, Type? targetType)
     {
         if (string.IsNullOrEmpty(json))
         {
@@ -756,9 +1054,35 @@ public class DurableWorkflowRunner
         }
     }
 
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing known wrapper type.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing known wrapper type.")]
-    private async Task<string> ExecuteExecutorAsync(
+    /// <summary>
+    /// Dispatches execution to the appropriate handler based on executor type.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method routes execution to the appropriate handler based on executor type:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>
+    /// <description>
+    /// <strong>Request Port Executors:</strong> Handled via <see cref="ExecuteRequestPortAsync"/>.
+    /// Sets custom status and waits for an external event (human-in-the-loop).
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
+    /// <strong>Regular Executors:</strong> Invoked as Durable Task activities. Input is wrapped
+    /// with state and type information via <see cref="ActivityInputWithState"/>.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
+    /// <strong>Agent Executors:</strong> Handled via <see cref="ExecuteAgentAsync"/>.
+    /// AI agents run through Durable Entities for stateful conversation management.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// </remarks>
+    private async Task<string> DispatchExecutorAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         string input,
@@ -786,13 +1110,37 @@ public class DurableWorkflowRunner
                 State = new Dictionary<string, string>(sharedState) // Pass a copy of the state
             };
 
-            string wrappedInput = JsonSerializer.Serialize(inputWithState);
+            string wrappedInput = JsonSerializer.Serialize(inputWithState, DurableWorkflowJsonContext.Default.ActivityInputWithState);
             return await context.CallActivityAsync<string>(triggerName, wrappedInput).ConfigureAwait(true);
         }
 
         return await ExecuteAgentAsync(context, executorInfo, input, logger).ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Executes a request port executor by waiting for an external event (human-in-the-loop).
+    /// </summary>
+    /// <param name="context">The orchestration context for waiting on external events.</param>
+    /// <param name="executorInfo">The executor info containing the request port configuration.</param>
+    /// <param name="input">The input data that prompted this request (visible to the external actor).</param>
+    /// <param name="logger">The logger for tracing.</param>
+    /// <param name="customStatus">The custom status to update with pending event info.</param>
+    /// <returns>The response string from the external actor.</returns>
+    /// <remarks>
+    /// <para>
+    /// Request ports enable human-in-the-loop workflows. When a request port executor is reached:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>The custom status is updated with <see cref="PendingExternalEventStatus"/> including
+    /// the event name, input, and expected request/response types.</description></item>
+    /// <item><description>The orchestration waits for an external event with the port's ID as the event name.</description></item>
+    /// <item><description>Once the event is received, the custom status is cleared and the response is returned.</description></item>
+    /// </list>
+    /// <para>
+    /// External actors can query the custom status to discover what input is needed and raise
+    /// the appropriate event via the Durable Task client.
+    /// </para>
+    /// </remarks>
     private static async Task<string> ExecuteRequestPortAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
@@ -828,6 +1176,32 @@ public class DurableWorkflowRunner
         return response;
     }
 
+    /// <summary>
+    /// Executes an AI agent executor through Durable Entities.
+    /// </summary>
+    /// <param name="context">The orchestration context for entity communication.</param>
+    /// <param name="executorInfo">The executor info containing the agent configuration.</param>
+    /// <param name="input">The input/prompt to send to the AI agent.</param>
+    /// <param name="logger">The logger for warnings.</param>
+    /// <returns>The agent's response text.</returns>
+    /// <remarks>
+    /// <para>
+    /// AI agents are stateful components that maintain conversation history and context.
+    /// They are implemented using Durable Entities to persist their state across orchestration replays.
+    /// </para>
+    /// <para>
+    /// Each agent invocation:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>Retrieves the agent proxy via <c>context.GetAgent()</c></description></item>
+    /// <item><description>Creates a new thread for this conversation turn</description></item>
+    /// <item><description>Runs the agent with the input and returns the response text</description></item>
+    /// </list>
+    /// <para>
+    /// If the agent is not found (not registered in <see cref="DurableAgentsOptions"/>),
+    /// an error message is returned instead of throwing.
+    /// </para>
+    /// </remarks>
     private static async Task<string> ExecuteAgentAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
@@ -847,4 +1221,68 @@ public class DurableWorkflowRunner
         AgentResponse response = await agent.RunAsync(input, thread);
         return response.Text;
     }
+}
+
+/// <summary>
+/// Wrapper for serialized workflow events that includes type information for proper deserialization.
+/// </summary>
+/// <remarks>
+/// Workflow events (e.g., <c>DurableYieldedOutputEvent</c>, <c>DurableHaltRequestedEvent</c>) are
+/// serialized with their type information so they can be properly deserialized and processed
+/// by the orchestrator. This enables type-safe event handling across the activity boundary.
+/// </remarks>
+internal sealed class SerializedWorkflowEvent
+{
+    /// <summary>
+    /// Gets or sets the assembly-qualified type name of the event.
+    /// </summary>
+    public string? TypeName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the serialized JSON data of the event.
+    /// </summary>
+    public string? Data { get; set; }
+}
+
+/// <summary>
+/// Wrapper for activity input that includes shared state and type information.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This wrapper is serialized and passed to each activity execution. It contains:
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description><strong>Input:</strong> The serialized message/data for the executor to process.</description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>InputTypeName:</strong> The full type name of the input, used to deserialize to the correct type.
+/// This is especially important when an executor accepts multiple input types.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>State:</strong> A snapshot of the shared workflow state at the time of execution.
+/// Activities can read from and write to this state via <see cref="IWorkflowContext"/>.
+/// </description>
+/// </item>
+/// </list>
+/// </remarks>
+internal sealed class ActivityInputWithState
+{
+    /// <summary>
+    /// Gets or sets the serialized executor input.
+    /// </summary>
+    public string? Input { get; set; }
+
+    /// <summary>
+    /// Gets or sets the assembly-qualified type name of the input, used for proper deserialization.
+    /// </summary>
+    public string? InputTypeName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the shared state dictionary.
+    /// </summary>
+    public Dictionary<string, string> State { get; set; } = [];
 }

@@ -107,9 +107,7 @@ internal sealed class FunctionsWorkflowRunner : DurableWorkflowRunner
     private static string SerializeEvent(WorkflowEvent evt)
     {
         // Serialize with type information so we can deserialize to the correct type later
-#pragma warning disable IDE0001 // Simplify name - cannot simplify cross-assembly reference
-        Microsoft.Agents.AI.DurableTask.DurableWorkflowRunner.SerializedWorkflowEvent wrapper = new()
-#pragma warning restore IDE0001
+        Microsoft.Agents.AI.DurableTask.SerializedWorkflowEvent wrapper = new()
         {
             TypeName = evt.GetType().AssemblyQualifiedName,
             Data = JsonSerializer.Serialize(evt, evt.GetType())

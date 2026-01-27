@@ -246,8 +246,8 @@ public sealed class DurableStreamingRun : IAsyncDisposable
         try
         {
             // First try to deserialize as SerializedWorkflowEvent (new format with type info)
-            DurableWorkflowRunner.SerializedWorkflowEvent? wrapper =
-                JsonSerializer.Deserialize<DurableWorkflowRunner.SerializedWorkflowEvent>(serializedEvent);
+            SerializedWorkflowEvent? wrapper =
+                JsonSerializer.Deserialize<SerializedWorkflowEvent>(serializedEvent);
 
             if (wrapper?.TypeName is not null && wrapper.Data is not null)
             {

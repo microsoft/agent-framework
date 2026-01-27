@@ -45,7 +45,7 @@ internal sealed class OrderLookup() : Executor<string, Order>("OrderLookup")
         Order order = new()
         {
             Id = message,
-            OrderDate = DateTime.UtcNow.AddDays(-3),
+            OrderDate = DateTime.UtcNow.AddDays(-1),
             IsCancelled = false,
             Customer = new Customer { Name = "Jerry", Email = "jerry@example.com" }
         };
@@ -78,11 +78,11 @@ internal sealed class OrderCancel() : Executor<Order, Order>("OrderCancel")
 
         // Simulate a slow cancellation process (e.g., calling external payment system)
         // This is where you can kill the process to test durability
-        for (int i = 1; i <= 5; i++)
+        for (int i = 1; i <= 10; i++)
         {
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.WriteLine($"│ [Activity] OrderCancel: Processing... {i}/5 seconds");
+            Console.WriteLine($"│ [Activity] OrderCancel: Processing... {i}/10 seconds");
             Console.ResetColor();
         }
 
