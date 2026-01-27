@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// This class provides a similar API to <see cref="Run"/> but for workflows executed as durable orchestrations.
 /// Events are received by raising external events to the orchestration and can be streamed to the caller.
 /// </remarks>
-public sealed class DurableRun : IAsyncDisposable
+public sealed class DurableRun : IRun
 {
     private readonly DurableTaskClient _client;
     private readonly List<WorkflowEvent> _eventSink = [];
@@ -31,6 +31,9 @@ public sealed class DurableRun : IAsyncDisposable
     /// Gets the unique instance ID for this orchestration run.
     /// </summary>
     public string InstanceId { get; }
+
+    /// <inheritdoc/>
+    public string RunId => this.InstanceId;
 
     /// <summary>
     /// Gets the name of the workflow being executed.

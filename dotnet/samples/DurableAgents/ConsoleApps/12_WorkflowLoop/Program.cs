@@ -19,7 +19,6 @@
 using Azure.Identity;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
 using Microsoft.DurableTask.Worker.AzureManaged;
 using Microsoft.Extensions.AI;
@@ -62,7 +61,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-DurableTaskClient durableClient = host.Services.GetRequiredService<DurableTaskClient>();
+// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
+DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
 
 Console.WriteLine("Workflow Events Demo - Enter input for slogan generation (or 'exit'):");
 
@@ -77,7 +77,7 @@ while (true)
 
     try
     {
-        await RunWorkflowWithStreamingAsync(input, workflow, durableClient);
+        await RunWorkflowWithStreamingAsync(input, workflow, durableExecution);
     }
     catch (Exception ex)
     {
@@ -90,10 +90,11 @@ while (true)
 await host.StopAsync();
 
 // Runs a workflow and streams events as they occur
-async Task RunWorkflowWithStreamingAsync(string orderId, Workflow workflow, DurableTaskClient client)
+async Task RunWorkflowWithStreamingAsync(string orderId, Workflow workflow, DurableExecutionEnvironment execution)
 {
     // StreamAsync starts the workflow and returns a handle for observing events
-    await using DurableStreamingRun run = await DurableWorkflow.StreamAsync(workflow, orderId, client);
+    // Cast to DurableStreamingRun for durable-specific features like InstanceId
+    await using DurableStreamingRun run = (DurableStreamingRun)await execution.StreamAsync(workflow, orderId);
     Console.WriteLine($"Started: {run.InstanceId}");
 
     // WatchStreamAsync yields events as they're emitted by executors

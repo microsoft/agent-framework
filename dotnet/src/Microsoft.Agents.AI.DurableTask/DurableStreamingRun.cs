@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// Events are detected by monitoring the orchestration status for <see cref="RequestPort"/> executors that are waiting
 /// for external input (human-in-the-loop scenarios).
 /// </remarks>
-public sealed class DurableStreamingRun : IAsyncDisposable
+public sealed class DurableStreamingRun : IStreamingRun
 {
     private readonly DurableTaskClient _client;
     private readonly Workflow _workflow;
@@ -36,6 +36,9 @@ public sealed class DurableStreamingRun : IAsyncDisposable
     /// Gets the unique instance ID for this orchestration run.
     /// </summary>
     public string InstanceId { get; }
+
+    /// <inheritdoc/>
+    public string RunId => this.InstanceId;
 
     /// <summary>
     /// Gets the name of the workflow being executed.
@@ -76,6 +79,10 @@ public sealed class DurableStreamingRun : IAsyncDisposable
         };
     }
 
+    /// <inheritdoc/>
+    public IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(CancellationToken cancellationToken = default)
+        => this.WatchStreamAsync(pollingInterval: null, cancellationToken);
+
     /// <summary>
     /// Asynchronously streams workflow events as they occur during workflow execution.
     /// </summary>
@@ -94,8 +101,8 @@ public sealed class DurableStreamingRun : IAsyncDisposable
     /// <param name="cancellationToken">A cancellation token to observe.</param>
     /// <returns>An asynchronous stream of <see cref="WorkflowEvent"/> objects.</returns>
     public async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
-        TimeSpan? pollingInterval = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        TimeSpan? pollingInterval,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         TimeSpan interval = pollingInterval ?? TimeSpan.FromMilliseconds(500);
 
@@ -349,6 +356,10 @@ public sealed class DurableStreamingRun : IAsyncDisposable
             eventData,
             cancellation: cancellationToken).ConfigureAwait(false);
     }
+
+    /// <inheritdoc/>
+    public ValueTask SendResponseAsync(ExternalResponse response, CancellationToken cancellationToken = default)
+        => this.SendExternalEventAsync("ExternalResponse", response, cancellationToken);
 
     /// <summary>
     /// Sends a response to a pending request in the workflow.

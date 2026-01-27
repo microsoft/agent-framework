@@ -27,7 +27,6 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
 using Microsoft.DurableTask.Worker.AzureManaged;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,7 +76,9 @@ IHost host = Host.CreateDefaultBuilder(args)
     .Build();
 
 await host.StartAsync();
-DurableTaskClient durableClient = host.Services.GetRequiredService<DurableTaskClient>();
+
+// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
+DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
 
 // Console UI
 Console.ForegroundColor = ConsoleColor.Cyan;
@@ -109,7 +110,8 @@ while (true)
 
     try
     {
-        await using DurableRun run = await DurableWorkflow.RunAsync(workflow, input, durableClient);
+        // Cast to DurableRun for durable-specific features like InstanceId and WaitForCompletionAsync
+        await using DurableRun run = (DurableRun)await durableExecution.RunAsync(workflow, input);
         Console.ForegroundColor = ConsoleColor.Gray;
         Console.WriteLine($"Instance: {run.InstanceId}");
         Console.ResetColor();

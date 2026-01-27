@@ -7,7 +7,6 @@
 
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
 using Microsoft.DurableTask.Worker.AzureManaged;
 using Microsoft.Extensions.DependencyInjection;
@@ -44,15 +43,16 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-// Get services
-DurableTaskClient durableClient = host.Services.GetRequiredService<DurableTaskClient>();
+// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
+DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
 
 // Start the workflow with an expense ID as input
 string expenseId = "EXP-2025-001";
 Console.WriteLine($"Starting expense reimbursement workflow for expense: {expenseId}");
 
 // Start the workflow and get a streaming handle
-await using DurableStreamingRun run = await DurableWorkflow.StreamAsync(expenseApproval, expenseId, durableClient);
+// Cast to DurableStreamingRun for durable-specific features like InstanceId and SendResponseAsync
+await using DurableStreamingRun run = (DurableStreamingRun)await durableExecution.StreamAsync(expenseApproval, expenseId);
 
 Console.WriteLine($"Workflow started with instance ID: {run.InstanceId}");
 Console.WriteLine("Watching for workflow events...\n");

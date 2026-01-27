@@ -113,6 +113,9 @@ public static class DurableWorkflowServiceCollectionExtensions
             services.AddDurableTaskClient(clientBuilder);
         }
 
+        // Register the DurableExecutionEnvironment for DI-friendly workflow execution
+        services.TryAddSingleton<DurableExecutionEnvironment>();
+
         return services;
     }
 

@@ -6,63 +6,59 @@ using Microsoft.DurableTask.Client;
 namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
-/// Provides methods to run workflows as durable orchestrations.
+/// Provides a DI-friendly execution environment for running workflows as durable orchestrations.
 /// </summary>
-public static class DurableWorkflow
+/// <remarks>
+/// This class wraps the <see cref="DurableTaskClient"/> and provides methods to run workflows
+/// without requiring the client to be passed explicitly. Register this class in DI using
+/// <see cref="DurableWorkflowServiceCollectionExtensions.ConfigureDurableWorkflows"/>.
+/// </remarks>
+public sealed class DurableExecutionEnvironment
 {
+    private readonly DurableTaskClient _client;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DurableExecutionEnvironment"/> class.
+    /// </summary>
+    /// <param name="client">The durable task client for orchestration operations.</param>
+    public DurableExecutionEnvironment(DurableTaskClient client)
+    {
+        this._client = client ?? throw new ArgumentNullException(nameof(client));
+    }
+
     /// <summary>
     /// Runs a workflow as a durable orchestration and returns a handle to monitor its execution.
     /// </summary>
     /// <typeparam name="TInput">The type of the input to the workflow.</typeparam>
     /// <param name="workflow">The workflow to execute.</param>
     /// <param name="input">The input to pass to the workflow's starting executor.</param>
-    /// <param name="client">The durable task client for orchestration operations.</param>
     /// <param name="instanceId">Optional instance ID for the orchestration. If not provided, a new ID will be generated.</param>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
     /// <returns>An <see cref="IRun"/> that can be used to monitor the workflow execution.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when workflow or client is null.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when workflow is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the workflow does not have a valid name.</exception>
-    public static async ValueTask<IRun> RunAsync<TInput>(
+    public ValueTask<IRun> RunAsync<TInput>(
         Workflow workflow,
         TInput input,
-        DurableTaskClient client,
         string? instanceId = null,
         CancellationToken cancellationToken = default)
         where TInput : notnull
-    {
-        ArgumentNullException.ThrowIfNull(workflow);
-        ArgumentNullException.ThrowIfNull(client);
-
-        if (string.IsNullOrEmpty(workflow.Name))
-        {
-            throw new ArgumentException("Workflow must have a valid Name property.", nameof(workflow));
-        }
-
-        string orchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name);
-        string actualInstanceId = await client.ScheduleNewOrchestrationInstanceAsync(
-            orchestratorName: orchestrationName,
-            input: input,
-            cancellation: cancellationToken).ConfigureAwait(false);
-
-        return new DurableRun(client, actualInstanceId, workflow.Name);
-    }
+        => DurableWorkflow.RunAsync(workflow, input, this._client, instanceId, cancellationToken);
 
     /// <summary>
     /// Runs a workflow as a durable orchestration with string input.
     /// </summary>
     /// <param name="workflow">The workflow to execute.</param>
     /// <param name="input">The string input to pass to the workflow.</param>
-    /// <param name="client">The durable task client for orchestration operations.</param>
     /// <param name="instanceId">Optional instance ID for the orchestration.</param>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
     /// <returns>An <see cref="IRun"/> that can be used to monitor the workflow execution.</returns>
-    public static ValueTask<IRun> RunAsync(
+    public ValueTask<IRun> RunAsync(
         Workflow workflow,
         string input,
-        DurableTaskClient client,
         string? instanceId = null,
         CancellationToken cancellationToken = default)
-        => RunAsync<string>(workflow, input, client, instanceId, cancellationToken);
+        => DurableWorkflow.RunAsync(workflow, input, this._client, instanceId, cancellationToken);
 
     /// <summary>
     /// Starts a workflow as a durable orchestration and returns a streaming handle to watch events.
@@ -70,89 +66,49 @@ public static class DurableWorkflow
     /// <typeparam name="TInput">The type of the input to the workflow.</typeparam>
     /// <param name="workflow">The workflow to execute.</param>
     /// <param name="input">The input to pass to the workflow's starting executor.</param>
-    /// <param name="client">The durable task client for orchestration operations.</param>
     /// <param name="instanceId">Optional instance ID for the orchestration. If not provided, a new ID will be generated.</param>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
     /// <returns>An <see cref="IStreamingRun"/> that can be used to stream workflow events.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when workflow or client is null.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when workflow is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the workflow does not have a valid name.</exception>
-    public static async ValueTask<IStreamingRun> StreamAsync<TInput>(
+    public ValueTask<IStreamingRun> StreamAsync<TInput>(
         Workflow workflow,
         TInput input,
-        DurableTaskClient client,
         string? instanceId = null,
         CancellationToken cancellationToken = default)
         where TInput : notnull
-    {
-        ArgumentNullException.ThrowIfNull(workflow);
-        ArgumentNullException.ThrowIfNull(client);
-
-        if (string.IsNullOrEmpty(workflow.Name))
-        {
-            throw new ArgumentException("Workflow must have a valid Name property.", nameof(workflow));
-        }
-
-        string orchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name);
-        string actualInstanceId = await client.ScheduleNewOrchestrationInstanceAsync(
-            orchestratorName: orchestrationName,
-            input: input,
-            cancellation: cancellationToken).ConfigureAwait(false);
-
-        return new DurableStreamingRun(client, actualInstanceId, workflow);
-    }
+        => DurableWorkflow.StreamAsync(workflow, input, this._client, instanceId, cancellationToken);
 
     /// <summary>
     /// Starts a workflow as a durable orchestration with string input and returns a streaming handle.
     /// </summary>
     /// <param name="workflow">The workflow to execute.</param>
     /// <param name="input">The string input to pass to the workflow.</param>
-    /// <param name="client">The durable task client for orchestration operations.</param>
     /// <param name="instanceId">Optional instance ID for the orchestration.</param>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
     /// <returns>An <see cref="IStreamingRun"/> that can be used to stream workflow events.</returns>
-    public static ValueTask<IStreamingRun> StreamAsync(
+    public ValueTask<IStreamingRun> StreamAsync(
         Workflow workflow,
         string input,
-        DurableTaskClient client,
         string? instanceId = null,
         CancellationToken cancellationToken = default)
-        => StreamAsync<string>(workflow, input, client, instanceId, cancellationToken);
+        => DurableWorkflow.StreamAsync(workflow, input, this._client, instanceId, cancellationToken);
 
     /// <summary>
     /// Attaches to an existing workflow orchestration instance.
     /// </summary>
     /// <param name="instanceId">The instance ID of the orchestration to attach to.</param>
     /// <param name="workflowName">The name of the workflow being executed.</param>
-    /// <param name="client">The durable task client for orchestration operations.</param>
     /// <returns>An <see cref="IRun"/> that can be used to monitor the workflow execution.</returns>
-    public static IRun Attach(
-        string instanceId,
-        string workflowName,
-        DurableTaskClient client)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        ArgumentException.ThrowIfNullOrEmpty(workflowName);
-        ArgumentNullException.ThrowIfNull(client);
-
-        return new DurableRun(client, instanceId, workflowName);
-    }
+    public IRun Attach(string instanceId, string workflowName)
+        => DurableWorkflow.Attach(instanceId, workflowName, this._client);
 
     /// <summary>
     /// Attaches to an existing workflow orchestration instance for streaming.
     /// </summary>
     /// <param name="instanceId">The instance ID of the orchestration to attach to.</param>
     /// <param name="workflow">The workflow being executed.</param>
-    /// <param name="client">The durable task client for orchestration operations.</param>
     /// <returns>An <see cref="IStreamingRun"/> that can be used to stream workflow events.</returns>
-    public static IStreamingRun AttachStream(
-        string instanceId,
-        Workflow workflow,
-        DurableTaskClient client)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        ArgumentNullException.ThrowIfNull(workflow);
-        ArgumentNullException.ThrowIfNull(client);
-
-        return new DurableStreamingRun(client, instanceId, workflow);
-    }
+    public IStreamingRun AttachStream(string instanceId, Workflow workflow)
+        => DurableWorkflow.AttachStream(instanceId, workflow, this._client);
 }

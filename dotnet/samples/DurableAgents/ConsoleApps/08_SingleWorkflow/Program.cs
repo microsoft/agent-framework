@@ -2,7 +2,7 @@
 
 // This sample demonstrates how to run a workflow as a durable orchestration from a console application.
 // The workflow consists of three executors: OrderLookup -> OrderCancel -> SendEmail.
-// It uses the DurableExecution API similar to InProcessExecution for in-process workflows.
+// It uses the DurableExecutionEnvironment which is injected via DI.
 //
 // DURABILITY DEMONSTRATION:
 // - Each activity has artificial delays to simulate real-world operations
@@ -13,7 +13,6 @@
 
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.AzureManaged;
 using Microsoft.DurableTask.Worker.AzureManaged;
 using Microsoft.Extensions.DependencyInjection;
@@ -51,7 +50,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-DurableTaskClient durableClient = host.Services.GetRequiredService<DurableTaskClient>();
+// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
+DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
 
 Console.WriteLine("Durable Workflow Sample");
 Console.WriteLine("Workflow: OrderLookup (2s) -> OrderCancel (5s) -> SendEmail (1s)");
@@ -75,7 +75,7 @@ while (true)
 
     try
     {
-        await StartNewWorkflowAsync(input, cancelOrder, durableClient);
+        await StartNewWorkflowAsync(input, cancelOrder, durableExecution);
     }
     catch (Exception ex)
     {
@@ -87,12 +87,13 @@ while (true)
 
 await host.StopAsync();
 
-// Start a new workflow
-async Task StartNewWorkflowAsync(string orderId, Workflow workflow, DurableTaskClient client)
+// Start a new workflow using DurableExecutionEnvironment (no DurableTaskClient needed)
+async Task StartNewWorkflowAsync(string orderId, Workflow workflow, DurableExecutionEnvironment execution)
 {
     Console.WriteLine($"Starting workflow for order '{orderId}'...");
 
-    await using DurableRun run = await DurableWorkflow.RunAsync(workflow, orderId, client);
+    // RunAsync returns IRun, cast to DurableRun for durable-specific features like WaitForCompletionAsync
+    await using DurableRun run = (DurableRun)await execution.RunAsync(workflow, orderId);
     Console.WriteLine($"Instance ID: {run.InstanceId}");
 
     try
