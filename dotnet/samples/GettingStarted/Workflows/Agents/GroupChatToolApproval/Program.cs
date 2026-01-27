@@ -98,8 +98,14 @@ public static class Program
             {
                 case RequestInfoEvent e:
                 {
-                    if (e.Request.DataAs<FunctionApprovalRequestContent>() is { } approvalRequestContent)
+                    if (e.Request.DataIs(out FunctionApprovalRequestContent? approvalRequestContent))
                     {
+                        Console.WriteLine();
+                        Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.Request.PortInfo.PortId}");
+                        Console.WriteLine($"  Tool: {approvalRequestContent.FunctionCall.Name}");
+                        Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(approvalRequestContent.FunctionCall.Arguments)}");
+                        Console.WriteLine();
+
                         // Approve the tool call request
                         Console.WriteLine($"Tool: {approvalRequestContent.FunctionCall.Name} approved");
                         await run.SendResponseAsync(e.Request.CreateResponse(approvalRequestContent.CreateResponse(approved: true)));
@@ -122,20 +128,6 @@ public static class Program
                     }
 
                     Console.Write(e.Update.Text);
-
-                    // Check for user input requests (approval requests)
-                    FunctionApprovalRequestContent? approvalRequest = e.Update.Contents
-                        .OfType<FunctionApprovalRequestContent>()
-                        .FirstOrDefault();
-
-                    if (approvalRequest is not null)
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.ExecutorId}");
-                        Console.WriteLine($"  Tool: {approvalRequest.FunctionCall.Name}");
-                        Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(approvalRequest.FunctionCall.Arguments)}");
-                        Console.WriteLine();
-                    }
 
                     break;
                 }
