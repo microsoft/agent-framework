@@ -282,7 +282,7 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected().Verify("RunCoreAsync",
             Times.Never(),
             ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-            ItExpr.IsAny<AgentThread>(),
+            ItExpr.IsAny<AgentSession>(),
             ItExpr.IsAny<AgentRunOptions>(),
             ItExpr.IsAny<CancellationToken>());
     }
@@ -301,7 +301,7 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread>(),
+                ItExpr.IsAny<AgentSession>(),
                 ItExpr.IsAny<AgentRunOptions>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);
@@ -340,7 +340,7 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread>(),
+                ItExpr.IsAny<AgentSession>(),
                 ItExpr.IsAny<AgentRunOptions>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);
@@ -383,7 +383,7 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread>(),
+                ItExpr.IsAny<AgentSession>(),
                 ItExpr.IsAny<AgentRunOptions>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(expectedResponse);
@@ -450,7 +450,7 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread>(),
+                ItExpr.IsAny<AgentSession>(),
                 ItExpr.IsAny<AgentRunOptions>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(expectedResponse);
@@ -492,12 +492,12 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread>(),
+                ItExpr.IsAny<AgentSession>(),
                 ItExpr.IsAny<AgentRunOptions>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(expectedResponse);
 
-        string? capturedThreadId = null;
+        string? capturedSessionId = null;
         this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             It.IsAny<string>(),
@@ -506,7 +506,7 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
             .Callback<IEnumerable<ChatMessage>, string, Activity, PurviewSettings, string, CancellationToken>(
-                (_, threadId, _, _, _, _) => capturedThreadId = threadId)
+                (_, threadId, _, _, _, _) => capturedSessionId = threadId)
             .ReturnsAsync((false, "user-123"));
 
         // Act
@@ -514,8 +514,8 @@ public sealed class PurviewWrapperTests : IDisposable
 
         // Assert
         Assert.NotNull(result);
-        Assert.NotNull(capturedThreadId);
-        Assert.True(Guid.TryParse(capturedThreadId, out _), "Generated thread ID should be a valid GUID");
+        Assert.NotNull(capturedSessionId);
+        Assert.True(Guid.TryParse(capturedSessionId, out _), "Generated session ID should be a valid GUID");
     }
 
     [Fact]
@@ -532,7 +532,7 @@ public sealed class PurviewWrapperTests : IDisposable
         mockAgent.Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread>(),
+                ItExpr.IsAny<AgentSession>(),
                 ItExpr.IsAny<AgentRunOptions>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);

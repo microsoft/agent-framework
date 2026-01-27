@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
@@ -50,6 +51,15 @@ public class Workflow
             keySelector: key => key,
             elementSelector: key => this.Ports[key].ToPortInfo()
         );
+    }
+
+    /// <summary>
+    /// Gets the collection of executor bindings, keyed by their ID.
+    /// </summary>
+    /// <returns>A copy of the executor bindings dictionary. Modifications do not affect the workflow.</returns>
+    public Dictionary<string, ExecutorBinding> ReflectExecutors()
+    {
+        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
     }
 
     /// <summary>
@@ -174,9 +184,9 @@ public class Workflow
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
             Justification = "Does not exist in NetFx 4.7.2")]
-    internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
+    internal async ValueTask ReleaseOwnershipAsync(object ownerToken, object? targetOwnerToken)
     {
-        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken) ??
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, targetOwnerToken, ownerToken) ??
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
 
         if (!ReferenceEquals(originalToken, ownerToken))
@@ -185,6 +195,16 @@ public class Workflow
         }
 
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
+    }
+
+    private sealed class NoOpExternalRequestContext : IExternalRequestContext, IExternalRequestSink
+    {
+        public ValueTask PostAsync(ExternalRequest request) => default;
+
+        IExternalRequestSink IExternalRequestContext.RegisterPort(RequestPort port)
+        {
+            return this;
+        }
     }
 
     /// <summary>
@@ -198,6 +218,8 @@ public class Workflow
         ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
+        startExecutor.Configure(new NoOpExternalRequestContext());
+
         return startExecutor.DescribeProtocol();
     }
 }

@@ -110,7 +110,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 firstUpdate = update;
                 if (firstUpdate.AdditionalProperties?.TryGetValue("agui_thread_id", out string? threadId) is true)
                 {
-                    // Capture the thread id from the first update to use as conversation id if none was provided
+                    // Capture the session id from the first update to use as conversation id if none was provided
                     conversationId = threadId;
                 }
             }
@@ -276,7 +276,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
         }
 
-        // Extract the thread id from the options additional properties
+        // Extract the session id from the options additional properties
         private static string? ExtractThreadIdFromOptions(ChatOptions? options)
         {
             if (options?.AdditionalProperties is null ||
@@ -288,7 +288,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
             return threadId;
         }
 
-        // Extract the thread id from the second last message's function call content additional properties
+        // Extract the session id from the second last message's function call content additional properties
         private static string? ExtractTemporaryThreadId(List<ChatMessage> messagesList)
         {
             if (messagesList.Count < 2)

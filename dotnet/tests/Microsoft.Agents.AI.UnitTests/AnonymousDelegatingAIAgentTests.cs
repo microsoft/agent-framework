@@ -19,7 +19,7 @@ public class AnonymousDelegatingAIAgentTests
 {
     private readonly Mock<AIAgent> _innerAgentMock;
     private readonly List<ChatMessage> _testMessages;
-    private readonly AgentThread _testThread;
+    private readonly AgentSession _testSession;
     private readonly AgentRunOptions _testOptions;
     private readonly AgentResponse _testResponse;
     private readonly AgentResponseUpdate[] _testStreamingResponses;
@@ -28,7 +28,7 @@ public class AnonymousDelegatingAIAgentTests
     {
         this._innerAgentMock = new Mock<AIAgent>();
         this._testMessages = [new ChatMessage(ChatRole.User, "Test message")];
-        this._testThread = new Mock<AgentThread>().Object;
+        this._testSession = new Mock<AgentSession>().Object;
         this._testOptions = new AgentRunOptions();
         this._testResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]);
         this._testStreamingResponses = [
@@ -40,7 +40,7 @@ public class AnonymousDelegatingAIAgentTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(this._testResponse);
@@ -49,7 +49,7 @@ public class AnonymousDelegatingAIAgentTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(this._testStreamingResponses));
@@ -165,27 +165,27 @@ public class AnonymousDelegatingAIAgentTests
     {
         // Arrange
         IEnumerable<ChatMessage>? capturedMessages = null;
-        AgentThread? capturedThread = null;
+        AgentSession? capturedSession = null;
         AgentRunOptions? capturedOptions = null;
         CancellationToken capturedCancellationToken = default;
         var expectedCancellationToken = new CancellationToken(true);
 
         var agent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 capturedMessages = messages;
-                capturedThread = thread;
+                capturedSession = session;
                 capturedOptions = options;
                 capturedCancellationToken = cancellationToken;
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             });
 
         // Act
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions, expectedCancellationToken);
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions, expectedCancellationToken);
 
         // Assert
         Assert.Same(this._testMessages, capturedMessages);
-        Assert.Same(this._testThread, capturedThread);
+        Assert.Same(this._testSession, capturedSession);
         Assert.Same(this._testOptions, capturedOptions);
         Assert.Equal(expectedCancellationToken, capturedCancellationToken);
 
@@ -194,7 +194,7 @@ public class AnonymousDelegatingAIAgentTests
             .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(m => m == this._testMessages),
-                ItExpr.Is<AgentThread?>(t => t == this._testThread),
+                ItExpr.Is<AgentSession?>(t => t == this._testSession),
                 ItExpr.Is<AgentRunOptions?>(o => o == this._testOptions),
                 ItExpr.Is<CancellationToken>(ct => ct == expectedCancellationToken));
     }
@@ -208,15 +208,15 @@ public class AnonymousDelegatingAIAgentTests
         // Arrange
         var callCount = 0;
         var agent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 callCount++;
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             });
 
         // Act
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
-        var streamingResults = await agent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions).ToListAsync();
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
+        var streamingResults = await agent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions).ToListAsync();
 
         // Assert
         Assert.Equal(2, callCount);
@@ -238,15 +238,15 @@ public class AnonymousDelegatingAIAgentTests
         var runFuncCalled = false;
         var agent = new AnonymousDelegatingAIAgent(
             this._innerAgentMock.Object,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 runFuncCalled = true;
-                return innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunAsync(messages, session, options, cancellationToken);
             },
             null);
 
         // Act
-        var result = await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        var result = await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.True(runFuncCalled);
@@ -263,15 +263,15 @@ public class AnonymousDelegatingAIAgentTests
         var runFuncCalled = false;
         var agent = new AnonymousDelegatingAIAgent(
             this._innerAgentMock.Object,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 runFuncCalled = true;
-                return innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunAsync(messages, session, options, cancellationToken);
             },
             null);
 
         // Act
-        var results = await agent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions).ToListAsync();
+        var results = await agent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions).ToListAsync();
 
         // Assert
         Assert.True(runFuncCalled);
@@ -289,14 +289,14 @@ public class AnonymousDelegatingAIAgentTests
         var agent = new AnonymousDelegatingAIAgent(
             this._innerAgentMock.Object,
             null,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 streamingFuncCalled = true;
-                return innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
             });
 
         // Act
-        var result = await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        var result = await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.True(streamingFuncCalled);
@@ -314,14 +314,14 @@ public class AnonymousDelegatingAIAgentTests
         var agent = new AnonymousDelegatingAIAgent(
             this._innerAgentMock.Object,
             null,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 streamingFuncCalled = true;
-                return innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
             });
 
         // Act
-        var results = await agent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions).ToListAsync();
+        var results = await agent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions).ToListAsync();
 
         // Assert
         Assert.True(streamingFuncCalled);
@@ -340,20 +340,20 @@ public class AnonymousDelegatingAIAgentTests
 
         var agent = new AnonymousDelegatingAIAgent(
             this._innerAgentMock.Object,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 runFuncCalled = true;
-                return innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunAsync(messages, session, options, cancellationToken);
             },
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 streamingFuncCalled = true;
-                return innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
             });
 
         // Act
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
-        await agent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions).ToListAsync();
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
+        await agent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions).ToListAsync();
 
         // Assert
         Assert.True(runFuncCalled);
@@ -377,7 +377,7 @@ public class AnonymousDelegatingAIAgentTests
 
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => agent.RunAsync(this._testMessages, this._testThread, this._testOptions));
+            () => agent.RunAsync(this._testMessages, this._testSession, this._testOptions));
 
         Assert.Same(expectedException, actualException);
     }
@@ -397,7 +397,7 @@ public class AnonymousDelegatingAIAgentTests
 
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => agent.RunAsync(this._testMessages, this._testThread, this._testOptions));
+            () => agent.RunAsync(this._testMessages, this._testSession, this._testOptions));
 
         Assert.Same(expectedException, actualException);
     }
@@ -418,7 +418,7 @@ public class AnonymousDelegatingAIAgentTests
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in agent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions))
+            await foreach (var _ in agent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions))
             {
                 // Should throw before yielding any items
             }
@@ -439,7 +439,7 @@ public class AnonymousDelegatingAIAgentTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => agent.RunAsync(this._testMessages, this._testThread, this._testOptions));
+            () => agent.RunAsync(this._testMessages, this._testSession, this._testOptions));
 
         Assert.Contains("without producing an AgentResponse", exception.Message);
     }
@@ -459,10 +459,10 @@ public class AnonymousDelegatingAIAgentTests
         var capturedValue = 0;
 
         var agent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 asyncLocal.Value = 42;
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 capturedValue = asyncLocal.Value;
             });
 
@@ -470,7 +470,7 @@ public class AnonymousDelegatingAIAgentTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(() =>
@@ -482,7 +482,7 @@ public class AnonymousDelegatingAIAgentTests
 
         // Act
         Assert.Equal(0, asyncLocal.Value); // Initial value
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.Equal(0, asyncLocal.Value); // Should be reset after call
@@ -503,31 +503,31 @@ public class AnonymousDelegatingAIAgentTests
         var executionOrder = new List<string>();
 
         var outerAgent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Outer-Pre");
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("Outer-Post");
             });
 
         var middleAgent = new AnonymousDelegatingAIAgent(outerAgent,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Middle-Pre");
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("Middle-Post");
             });
 
         var innerAgent = new AnonymousDelegatingAIAgent(middleAgent,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Inner-Pre");
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("Inner-Post");
             });
 
         // Act
-        await innerAgent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        await innerAgent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         var expectedOrder = new[] { "Inner-Pre", "Middle-Pre", "Outer-Pre", "Outer-Post", "Middle-Post", "Inner-Post" };
@@ -544,32 +544,32 @@ public class AnonymousDelegatingAIAgentTests
         var executionOrder = new List<string>();
 
         var outerAgent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 executionOrder.Add("Outer-Run");
-                return innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunAsync(messages, session, options, cancellationToken);
             },
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 executionOrder.Add("Outer-Streaming");
-                return innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
             });
 
         var middleAgent = new AnonymousDelegatingAIAgent(outerAgent,
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 executionOrder.Add("Middle-Run");
-                return innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunAsync(messages, session, options, cancellationToken);
             },
-            (messages, thread, options, innerAgent, cancellationToken) =>
+            (messages, session, options, innerAgent, cancellationToken) =>
             {
                 executionOrder.Add("Middle-Streaming");
-                return innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+                return innerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
             });
 
         // Act
-        await middleAgent.RunAsync(this._testMessages, this._testThread, this._testOptions);
-        await middleAgent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions).ToListAsync();
+        await middleAgent.RunAsync(this._testMessages, this._testSession, this._testOptions);
+        await middleAgent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions).ToListAsync();
 
         // Assert
         Assert.Contains("Middle-Run", executionOrder);
@@ -597,24 +597,24 @@ public class AnonymousDelegatingAIAgentTests
         var executionOrder = new List<string>();
 
         var outerAgent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Outer-Pre");
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("Outer-Post");
             });
 
         var innerAgent = new AnonymousDelegatingAIAgent(outerAgent,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Inner-Pre");
                 capturedOptions.Add(options);
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("Inner-Post");
             });
 
         // Act
-        await innerAgent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        await innerAgent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.Single(capturedOptions);
@@ -639,25 +639,25 @@ public class AnonymousDelegatingAIAgentTests
         var innerExecuted = false;
 
         var outerAgent = new AnonymousDelegatingAIAgent(this._innerAgentMock.Object,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 outerExecuted = true;
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             });
 
         var middleAgent = new AnonymousDelegatingAIAgent(outerAgent,
             (_, _, _, _, _) => throw expectedException);
 
         var innerAgent = new AnonymousDelegatingAIAgent(middleAgent,
-            async (messages, thread, options, next, cancellationToken) =>
+            async (messages, session, options, next, cancellationToken) =>
             {
                 innerExecuted = true;
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             });
 
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => innerAgent.RunAsync(this._testMessages, this._testThread, this._testOptions));
+            () => innerAgent.RunAsync(this._testMessages, this._testSession, this._testOptions));
 
         Assert.Same(expectedException, actualException);
         Assert.True(innerExecuted); // Inner middleware should execute
@@ -679,13 +679,13 @@ public class AnonymousDelegatingAIAgentTests
 
         var innerAgent = new AnonymousDelegatingAIAgent(outerAgent,
             null,
-            (messages, thread, options, innerAgent, cancellationToken) =>
-                innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken));
+            (messages, session, options, innerAgent, cancellationToken) =>
+                innerAgent.RunStreamingAsync(messages, session, options, cancellationToken));
 
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in innerAgent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions))
+            await foreach (var _ in innerAgent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions))
             {
                 // Should throw before yielding any items
             }
@@ -708,22 +708,22 @@ public class AnonymousDelegatingAIAgentTests
         var executionOrder = new List<string>();
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("First-Pre");
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("First-Post");
             })
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Second-Pre");
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
                 executionOrder.Add("Second-Post");
             })
             .Build();
 
         // Act
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         var expectedOrder = new[] { "First-Pre", "Second-Pre", "Second-Post", "First-Post" };
@@ -741,12 +741,12 @@ public class AnonymousDelegatingAIAgentTests
         var streamingExecutionOrder = new List<string>();
 
         static async IAsyncEnumerable<AgentResponseUpdate> FirstStreamingMiddlewareAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent,
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent,
             [EnumeratorCancellation] CancellationToken cancellationToken,
             List<string> executionOrder)
         {
             executionOrder.Add("First-Streaming-Pre");
-            await foreach (var update in innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in innerAgent.RunStreamingAsync(messages, session, options, cancellationToken))
             {
                 yield return update;
             }
@@ -754,12 +754,12 @@ public class AnonymousDelegatingAIAgentTests
         }
 
         static async IAsyncEnumerable<AgentResponseUpdate> SecondStreamingMiddlewareAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent,
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent,
             [EnumeratorCancellation] CancellationToken cancellationToken,
             List<string> executionOrder)
         {
             executionOrder.Add("Second-Streaming-Pre");
-            await foreach (var update in innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in innerAgent.RunStreamingAsync(messages, session, options, cancellationToken))
             {
                 yield return update;
             }
@@ -768,30 +768,30 @@ public class AnonymousDelegatingAIAgentTests
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
             .Use(
-                async (messages, thread, options, innerAgent, cancellationToken) =>
+                async (messages, session, options, innerAgent, cancellationToken) =>
                 {
                     runExecutionOrder.Add("First-Run-Pre");
-                    var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                    var result = await innerAgent.RunAsync(messages, session, options, cancellationToken);
                     runExecutionOrder.Add("First-Run-Post");
                     return result;
                 },
-                (messages, thread, options, innerAgent, cancellationToken) =>
-                    FirstStreamingMiddlewareAsync(messages, thread, options, innerAgent, cancellationToken, streamingExecutionOrder))
+                (messages, session, options, innerAgent, cancellationToken) =>
+                    FirstStreamingMiddlewareAsync(messages, session, options, innerAgent, cancellationToken, streamingExecutionOrder))
             .Use(
-                async (messages, thread, options, innerAgent, cancellationToken) =>
+                async (messages, session, options, innerAgent, cancellationToken) =>
                 {
                     runExecutionOrder.Add("Second-Run-Pre");
-                    var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                    var result = await innerAgent.RunAsync(messages, session, options, cancellationToken);
                     runExecutionOrder.Add("Second-Run-Post");
                     return result;
                 },
-                (messages, thread, options, innerAgent, cancellationToken) =>
-                    SecondStreamingMiddlewareAsync(messages, thread, options, innerAgent, cancellationToken, streamingExecutionOrder))
+                (messages, session, options, innerAgent, cancellationToken) =>
+                    SecondStreamingMiddlewareAsync(messages, session, options, innerAgent, cancellationToken, streamingExecutionOrder))
             .Build();
 
         // Act
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
-        await agent.RunStreamingAsync(this._testMessages, this._testThread, this._testOptions).ToListAsync();
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
+        await agent.RunStreamingAsync(this._testMessages, this._testSession, this._testOptions).ToListAsync();
 
         // Assert
         var expectedRunOrder = new[] { "First-Run-Pre", "Second-Run-Pre", "Second-Run-Post", "First-Run-Post" };
@@ -812,24 +812,24 @@ public class AnonymousDelegatingAIAgentTests
         AgentRunOptions? capturedOptions = null;
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 // Modify messages and options
                 var modifiedMessages = messages.Concat([new ChatMessage(ChatRole.System, "Added by first middleware")]);
                 var modifiedOptions = new AgentRunOptions();
-                await next(modifiedMessages, thread, modifiedOptions, cancellationToken);
+                await next(modifiedMessages, session, modifiedOptions, cancellationToken);
             })
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 // Capture what the second middleware receives
                 capturedMessages = messages;
                 capturedOptions = options;
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             })
             .Build();
 
         // Act
-        await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.NotNull(capturedMessages);
@@ -853,12 +853,12 @@ public class AnonymousDelegatingAIAgentTests
         var executionOrder = new List<string>();
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("First-Pre");
                 try
                 {
-                    await next(messages, thread, options, cancellationToken);
+                    await next(messages, session, options, cancellationToken);
                     executionOrder.Add("First-Post-Success");
                 }
                 catch
@@ -867,7 +867,7 @@ public class AnonymousDelegatingAIAgentTests
                     throw;
                 }
             })
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Second-Pre");
                 throw expectedException;
@@ -876,7 +876,7 @@ public class AnonymousDelegatingAIAgentTests
 
         // Act & Assert
         var actualException = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => agent.RunAsync(this._testMessages, this._testThread, this._testOptions));
+            () => agent.RunAsync(this._testMessages, this._testSession, this._testOptions));
 
         Assert.Same(expectedException, actualException);
         var expectedOrder = new[] { "First-Pre", "Second-Pre", "First-Post-Exception" };
@@ -895,12 +895,12 @@ public class AnonymousDelegatingAIAgentTests
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
             .Use(
-                async (messages, thread, options, innerAgent, cancellationToken) =>
+                async (messages, session, options, innerAgent, cancellationToken) =>
                 {
                     executionOrder.Add("Handler-Pre");
                     try
                     {
-                        return await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                        return await innerAgent.RunAsync(messages, session, options, cancellationToken);
                     }
                     catch (InvalidOperationException)
                     {
@@ -909,7 +909,7 @@ public class AnonymousDelegatingAIAgentTests
                     }
                 },
                 null)
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 executionOrder.Add("Throwing-Pre");
                 throw new InvalidOperationException("Simulated error");
@@ -917,7 +917,7 @@ public class AnonymousDelegatingAIAgentTests
             .Build();
 
         // Act
-        var result = await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        var result = await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.Same(fallbackResponse, result);
@@ -940,27 +940,27 @@ public class AnonymousDelegatingAIAgentTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.Is<CancellationToken>(ct => ct.IsCancellationRequested))
             .ThrowsAsync(new OperationCanceledException());
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 capturedTokens.Add(cancellationToken);
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             })
-            .Use(async (messages, thread, options, next, cancellationToken) =>
+            .Use(async (messages, session, options, next, cancellationToken) =>
             {
                 capturedTokens.Add(cancellationToken);
-                await next(messages, thread, options, cancellationToken);
+                await next(messages, session, options, cancellationToken);
             })
             .Build();
 
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => agent.RunAsync(this._testMessages, this._testThread, this._testOptions, expectedToken));
+            () => agent.RunAsync(this._testMessages, this._testSession, this._testOptions, expectedToken));
 
         Assert.All(capturedTokens, token => Assert.Equal(expectedToken, token));
         Assert.Equal(2, capturedTokens.Count);
@@ -978,16 +978,16 @@ public class AnonymousDelegatingAIAgentTests
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
             .Use(
-                async (messages, thread, options, innerAgent, cancellationToken) =>
+                async (messages, session, options, innerAgent, cancellationToken) =>
                 {
                     executionOrder.Add("First-Pre");
-                    var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+                    var result = await innerAgent.RunAsync(messages, session, options, cancellationToken);
                     executionOrder.Add("First-Post");
                     return result;
                 },
                 null)
             .Use(
-                async (messages, thread, options, innerAgent, cancellationToken) =>
+                async (messages, session, options, innerAgent, cancellationToken) =>
                 {
                     executionOrder.Add("Second-ShortCircuit");
                     // Don't call inner agent - short circuit the chain
@@ -997,7 +997,7 @@ public class AnonymousDelegatingAIAgentTests
             .Build();
 
         // Act
-        var result = await agent.RunAsync(this._testMessages, this._testThread, this._testOptions);
+        var result = await agent.RunAsync(this._testMessages, this._testSession, this._testOptions);
 
         // Assert
         Assert.Same(shortCircuitResponse, result);
@@ -1010,7 +1010,7 @@ public class AnonymousDelegatingAIAgentTests
             .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Never(),
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>());
     }

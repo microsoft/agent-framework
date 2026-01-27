@@ -66,7 +66,7 @@ async def streaming_reasoning_example() -> None:
                     usage = content
     print("\n")
     if usage:
-        print(f"Usage: {usage.details}")
+        print(f"Usage: {usage.usage_details}")
 
 
 async def main() -> None:

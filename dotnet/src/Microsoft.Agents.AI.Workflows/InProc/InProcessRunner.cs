@@ -204,7 +204,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             await executor.ExecuteAsync(
                 envelope.Message,
                 envelope.MessageType,
-                this.RunContext.Bind(receiverId, envelope.TraceContext),
+                this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
                 this.TelemetryContext,
                 cancellationToken
             ).ConfigureAwait(false);

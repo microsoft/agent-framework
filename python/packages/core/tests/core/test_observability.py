@@ -279,6 +279,133 @@ async def test_chat_client_streaming_observability(
         assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions from options are captured in LLM span."""
+    import json
+
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute is set
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "You are a helpful assistant."
+
+    # Verify input_messages contains system message
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert any(msg.get("role") == "system" for msg in input_messages)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_streaming_observability_with_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test streaming telemetry captures system_instructions from options."""
+    import json
+
+    client = use_instrumentation(mock_chat_client)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
+    span_exporter.clear()
+
+    updates = []
+    async for update in client.get_streaming_response(messages=messages, options=options):
+        updates.append(update)
+
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute is set
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "You are a helpful assistant."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_without_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions attribute is not set when instructions are not provided."""
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test"}  # No instructions
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute is NOT set
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_empty_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions attribute is not set when instructions is an empty string."""
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test", "instructions": ""}  # Empty string
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Empty string should not set system_instructions
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_list_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that list-type instructions are correctly captured."""
+    import json
+
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute contains both instructions
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 2
+    assert system_instructions[0]["content"] == "Instruction 1"
+    assert system_instructions[1]["content"] == "Instruction 2"
+
+
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
     client = use_instrumentation(mock_chat_client)()

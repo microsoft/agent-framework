@@ -31,11 +31,9 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
-    Contents,
-    DataContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
+    normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
 from agent_framework.observability import use_agent_instrumentation
@@ -236,7 +234,7 @@ class A2AAgent(BaseAgent):
         Yields:
             An agent response item.
         """
-        messages = self._normalize_messages(messages)
+        messages = normalize_messages(messages)
         a2a_message = self._prepare_message_for_a2a(messages[-1])
 
         response_stream = self.client.send_message(a2a_message)
@@ -332,7 +330,7 @@ class A2AAgent(BaseAgent):
                         A2APart(
                             root=FilePart(
                                 file=FileWithBytes(
-                                    bytes=_get_uri_data(content.uri),
+                                    bytes=_get_uri_data(content.uri),  # type: ignore[arg-type]
                                     mime_type=content.media_type,
                                 ),
                                 metadata=content.additional_properties,
@@ -361,19 +359,19 @@ class A2AAgent(BaseAgent):
             metadata=cast(dict[str, Any], message.additional_properties),
         )
 
-    def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Contents]:
-        """Parse A2A Parts into Agent Framework Contents.
+    def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Content]:
+        """Parse A2A Parts into Agent Framework Content.
 
         Transforms A2A protocol Parts into framework-native Content objects,
         handling text, file (URI/bytes), and data parts with metadata preservation.
         """
-        contents: list[Contents] = []
+        contents: list[Content] = []
         for part in parts:
             inner_part = part.root
             match inner_part.kind:
                 case "text":
                     contents.append(
-                        TextContent(
+                        Content.from_text(
                             text=inner_part.text,
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
@@ -382,7 +380,7 @@ class A2AAgent(BaseAgent):
                 case "file":
                     if isinstance(inner_part.file, FileWithUri):
                         contents.append(
-                            UriContent(
+                            Content.from_uri(
                                 uri=inner_part.file.uri,
                                 media_type=inner_part.file.mime_type or "",
                                 additional_properties=inner_part.metadata,
@@ -391,7 +389,7 @@ class A2AAgent(BaseAgent):
                         )
                     elif isinstance(inner_part.file, FileWithBytes):
                         contents.append(
-                            DataContent(
+                            Content.from_data(
                                 data=base64.b64decode(inner_part.file.bytes),
                                 media_type=inner_part.file.mime_type or "",
                                 additional_properties=inner_part.metadata,
@@ -400,7 +398,7 @@ class A2AAgent(BaseAgent):
                         )
                 case "data":
                     contents.append(
-                        TextContent(
+                        Content.from_text(
                             text=json.dumps(inner_part.data),
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
