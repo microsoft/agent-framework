@@ -83,14 +83,12 @@ public static class Program
 
         // 5. Start the workflow
         Console.WriteLine("Starting group chat workflow for software deployment...");
-        Console.WriteLine($"Agents: [{qaEngineer.Id}, {devopsEngineer.Id}]");
+        Console.WriteLine($"Agents: [{qaEngineer.Name}, {devopsEngineer.Name}]");
         Console.WriteLine(new string('-', 60));
 
         List<ChatMessage> messages = [new(ChatRole.User, "We need to deploy version 2.4.0 to production. Please coordinate the deployment.")];
 
-        // Phase 1: Run workflow and collect all events (stream ends at IDLE or IDLE_WITH_PENDING_REQUESTS)
-        List<FunctionApprovalRequestContent> approvalRequests = [];
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, messages);
+        await using StreamingRun run = await InProcessExecution.Lockstep.StreamAsync(workflow, messages);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         string? lastExecutorId = null;
@@ -98,14 +96,28 @@ public static class Program
         {
             switch (evt)
             {
+                case RequestInfoEvent e:
+                {
+                    if (e.Request.DataAs<FunctionApprovalRequestContent>() is { } approvalRequestContent)
+                    {
+                        // Approve the tool call request
+                        Console.WriteLine($"Tool: {approvalRequestContent.FunctionCall.Name} approved");
+                        await run.SendResponseAsync(e.Request.CreateResponse(approvalRequestContent.CreateResponse(approved: true)));
+                    }
+
+                    break;
+                }
+
                 case AgentResponseUpdateEvent e:
+                {
                     if (e.ExecutorId != lastExecutorId)
                     {
                         if (lastExecutorId is not null)
                         {
                             Console.WriteLine();
                         }
-                        Console.Write($"- {e.ExecutorId}: ");
+
+                        Console.WriteLine($"- {e.ExecutorId}: ");
                         lastExecutorId = e.ExecutorId;
                     }
 
@@ -118,75 +130,22 @@ public static class Program
 
                     if (approvalRequest is not null)
                     {
-                        approvalRequests.Add(approvalRequest);
                         Console.WriteLine();
                         Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.ExecutorId}");
                         Console.WriteLine($"  Tool: {approvalRequest.FunctionCall.Name}");
                         Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(approvalRequest.FunctionCall.Arguments)}");
+                        Console.WriteLine();
                     }
 
                     break;
-
-                case WorkflowOutputEvent:
-                    // Workflow has completed, check if we have pending approval requests
-                    if (approvalRequests.Count == 0)
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine("Workflow completed without requiring production deployment approval.");
-                    }
-                    else
-                    {
-                        // We have approval requests to handle
-                        Console.WriteLine();
-                        Console.WriteLine(new string('=', 60));
-                        Console.WriteLine("Human review required for production deployment!");
-                        Console.WriteLine("In a real scenario, you would review the deployment details here.");
-                        Console.WriteLine("Simulating approval for demo purposes...");
-                        Console.WriteLine(new string('=', 60));
-
-                        // Phase 2: Send approval and continue workflow
-                        List<ChatMessage> approvalMessages = [];
-                        foreach (FunctionApprovalRequestContent req in approvalRequests)
-                        {
-                            approvalMessages.Add(new ChatMessage(ChatRole.User, [req.CreateResponse(approved: true)]));
-                        }
-
-                        messages.AddRange(approvalMessages);
-
-                        // Resume workflow with approval responses
-                        await using StreamingRun resumeRun = await InProcessExecution.StreamAsync(workflow, messages);
-                        await resumeRun.TrySendMessageAsync(new TurnToken(emitEvents: true));
-
-                        lastExecutorId = null;
-                        await foreach (WorkflowEvent resumeEvt in resumeRun.WatchStreamAsync())
-                        {
-                            if (resumeEvt is AgentResponseUpdateEvent e2)
-                            {
-                                if (e2.ExecutorId != lastExecutorId)
-                                {
-                                    if (lastExecutorId is not null)
-                                    {
-                                        Console.WriteLine();
-                                    }
-                                    Console.Write($"- {e2.ExecutorId}: ");
-                                    lastExecutorId = e2.ExecutorId;
-                                }
-
-                                Console.Write(e2.Update.Text);
-                            }
-                            else if (resumeEvt is WorkflowOutputEvent)
-                            {
-                                Console.WriteLine();
-                                Console.WriteLine(new string('-', 60));
-                                Console.WriteLine("Deployment workflow completed successfully!");
-                                Console.WriteLine("All agents have finished their tasks.");
-                                break;
-                            }
-                        }
-                    }
-                    return;
+                }
             }
         }
+
+        Console.WriteLine();
+        Console.WriteLine(new string('-', 60));
+        Console.WriteLine("Deployment workflow completed successfully!");
+        Console.WriteLine("All agents have finished their tasks.");
     }
 
     // Tool definitions - These are called by the agents during workflow execution
