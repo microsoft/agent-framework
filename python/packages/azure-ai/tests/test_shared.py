@@ -91,10 +91,12 @@ def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
 
 def test_to_azure_ai_agent_tools_unsupported_type() -> None:
     """Test unsupported tool type raises error."""
-    unsupported = MagicMock()
-    unsupported.__class__.__name__ = "UnsupportedTool"
+
+    class UnsupportedTool:
+        pass
+
     with pytest.raises(ServiceInitializationError, match="Unsupported tool type"):
-        to_azure_ai_agent_tools([unsupported])
+        to_azure_ai_agent_tools([UnsupportedTool()])  # type: ignore
 
 
 def test_from_azure_ai_agent_tools_empty() -> None:
