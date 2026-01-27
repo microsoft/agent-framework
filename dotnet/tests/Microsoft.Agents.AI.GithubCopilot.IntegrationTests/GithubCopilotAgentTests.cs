@@ -13,7 +13,7 @@ public class GithubCopilotAgentTests
 {
     private const string SkipReason = "Integration tests require GitHub Copilot CLI installed. For local execution only.";
 
-    private static Task<PermissionRequestResult> ApproveAllAsync(PermissionRequest request, PermissionInvocation invocation)
+    private static Task<PermissionRequestResult> OnPermissionRequestAsync(PermissionRequest request, PermissionInvocation invocation)
         => Task.FromResult(new PermissionRequestResult { Kind = "approved" });
 
     [Fact(Skip = SkipReason)]
@@ -154,7 +154,7 @@ public class GithubCopilotAgentTests
 
         SessionConfig sessionConfig = new()
         {
-            OnPermissionRequest = ApproveAllAsync,
+            OnPermissionRequest = OnPermissionRequestAsync,
         };
 
         await using GithubCopilotAgent agent = new(client, sessionConfig);
@@ -177,7 +177,7 @@ public class GithubCopilotAgentTests
 
         SessionConfig sessionConfig = new()
         {
-            OnPermissionRequest = ApproveAllAsync,
+            OnPermissionRequest = OnPermissionRequestAsync,
         };
 
         await using GithubCopilotAgent agent = new(client, sessionConfig);
@@ -200,7 +200,7 @@ public class GithubCopilotAgentTests
 
         SessionConfig sessionConfig = new()
         {
-            OnPermissionRequest = ApproveAllAsync,
+            OnPermissionRequest = OnPermissionRequestAsync,
             McpServers = new Dictionary<string, object>
             {
                 ["filesystem"] = new McpLocalServerConfig
@@ -233,7 +233,7 @@ public class GithubCopilotAgentTests
 
         SessionConfig sessionConfig = new()
         {
-            OnPermissionRequest = ApproveAllAsync,
+            OnPermissionRequest = OnPermissionRequestAsync,
             McpServers = new Dictionary<string, object>
             {
                 ["microsoft-learn"] = new McpRemoteServerConfig
