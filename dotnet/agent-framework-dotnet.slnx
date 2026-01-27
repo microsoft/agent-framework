@@ -54,7 +54,7 @@
     <Project Path="samples/DurableAgents/ConsoleApps/09_Workflow_Concurrency/09_Workflow_Concurrency.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/10_Workflow_HITL/10_Workflow_HITL.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/11_WorkflowEvents/11_WorkflowEvents.csproj" />
-    <Project Path="samples/DurableAgents/ConsoleApps/12_WorkflowTypeHandling/12_WorkflowTypeHandling.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/12_WorkflowLoop/12_WorkflowLoop.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />

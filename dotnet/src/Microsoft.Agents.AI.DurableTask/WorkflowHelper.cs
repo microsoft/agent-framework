@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
@@ -65,8 +64,7 @@ public static class WorkflowHelper
         ArgumentNullException.ThrowIfNull(workflow);
 
         Dictionary<string, ExecutorBinding> executors = workflow.ReflectExecutors();
-        Dictionary<string, HashSet<EdgeInfo>> edges = workflow.ReflectEdges();
-        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> edgeConditions = workflow.ReflectEdgeConditions();
+        Dictionary<string, HashSet<Edge>> edges = workflow.Edges;
 
         WorkflowExecutionPlan plan = new()
         {
@@ -90,21 +88,29 @@ public static class WorkflowHelper
             plan.ExecutorOutputTypes[executor.Key] = GetExecutorOutputType(executor.Value.ExecutorType);
         }
 
-        // Build the graph from edges
-        foreach (KeyValuePair<string, HashSet<EdgeInfo>> edgeGroup in edges)
+        // Build the graph from edges and extract edge conditions
+        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> edgeConditions = [];
+        foreach (KeyValuePair<string, HashSet<Edge>> edgeGroup in edges)
         {
             string sourceId = edgeGroup.Key;
             List<string> sourceSuccessors = successors[sourceId];
 
-            foreach (EdgeInfo edge in edgeGroup.Value)
+            foreach (Edge edge in edgeGroup.Value)
             {
-                foreach (string sinkId in edge.Connection.SinkIds)
+                foreach (string sinkId in edge.Data.Connection.SinkIds)
                 {
                     if (executorIndex.ContainsKey(sinkId))
                     {
                         sourceSuccessors.Add(sinkId);
                         predecessors[sinkId].Add(sourceId);
                     }
+                }
+
+                // Extract condition from DirectEdgeData if present
+                DirectEdgeData? directEdge = edge.DirectEdgeData;
+                if (directEdge is not null)
+                {
+                    edgeConditions[(directEdge.SourceId, directEdge.SinkId)] = directEdge.Condition;
                 }
             }
         }

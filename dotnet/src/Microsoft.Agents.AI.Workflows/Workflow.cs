@@ -36,40 +36,6 @@ public class Workflow
         );
     }
 
-    /// <summary>
-    /// Gets a mapping of edge identifiers to their associated condition delegates.
-    /// </summary>
-    /// <remarks>The returned dictionary includes only edges that have direct edge data. The condition
-    /// delegate can be used to determine whether the edge is active or valid for a given input. Edges without direct
-    /// edge data are not included in the result.</remarks>
-    /// <returns>A dictionary where each key is a tuple containing the source and target node identifiers, and each value is a
-    /// delegate that evaluates the condition for the corresponding edge. The value is <see langword="null"/> if the
-    /// edge has no associated condition.</returns>
-    public Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> ReflectEdgeConditions()
-    {
-        int capacity = 0;
-        foreach (HashSet<Edge> edgeSet in this.Edges.Values)
-        {
-            capacity += edgeSet.Count;
-        }
-
-        Dictionary<(string SourceId, string TargetId), Func<object?, bool>?> conditions = new(capacity);
-
-        foreach (HashSet<Edge> edgeSet in this.Edges.Values)
-        {
-            foreach (Edge edge in edgeSet)
-            {
-                DirectEdgeData? directEdge = edge.DirectEdgeData;
-                if (directEdge is not null)
-                {
-                    conditions[(directEdge.SourceId, directEdge.SinkId)] = directEdge.Condition;
-                }
-            }
-        }
-
-        return conditions;
-    }
-
     internal Dictionary<string, RequestPort> Ports { get; init; } = [];
 
     /// <summary>
