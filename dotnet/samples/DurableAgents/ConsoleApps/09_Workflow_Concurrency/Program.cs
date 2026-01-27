@@ -77,8 +77,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
-DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
+// Get the IWorkflowClient from DI - no need to manually resolve DurableTaskClient
+IWorkflowClient workflowClient = host.Services.GetRequiredService<IWorkflowClient>();
 
 // Console UI
 Console.ForegroundColor = ConsoleColor.Cyan;
@@ -111,7 +111,7 @@ while (true)
     try
     {
         // Cast to DurableRun for durable-specific features like InstanceId and WaitForCompletionAsync
-        await using DurableRun run = (DurableRun)await durableExecution.RunAsync(workflow, input);
+        await using DurableRun run = (DurableRun)await workflowClient.RunAsync(workflow, input);
         Console.ForegroundColor = ConsoleColor.Gray;
         Console.WriteLine($"Instance: {run.InstanceId}");
         Console.ResetColor();

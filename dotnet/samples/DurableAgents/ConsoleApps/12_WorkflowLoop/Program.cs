@@ -61,8 +61,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
-DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
+// Get the IWorkflowClient from DI - no need to manually resolve DurableTaskClient
+IWorkflowClient workflowClient = host.Services.GetRequiredService<IWorkflowClient>();
 
 Console.WriteLine("Workflow Events Demo - Enter input for slogan generation (or 'exit'):");
 
@@ -77,7 +77,7 @@ while (true)
 
     try
     {
-        await RunWorkflowWithStreamingAsync(input, workflow, durableExecution);
+        await RunWorkflowWithStreamingAsync(input, workflow, workflowClient);
     }
     catch (Exception ex)
     {
@@ -90,11 +90,11 @@ while (true)
 await host.StopAsync();
 
 // Runs a workflow and streams events as they occur
-async Task RunWorkflowWithStreamingAsync(string orderId, Workflow workflow, DurableExecutionEnvironment execution)
+async Task RunWorkflowWithStreamingAsync(string orderId, Workflow workflow, IWorkflowClient client)
 {
     // StreamAsync starts the workflow and returns a handle for observing events
     // Cast to DurableStreamingRun for durable-specific features like InstanceId
-    await using DurableStreamingRun run = (DurableStreamingRun)await execution.StreamAsync(workflow, orderId);
+    await using DurableStreamingRun run = (DurableStreamingRun)await client.StreamAsync(workflow, orderId);
     Console.WriteLine($"Started: {run.InstanceId}");
 
     // WatchStreamAsync yields events as they're emitted by executors

@@ -50,8 +50,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
-DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
+// Get the IWorkflowClient from DI - no need to manually resolve DurableTaskClient
+IWorkflowClient workflowClient = host.Services.GetRequiredService<IWorkflowClient>();
 
 Console.WriteLine("Durable Workflow Sample");
 Console.WriteLine("Workflow: OrderLookup (2s) -> OrderCancel (5s) -> SendEmail (1s)");
@@ -75,7 +75,7 @@ while (true)
 
     try
     {
-        await StartNewWorkflowAsync(input, cancelOrder, durableExecution);
+        await StartNewWorkflowAsync(input, cancelOrder, workflowClient);
     }
     catch (Exception ex)
     {
@@ -87,13 +87,13 @@ while (true)
 
 await host.StopAsync();
 
-// Start a new workflow using DurableExecutionEnvironment (no DurableTaskClient needed)
-async Task StartNewWorkflowAsync(string orderId, Workflow workflow, DurableExecutionEnvironment execution)
+// Start a new workflow using IWorkflowClient (no DurableTaskClient needed)
+async Task StartNewWorkflowAsync(string orderId, Workflow workflow, IWorkflowClient client)
 {
     Console.WriteLine($"Starting workflow for order '{orderId}'...");
 
     // RunAsync returns IRun, cast to DurableRun for durable-specific features like WaitForCompletionAsync
-    await using DurableRun run = (DurableRun)await execution.RunAsync(workflow, orderId);
+    await using DurableRun run = (DurableRun)await client.RunAsync(workflow, orderId);
     Console.WriteLine($"Instance ID: {run.InstanceId}");
 
     try

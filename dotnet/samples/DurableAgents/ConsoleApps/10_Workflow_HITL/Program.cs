@@ -43,8 +43,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
 await host.StartAsync();
 
-// Get the DurableExecutionEnvironment from DI - no need to manually resolve DurableTaskClient
-DurableExecutionEnvironment durableExecution = host.Services.GetRequiredService<DurableExecutionEnvironment>();
+// Get the IWorkflowClient from DI - no need to manually resolve DurableTaskClient
+IWorkflowClient workflowClient = host.Services.GetRequiredService<IWorkflowClient>();
 
 // Start the workflow with an expense ID as input
 string expenseId = "EXP-2025-001";
@@ -52,7 +52,7 @@ Console.WriteLine($"Starting expense reimbursement workflow for expense: {expens
 
 // Start the workflow and get a streaming handle
 // Cast to DurableStreamingRun for durable-specific features like InstanceId and SendResponseAsync
-await using DurableStreamingRun run = (DurableStreamingRun)await durableExecution.StreamAsync(expenseApproval, expenseId);
+await using DurableStreamingRun run = (DurableStreamingRun)await workflowClient.StreamAsync(expenseApproval, expenseId);
 
 Console.WriteLine($"Workflow started with instance ID: {run.InstanceId}");
 Console.WriteLine("Watching for workflow events...\n");
