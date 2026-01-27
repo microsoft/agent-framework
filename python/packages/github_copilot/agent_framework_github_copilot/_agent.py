@@ -19,7 +19,7 @@ from agent_framework import (
     Role,
     normalize_messages,
 )
-from agent_framework._tools import AIFunction, ToolProtocol
+from agent_framework._tools import FunctionTool, ToolProtocol
 from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from copilot import CopilotClient, CopilotSession
@@ -417,8 +417,8 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
-                        copilot_tools.append(self._ai_function_to_copilot_tool(tool))  # type: ignore
+                    case FunctionTool():
+                        copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
                     case _:
                         logger.debug(f"Unsupported tool type: {type(tool)}")
             elif isinstance(tool, CopilotTool):
@@ -426,8 +426,8 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         return copilot_tools
 
-    def _ai_function_to_copilot_tool(self, ai_func: AIFunction[Any, Any]) -> CopilotTool:
-        """Convert an AIFunction to a Copilot SDK tool."""
+    def _tool_to_copilot_tool(self, ai_func: FunctionTool[Any, Any]) -> CopilotTool:
+        """Convert an FunctionTool to a Copilot SDK tool."""
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
             args = invocation.get("arguments", {})
