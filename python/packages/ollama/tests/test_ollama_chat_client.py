@@ -109,7 +109,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
     )
 
 
-@tool
+@tool(approval_mode="never_require")
 def hello_world(arg1: str) -> str:
     return "Hello World"
 
