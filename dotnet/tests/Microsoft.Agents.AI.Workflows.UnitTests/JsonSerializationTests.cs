@@ -720,9 +720,9 @@ public class JsonSerializationTests
         string reorderedJson = ReorderJsonPropertiesToMoveTypeDiscriminatorLast(json);
         JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
 
-        // Act - Deserialize with AllowOutOfOrderMetadataProperties enabled
-        JsonCheckpointManagerOptions options = new() { AllowOutOfOrderMetadataProperties = true };
-        JsonMarshaller marshallerWithOption = new(serializerOptions: null, options);
+        // Act - Deserialize with AllowOutOfOrderMetadataProperties enabled via JsonSerializerOptions
+        JsonSerializerOptions options = new() { AllowOutOfOrderMetadataProperties = true };
+        JsonMarshaller marshallerWithOption = new(options);
         EdgeInfo deserialized = marshallerWithOption.Marshal<EdgeInfo>(reorderedElement);
 
         // Assert
