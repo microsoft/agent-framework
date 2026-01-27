@@ -543,7 +543,10 @@ def _default_histogram() -> Histogram:
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
     if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
-        return NoOpHistogram()  # type: ignore[return-value]
+        return NoOpHistogram(
+            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+            unit=OtelAttr.DURATION_UNIT,
+        )
     meter = get_meter()
     try:
         return meter.create_histogram(
