@@ -18,6 +18,7 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatMessageStore,
+    ChatOptions,
     ChatResponse,
     Content,
     Context,
@@ -26,8 +27,9 @@ from agent_framework import (
     Role,
     ai_function,
 )
+from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import AgentExecutionException
+from agent_framework.exceptions import AgentExecutionException, AgentInitializationError
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -634,8 +636,6 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that agent-level tool_choice is used when run() doesn't specify one."""
-    from agent_framework import ChatOptions
-
     captured_options: list[ChatOptions] = []
 
     original_inner = chat_client_base._inner_get_response
@@ -669,8 +669,6 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     chat_client_base: Any, ai_function_tool: Any
 ) -> None:
     """Verify that tool_choice=None at run() uses agent-level default."""
-    from agent_framework import ChatOptions
-
     captured_options: list[ChatOptions] = []
 
     original_inner = chat_client_base._inner_get_response
@@ -703,8 +701,6 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
 
 def test_merge_options_basic():
     """Test _merge_options merges two dicts with override precedence."""
-    from agent_framework._agents import _merge_options
-
     base = {"key1": "value1", "key2": "value2"}
     override = {"key2": "new_value2", "key3": "value3"}
 
@@ -717,8 +713,6 @@ def test_merge_options_basic():
 
 def test_merge_options_none_values_ignored():
     """Test _merge_options ignores None values in override."""
-    from agent_framework._agents import _merge_options
-
     base = {"key1": "value1"}
     override = {"key1": None, "key2": "value2"}
 
@@ -730,7 +724,6 @@ def test_merge_options_none_values_ignored():
 
 def test_merge_options_tools_combined():
     """Test _merge_options combines tool lists without duplicates."""
-    from agent_framework._agents import _merge_options
 
     class MockTool:
         def __init__(self, name):
@@ -754,8 +747,6 @@ def test_merge_options_tools_combined():
 
 def test_merge_options_logit_bias_merged():
     """Test _merge_options merges logit_bias dicts."""
-    from agent_framework._agents import _merge_options
-
     base = {"logit_bias": {"token1": 1.0}}
     override = {"logit_bias": {"token2": 2.0}}
 
@@ -767,8 +758,6 @@ def test_merge_options_logit_bias_merged():
 
 def test_merge_options_metadata_merged():
     """Test _merge_options merges metadata dicts."""
-    from agent_framework._agents import _merge_options
-
     base = {"metadata": {"key1": "value1"}}
     override = {"metadata": {"key2": "value2"}}
 
@@ -780,8 +769,6 @@ def test_merge_options_metadata_merged():
 
 def test_merge_options_instructions_concatenated():
     """Test _merge_options concatenates instructions."""
-    from agent_framework._agents import _merge_options
-
     base = {"instructions": "First instruction."}
     override = {"instructions": "Second instruction."}
 
@@ -800,23 +787,17 @@ def test_merge_options_instructions_concatenated():
 
 def test_sanitize_agent_name_none():
     """Test _sanitize_agent_name returns None for None input."""
-    from agent_framework._agents import _sanitize_agent_name
-
     assert _sanitize_agent_name(None) is None
 
 
 def test_sanitize_agent_name_valid():
     """Test _sanitize_agent_name returns valid names unchanged."""
-    from agent_framework._agents import _sanitize_agent_name
-
     assert _sanitize_agent_name("valid_name") == "valid_name"
     assert _sanitize_agent_name("ValidName123") == "ValidName123"
 
 
 def test_sanitize_agent_name_replaces_invalid_chars():
     """Test _sanitize_agent_name replaces invalid characters."""
-    from agent_framework._agents import _sanitize_agent_name
-
     result = _sanitize_agent_name("Agent Name!")
     # Should replace spaces and special chars with underscores
     assert " " not in result
@@ -849,10 +830,6 @@ async def test_agent_get_new_thread(chat_client_base, ai_function_tool):
 @pytest.mark.asyncio
 async def test_chat_agent_raises_with_both_conversation_id_and_store():
     """Test ChatAgent raises error with both conversation_id and chat_message_store_factory."""
-    from unittest.mock import MagicMock
-
-    from agent_framework.exceptions import AgentInitializationError
-
     mock_client = MagicMock()
     mock_store_factory = MagicMock()
 

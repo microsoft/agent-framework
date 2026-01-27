@@ -2,11 +2,12 @@
 
 import base64
 from collections.abc import AsyncIterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
@@ -28,6 +29,14 @@ from agent_framework import (
     detect_media_type_from_base64,
     merge_chat_options,
     prepare_function_call_results,
+)
+from agent_framework._types import (
+    _get_data_bytes,
+    _get_data_bytes_as_str,
+    _parse_content_list,
+    _validate_uri,
+    add_usage_details,
+    validate_tool_mode,
 )
 from agent_framework.exceptions import ContentError
 
@@ -439,8 +448,6 @@ def test_usage_details():
 
 
 def test_usage_details_addition():
-    from agent_framework._types import add_usage_details
-
     usage1 = UsageDetails(
         input_token_count=5,
         output_token_count=10,
@@ -478,8 +485,6 @@ def test_usage_details_additional_counts():
 
 
 def test_usage_details_add_with_none_and_type_errors():
-    from agent_framework._types import add_usage_details
-
     u = UsageDetails(input_token_count=1)
     # add_usage_details with None returns the non-None value
     v = add_usage_details(u, None)
@@ -665,9 +670,6 @@ def test_chat_response_with_format_init():
 
 def test_chat_response_value_raises_on_invalid_schema():
     """Test that value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -689,9 +691,6 @@ def test_chat_response_value_raises_on_invalid_schema():
 
 def test_chat_response_try_parse_value_returns_none_on_invalid():
     """Test that try_parse_value returns None on validation failure with Field constraints."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -707,7 +706,6 @@ def test_chat_response_try_parse_value_returns_none_on_invalid():
 
 def test_chat_response_try_parse_value_returns_value_on_success():
     """Test that try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -724,9 +722,6 @@ def test_chat_response_try_parse_value_returns_value_on_success():
 
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -748,9 +743,6 @@ def test_agent_response_value_raises_on_invalid_schema():
 
 def test_agent_response_try_parse_value_returns_none_on_invalid():
     """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -766,7 +758,6 @@ def test_agent_response_try_parse_value_returns_none_on_invalid():
 
 def test_agent_response_try_parse_value_returns_value_on_success():
     """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -990,8 +981,6 @@ def test_chat_options_init() -> None:
 
 def test_chat_options_tool_choice_validation():
     """Test validate_tool_mode utility function."""
-    from agent_framework._types import validate_tool_mode
-
     # Valid string values
     assert validate_tool_mode("auto") == {"mode": "auto"}
     assert validate_tool_mode("required") == {"mode": "required"}
@@ -1019,8 +1008,6 @@ def test_chat_options_tool_choice_validation():
 
 def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""
-    from agent_framework import merge_chat_options
-
     options1: ChatOptions = {
         "model_id": "gpt-4o",
         "tools": [ai_function_tool],
@@ -1502,8 +1489,6 @@ def test_comprehensive_to_dict_exclude_options():
 
 def test_usage_details_iadd_edge_cases():
     """Test UsageDetails addition with edge cases for better coverage."""
-    from agent_framework._types import add_usage_details
-
     # Test with None values
     u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)
     u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)
@@ -2235,7 +2220,6 @@ def test_prepare_function_call_results_nested_pydantic_model():
 
 def test_prepare_function_call_results_text_content_single():
     """Test that objects with text attribute (like MCP TextContent) are properly handled."""
-    from dataclasses import dataclass
 
     @dataclass
     class MockTextContent:
@@ -2251,7 +2235,6 @@ def test_prepare_function_call_results_text_content_single():
 
 def test_prepare_function_call_results_text_content_multiple():
     """Test that multiple TextContent-like objects are serialized correctly."""
-    from dataclasses import dataclass
 
     @dataclass
     class MockTextContent:
@@ -2438,16 +2421,12 @@ def test_content_parse_arguments_dict_passthrough():
 
 def test_get_data_bytes_as_str_non_data_uri():
     """Test _get_data_bytes_as_str returns None for non-data URIs."""
-    from agent_framework._types import _get_data_bytes_as_str
-
     content = Content(type="uri", uri="https://example.com/image.png")
     assert _get_data_bytes_as_str(content) is None
 
 
 def test_get_data_bytes_as_str_no_base64():
     """Test _get_data_bytes_as_str raises for non-base64 data URI."""
-    from agent_framework._types import _get_data_bytes_as_str
-
     content = Content(type="uri", uri="data:text/plain,hello")
     with raises(ContentError, match="base64 encoding"):
         _get_data_bytes_as_str(content)
@@ -2455,8 +2434,6 @@ def test_get_data_bytes_as_str_no_base64():
 
 def test_get_data_bytes_as_str_valid():
     """Test _get_data_bytes_as_str extracts base64 data."""
-    from agent_framework._types import _get_data_bytes_as_str
-
     data = base64.b64encode(b"hello").decode()
     content = Content(type="uri", uri=f"data:text/plain;base64,{data}")
     result = _get_data_bytes_as_str(content)
@@ -2471,8 +2448,6 @@ def test_get_data_bytes_as_str_valid():
 
 def test_get_data_bytes_decodes_base64():
     """Test _get_data_bytes decodes base64 data correctly."""
-    from agent_framework._types import _get_data_bytes
-
     original = b"hello world"
     data = base64.b64encode(original).decode()
     content = Content(type="uri", uri=f"data:text/plain;base64,{data}")
@@ -2483,8 +2458,6 @@ def test_get_data_bytes_decodes_base64():
 
 def test_get_data_bytes_invalid_base64():
     """Test _get_data_bytes raises for invalid base64."""
-    from agent_framework._types import _get_data_bytes
-
     content = Content(type="uri", uri="data:text/plain;base64,!!invalid!!")
     with raises(ContentError, match="Failed to decode"):
         _get_data_bytes(content)
@@ -2498,8 +2471,6 @@ def test_get_data_bytes_invalid_base64():
 
 def test_parse_content_list_with_content_objects():
     """Test _parse_content_list passes through Content objects."""
-    from agent_framework._types import _parse_content_list
-
     content = Content(type="text", text="hello")
     result = _parse_content_list([content])
 
@@ -2509,8 +2480,6 @@ def test_parse_content_list_with_content_objects():
 
 def test_parse_content_list_with_dicts():
     """Test _parse_content_list converts dicts to Content."""
-    from agent_framework._types import _parse_content_list
-
     result = _parse_content_list([{"type": "text", "text": "hello"}])
 
     assert len(result) == 1
@@ -2518,10 +2487,8 @@ def test_parse_content_list_with_dicts():
     assert result[0].text == "hello"
 
 
-def test_parse_content_list_with_mixed_valid_invalid():
-    """Test _parse_content_list handles a mix of valid and Content objects."""
-    from agent_framework._types import _parse_content_list
-
+def test_parse_content_list_with_mixed_content_and_dict():
+    """Test _parse_content_list handles a mix of Content objects and dicts."""
     content = Content(type="text", text="hello")
     # Pass a mix of Content object and dict
     result = _parse_content_list([content, {"type": "text", "text": "world"}])
@@ -2537,18 +2504,14 @@ def test_parse_content_list_with_mixed_valid_invalid():
 # region Test _validate_uri
 
 
-def test_validate_uri_known_schema():
-    """Test _validate_uri accepts known URI schemas."""
-    from agent_framework._types import _validate_uri
-
+def test_validate_uri_known_scheme():
+    """Test _validate_uri accepts known URI schemes."""
     result = _validate_uri("https://example.com/file.txt", "text/plain")
     assert result.get("uri") == "https://example.com/file.txt"
 
 
 def test_validate_uri_data_uri():
     """Test _validate_uri handles data URIs."""
-    from agent_framework._types import _validate_uri
-
     data = base64.b64encode(b"test").decode()
     uri = f"data:text/plain;base64,{data}"
     result = _validate_uri(uri, None)
