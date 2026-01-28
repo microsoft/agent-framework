@@ -31,7 +31,7 @@ from ._memory import Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
-from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionTool, ToolProtocol
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -89,8 +89,10 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         if value is None:
             continue
         if key == "tools" and result.get("tools"):
-            # Combine tool lists
-            result["tools"] = list(result["tools"]) + list(value)
+            # Combine tool lists, avoiding duplicates by name
+            existing_names = {getattr(t, "name", None) for t in result["tools"]}
+            unique_new = [t for t in value if getattr(t, "name", None) not in existing_names]
+            result["tools"] = list(result["tools"]) + unique_new
         elif key == "logit_bias" and result.get("logit_bias"):
             # Merge logit_bias dicts
             result["logit_bias"] = {**result["logit_bias"], **value}
@@ -415,8 +417,8 @@ class BaseAgent(SerializationMixin):
         stream_callback: Callable[[AgentResponseUpdate], None]
         | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
-    ) -> AIFunction[BaseModel, str]:
-        """Create an AIFunction tool that wraps this agent.
+    ) -> FunctionTool[BaseModel, str]:
+        """Create a FunctionTool that wraps this agent.
 
         Keyword Args:
             name: The name for the tool. If None, uses the agent's name.
@@ -427,7 +429,7 @@ class BaseAgent(SerializationMixin):
             stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
 
         Returns:
-            An AIFunction that can be used as a tool by other agents.
+            A FunctionTool that can be used as a tool by other agents.
 
         Raises:
             TypeError: If the agent does not implement AgentProtocol.
@@ -489,11 +491,12 @@ class BaseAgent(SerializationMixin):
             # Create final text from accumulated updates
             return AgentResponse.from_agent_run_response_updates(response_updates).text
 
-        agent_tool: AIFunction[BaseModel, str] = AIFunction(
+        agent_tool: FunctionTool[BaseModel, str] = FunctionTool(
             name=tool_name,
             description=tool_description,
             func=agent_wrapper,
             input_model=input_model,  # type: ignore
+            approval_mode="never_require",
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool
@@ -1211,7 +1214,19 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         Raises:
             AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
-        chat_options = deepcopy(self.default_options) if self.default_options else {}
+        # Create a shallow copy of options and deep copy non-tool values
+        # Tools containing HTTP clients or other non-copyable objects cannot be deep copied
+        if self.default_options:
+            chat_options: dict[str, Any] = {}
+            for key, value in self.default_options.items():
+                if key == "tools":
+                    # Keep tool references as-is (don't deep copy)
+                    chat_options[key] = list(value) if value else []
+                else:
+                    # Deep copy other options to prevent mutation
+                    chat_options[key] = deepcopy(value)
+        else:
+            chat_options = {}
         thread = thread or self.get_new_thread()
         if thread.service_thread_id and thread.context_provider:
             await thread.context_provider.thread_created(thread.service_thread_id)
@@ -1235,7 +1250,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 if context.instructions:
                     chat_options["instructions"] = (
                         context.instructions
-                        if not chat_options.get("instructions")
+                        if "instructions" not in chat_options
                         else f"{chat_options['instructions']}\n{context.instructions}"
                     )
         thread_messages.extend(input_messages or [])

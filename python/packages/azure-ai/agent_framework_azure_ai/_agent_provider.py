@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     ChatAgent,
     ContextProvider,
+    FunctionTool,
     Middleware,
     ToolProtocol,
     normalize_tools,
@@ -445,9 +445,9 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         # Add user-provided function tools and MCP tools
         if provided_tools:
             for provided_tool in provided_tools:
-                # AIFunction - has implementation for function calling
+                # FunctionTool - has implementation for function calling
                 # MCPTool - ChatAgent handles MCP connection and tool discovery at runtime
-                if isinstance(provided_tool, (AIFunction, MCPTool)):
+                if isinstance(provided_tool, (FunctionTool, MCPTool)):
                     merged.append(provided_tool)  # type: ignore[reportUnknownArgumentType]
 
         return merged
@@ -488,7 +488,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         provided_names: set[str] = set()
         if provided_tools:
             for tool in provided_tools:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     provided_names.add(tool.name)
 
         # Check for missing implementations

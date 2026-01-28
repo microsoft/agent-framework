@@ -14,6 +14,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Role,
     agent_middleware,
     chat_middleware,
@@ -214,9 +215,13 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("function_called")
             return "test_result"
 
+        test_function_tool = FunctionTool(
+            func=test_function, name="test_function", description="Test function", approval_mode="never_require"
+        )
+
         # Create ChatAgent with function middleware and test function
         middleware = PreTerminationFunctionMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function_tool])
 
         # Execute the agent
         await agent.run(messages)
@@ -271,9 +276,13 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("function_called")
             return "test_result"
 
+        test_function_tool = FunctionTool(
+            func=test_function, name="test_function", description="Test function", approval_mode="never_require"
+        )
+
         # Create ChatAgent with function middleware and test function
         middleware = PostTerminationFunctionMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function_tool])
 
         # Execute the agent
         response = await agent.run(messages)
@@ -518,9 +527,17 @@ class TestChatAgentMultipleMiddlewareOrdering:
 # region Tool Functions for Testing
 
 
-def sample_tool_function(location: str) -> str:
+def _sample_tool_function_impl(location: str) -> str:
     """A simple tool function for middleware testing."""
     return f"Weather in {location}: sunny"
+
+
+sample_tool_function = FunctionTool(
+    func=_sample_tool_function_impl,
+    name="sample_tool_function",
+    description="A simple tool function for middleware testing.",
+    approval_mode="never_require",
+)
 
 
 # region ChatAgent Function Middleware Tests with Tools
@@ -1157,6 +1174,10 @@ class TestRunLevelMiddleware:
             execution_log.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
@@ -1179,7 +1200,7 @@ class TestRunLevelMiddleware:
         agent = ChatAgent(
             chat_client=chat_client,
             middleware=[AgentLevelAgentMiddleware(), AgentLevelFunctionMiddleware()],
-            tools=[custom_tool],
+            tools=[custom_tool_wrapped],
         )
 
         # Execute with run-level middleware
@@ -1246,6 +1267,10 @@ class TestMiddlewareDecoratorLogic:
             execution_order.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
@@ -1268,7 +1293,7 @@ class TestMiddlewareDecoratorLogic:
         agent = ChatAgent(
             chat_client=chat_client,
             middleware=[matching_agent_middleware, matching_function_middleware],
-            tools=[custom_tool],
+            tools=[custom_tool_wrapped],
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1313,6 +1338,10 @@ class TestMiddlewareDecoratorLogic:
             execution_order.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
@@ -1333,7 +1362,9 @@ class TestMiddlewareDecoratorLogic:
 
         # Should work - relies on decorator
         agent = ChatAgent(
-            chat_client=chat_client, middleware=[decorator_only_agent, decorator_only_function], tools=[custom_tool]
+            chat_client=chat_client,
+            middleware=[decorator_only_agent, decorator_only_function],
+            tools=[custom_tool_wrapped],
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1363,6 +1394,10 @@ class TestMiddlewareDecoratorLogic:
             execution_order.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
@@ -1383,7 +1418,7 @@ class TestMiddlewareDecoratorLogic:
 
         # Should work - relies on type annotations
         agent = ChatAgent(
-            chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool]
+            chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool_wrapped]
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])

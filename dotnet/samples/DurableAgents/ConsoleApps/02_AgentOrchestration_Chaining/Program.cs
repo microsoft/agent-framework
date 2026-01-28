@@ -33,7 +33,7 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
     : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
 
-// Single agent used by the orchestration to demonstrate sequential calls on the same thread.
+// Single agent used by the orchestration to demonstrate sequential calls on the same session.
 const string WriterName = "WriterAgent";
 const string WriterInstructions =
     """
@@ -47,15 +47,15 @@ AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstr
 static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context)
 {
     DurableAIAgent writer = context.GetAgent("WriterAgent");
-    AgentThread writerThread = await writer.GetNewThreadAsync();
+    AgentSession writerSession = await writer.GetNewSessionAsync();
 
     AgentResponse<TextResponse> initial = await writer.RunAsync<TextResponse>(
         message: "Write a concise inspirational sentence about learning.",
-        thread: writerThread);
+        session: writerSession);
 
     AgentResponse<TextResponse> refined = await writer.RunAsync<TextResponse>(
         message: $"Improve this further while keeping it under 25 words: {initial.Result.Text}",
-        thread: writerThread);
+        session: writerSession);
 
     return refined.Result.Text;
 }

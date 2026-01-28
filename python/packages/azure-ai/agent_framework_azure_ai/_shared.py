@@ -5,10 +5,11 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Literal, cast
 
 from agent_framework import (
-    AIFunction,
     Content,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
@@ -28,7 +29,8 @@ from azure.ai.projects.models import (
     ApproximateLocation,
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
-    FunctionTool,
+    ImageGenTool,
+    ImageGenToolInputImageMask,
     MCPTool,
     ResponseTextFormatConfigurationJsonObject,
     ResponseTextFormatConfigurationJsonSchema,
@@ -38,6 +40,9 @@ from azure.ai.projects.models import (
 )
 from azure.ai.projects.models import (
     FileSearchTool as ProjectsFileSearchTool,
+)
+from azure.ai.projects.models import (
+    FunctionTool as AzureFunctionTool,
 )
 from pydantic import BaseModel
 
@@ -138,7 +143,7 @@ def to_azure_ai_agent_tools(
     tool_definitions: list[ToolDefinition | dict[str, Any]] = []
     for tool in tools:
         match tool:
-            case AIFunction():
+            case FunctionTool():
                 tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
             case HostedWebSearchTool():
                 additional_props = tool.additional_properties or {}
@@ -436,11 +441,11 @@ def to_azure_ai_tools(
                     container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
                     ci_tool: CodeInterpreterTool = CodeInterpreterTool(container=container)
                     azure_tools.append(ci_tool)
-                case AIFunction():
+                case FunctionTool():
                     params = tool.parameters()
                     params["additionalProperties"] = False
                     azure_tools.append(
-                        FunctionTool(
+                        AzureFunctionTool(
                             name=tool.name,
                             parameters=params,
                             strict=False,
@@ -480,6 +485,31 @@ def to_azure_ai_tools(
                                 timezone=location.get("timezone"),
                             )
                     azure_tools.append(ws_tool)
+                case HostedImageGenerationTool():
+                    opts = tool.options or {}
+                    addl = tool.additional_properties or {}
+                    # Azure ImageGenTool requires the constant model "gpt-image-1"
+                    ig_tool: ImageGenTool = ImageGenTool(
+                        model=opts.get("model_id", "gpt-image-1"),  # type: ignore
+                        size=cast(
+                            Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None, opts.get("image_size")
+                        ),
+                        output_format=cast(Literal["png", "webp", "jpeg"] | None, opts.get("media_type")),
+                        input_image_mask=(
+                            ImageGenToolInputImageMask(
+                                image_url=addl.get("input_image_mask", {}).get("image_url"),
+                                file_id=addl.get("input_image_mask", {}).get("file_id"),
+                            )
+                            if isinstance(addl.get("input_image_mask"), dict)
+                            else None
+                        ),
+                        quality=cast(Literal["low", "medium", "high", "auto"] | None, addl.get("quality")),
+                        background=cast(Literal["transparent", "opaque", "auto"] | None, addl.get("background")),
+                        output_compression=cast(int | None, addl.get("output_compression")),
+                        moderation=cast(Literal["auto", "low"] | None, addl.get("moderation")),
+                        partial_images=opts.get("streaming_count"),
+                    )
+                    azure_tools.append(ig_tool)
                 case _:
                     logger.debug("Unsupported tool passed (type: %s)", type(tool))
         else:

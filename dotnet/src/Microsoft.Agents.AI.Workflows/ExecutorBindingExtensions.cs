@@ -419,8 +419,17 @@ public static class ExecutorBindingExtensions
     /// <param name="agent">The agent instance.</param>
     /// <param name="emitEvents">Specifies whether the agent should emit streaming events.</param>
     /// <returns>An <see cref="AIAgentBinding"/> instance that wraps the provided agent.</returns>
-    public static ExecutorBinding BindAsExecutor(this AIAgent agent, bool emitEvents = false)
+    public static ExecutorBinding BindAsExecutor(this AIAgent agent, bool emitEvents)
         => new AIAgentBinding(agent, emitEvents);
+
+    /// <summary>
+    /// Configure an <see cref="AIAgent"/> as an executor for use in a workflow.
+    /// </summary>
+    /// <param name="agent">The agent instance.</param>
+    /// <param name="options">Optional configuration options for the AI agent executor. If null, default options are used.</param>
+    /// <returns>An <see cref="AIAgentBinding"/> instance that wraps the provided agent.</returns>
+    public static ExecutorBinding BindAsExecutor(this AIAgent agent, AIAgentHostOptions? options = null)
+        => new AIAgentBinding(agent, options);
 
     /// <summary>
     /// Configure a <see cref="RequestPort"/> as an executor for use in a workflow.

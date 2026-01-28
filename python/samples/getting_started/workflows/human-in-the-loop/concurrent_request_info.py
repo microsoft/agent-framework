@@ -33,6 +33,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
+    tool,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework.azure import AzureOpenAIChatClient

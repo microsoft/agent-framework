@@ -22,7 +22,7 @@ import asyncio
 import logging
 import os
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 from agent_framework.ag_ui import AGUIChatClient
 
 # Enable debug logging
@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@ai_function(description="Get the current weather for a location.")
+@tool(description="Get the current weather for a location.")
 def get_weather(location: str) -> str:
     """Get the current weather for a location.
 

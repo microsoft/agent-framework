@@ -55,10 +55,10 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework._tools import ai_function
+    from agent_framework._tools import tool
     from agent_framework.openai import OpenAIAssistantsClient
 
-    @ai_function(
+    @tool(
         name="get_forecast",
         description="Look up the forecast for a city and day.",
     )

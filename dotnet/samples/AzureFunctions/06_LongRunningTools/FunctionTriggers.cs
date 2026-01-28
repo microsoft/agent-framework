@@ -20,7 +20,7 @@ public static class FunctionTriggers
 
         // Get the writer agent
         DurableAIAgent writerAgent = context.GetAgent("Writer");
-        AgentThread writerThread = await writerAgent.GetNewThreadAsync();
+        AgentSession writerSession = await writerAgent.GetNewSessionAsync();
 
         // Set initial status
         context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
@@ -28,7 +28,7 @@ public static class FunctionTriggers
         // Step 1: Generate initial content
         AgentResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
             message: $"Write a short article about '{input.Topic}'.",
-            thread: writerThread);
+            session: writerSession);
         GeneratedContent content = writerResponse.Result;
 
         // Human-in-the-loop iteration - we set a maximum number of attempts to avoid infinite loops
@@ -102,7 +102,7 @@ public static class FunctionTriggers
                     
                     Human Feedback: {humanResponse.Feedback}
                     """,
-                thread: writerThread);
+                session: writerSession);
 
             content = writerResponse.Result;
         }

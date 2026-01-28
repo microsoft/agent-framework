@@ -189,6 +189,205 @@ public sealed class AnthropicBetaServiceExtensionsTests
     }
 
     /// <summary>
+    /// Verify that CreateAIAgent with tools correctly assigns tools to ChatOptions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithTools_AssignsToolsCorrectly()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+        IList<AITool> tools = [AIFunctionFactory.Create(() => "test result", "TestFunction", "A test function")];
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        // When tools are provided, ChatOptions is created but instructions remain null
+        Assert.Null(agent.Instructions);
+
+        // Verify that tools are registered in the FunctionInvokingChatClient
+        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.NotNull(functionInvokingClient.AdditionalTools);
+        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with explicit defaultMaxTokens uses the provided value.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgent_WithExplicitMaxTokens_UsesProvidedValueAsync()
+    {
+        // Arrange
+        int capturedMaxTokens = 0;
+        var handler = new CapturingHttpHandler(request =>
+        {
+            // Parse the request body to capture max_tokens
+            var content = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (content is not null)
+            {
+                var json = System.Text.Json.JsonDocument.Parse(content);
+                if (json.RootElement.TryGetProperty("max_tokens", out var maxTokens))
+                {
+                    capturedMaxTokens = maxTokens.GetInt32();
+                }
+            }
+        });
+
+        var client = new AnthropicClient
+        {
+            HttpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") },
+            APIKey = "test-key"
+        };
+
+        // Act
+        var agent = client.Beta.AsAIAgent(
+            model: "claude-haiku-4-5",
+            name: "Test Agent",
+            defaultMaxTokens: 8192);
+
+        // Invoke the agent to trigger the request
+        var session = await agent.GetNewSessionAsync();
+        try
+        {
+            await agent.RunAsync("Test message", session);
+        }
+        catch
+        {
+            // Expected to fail since we're using a test handler
+        }
+
+        // Assert
+        Assert.Equal(8192, capturedMaxTokens);
+    }
+
+    /// <summary>
+    /// HTTP handler that captures requests for verification.
+    /// </summary>
+    private sealed class CapturingHttpHandler : HttpMessageHandler
+    {
+        private readonly Action<HttpRequestMessage> _captureRequest;
+
+        public CapturingHttpHandler(Action<HttpRequestMessage> captureRequest)
+        {
+            this._captureRequest = captureRequest;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            this._captureRequest(request);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"error\": \"test\"}")
+            });
+        }
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with tools and instructions correctly assigns both.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithToolsAndInstructions_AssignsBothCorrectly()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+        IList<AITool> tools = [AIFunctionFactory.Create(() => "test result", "TestFunction", "A test function")];
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            instructions: "Test instructions",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Equal("Test instructions", agent.Instructions);
+
+        // Verify that tools are registered in the FunctionInvokingChatClient
+        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.NotNull(functionInvokingClient.AdditionalTools);
+        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with empty tools list does not assign tools.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithEmptyTools_DoesNotAssignTools()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+        IList<AITool> tools = [];
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        // With empty tools and no instructions, agent instructions remain null
+        Assert.Null(agent.Instructions);
+
+        // Verify that FunctionInvokingChatClient has no additional tools assigned
+        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.True(functionInvokingClient.AdditionalTools is null or { Count: 0 });
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with null instructions does not set instructions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithNullInstructions_DoesNotSetInstructions()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            instructions: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Null(agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with whitespace instructions does not set instructions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithWhitespaceInstructions_DoesNotSetInstructions()
+    {
+        // Arrange
+        var chatClient = new TestAnthropicChatClient();
+
+        // Act
+        var agent = chatClient.Beta.AsAIAgent(
+            model: "test-model",
+            name: "Test Agent",
+            instructions: "   ");
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Null(agent.Instructions);
+    }
+
+    /// <summary>
     /// Test custom chat client that can be used to verify clientFactory functionality.
     /// </summary>
     private sealed class TestChatClient : IChatClient

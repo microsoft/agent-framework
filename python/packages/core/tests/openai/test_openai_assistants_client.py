@@ -23,7 +23,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     Role,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantsClient
@@ -609,6 +609,81 @@ def test_parse_function_calls_from_assistants_basic(mock_async_openai: MagicMock
     assert contents[0].arguments == {"location": "Seattle"}
 
 
+def test_parse_run_step_with_code_interpreter_tool_call(mock_async_openai: MagicMock) -> None:
+    """Test _parse_run_step_tool_call with code_interpreter type creates CodeInterpreterToolCallContent."""
+    client = create_test_openai_assistants_client(
+        mock_async_openai,
+        model_id="test-model",
+        assistant_id="test-assistant",
+    )
+
+    # Mock a run with required_action containing code_interpreter tool call
+    mock_run = MagicMock()
+    mock_run.id = "run_123"
+    mock_run.status = "requires_action"
+
+    mock_tool_call = MagicMock()
+    mock_tool_call.id = "call_code_123"
+    mock_tool_call.type = "code_interpreter"
+    mock_code_interpreter = MagicMock()
+    mock_code_interpreter.input = "print('Hello, World!')"
+    mock_tool_call.code_interpreter = mock_code_interpreter
+
+    mock_required_action = MagicMock()
+    mock_required_action.submit_tool_outputs = MagicMock()
+    mock_required_action.submit_tool_outputs.tool_calls = [mock_tool_call]
+    mock_run.required_action = mock_required_action
+
+    # Parse the run step
+    contents = client._parse_function_calls_from_assistants(mock_run, "response_123")
+
+    # Should have CodeInterpreterToolCallContent
+    assert len(contents) == 1
+    assert contents[0].type == "code_interpreter_tool_call"
+    assert contents[0].call_id == '["response_123", "call_code_123"]'
+    assert contents[0].inputs is not None
+    assert len(contents[0].inputs) == 1
+    assert contents[0].inputs[0].type == "text"
+    assert contents[0].inputs[0].text == "print('Hello, World!')"
+
+
+def test_parse_run_step_with_mcp_tool_call(mock_async_openai: MagicMock) -> None:
+    """Test _parse_run_step_tool_call with mcp type creates MCPServerToolCallContent."""
+    client = create_test_openai_assistants_client(
+        mock_async_openai,
+        model_id="test-model",
+        assistant_id="test-assistant",
+    )
+
+    # Mock a run with required_action containing mcp tool call
+    mock_run = MagicMock()
+    mock_run.id = "run_456"
+    mock_run.status = "requires_action"
+
+    mock_tool_call = MagicMock()
+    mock_tool_call.id = "call_mcp_456"
+    mock_tool_call.type = "mcp"
+    mock_tool_call.name = "fetch_data"
+    mock_tool_call.server_label = "DataServer"
+    mock_tool_call.args = {"key": "value"}
+
+    mock_required_action = MagicMock()
+    mock_required_action.submit_tool_outputs = MagicMock()
+    mock_required_action.submit_tool_outputs.tool_calls = [mock_tool_call]
+    mock_run.required_action = mock_required_action
+
+    # Parse the run step
+    contents = client._parse_function_calls_from_assistants(mock_run, "response_456")
+
+    # Should have MCPServerToolCallContent
+    assert len(contents) == 1
+    assert contents[0].type == "mcp_server_tool_call"
+    assert contents[0].call_id == '["response_456", "call_mcp_456"]'
+    assert contents[0].tool_name == "fetch_data"
+    assert contents[0].server_name == "DataServer"
+    assert contents[0].arguments == {"key": "value"}
+
+
 def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
     """Test _prepare_options with basic chat options."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
@@ -634,13 +709,13 @@ def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
     assert tool_results is None
 
 
-def test_prepare_options_with_ai_function_tool(mock_async_openai: MagicMock) -> None:
-    """Test _prepare_options with AIFunction tool."""
+def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with a FunctionTool."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a simple function for testing and decorate it
-    @ai_function
+    @tool(approval_mode="never_require")
     def test_function(query: str) -> str:
         """A test function."""
         return f"Result for {query}"
@@ -923,6 +998,7 @@ def test_update_agent_name_and_description_none(mock_async_openai: MagicMock) ->
     assert chat_client.assistant_name is None
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

@@ -12,11 +12,11 @@ This example demonstrates advanced AGUIChatClient features including:
 import asyncio
 import os
 
-from agent_framework import ai_function
+from agent_framework import tool
 from agent_framework.ag_ui import AGUIChatClient
 
 
-@ai_function
+@tool
 def get_weather(location: str) -> str:
     """Get the current weather for a location.
 
@@ -33,7 +33,7 @@ def get_weather(location: str) -> str:
     return weather_data.get(location.lower(), f"Weather data not available for {location}")
 
 
-@ai_function
+@tool
 def calculate(a: float, b: float, operation: str) -> str:
     """Perform basic arithmetic operations.
 

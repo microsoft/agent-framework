@@ -87,12 +87,12 @@ public sealed class Mem0ProviderTests : IDisposable
     public async Task InvokingAsync_PerformsSearch_AndReturnsContextMessageAsync()
     {
         // Arrange
-        this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"session_id\": \"thread\" } ]");
+        this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"thread_id\": \"session\" } ]");
         var storageScope = new Mem0ProviderScope
         {
             ApplicationId = "app",
             AgentId = "agent",
-            ThreadId = "thread",
+            ThreadId = "session",
             UserId = "user"
         };
         var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { EnableSensitiveTelemetryData = true }, loggerFactory: this._loggerFactoryMock.Object);
@@ -106,7 +106,7 @@ public sealed class Mem0ProviderTests : IDisposable
         using JsonDocument doc = JsonDocument.Parse(searchRequest.RequestBody);
         Assert.Equal("app", doc.RootElement.GetProperty("app_id").GetString());
         Assert.Equal("agent", doc.RootElement.GetProperty("agent_id").GetString());
-        Assert.Equal("thread", doc.RootElement.GetProperty("run_id").GetString());
+        Assert.Equal("session", doc.RootElement.GetProperty("run_id").GetString());
         Assert.Equal("user", doc.RootElement.GetProperty("user_id").GetString());
         Assert.Equal("What is my name?", doc.RootElement.GetProperty("query").GetString());
 
@@ -148,14 +148,14 @@ public sealed class Mem0ProviderTests : IDisposable
         }
         else
         {
-            this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"session_id\": \"thread\" } ]");
+            this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"thread_id\": \"session\" } ]");
         }
 
         var storageScope = new Mem0ProviderScope
         {
             ApplicationId = "app",
             AgentId = "agent",
-            ThreadId = "thread",
+            ThreadId = "session",
             UserId = "user"
         };
         var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
@@ -295,14 +295,14 @@ public sealed class Mem0ProviderTests : IDisposable
         }
         else
         {
-            this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"session_id\": \"thread\" } ]");
+            this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"thread_id\": \"session\" } ]");
         }
 
         var storageScope = new Mem0ProviderScope
         {
             ApplicationId = "app",
             AgentId = "agent",
-            ThreadId = "thread",
+            ThreadId = "session",
             UserId = "user"
         };
 
@@ -339,7 +339,7 @@ public sealed class Mem0ProviderTests : IDisposable
     public async Task ClearStoredMemoriesAsync_SendsDeleteWithQueryAsync()
     {
         // Arrange
-        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "session", UserId = "user" };
         var sut = new Mem0Provider(this._httpClient, storageScope);
         this._handler.EnqueueEmptyOk(); // for DELETE
 
@@ -348,14 +348,14 @@ public sealed class Mem0ProviderTests : IDisposable
 
         // Assert
         var delete = Assert.Single(this._handler.Requests, r => r.RequestMessage.Method == HttpMethod.Delete);
-        Assert.Equal("https://localhost/v1/memories/?app_id=app&agent_id=agent&run_id=thread&user_id=user", delete.RequestMessage.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://localhost/v1/memories/?app_id=app&agent_id=agent&run_id=session&user_id=user", delete.RequestMessage.RequestUri!.AbsoluteUri);
     }
 
     [Fact]
     public void Serialize_RoundTripsScopes()
     {
         // Arrange
-        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "session", UserId = "user" };
         var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { ContextPrompt = "Custom:" }, loggerFactory: this._loggerFactoryMock.Object);
 
         // Act
@@ -364,7 +364,7 @@ public sealed class Mem0ProviderTests : IDisposable
         var storageScopeElement = doc.RootElement.GetProperty("storageScope");
         Assert.Equal("app", storageScopeElement.GetProperty("applicationId").GetString());
         Assert.Equal("agent", storageScopeElement.GetProperty("agentId").GetString());
-        Assert.Equal("thread", storageScopeElement.GetProperty("threadId").GetString());
+        Assert.Equal("session", storageScopeElement.GetProperty("threadId").GetString());
         Assert.Equal("user", storageScopeElement.GetProperty("userId").GetString());
 
         var sut2 = new Mem0Provider(this._httpClient, stateElement);
@@ -375,7 +375,7 @@ public sealed class Mem0ProviderTests : IDisposable
         var storageScopeElement2 = doc2.RootElement.GetProperty("storageScope");
         Assert.Equal("app", storageScopeElement2.GetProperty("applicationId").GetString());
         Assert.Equal("agent", storageScopeElement2.GetProperty("agentId").GetString());
-        Assert.Equal("thread", storageScopeElement2.GetProperty("threadId").GetString());
+        Assert.Equal("session", storageScopeElement2.GetProperty("threadId").GetString());
         Assert.Equal("user", storageScopeElement2.GetProperty("userId").GetString());
     }
 

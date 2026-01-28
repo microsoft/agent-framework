@@ -7,6 +7,7 @@ from typing import Annotated
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from agent_framework import tool
 
 """
 Azure AI Agent Latest Version Example
@@ -16,7 +17,8 @@ instead of creating a new agent version on each instantiation. The first call cr
 while subsequent calls with `get_agent()` reuse the latest agent version.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

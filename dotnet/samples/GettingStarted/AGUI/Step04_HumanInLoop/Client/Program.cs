@@ -27,7 +27,7 @@ JsonSerializerOptions jsonSerializerOptions = JsonSerializerOptions.Default;
 ServerFunctionApprovalClientAgent agent = new(baseAgent, jsonSerializerOptions);
 
 List<ChatMessage> messages = [];
-AgentThread? thread = null;
+AgentSession? session = null;
 
 Console.ForegroundColor = ConsoleColor.White;
 Console.WriteLine("Ask a question (or type 'exit' to quit):");
@@ -52,7 +52,7 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
         approvalResponses.Clear();
 
         List<AgentResponseUpdate> chatResponseUpdates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: default))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, cancellationToken: default))
         {
             chatResponseUpdates.Add(update);
             foreach (AIContent content in update.Contents)

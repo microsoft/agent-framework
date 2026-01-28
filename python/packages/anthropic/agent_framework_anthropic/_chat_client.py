@@ -6,7 +6,6 @@ from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     Annotation,
     BaseChatClient,
     ChatMessage,
@@ -15,6 +14,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
@@ -146,6 +146,7 @@ class AnthropicChatOptions(ChatOptions, total=False):
     frequency_penalty: None  # type: ignore[misc]
     presence_penalty: None  # type: ignore[misc]
     store: None  # type: ignore[misc]
+    conversation_id: None  # type: ignore[misc]
 
 
 TAnthropicOptions = TypeVar(
@@ -513,7 +514,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         for content in message.contents:
             match content.type:
                 case "text":
-                    a_content.append({"type": "text", "text": content.text})
+                    # Skip empty text content blocks - Anthropic API rejects them
+                    if content.text:
+                        a_content.append({"type": "text", "text": content.text})
                 case "data":
                     if content.has_top_level_media_type("image"):
                         a_content.append({
@@ -580,7 +583,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 match tool:
                     case MutableMapping():
                         tool_list.append(tool)
-                    case AIFunction():
+                    case FunctionTool():
                         tool_list.append({
                             "type": "custom",
                             "name": tool.name,
