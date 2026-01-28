@@ -356,23 +356,9 @@ internal class DurableWorkflowRunner
     /// Runs the workflow execution loop using superstep-based processing.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// This method implements a Bulk Synchronous Parallel (BSP) style execution where each "superstep"
-    /// processes all pending messages for all active executors. The workflow terminates when:
-    /// </para>
-    /// <list type="bullet">
-    /// <item><description>No more messages are pending (natural completion)</description></item>
-    /// <item><description>An executor calls <c>RequestHaltAsync</c> (explicit halt)</description></item>
-    /// <item><description>Maximum superstep limit is reached (safety limit)</description></item>
-    /// </list>
-    /// <para>
-    /// <strong>Fan-In Handling:</strong>
-    /// </para>
-    /// <para>
-    /// For executors with multiple predecessors (Fan-In), the implementation waits for all predecessor
-    /// results before invoking the executor. If the executor accepts an array type, all messages are
-    /// aggregated into a JSON array.
-    /// </para>
+    /// Implements Bulk Synchronous Parallel (BSP) style execution where each superstep
+    /// processes all pending messages for active executors in parallel. Terminates when
+    /// no messages remain, halt is requested, or max supersteps reached.
     /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
@@ -385,152 +371,152 @@ internal class DurableWorkflowRunner
     {
         const int MaxSupersteps = 100;
 
-        // Message queues per executor - stores (message, inputTypeName) tuples
-        Dictionary<string, Queue<(string Message, string? InputTypeName)>> messageQueues = [];
+        SuperstepState state = new(workflow, plan);
+        EnqueueMessage(state.MessageQueues, plan.StartExecutorId, initialInput, typeof(string).FullName);
 
-        // Last result from each executor (for edge condition evaluation and final result)
-        Dictionary<string, string> lastResults = [];
-
-        // Track accumulated events and shared state
-        DurableWorkflowCustomStatus customStatus = new();
-        Dictionary<string, string> sharedState = [];
-
-        // Get executor bindings for creating WorkflowExecutorInfo
-        Dictionary<string, ExecutorBinding> executorBindings = workflow.ReflectExecutors();
-
-        // Initialize: queue input to start executor (initial input is a string)
-        EnqueueMessage(messageQueues, plan.StartExecutorId, initialInput, typeof(string).FullName);
-
-        int superstep = 0;
-        bool haltRequested = false;
-        string? finalOutput = null;
-
-        while (superstep < MaxSupersteps && !haltRequested)
+        for (int superstep = 1; superstep <= MaxSupersteps; superstep++)
         {
-            superstep++;
-
-            // Collect all executors with pending messages
-            List<string> activeExecutors = messageQueues
-                .Where(kv => kv.Value.Count > 0)
-                .Select(kv => kv.Key)
-                .ToList();
-
-            if (activeExecutors.Count == 0)
+            List<ExecutorInput> inputs = PrepareExecutorInputs(state, logger);
+            if (inputs.Count == 0)
             {
-                break; // No more work
+                break;
             }
 
-            logger.LogDebug(
-            "Superstep {Step}: {Count} active executor(s): {Executors}",
-            superstep,
-            activeExecutors.Count,
-            string.Join(", ", activeExecutors));
+            logger.LogDebug("Superstep {Step}: {Count} active executor(s)", superstep, inputs.Count);
 
-            // Prepare execution tasks for all active executors (for parallel dispatch)
-            List<(string ExecutorId, string Input, string? InputTypeName, WorkflowExecutorInfo Info)> executorInputs = [];
+            // Dispatch all executors in parallel
+            Task<string>[] tasks = inputs
+                .Select(e => this.DispatchExecutorAsync(context, e.Info, e.Input, e.InputTypeName, logger, state.CustomStatus, state.SharedState))
+                .ToArray();
 
-            foreach (string executorId in activeExecutors)
+            string[] results = await Task.WhenAll(tasks).ConfigureAwait(true);
+
+            // Process results and route to successors
+            string? haltOutput = ProcessSuperstepResults(inputs, results, state, logger);
+            if (haltOutput is not null)
             {
-                Queue<(string Message, string? InputTypeName)> queue = messageQueues[executorId];
-
-                // Check if this is a Fan-In executor that expects aggregated input
-                bool isFanIn = plan.Predecessors.TryGetValue(executorId, out List<string>? predecessors) && predecessors.Count > 1;
-
-                string input;
-                string? inputTypeName;
-
-                if (isFanIn && queue.Count > 1)
-                {
-                    // Fan-In: Aggregate all messages into a JSON array
-                    List<string> messages = [];
-                    while (queue.Count > 0)
-                    {
-                        (string msg, _) = queue.Dequeue();
-                        messages.Add(msg);
-                    }
-
-                    input = AggregateMessagesToJsonArray(messages);
-                    inputTypeName = typeof(string[]).FullName;
-
-                    logger.LogDebug("Fan-In executor {ExecutorId}: aggregated {Count} messages", executorId, messages.Count);
-                }
-                else
-                {
-                    // Normal case: process single message
-                    (input, inputTypeName) = queue.Dequeue();
-                }
-
-                WorkflowExecutorInfo executorInfo = CreateExecutorInfo(executorId, executorBindings);
-                executorInputs.Add((executorId, input, inputTypeName, executorInfo));
+                return haltOutput;
             }
 
-            // Dispatch all executors in parallel by starting all tasks first, then awaiting together
-            List<Task<string>> executorTasks = [];
-            foreach ((string executorId, string input, string? inputTypeName, WorkflowExecutorInfo executorInfo) in executorInputs)
-            {
-                // Start the task without awaiting - this enables parallel dispatch
-                Task<string> task = this.DispatchExecutorAsync(
-                    context, executorInfo, input, inputTypeName, logger, customStatus, sharedState);
-                executorTasks.Add(task);
-            }
-
-            // Wait for all executors to complete in parallel
-            string[] rawResults = await Task.WhenAll(executorTasks).ConfigureAwait(true);
-
-            // Process results and route messages
-            for (int i = 0; i < executorInputs.Count; i++)
-            {
-                string executorId = executorInputs[i].ExecutorId;
-                string rawResult = rawResults[i];
-
-                (string result, List<SentMessageInfo> sentMessages) = UnwrapActivityResult(rawResult, customStatus, sharedState);
-                lastResults[executorId] = result;
-
-                // Check for explicit halt request (via RequestHaltAsync)
-                if (HasHaltBeenRequested(customStatus, executorId))
-                {
-                    haltRequested = true;
-                    finalOutput = result;
-                    logger.LogDebug("Halt requested by executor {ExecutorId}", executorId);
-                    break;
-                }
-
-                // Route messages sent via SendMessageAsync (takes priority for void-returning executors)
-                if (sentMessages.Count > 0)
-                {
-                    foreach (SentMessageInfo sentMessage in sentMessages)
-                    {
-                        if (!string.IsNullOrEmpty(sentMessage.Message))
-                        {
-                            // Route to successors with the sent message's type
-                            RouteMessageToSuccessors(
-                                executorId, sentMessage.Message, sentMessage.TypeName, plan, messageQueues, logger);
-                        }
-                    }
-                }
-                else if (!string.IsNullOrEmpty(result))
-                {
-                    // Route executor's return value to successor executors via edges (for non-void executors)
-                    RouteMessageToSuccessors(
-                        executorId, result, plan, messageQueues, logger);
-                }
-
-                if (haltRequested)
-                {
-                    break;
-                }
-            }
-
-            UpdateCustomStatus(context, customStatus);
+            UpdateCustomStatus(context, state.CustomStatus);
         }
 
-        if (superstep >= MaxSupersteps)
+        return DetermineFinalResult(workflow, state.LastResults, state.CustomStatus);
+    }
+
+    /// <summary>
+    /// Holds mutable state for superstep-based workflow execution.
+    /// </summary>
+    private sealed class SuperstepState(Workflow workflow, WorkflowExecutionPlan plan)
+    {
+        public WorkflowExecutionPlan Plan { get; } = plan;
+        public Dictionary<string, ExecutorBinding> ExecutorBindings { get; } = workflow.ReflectExecutors();
+        public Dictionary<string, Queue<(string Message, string? InputTypeName)>> MessageQueues { get; } = [];
+        public Dictionary<string, string> LastResults { get; } = [];
+        public Dictionary<string, string> SharedState { get; } = [];
+        public DurableWorkflowCustomStatus CustomStatus { get; } = new();
+    }
+
+    /// <summary>
+    /// Represents prepared input for an executor ready for dispatch.
+    /// </summary>
+    private sealed record ExecutorInput(string ExecutorId, string Input, string? InputTypeName, WorkflowExecutorInfo Info);
+
+    /// <summary>
+    /// Prepares inputs for all active executors, handling Fan-In aggregation.
+    /// </summary>
+    private static List<ExecutorInput> PrepareExecutorInputs(SuperstepState state, ILogger logger)
+    {
+        List<ExecutorInput> inputs = [];
+
+        foreach ((string executorId, Queue<(string Message, string? InputTypeName)> queue) in state.MessageQueues)
         {
-            logger.LogWarning("Workflow reached maximum superstep limit ({MaxSteps})", MaxSupersteps);
+            if (queue.Count == 0)
+            {
+                continue;
+            }
+
+            bool isFanIn = state.Plan.Predecessors.TryGetValue(executorId, out List<string>? predecessors) && predecessors.Count > 1;
+            (string input, string? inputTypeName) = isFanIn && queue.Count > 1
+                ? AggregateQueueMessages(queue, executorId, logger)
+                : queue.Dequeue();
+
+            inputs.Add(new ExecutorInput(executorId, input, inputTypeName, CreateExecutorInfo(executorId, state.ExecutorBindings)));
         }
 
-        // Return final output or last result from output executors
-        return finalOutput ?? DetermineFinalResult(workflow, lastResults, customStatus);
+        return inputs;
+    }
+
+    /// <summary>
+    /// Aggregates all messages in a queue into a JSON array for Fan-In executors.
+    /// </summary>
+    private static (string Input, string? TypeName) AggregateQueueMessages(
+        Queue<(string Message, string? InputTypeName)> queue,
+        string executorId,
+        ILogger logger)
+    {
+        List<string> messages = [];
+        while (queue.Count > 0)
+        {
+            messages.Add(queue.Dequeue().Message);
+        }
+
+        logger.LogDebug("Fan-In executor {ExecutorId}: aggregated {Count} messages", executorId, messages.Count);
+        return (AggregateMessagesToJsonArray(messages), typeof(string[]).FullName);
+    }
+
+    /// <summary>
+    /// Processes results from a superstep, updating state and routing messages.
+    /// </summary>
+    /// <returns>The halt output if halt was requested; otherwise null.</returns>
+    private static string? ProcessSuperstepResults(
+        List<ExecutorInput> inputs,
+        string[] rawResults,
+        SuperstepState state,
+        ILogger logger)
+    {
+        for (int i = 0; i < inputs.Count; i++)
+        {
+            string executorId = inputs[i].ExecutorId;
+            (string result, List<SentMessageInfo> sentMessages) = UnwrapActivityResult(rawResults[i], state.CustomStatus, state.SharedState);
+            state.LastResults[executorId] = result;
+
+            if (HasHaltBeenRequested(state.CustomStatus, executorId))
+            {
+                logger.LogDebug("Halt requested by executor {ExecutorId}", executorId);
+                return result;
+            }
+
+            RouteExecutorOutput(executorId, result, sentMessages, state, logger);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Routes executor output (explicit messages or return value) to successors.
+    /// </summary>
+    private static void RouteExecutorOutput(
+        string executorId,
+        string result,
+        List<SentMessageInfo> sentMessages,
+        SuperstepState state,
+        ILogger logger)
+    {
+        if (sentMessages.Count > 0)
+        {
+            foreach (SentMessageInfo msg in sentMessages)
+            {
+                if (!string.IsNullOrEmpty(msg.Message))
+                {
+                    RouteMessageToSuccessors(executorId, msg.Message, msg.TypeName, state.Plan, state.MessageQueues, logger);
+                }
+            }
+        }
+        else if (!string.IsNullOrEmpty(result))
+        {
+            RouteMessageToSuccessors(executorId, result, state.Plan, state.MessageQueues, logger);
+        }
     }
 
     /// <summary>
