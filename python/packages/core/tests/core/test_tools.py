@@ -67,6 +67,7 @@ def test_tool_decorator_without_args():
         "type": "object",
     }
     assert test_tool(1, 2) == 3
+    assert test_tool.approval_mode == "always_require"
 
 
 def test_tool_without_args():
@@ -977,7 +978,11 @@ def mock_chat_client():
     return MockChatClient()
 
 
-@tool(name="no_approval_tool", description="Tool that doesn't require approval", approval_mode="never_require")
+@tool(
+    name="no_approval_tool",
+    description="Tool that doesn't require approval",
+    approval_mode="never_require",
+)
 def no_approval_tool(x: int) -> int:
     """A tool that doesn't require approval."""
     return x * 2

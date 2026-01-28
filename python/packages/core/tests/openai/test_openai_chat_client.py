@@ -189,7 +189,7 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
-@tool
+@tool(approval_mode="never_require")
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
     return (
@@ -200,7 +200,7 @@ def get_story_text() -> str:
     )
 
 
-@tool
+@tool(approval_mode="never_require")
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
     return f"The weather in {location} is sunny and 72°F."

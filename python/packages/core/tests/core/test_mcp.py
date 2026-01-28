@@ -1228,7 +1228,7 @@ async def test_streamable_http_integration():
     if not url.startswith("http"):
         pytest.skip("LOCAL_MCP_URL is not an HTTP URL")
 
-    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url, approval_mode="never_require")
 
     async with tool:
         # Test that we can connect and load tools
@@ -1260,7 +1260,7 @@ async def test_mcp_connection_reset_integration():
     """
     url = os.environ.get("LOCAL_MCP_URL")
 
-    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url, approval_mode="never_require")
 
     async with tool:
         # Verify initial connection

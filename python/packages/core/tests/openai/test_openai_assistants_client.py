@@ -715,7 +715,7 @@ def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a simple function for testing and decorate it
-    @tool
+    @tool(approval_mode="never_require")
     def test_function(query: str) -> str:
         """A test function."""
         return f"Result for {query}"
@@ -998,6 +998,7 @@ def test_update_agent_name_and_description_none(mock_async_openai: MagicMock) ->
     assert chat_client.assistant_name is None
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

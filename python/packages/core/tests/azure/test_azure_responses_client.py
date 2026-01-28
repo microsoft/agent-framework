@@ -41,7 +41,7 @@ class OutputStruct(BaseModel):
     weather: str
 
 
-@tool
+@tool(approval_mode="never_require")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
