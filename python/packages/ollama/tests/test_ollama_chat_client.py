@@ -11,8 +11,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     HostedWebSearchTool,
-    ai_function,
     chat_middleware,
+    tool,
 )
 from agent_framework.exceptions import (
     ServiceInitializationError,
@@ -109,7 +109,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
     )
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def hello_world(arg1: str) -> str:
     return "Hello World"
 

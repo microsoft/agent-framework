@@ -8,6 +8,7 @@ from agent_framework import (
     CodeInterpreterToolResultContent,
     HostedCodeInterpreterTool,
     TextContent,
+    tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
 

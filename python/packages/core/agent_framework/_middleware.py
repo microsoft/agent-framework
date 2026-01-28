@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ._agents import AgentProtocol
     from ._clients import ChatClientProtocol
     from ._threads import AgentThread
-    from ._tools import AIFunction
+    from ._tools import FunctionTool
     from ._types import ChatResponse, ChatResponseUpdate
 
 
@@ -172,7 +172,7 @@ class FunctionInvocationContext(SerializationMixin):
 
     def __init__(
         self,
-        function: "AIFunction[Any, Any]",
+        function: "FunctionTool[Any, Any]",
         arguments: "BaseModel",
         metadata: dict[str, Any] | None = None,
         result: Any = None,

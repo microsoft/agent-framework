@@ -13,6 +13,7 @@ from agent_framework import (
     RequestInfoEvent,
     WorkflowEvent,
     WorkflowOutputEvent,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential

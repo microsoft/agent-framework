@@ -41,7 +41,7 @@ from typing_extensions import Never
 from .._agents import AgentProtocol, ChatAgent
 from .._middleware import FunctionInvocationContext, FunctionMiddleware
 from .._threads import AgentThread
-from .._tools import AIFunction, ai_function
+from .._tools import FunctionTool, tool
 from .._types import AgentResponse, ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
@@ -331,7 +331,7 @@ class HandoffAgentExecutor(AgentExecutor):
         existing_tools = list(default_options.get("tools") or [])
         existing_names = {getattr(tool, "name", "") for tool in existing_tools if hasattr(tool, "name")}
 
-        new_tools: list[AIFunction[Any, Any]] = []
+        new_tools: list[FunctionTool[Any, Any]] = []
         for target in targets:
             tool = self._create_handoff_tool(target.target_id, target.description)
             if tool.name in existing_names:
@@ -347,17 +347,17 @@ class HandoffAgentExecutor(AgentExecutor):
         else:
             default_options["tools"] = existing_tools
 
-    def _create_handoff_tool(self, target_id: str, description: str | None = None) -> AIFunction[Any, Any]:
+    def _create_handoff_tool(self, target_id: str, description: str | None = None) -> FunctionTool[Any, Any]:
         """Construct the synthetic handoff tool that signals routing to `target_id`."""
         tool_name = get_handoff_tool_name(target_id)
         doc = description or f"Handoff to the {target_id} agent."
-        # Note: approval_mode is intentionally NOT set for handoff tools.
-        # Handoff tools are framework-internal signals that trigger routing logic,
-        # not actual function executions. They are automatically intercepted by
+        # Note: approval_mode is set to "never_require" for handoff tools because
+        # they are framework-internal signals that trigger routing logic, not
+        # actual function executions. They are automatically intercepted by
         # _AutoHandoffMiddleware which short-circuits execution and provides synthetic
         # results, so the function body never actually runs in practice.
 
-        @ai_function(name=tool_name, description=doc)
+        @tool(name=tool_name, description=doc, approval_mode="never_require")
         def _handoff_tool(context: str | None = None) -> str:
             """Return a deterministic acknowledgement that encodes the target alias."""
             return f"Handoff to {target_id}"

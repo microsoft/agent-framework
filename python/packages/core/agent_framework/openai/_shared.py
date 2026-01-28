@@ -24,7 +24,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
+from .._tools import FunctionTool, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -295,7 +295,7 @@ def to_assistant_tools(
     tool_definitions: list[dict[str, Any]] = []
 
     for tool in tools:
-        if isinstance(tool, AIFunction):
+        if isinstance(tool, FunctionTool):
             tool_definitions.append(tool.to_json_schema_spec())
         elif isinstance(tool, HostedCodeInterpreterTool):
             tool_definitions.append({"type": "code_interpreter"})

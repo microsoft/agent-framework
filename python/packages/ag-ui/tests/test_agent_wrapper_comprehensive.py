@@ -680,12 +680,12 @@ async def test_agent_with_use_service_thread_is_true():
 
 async def test_function_approval_mode_executes_tool():
     """Test that function approval with approval_mode='always_require' sends the correct messages."""
-    from agent_framework import ai_function
+    from agent_framework import tool
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     messages_received: list[Any] = []
 
-    @ai_function(
+    @tool(
         name="get_datetime",
         description="Get the current date and time",
         approval_mode="always_require",
@@ -771,12 +771,12 @@ async def test_function_approval_mode_executes_tool():
 
 async def test_function_approval_mode_rejection():
     """Test that function approval rejection creates a rejection response."""
-    from agent_framework import ai_function
+    from agent_framework import tool
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     messages_received: list[Any] = []
 
-    @ai_function(
+    @tool(
         name="delete_all_data",
         description="Delete all user data",
         approval_mode="always_require",

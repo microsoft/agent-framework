@@ -24,7 +24,7 @@ from agent_framework._middleware import (
     FunctionMiddleware,
     FunctionMiddlewarePipeline,
 )
-from agent_framework._tools import AIFunction
+from agent_framework._tools import FunctionTool
 
 from .conftest import MockChatClient
 
@@ -103,7 +103,7 @@ class TestResultOverrideMiddleware:
         assert updates[0].text == "overridden"
         assert updates[1].text == " stream"
 
-    async def test_function_middleware_result_override(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_result_override(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that function middleware can override result."""
         override_result = "overridden function result"
 
@@ -260,7 +260,7 @@ class TestResultOverrideMiddleware:
         assert execute_result.messages[0].text == "executed response"
         assert handler_called
 
-    async def test_function_middleware_conditional_no_next(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_conditional_no_next(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that when function middleware conditionally doesn't call next(), no execution happens."""
 
         class ConditionalNoNextFunctionMiddleware(FunctionMiddleware):
@@ -345,7 +345,7 @@ class TestResultObservability:
         assert observed_responses[0].messages[0].text == "executed response"
         assert result == observed_responses[0]
 
-    async def test_function_middleware_result_observability(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_result_observability(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that middleware can observe function result after execution."""
         observed_results: list[str] = []
 
@@ -414,7 +414,7 @@ class TestResultObservability:
         assert result is not None
         assert result.messages[0].text == "modified after execution"
 
-    async def test_function_middleware_post_execution_override(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_post_execution_override(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that middleware can override function result after observing execution."""
 
         class PostExecutionOverrideMiddleware(FunctionMiddleware):
@@ -456,8 +456,8 @@ def mock_agent() -> AgentProtocol:
 
 
 @pytest.fixture
-def mock_function() -> AIFunction[Any, Any]:
+def mock_function() -> FunctionTool[Any, Any]:
     """Mock function for testing."""
-    function = MagicMock(spec=AIFunction[Any, Any])
+    function = MagicMock(spec=FunctionTool[Any, Any])
     function.name = "test_function"
     return function

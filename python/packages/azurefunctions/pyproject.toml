@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
+    "agent-framework-durabletask",
     "azure-functions",
     "azure-functions-durable",
 ]

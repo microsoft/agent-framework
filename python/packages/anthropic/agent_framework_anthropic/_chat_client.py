@@ -6,7 +6,6 @@ from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     Annotation,
     BaseChatClient,
     ChatMessage,
@@ -15,6 +14,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
@@ -583,7 +583,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 match tool:
                     case MutableMapping():
                         tool_list.append(tool)
-                    case AIFunction():
+                    case FunctionTool():
                         tool_list.append({
                             "type": "custom",
                             "name": tool.name,

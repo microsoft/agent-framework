@@ -96,7 +96,7 @@ async def run_agent_framework() -> None:
         MagenticBuilder()
         .participants([researcher, coder, reviewer])
         .with_manager(
-            agent=client.create_agent(
+            agent=client.as_agent(
                 name="magentic_manager",
                 instructions="You coordinate a team to complete complex tasks efficiently.",
                 description="Orchestrator for team coordination",
