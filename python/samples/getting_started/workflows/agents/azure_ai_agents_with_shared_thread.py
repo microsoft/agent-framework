@@ -12,7 +12,6 @@ from agent_framework import (
     executor,
 )
 from agent_framework.azure import AzureAIProjectAgentProvider
-from agent_framework.openai import OpenAIResponsesOptions
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -63,9 +62,7 @@ async def main() -> None:
         )
 
         reviewer = await provider.create_agent(
-            instructions=(
-                "You are a thoughtful reviewer. Give brief feedback on the previous assistant message."
-            ),
+            instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
             name="reviewer",
         )
 
@@ -75,11 +72,11 @@ async def main() -> None:
 
         workflow = (
             WorkflowBuilder()
-            .register_agent(lambda: writer, "writer", agent_thread=shared_thread)
-            .register_agent(lambda: reviewer, "reviewer", agent_thread=shared_thread)
+            .register_agent(factory_func=lambda: writer, name="writer", agent_thread=shared_thread)
+            .register_agent(factory_func=lambda: reviewer, name="reviewer", agent_thread=shared_thread)
             .register_executor(
-                lambda: intercept_agent_response,
-                "intercept_agent_response",
+                factory_func=lambda: intercept_agent_response,
+                name="intercept_agent_response",
             )
             .add_chain(["writer", "intercept_agent_response", "reviewer"])
             .set_start_executor("writer")
@@ -90,7 +87,7 @@ async def main() -> None:
             "Write a tagline for a budget-friendly eBike.",
             # Keyword arguments will be passed to each agent call.
             # Setting store=False to avoid storing messages in the service for this example.
-            options=OpenAIResponsesOptions(store=False),
+            options={"store": False},
         )
         # The final state should be IDLE since the workflow no longer has messages to
         # process after the reviewer agent responds.
