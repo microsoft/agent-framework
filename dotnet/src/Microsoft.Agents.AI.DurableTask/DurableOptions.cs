@@ -20,7 +20,7 @@ public sealed class DurableOptions
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableOptions"/> class.
     /// </summary>
-    public DurableOptions()
+    internal DurableOptions()
     {
         this.Workflows = new DurableWorkflowOptions(this);
     }

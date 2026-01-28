@@ -116,7 +116,7 @@ public sealed class DurableRun : IRun
     /// <param name="eventData">The data to send with the event.</param>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
 #pragma warning disable CA1030 // Use events where appropriate - This is intentionally a method that sends events to an orchestration
-    public async ValueTask SendExternalEventAsync(string eventName, object? eventData = null, CancellationToken cancellationToken = default)
+    internal async ValueTask SendExternalEventAsync(string eventName, object? eventData = null, CancellationToken cancellationToken = default)
 #pragma warning restore CA1030
     {
         await this._client.RaiseEventAsync(
@@ -131,7 +131,7 @@ public sealed class DurableRun : IRun
     /// </summary>
     /// <param name="workflowEvent">The workflow event to send.</param>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
-    public ValueTask SendEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
+    internal ValueTask SendEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
         => this.SendExternalEventAsync("WorkflowEvent", workflowEvent, cancellationToken);
 
     /// <summary>
@@ -237,50 +237,4 @@ public sealed class DurableRun : IRun
         // Nothing to dispose for durable runs - the orchestration continues independently
         return default;
     }
-}
-
-/// <summary>
-/// Represents the execution status of a durable workflow run.
-/// </summary>
-public enum DurableRunStatus
-{
-    /// <summary>
-    /// The orchestration instance was not found.
-    /// </summary>
-    NotFound,
-
-    /// <summary>
-    /// The orchestration is pending and has not started.
-    /// </summary>
-    Pending,
-
-    /// <summary>
-    /// The orchestration is currently running.
-    /// </summary>
-    Running,
-
-    /// <summary>
-    /// The orchestration completed successfully.
-    /// </summary>
-    Completed,
-
-    /// <summary>
-    /// The orchestration failed with an error.
-    /// </summary>
-    Failed,
-
-    /// <summary>
-    /// The orchestration was terminated.
-    /// </summary>
-    Terminated,
-
-    /// <summary>
-    /// The orchestration is suspended.
-    /// </summary>
-    Suspended,
-
-    /// <summary>
-    /// The orchestration status is unknown.
-    /// </summary>
-    Unknown
 }

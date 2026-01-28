@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <summary>
 /// Provides methods to run workflows as durable orchestrations.
 /// </summary>
-public static class DurableWorkflow
+internal static class DurableWorkflow
 {
     /// <summary>
     /// Runs a workflow as a durable orchestration and returns a handle to monitor its execution.
