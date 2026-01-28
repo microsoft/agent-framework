@@ -1131,6 +1131,81 @@ async def test_local_mcp_server_prompt_execution():
         assert result[0].contents[0].text == "Test message"
 
 
+async def test_mcp_prompt_filters_framework_kwargs():
+    """Test that get_prompt method filters out framework-specific kwargs."""
+
+    class TestMCPTool(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_prompts = AsyncMock(
+                return_value=types.ListPromptsResult(
+                    prompts=[
+                        types.Prompt(
+                            name="test_prompt",
+                            description="Test prompt",
+                            arguments=[
+                                types.PromptArgument(name="arg", description="Test arg", required=True),
+                                types.PromptArgument(name="code", description="Code arg", required=False),
+                            ],
+                        )
+                    ]
+                )
+            )
+            self.session.get_prompt = AsyncMock(
+                return_value=types.GetPromptResult(
+                    description="Generated prompt",
+                    messages=[
+                        types.PromptMessage(
+                            role="user",
+                            content=types.TextContent(type="text", text="Test message"),
+                        )
+                    ],
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestMCPTool(name="test_server")
+    async with server:
+        await server.load_prompts()
+        prompt = server.functions[0]
+
+        # Create a mock response_format type
+        class MockResponseFormat(BaseModel):
+            result: str
+
+        # Call with framework kwargs that should be filtered out
+        result = await prompt.invoke(
+            arg="test_value",
+            code="print('hello')",
+            chat_options={"key": "value"},
+            tools=["tool1", "tool2"],
+            tool_choice="auto",
+            thread="thread_id",
+            conversation_id="conv_123",
+            options={"store": "data"},
+            response_format=MockResponseFormat,
+        )
+
+        assert len(result) == 1
+        assert isinstance(result[0], ChatMessage)
+
+        # Verify the session.get_prompt was called with only the actual prompt parameters
+        server.session.get_prompt.assert_called_once()
+        call_args = server.session.get_prompt.call_args
+        # Should only include arg and code, not the framework kwargs
+        assert call_args.kwargs["arguments"] == {"arg": "test_value", "code": "print('hello')"}
+        # Ensure none of the framework kwargs were passed
+        assert "chat_options" not in call_args.kwargs["arguments"]
+        assert "tools" not in call_args.kwargs["arguments"]
+        assert "tool_choice" not in call_args.kwargs["arguments"]
+        assert "thread" not in call_args.kwargs["arguments"]
+        assert "conversation_id" not in call_args.kwargs["arguments"]
+        assert "options" not in call_args.kwargs["arguments"]
+        assert "response_format" not in call_args.kwargs["arguments"]
+
+
 @pytest.mark.parametrize(
     "approval_mode,expected_approvals",
     [

@@ -761,7 +761,15 @@ class MCPTool:
             k: v
             for k, v in kwargs.items()
             if k
-            not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options", "response_format"}
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "thread",
+                "conversation_id",
+                "options",
+                "response_format",
+            }
         }
 
         # Try the operation, reconnecting once if the connection is closed
@@ -821,10 +829,28 @@ class MCPTool:
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
 
+        # Filter out framework kwargs that cannot be serialized by the MCP SDK.
+        # These are internal objects passed through the function invocation pipeline
+        # that should not be forwarded to external MCP servers.
+        filtered_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "thread",
+                "conversation_id",
+                "options",
+                "response_format",
+            }
+        }
+
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                prompt_result = await self.session.get_prompt(prompt_name, arguments=filtered_kwargs)  # type: ignore
                 if self.parse_prompt_results is None:
                     return prompt_result
                 if self.parse_prompt_results is True:
