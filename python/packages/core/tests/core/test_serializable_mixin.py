@@ -245,7 +245,6 @@ class TestSerializationMixin:
 
     def test_to_dict_skips_non_serializable_in_list(self, caplog):
         """Test to_dict skips non-serializable items in lists with debug logging."""
-        import logging
 
         class NonSerializable:
             pass
@@ -254,8 +253,7 @@ class TestSerializationMixin:
             def __init__(self, items: list):
                 self.items = items
 
-        non_serializable = NonSerializable()
-        obj = TestClass(items=["serializable", non_serializable])
+        obj = TestClass(items=["serializable", NonSerializable()])
 
         with caplog.at_level(logging.DEBUG):
             data = obj.to_dict()
@@ -298,7 +296,6 @@ class TestSerializationMixin:
 
     def test_to_dict_skips_non_serializable_in_dict(self, caplog):
         """Test to_dict skips non-serializable values in dicts with debug logging."""
-        import logging
 
         class NonSerializable:
             pass
@@ -317,10 +314,6 @@ class TestSerializationMixin:
 
     def test_to_dict_skips_non_serializable_attributes(self, caplog):
         """Test to_dict skips non-serializable top-level attributes."""
-        import logging
-
-        class NonSerializable:
-            pass
 
         class TestClass(SerializationMixin):
             def __init__(self, value: str, func: Any = None):
@@ -335,39 +328,24 @@ class TestSerializationMixin:
         assert data["value"] == "test"
         assert "func" not in data
 
-    def test_from_dict_type_mismatch_raises(self):
-        """Test from_dict raises ValueError on type mismatch when class has TYPE."""
-        # When a class has TYPE defined, and the dict has a different type value,
-        # it should raise ValueError. But _get_type_identifier prioritizes the
-        # value's 'type' field, so this scenario doesn't actually trigger the mismatch.
-        # This test verifies the behavior when we explicitly check type matching.
+    def test_from_dict_without_type_in_data(self):
+        """Test from_dict uses class TYPE when no type field in data."""
 
         class TestClass(SerializationMixin):
-            TYPE = "expected_type"
+            TYPE = "my_custom_type"
 
             def __init__(self, value: str):
                 self.value = value
 
-        # The type in the dict will be used for dependency lookup, but the class TYPE is used
-        # for validation. Actually, looking at the code, _get_type_identifier returns
-        # the value's type first, so there's no mismatch. Let's skip this test.
-        # The mismatch check at line 515-516 only triggers when the class has TYPE
-        # and value has a different type field. Let's test a different scenario.
+        # Data without 'type' field - class TYPE should be used for type identifier
+        data = {"value": "test"}
 
-        # Actually create an instance and serialize, then try deserializing with different class
-        class AnotherClass(SerializationMixin):
-            TYPE = "another_type"
-
-            def __init__(self, value: str):
-                self.value = value
-
-        # Create a data dict that would be from TestClass
-        data = {"type": "expected_type", "value": "test"}
-
-        # This will work because _get_type_identifier returns "expected_type" from the dict
-        # The TYPE class attribute is only used when value doesn't have 'type'
-        obj = AnotherClass.from_dict(data)
+        obj = TestClass.from_dict(data)
         assert obj.value == "test"
+
+        # Verify to_dict includes the type
+        out = obj.to_dict()
+        assert out["type"] == "my_custom_type"
 
     def test_from_json(self):
         """Test from_json deserializes JSON string."""
