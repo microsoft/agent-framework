@@ -119,8 +119,7 @@ async def main() -> None:
     # 4. Build a group chat workflow with the selector function
     workflow = (
         GroupChatBuilder()
-        # Optionally, use `.set_manager(...)` to customize the group chat manager
-        .with_select_speaker_func(select_next_speaker)
+        .with_orchestrator(selection_func=select_next_speaker)
         .participants([qa_engineer, devops_engineer])
         # Set a hard limit to 4 rounds
         # First round: QAEngineer speaks

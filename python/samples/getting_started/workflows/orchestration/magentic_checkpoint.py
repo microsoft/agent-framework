@@ -84,7 +84,7 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         MagenticBuilder()
         .participants([researcher, writer])
         .with_plan_review()
-        .with_standard_manager(
+        .with_manager(
             agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
