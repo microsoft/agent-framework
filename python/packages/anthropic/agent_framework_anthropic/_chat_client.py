@@ -50,7 +50,7 @@ from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel
 
 from ._shared import AnthropicBackend, AnthropicSettings
 
@@ -698,10 +698,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 "or 'ANTHROPIC_API_KEY' environment variable."
             )
 
-        api_key = settings.api_key.get_secret_value() if isinstance(settings.api_key, SecretStr) else settings.api_key
-
         return AsyncAnthropic(
-            api_key=api_key,
+            api_key=settings.api_key,
             base_url=settings.base_url,
             default_headers=default_headers,
         )
@@ -714,11 +712,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         api_key: str | None = None
 
         if settings.foundry_api_key:
-            api_key = (
-                settings.foundry_api_key.get_secret_value()
-                if isinstance(settings.foundry_api_key, SecretStr)
-                else settings.foundry_api_key
-            )
+            api_key = settings.foundry_api_key
         elif settings.ad_token_provider:
             api_key = settings.ad_token_provider()
 
@@ -783,11 +777,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         if settings.aws_access_key:
             client_kwargs["aws_access_key"] = settings.aws_access_key
         if settings.aws_secret_key:
-            client_kwargs["aws_secret_key"] = (
-                settings.aws_secret_key.get_secret_value()
-                if isinstance(settings.aws_secret_key, SecretStr)
-                else settings.aws_secret_key
-            )
+            client_kwargs["aws_secret_key"] = settings.aws_secret_key
         if settings.aws_session_token:
             client_kwargs["aws_session_token"] = settings.aws_session_token
         if settings.aws_profile:

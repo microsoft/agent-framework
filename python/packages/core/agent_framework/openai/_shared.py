@@ -19,12 +19,11 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
-from pydantic import SecretStr
 
 from .._logging import get_logger
 from .._pydantic import HTTPsUrl
 from .._serialization import SerializationMixin
-from .._settings import AFSettings, BackendConfig
+from .._settings import AFSettings, BackendConfig, SecretString
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._tools import FunctionTool, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
 from ..exceptions import ServiceInitializationError
@@ -162,12 +161,12 @@ class OpenAISettings(AFSettings):
     responses_model_id: str | None = None
 
     # OpenAI backend fields
-    api_key: SecretStr | None = None
+    api_key: SecretString | None = None
     base_url: str | None = None
     org_id: str | None = None
 
     # Azure backend fields
-    azure_api_key: SecretStr | None = None
+    azure_api_key: SecretString | None = None
     endpoint: HTTPsUrl | None = None
     azure_base_url: HTTPsUrl | None = None
     api_version: str | None = None
@@ -264,18 +263,13 @@ class OpenAISettings(AFSettings):
         """Get the API key value for client initialization.
 
         For callable API keys: returns the callable directly.
-        For SecretStr API keys: returns the string value.
-        For string/None API keys: returns as-is.
+        For SecretString/string/None API keys: returns as-is.
         """
         if self._callable_api_key is not None:
             return self._callable_api_key
 
         if self._backend == "azure":
-            if isinstance(self.azure_api_key, SecretStr):
-                return self.azure_api_key.get_secret_value()
             return self.azure_api_key
-        if isinstance(self.api_key, SecretStr):
-            return self.api_key.get_secret_value()
         return self.api_key
 
     def get_azure_auth_token(self, **kwargs: Any) -> str | None:
@@ -395,21 +389,17 @@ class OpenAIBase(SerializationMixin):
         return self.client
 
     def _get_api_key(
-        self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
+        self, api_key: str | Callable[[], str | Awaitable[str]] | None
     ) -> str | Callable[[], str | Awaitable[str]] | None:
         """Get the appropriate API key value for client initialization.
 
         Args:
-            api_key: The API key parameter which can be a string, SecretStr, callable, or None.
+            api_key: The API key parameter which can be a string, callable, or None.
 
         Returns:
             For callable API keys: returns the callable directly.
-            For SecretStr API keys: returns the string value.
             For string/None API keys: returns as-is.
         """
-        if isinstance(api_key, SecretStr):
-            return api_key.get_secret_value()
-
         # Check version compatibility for callable API keys
         if callable(api_key):
             _check_openai_version_for_callable_api_key()

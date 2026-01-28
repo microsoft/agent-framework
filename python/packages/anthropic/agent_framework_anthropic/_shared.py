@@ -4,8 +4,7 @@
 
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework._settings import AFSettings, BackendConfig
-from pydantic import SecretStr
+from agent_framework._settings import AFSettings, BackendConfig, SecretString
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -162,11 +161,11 @@ class AnthropicSettings(AFSettings):
     model_id: str | None = None
 
     # Anthropic backend
-    api_key: SecretStr | None = None
+    api_key: SecretString | None = None
     base_url: str | None = None
 
     # Foundry backend
-    foundry_api_key: SecretStr | None = None
+    foundry_api_key: SecretString | None = None
     foundry_resource: str | None = None
     foundry_base_url: str | None = None
     # ad_token_provider is not stored - passed directly to client
@@ -180,7 +179,7 @@ class AnthropicSettings(AFSettings):
 
     # Bedrock backend
     aws_access_key: str | None = None
-    aws_secret_key: SecretStr | None = None
+    aws_secret_key: SecretString | None = None
     aws_session_token: str | None = None
     aws_profile: str | None = None
     aws_region: str | None = None

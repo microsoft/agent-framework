@@ -5,9 +5,16 @@ import sys
 from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider, Role
-from agent_framework._logging import get_logger
-from agent_framework._settings import AFSettings
+from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
+    AFSettings,
+    ChatMessage,
+    Context,
+    ContextProvider,
+    Role,
+    SecretString,
+    get_logger,
+)
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -33,7 +40,7 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 # Type checking imports for optional agentic mode dependencies
 if TYPE_CHECKING:
@@ -161,7 +168,7 @@ class AzureAISearchSettings(AFSettings):
     endpoint: str | None = None
     index_name: str | None = None
     knowledge_base_name: str | None = None
-    api_key: SecretStr | None = None
+    api_key: SecretString | None = None
 
 
 class AzureAISearchContextProvider(ContextProvider):

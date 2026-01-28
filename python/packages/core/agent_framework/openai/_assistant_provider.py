@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._agents import ChatAgent
 from .._memory import ContextProvider
@@ -102,7 +102,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         self,
         client: AsyncOpenAI | None = None,
         *,
-        api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         env_file_path: str | None = None,
@@ -144,7 +144,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             # Load settings and create client
             try:
                 settings = OpenAISettings(
-                    api_key=api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key,
+                    api_key=api_key,
                     org_id=org_id,
                     base_url=base_url,
                     env_file_path=env_file_path,
@@ -158,15 +158,8 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
                     "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
                 )
 
-            # Get API key value
-            api_key_value: str | Callable[[], str | Awaitable[str]] | None
-            if isinstance(settings.api_key, SecretStr):
-                api_key_value = settings.api_key.get_secret_value()
-            else:
-                api_key_value = settings.api_key
-
             # Create client
-            client_args: dict[str, Any] = {"api_key": api_key_value}
+            client_args: dict[str, Any] = {"api_key": settings.api_key}
             if settings.org_id:
                 client_args["organization"] = settings.org_id
             if settings.base_url:

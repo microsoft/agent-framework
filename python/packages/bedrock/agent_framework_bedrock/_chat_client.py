@@ -27,13 +27,13 @@ from agent_framework import (
     use_function_invocation,
     validate_tool_mode,
 )
-from agent_framework._settings import AFSettings
+from agent_framework._settings import AFSettings, SecretString
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -204,9 +204,9 @@ class BedrockSettings(AFSettings):
 
     region: str = DEFAULT_REGION
     chat_model_id: str | None = None
-    access_key: SecretStr | None = None
-    secret_key: SecretStr | None = None
-    session_token: SecretStr | None = None
+    access_key: SecretString | None = None
+    secret_key: SecretString | None = None
+    session_token: SecretString | None = None
 
 
 @use_function_invocation
@@ -295,10 +295,10 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
     def _create_session(settings: BedrockSettings) -> Boto3Session:
         session_kwargs: dict[str, Any] = {"region_name": settings.region or DEFAULT_REGION}
         if settings.access_key and settings.secret_key:
-            session_kwargs["aws_access_key_id"] = settings.access_key.get_secret_value()
-            session_kwargs["aws_secret_access_key"] = settings.secret_key.get_secret_value()
+            session_kwargs["aws_access_key_id"] = settings.access_key
+            session_kwargs["aws_secret_access_key"] = settings.secret_key
         if settings.session_token:
-            session_kwargs["aws_session_token"] = settings.session_token.get_secret_value()
+            session_kwargs["aws_session_token"] = settings.session_token
         return Boto3Session(**session_kwargs)
 
     @override

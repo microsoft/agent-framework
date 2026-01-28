@@ -16,6 +16,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
+    SecretString,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -25,7 +26,7 @@ from anthropic.types.beta import (
     BetaToolUseBlock,
     BetaUsage,
 )
-from pydantic import Field, SecretStr
+from pydantic import Field
 
 from agent_framework_anthropic import AnthropicClient, AnthropicSettings
 
@@ -72,8 +73,8 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
     settings = AnthropicSettings(env_file_path="/nonexistent/test.env")
 
     assert settings.api_key is not None
-    # When loaded from env var, api_key is SecretStr
-    assert settings.api_key.get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
+    # When loaded from env var, api_key is SecretString
+    assert settings.api_key == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
     assert settings.model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
 
 
@@ -84,9 +85,9 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
     )
 
     assert settings.api_key is not None
-    # String kwargs are coerced to SecretStr
-    assert isinstance(settings.api_key, SecretStr)
-    assert settings.api_key.get_secret_value() == "custom-api-key"
+    # String kwargs are coerced to SecretString
+    assert isinstance(settings.api_key, SecretString)
+    assert settings.api_key == "custom-api-key"
     assert settings.model_id == "claude-3-opus-20240229"
 
 

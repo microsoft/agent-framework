@@ -6,9 +6,8 @@ import os
 import tempfile
 
 import pytest
-from pydantic import SecretStr
 
-from agent_framework._settings import AFSettings, BackendConfig
+from agent_framework._settings import AFSettings, BackendConfig, SecretString
 
 
 class SimpleSettings(AFSettings):
@@ -47,11 +46,11 @@ class BackendAwareSettings(AFSettings):
 
 
 class SecretSettings(AFSettings):
-    """Settings class with SecretStr for testing."""
+    """Settings class with SecretString for testing."""
 
     env_prefix = "SECRET_"
 
-    api_key: SecretStr | None = None
+    api_key: SecretString | None = None
     username: str | None = None
 
 
@@ -189,28 +188,28 @@ class TestDotenvFile:
         assert settings.api_key is None
 
 
-class TestSecretStr:
-    """Test SecretStr type handling."""
+class TestSecretString:
+    """Test SecretString type handling."""
 
-    def test_secretstr_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that SecretStr values are properly loaded from env."""
+    def test_secretstring_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that SecretString values are properly loaded from env."""
         monkeypatch.setenv("SECRET_API_KEY", "secret-value")
 
         settings = SecretSettings()
 
-        assert isinstance(settings.api_key, SecretStr)
-        assert settings.api_key.get_secret_value() == "secret-value"
+        assert isinstance(settings.api_key, SecretString)
+        assert settings.api_key == "secret-value"
 
-    def test_secretstr_from_kwargs(self) -> None:
-        """Test that string kwargs are converted to SecretStr."""
+    def test_secretstring_from_kwargs(self) -> None:
+        """Test that string kwargs are converted to SecretString."""
         settings = SecretSettings(api_key="kwarg-secret")
 
-        # String kwargs are coerced to SecretStr
-        assert isinstance(settings.api_key, SecretStr)
-        assert settings.api_key.get_secret_value() == "kwarg-secret"
+        # String kwargs are coerced to SecretString
+        assert isinstance(settings.api_key, SecretString)
+        assert settings.api_key == "kwarg-secret"
 
-    def test_secretstr_masked_in_repr(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that SecretStr values are masked in repr."""
+    def test_secretstring_masked_in_repr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that SecretString values are masked in repr."""
         monkeypatch.setenv("SECRET_API_KEY", "secret-value")
         monkeypatch.setenv("SECRET_USERNAME", "test-user")
 

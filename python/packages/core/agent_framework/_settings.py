@@ -9,12 +9,32 @@ variables and .env files, with support for backend-aware resolution and preceden
 import os
 from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, ClassVar, TypeVar, get_args, get_origin, get_type_hints
 
-from pydantic import SecretStr
+from dotenv import load_dotenv
 
-__all__ = ["AFSettings", "BackendConfig"]
+__all__ = ["AFSettings", "BackendConfig", "SecretString"]
+
+
+class SecretString(str):
+    """A string subclass that masks its value in repr() to prevent accidental exposure.
+
+    SecretString behaves exactly like a regular string in all operations,
+    but its repr() shows '**********' instead of the actual value.
+    This helps prevent secrets from being accidentally logged or displayed.
+
+    Example:
+        ```python
+        api_key = SecretString("sk-secret-key")
+        print(api_key)  # sk-secret-key (normal string behavior)
+        print(repr(api_key))  # SecretString('**********')
+        print(f"Key: {api_key}")  # Key: sk-secret-key
+        ```
+    """
+
+    def __repr__(self) -> str:
+        """Return a masked representation to prevent secret exposure."""
+        return "SecretString('**********')"
 
 
 TSettings = TypeVar("TSettings", bound="AFSettings")
@@ -36,61 +56,6 @@ class BackendConfig:
     precedence: int = 100
     detection_fields: "set[str]" = field(default_factory=set)  # type: ignore[assignment]
     field_env_vars: "dict[str, str]" = field(default_factory=dict)  # type: ignore[assignment]
-
-
-def _parse_dotenv_file(file_path: str | Path, encoding: str = "utf-8") -> dict[str, str]:
-    """Parse a .env file and return a dictionary of key-value pairs.
-
-    This is a simple parser that handles:
-    - KEY=value
-    - KEY="quoted value"
-    - KEY='single quoted value'
-    - # comments
-    - Empty lines
-    - Export prefix (export KEY=value)
-
-    Args:
-        file_path: Path to the .env file.
-        encoding: File encoding.
-
-    Returns:
-        Dictionary of environment variable names to values.
-    """
-    result: dict[str, str] = {}
-    path = Path(file_path)
-
-    if not path.exists():
-        return result
-
-    with path.open(encoding=encoding) as f:
-        for line in f:
-            line = line.strip()
-
-            # Skip empty lines and comments
-            if not line or line.startswith("#"):
-                continue
-
-            # Handle export prefix
-            if line.startswith("export "):
-                line = line[7:].strip()
-
-            # Find the first = sign
-            if "=" not in line:
-                continue
-
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-
-            # Remove quotes if present
-            if len(value) >= 2 and (
-                (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'"))
-            ):
-                value = value[1:-1]
-
-            result[key] = value
-
-    return result
 
 
 def _coerce_value(value: str, target_type: type) -> Any:
@@ -124,9 +89,9 @@ def _coerce_value(value: str, target_type: type) -> Any:
                     continue
         return value
 
-    # Handle SecretStr
-    if target_type is SecretStr or (hasattr(target_type, "__mro__") and SecretStr in target_type.__mro__):
-        return SecretStr(value)
+    # Handle SecretString
+    if target_type is SecretString or (hasattr(target_type, "__mro__") and SecretString in target_type.__mro__):
+        return SecretString(value)
 
     # Handle basic types
     if target_type is str:
@@ -138,7 +103,7 @@ def _coerce_value(value: str, target_type: type) -> Any:
     if target_type is bool:
         return value.lower() in ("true", "1", "yes", "on")
 
-    # For other types, return the string value and let pydantic handle validation
+    # For other types, return the string value
     return value
 
 
@@ -226,9 +191,8 @@ class AFSettings:
         # Set default encoding
         encoding = env_file_encoding or "utf-8"
 
-        # Load .env file
-        dotenv_path = env_file_path or ".env"
-        dotenv_vars = _parse_dotenv_file(dotenv_path, encoding)
+        # Load .env file into os.environ (existing values take precedence)
+        load_dotenv(dotenv_path=env_file_path, encoding=encoding)
 
         # Store settings metadata
         self._env_file_path = env_file_path
@@ -237,14 +201,10 @@ class AFSettings:
         # Filter out None values from kwargs (matching AFBaseSettings behavior)
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
-        # Build combined env dict (os.environ takes precedence over dotenv)
-        # This is read once and reused for both detection and field loading
-        combined_env: dict[str, str] = {**dotenv_vars, **dict(os.environ)}
-
         # Determine the backend to use and load all field values in one pass
         resolved_backend: str | None
         field_values: dict[str, str]
-        resolved_backend, field_values = self._resolve_backend(backend, combined_env, kwargs)
+        resolved_backend, field_values = self._resolve_backend(backend, kwargs)
         self._backend: str | None = resolved_backend
 
         # Get field definitions from type hints for type coercion
@@ -258,7 +218,7 @@ class AFSettings:
             # kwargs take precedence
             if field_name in kwargs:
                 kwarg_value = kwargs[field_name]
-                # Coerce string values to SecretStr if needed
+                # Coerce string values to SecretString if needed
                 if isinstance(kwarg_value, str) and field_type is not str:
                     with suppress(ValueError, TypeError):
                         kwarg_value = _coerce_value(kwarg_value, field_type)
@@ -318,14 +278,13 @@ class AFSettings:
     def _resolve_backend(
         self,
         explicit_backend: str | None,
-        combined_env: dict[str, str],
         kwargs: dict[str, Any],
     ) -> tuple[str | None, dict[str, str]]:
         """Resolve backend and load all field values from environment in one pass.
 
         This method:
         1. Determines which backend to use
-        2. Loads all field values from the combined environment dict
+        2. Loads all field values from os.environ
 
         Resolution order for backend:
         1. Explicit `backend` parameter
@@ -335,7 +294,6 @@ class AFSettings:
 
         Args:
             explicit_backend: Backend provided via constructor parameter.
-            combined_env: Combined dict of dotenv + os.environ (os.environ wins).
             kwargs: Constructor keyword arguments.
 
         Returns:
@@ -347,7 +305,7 @@ class AFSettings:
 
         # If no backend configs defined, this is a simple settings class
         if not self.backend_configs:
-            field_values = self._load_fields_for_backend(None, combined_env, field_names)
+            field_values = self._load_fields_for_backend(None, field_names)
             return None, field_values
 
         # 1. Check explicit parameter
@@ -355,19 +313,19 @@ class AFSettings:
             if explicit_backend not in self.backend_configs:
                 valid_backends = ", ".join(sorted(self.backend_configs.keys()))
                 raise ValueError(f"Invalid backend '{explicit_backend}'. Valid backends: {valid_backends}")
-            field_values = self._load_fields_for_backend(explicit_backend, combined_env, field_names)
+            field_values = self._load_fields_for_backend(explicit_backend, field_names)
             return explicit_backend, field_values
 
         # 2. Check backend environment variable
         if self.backend_env_var:
-            env_backend = combined_env.get(self.backend_env_var)
+            env_backend = os.getenv(self.backend_env_var)
             if env_backend:
                 if env_backend not in self.backend_configs:
                     valid_backends = ", ".join(sorted(self.backend_configs.keys()))
                     raise ValueError(
                         f"Invalid backend '{env_backend}' from {self.backend_env_var}. Valid backends: {valid_backends}"
                     )
-                field_values = self._load_fields_for_backend(env_backend, combined_env, field_names)
+                field_values = self._load_fields_for_backend(env_backend, field_names)
                 return env_backend, field_values
 
         # 3. Auto-detect by checking backends in precedence order
@@ -375,7 +333,7 @@ class AFSettings:
         sorted_backends = sorted(self.backend_configs.items(), key=lambda x: x[1].precedence)
 
         for backend_name, config in sorted_backends:
-            field_values = self._load_fields_for_backend(backend_name, combined_env, field_names)
+            field_values = self._load_fields_for_backend(backend_name, field_names)
 
             # Check if any detection field has a value (from kwargs or loaded env)
             detected = False
@@ -388,20 +346,18 @@ class AFSettings:
                 return backend_name, field_values
 
         # No backend detected - load with default prefix
-        field_values = self._load_fields_for_backend(None, combined_env, field_names)
+        field_values = self._load_fields_for_backend(None, field_names)
         return None, field_values
 
     def _load_fields_for_backend(
         self,
         backend: str | None,
-        combined_env: dict[str, str],
         field_names: list[str],
     ) -> dict[str, str]:
         """Load all field values from environment for a specific backend.
 
         Args:
             backend: The backend name, or None for default behavior.
-            combined_env: Combined dict of dotenv + os.environ.
             field_names: List of field names to load.
 
         Returns:
@@ -411,8 +367,9 @@ class AFSettings:
 
         for field_name in field_names:
             env_var_name = self._get_env_var_name(field_name, backend)
-            if env_var_name in combined_env:
-                field_values[field_name] = combined_env[env_var_name]
+            env_value = os.getenv(env_var_name)
+            if env_value is not None:
+                field_values[field_name] = env_value
 
         return field_values
 
@@ -465,8 +422,8 @@ class AFSettings:
                 continue
             value = getattr(self, field_name, None)
             # Mask secret values
-            if isinstance(value, SecretStr):
-                fields.append(f"{field_name}=SecretStr('**********')")
+            if isinstance(value, SecretString):
+                fields.append(f"{field_name}=SecretString('**********')")
             elif value is not None:
                 fields.append(f"{field_name}={value!r}")
         return f"{cls_name}({', '.join(fields)})"
