@@ -11,6 +11,7 @@ from agent_framework import (
     GroupChatBuilder,
     Role,
     WorkflowOutputEvent,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -211,7 +212,7 @@ Share your perspective authentically. Feel free to:
 
     workflow = (
         GroupChatBuilder()
-        .with_agent_orchestrator(moderator)
+        .with_orchestrator(agent=moderator)
         .participants([farmer, developer, teacher, activist, spiritual_leader, artist, immigrant, doctor])
         .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == Role.ASSISTANT) >= 10)
         .build()

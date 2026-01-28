@@ -25,7 +25,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    ai_function,
+    tool,
 )
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.azure import AzureOpenAIChatClient
@@ -631,7 +631,7 @@ async def test_streaming_with_none_delta(
     assert any(msg.contents for msg in results)
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
     return (
@@ -642,7 +642,7 @@ def get_story_text() -> str:
     )
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
     return f"The weather in {location} is sunny and 72°F."

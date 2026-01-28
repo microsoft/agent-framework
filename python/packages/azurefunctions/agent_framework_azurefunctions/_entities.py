@@ -8,346 +8,41 @@ allows for long-running agent conversations.
 """
 
 import asyncio
-import inspect
-from collections.abc import AsyncIterable, Callable
+from collections.abc import Callable
 from typing import Any, cast
 
 import azure.durable_functions as df
-from agent_framework import (
-    AgentProtocol,
-    AgentResponse,
-    AgentResponseUpdate,
-    ChatMessage,
-    Content,
-    Role,
-    get_logger,
+from agent_framework import AgentProtocol, get_logger
+from agent_framework_durabletask import (
+    AgentEntity,
+    AgentEntityStateProviderMixin,
+    AgentResponseCallbackProtocol,
 )
-
-from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
-from ._durable_agent_state import (
-    DurableAgentState,
-    DurableAgentStateData,
-    DurableAgentStateEntry,
-    DurableAgentStateRequest,
-    DurableAgentStateResponse,
-)
-from ._models import RunRequest
 
 logger = get_logger("agent_framework.azurefunctions.entities")
 
 
-class AgentEntity:
-    """Durable entity that manages agent execution and conversation state.
+class AzureFunctionEntityStateProvider(AgentEntityStateProviderMixin):
+    """Azure Functions Durable Entity state provider for AgentEntity.
 
-    This entity:
-    - Maintains conversation history
-    - Executes agent with messages
-    - Stores agent responses
-    - Handles tool execution
-
-    Operations:
-    - run: Execute the agent with a message
-    - run_agent: (Deprecated) Execute the agent with a message
-    - reset: Clear conversation history
-
-    Attributes:
-        agent: The AgentProtocol instance
-        state: The DurableAgentState managing conversation history
+    This class utilizes the Durable Entity context from `azure-functions-durable` package
+    to get and set the state of the agent entity.
     """
 
-    agent: AgentProtocol
-    state: DurableAgentState
+    def __init__(self, context: df.DurableEntityContext) -> None:
+        self._context = context
 
-    def __init__(
-        self,
-        agent: AgentProtocol,
-        callback: AgentResponseCallbackProtocol | None = None,
-    ):
-        """Initialize the agent entity.
+    def _get_state_dict(self) -> dict[str, Any]:
+        raw_state = self._context.get_state(lambda: {})
+        if not isinstance(raw_state, dict):
+            return {}
+        return cast(dict[str, Any], raw_state)
 
-        Args:
-            agent: The Microsoft Agent Framework agent instance (must implement AgentProtocol)
-            callback: Optional callback invoked during streaming updates and final responses
-        """
-        self.agent = agent
-        self.state = DurableAgentState()
-        self.callback = callback
+    def _set_state_dict(self, state: dict[str, Any]) -> None:
+        self._context.set_state(state)
 
-        logger.debug(f"[AgentEntity] Initialized with agent type: {type(agent).__name__}")
-
-    def _is_error_response(self, entry: DurableAgentStateEntry) -> bool:
-        """Check if a conversation history entry is an error response.
-
-        Error responses should be kept in history for tracking but not sent to the agent
-        since Azure OpenAI doesn't support 'error' content type.
-
-        Args:
-            entry: A conversation history entry (DurableAgentStateEntry or dict)
-
-        Returns:
-            True if the entry is a response containing error content, False otherwise
-        """
-        if isinstance(entry, DurableAgentStateResponse):
-            return entry.is_error
-        return False
-
-    async def run_agent(
-        self,
-        context: df.DurableEntityContext,
-        request: RunRequest | dict[str, Any] | str,
-    ) -> AgentResponse:
-        """(Deprecated) Execute the agent with a message directly in the entity.
-
-        Args:
-            context: Entity context
-            request: RunRequest object, dict, or string message (for backward compatibility)
-
-        Returns:
-            AgentResponse enriched with execution metadata.
-        """
-        return await self.run(context, request)
-
-    async def run(
-        self,
-        context: df.DurableEntityContext,
-        request: RunRequest | dict[str, Any] | str,
-    ) -> AgentResponse:
-        """Execute the agent with a message directly in the entity.
-
-        Args:
-            context: Entity context
-            request: RunRequest object, dict, or string message (for backward compatibility)
-
-        Returns:
-            AgentResponse enriched with execution metadata.
-        """
-        if isinstance(request, str):
-            run_request = RunRequest(message=request, role=Role.USER)
-        elif isinstance(request, dict):
-            run_request = RunRequest.from_dict(request)
-        else:
-            run_request = request
-
-        message = run_request.message
-        thread_id = run_request.thread_id
-        correlation_id = run_request.correlation_id
-        if not thread_id:
-            raise ValueError("RunRequest must include a thread_id")
-        if not correlation_id:
-            raise ValueError("RunRequest must include a correlation_id")
-        response_format = run_request.response_format
-        enable_tool_calls = run_request.enable_tool_calls
-
-        state_request = DurableAgentStateRequest.from_run_request(run_request)
-        self.state.data.conversation_history.append(state_request)
-
-        logger.debug(f"[AgentEntity.run] Received Message: {state_request}")
-
-        try:
-            # Build messages from conversation history, excluding error responses
-            # Error responses are kept in history for tracking but not sent to the agent
-            chat_messages: list[ChatMessage] = [
-                m.to_chat_message()
-                for entry in self.state.data.conversation_history
-                if not self._is_error_response(entry)
-                for m in entry.messages
-            ]
-
-            run_kwargs: dict[str, Any] = {"messages": chat_messages, "options": {}}
-            if not enable_tool_calls:
-                run_kwargs["options"]["tools"] = None
-            if response_format:
-                run_kwargs["options"]["response_format"] = response_format
-
-            agent_response: AgentResponse = await self._invoke_agent(
-                run_kwargs=run_kwargs,
-                correlation_id=correlation_id,
-                thread_id=thread_id,
-                request_message=message,
-            )
-
-            logger.debug(
-                "[AgentEntity.run] Agent invocation completed - response type: %s",
-                type(agent_response).__name__,
-            )
-
-            try:
-                response_text = agent_response.text if agent_response.text else "No response"
-                logger.debug(f"Response: {response_text[:100]}...")
-            except Exception as extraction_error:
-                logger.error(
-                    "Error extracting response text: %s",
-                    extraction_error,
-                    exc_info=True,
-                )
-
-            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_response)
-            self.state.data.conversation_history.append(state_response)
-
-            logger.debug("[AgentEntity.run] AgentResponse stored in conversation history")
-
-            return agent_response
-
-        except Exception as exc:
-            logger.exception("[AgentEntity.run] Agent execution failed.")
-
-            # Create error message
-            error_message = ChatMessage(
-                role=Role.ASSISTANT, contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
-            )
-
-            error_response = AgentResponse(messages=[error_message])
-
-            # Create and store error response in conversation history
-            error_state_response = DurableAgentStateResponse.from_run_response(correlation_id, error_response)
-            error_state_response.is_error = True
-            self.state.data.conversation_history.append(error_state_response)
-
-            return error_response
-
-    async def _invoke_agent(
-        self,
-        run_kwargs: dict[str, Any],
-        correlation_id: str,
-        thread_id: str,
-        request_message: str,
-    ) -> AgentResponse:
-        """Execute the agent, preferring streaming when available."""
-        callback_context: AgentCallbackContext | None = None
-        if self.callback is not None:
-            callback_context = self._build_callback_context(
-                correlation_id=correlation_id,
-                thread_id=thread_id,
-                request_message=request_message,
-            )
-
-        run_stream_callable = getattr(self.agent, "run_stream", None)
-        if callable(run_stream_callable):
-            try:
-                stream_candidate = run_stream_callable(**run_kwargs)
-                if inspect.isawaitable(stream_candidate):
-                    stream_candidate = await stream_candidate
-
-                return await self._consume_stream(
-                    stream=cast(AsyncIterable[AgentResponseUpdate], stream_candidate),
-                    callback_context=callback_context,
-                )
-            except TypeError as type_error:
-                if "__aiter__" not in str(type_error):
-                    raise
-                logger.debug(
-                    "run_stream returned a non-async result; falling back to run(): %s",
-                    type_error,
-                )
-            except Exception as stream_error:
-                logger.warning(
-                    "run_stream failed; falling back to run(): %s",
-                    stream_error,
-                    exc_info=True,
-                )
-        else:
-            logger.debug("Agent does not expose run_stream; falling back to run().")
-
-        agent_response = await self._invoke_non_stream(run_kwargs)
-        await self._notify_final_response(agent_response, callback_context)
-        return agent_response
-
-    async def _consume_stream(
-        self,
-        stream: AsyncIterable[AgentResponseUpdate],
-        callback_context: AgentCallbackContext | None = None,
-    ) -> AgentResponse:
-        """Consume streaming responses and build the final AgentResponse."""
-        updates: list[AgentResponseUpdate] = []
-
-        async for update in stream:
-            updates.append(update)
-            await self._notify_stream_update(update, callback_context)
-
-        if updates:
-            response = AgentResponse.from_agent_run_response_updates(updates)
-        else:
-            logger.debug("[AgentEntity] No streaming updates received; creating empty response")
-            response = AgentResponse(messages=[])
-
-        await self._notify_final_response(response, callback_context)
-        return response
-
-    async def _invoke_non_stream(self, run_kwargs: dict[str, Any]) -> AgentResponse:
-        """Invoke the agent without streaming support."""
-        run_callable = getattr(self.agent, "run", None)
-        if run_callable is None or not callable(run_callable):
-            raise AttributeError("Agent does not implement run() method")
-
-        result = run_callable(**run_kwargs)
-        if inspect.isawaitable(result):
-            result = await result
-
-        if not isinstance(result, AgentResponse):
-            raise TypeError(f"Agent run() must return an AgentResponse instance; received {type(result).__name__}")
-
-        return result
-
-    async def _notify_stream_update(
-        self,
-        update: AgentResponseUpdate,
-        context: AgentCallbackContext | None,
-    ) -> None:
-        """Invoke the streaming callback if one is registered."""
-        if self.callback is None or context is None:
-            return
-
-        try:
-            callback_result = self.callback.on_streaming_response_update(update, context)
-            if inspect.isawaitable(callback_result):
-                await callback_result
-        except Exception as exc:
-            logger.warning(
-                "[AgentEntity] Streaming callback raised an exception: %s",
-                exc,
-                exc_info=True,
-            )
-
-    async def _notify_final_response(
-        self,
-        response: AgentResponse,
-        context: AgentCallbackContext | None,
-    ) -> None:
-        """Invoke the final response callback if one is registered."""
-        if self.callback is None or context is None:
-            return
-
-        try:
-            callback_result = self.callback.on_agent_response(response, context)
-            if inspect.isawaitable(callback_result):
-                await callback_result
-        except Exception as exc:
-            logger.warning(
-                "[AgentEntity] Response callback raised an exception: %s",
-                exc,
-                exc_info=True,
-            )
-
-    def _build_callback_context(
-        self,
-        correlation_id: str,
-        thread_id: str,
-        request_message: str,
-    ) -> AgentCallbackContext:
-        """Create the callback context provided to consumers."""
-        agent_name = getattr(self.agent, "name", None) or type(self.agent).__name__
-        return AgentCallbackContext(
-            agent_name=agent_name,
-            correlation_id=correlation_id,
-            thread_id=thread_id,
-            request_message=request_message,
-        )
-
-    def reset(self, context: df.DurableEntityContext) -> None:
-        """Reset the entity state (clear conversation history)."""
-        logger.debug("[AgentEntity.reset] Resetting entity state")
-        self.state.data = DurableAgentStateData(conversation_history=[])
-        logger.debug("[AgentEntity.reset] State reset complete")
+    def _get_thread_id_from_entity(self) -> str:
+        return str(self._context.entity_key)
 
 
 def create_agent_entity(
@@ -368,19 +63,10 @@ def create_agent_entity(
         """Async handler that executes the entity operations."""
         try:
             logger.debug("[entity_function] Entity triggered")
-            logger.debug(f"[entity_function] Operation: {context.operation_name}")
+            logger.debug("[entity_function] Operation: %s", context.operation_name)
 
-            current_state = context.get_state(lambda: None)
-            logger.debug("Retrieved state: %s", str(current_state)[:100])
-            entity = AgentEntity(agent, callback)
-
-            if current_state is not None:
-                entity.state = DurableAgentState.from_dict(current_state)
-                logger.debug(
-                    "[entity_function] Restored entity from state (message_count: %s)", entity.state.message_count
-                )
-            else:
-                logger.debug("[entity_function] Created new entity instance")
+            state_provider = AzureFunctionEntityStateProvider(context)
+            entity = AgentEntity(agent, callback, state_provider=state_provider)
 
             operation = context.operation_name
 
@@ -394,21 +80,18 @@ def create_agent_entity(
                     # Fall back to treating input as message string
                     request = "" if input_data is None else str(cast(object, input_data))
 
-                result = await entity.run(context, request)
+                result = await entity.run(request)
                 context.set_result(result.to_dict())
 
             elif operation == "reset":
-                entity.reset(context)
+                entity.reset()
                 context.set_result({"status": "reset"})
 
             else:
                 logger.error("[entity_function] Unknown operation: %s", operation)
                 context.set_result({"error": f"Unknown operation: {operation}"})
 
-            serialized_state = entity.state.to_dict()
-            logger.debug("State dict: %s", serialized_state)
-            context.set_state(serialized_state)
-            logger.info(f"[entity_function] Operation {operation} completed successfully")
+            logger.info("[entity_function] Operation %s completed successfully", operation)
 
         except Exception as exc:
             logger.exception("[entity_function] Error executing entity operation %s", exc)

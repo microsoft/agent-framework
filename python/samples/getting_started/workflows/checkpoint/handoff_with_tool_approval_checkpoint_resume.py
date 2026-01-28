@@ -17,7 +17,7 @@ from agent_framework import (
     Workflow,
     WorkflowOutputEvent,
     WorkflowStatusEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -51,7 +51,7 @@ CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     """Capture a refund request for manual review before processing."""
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"

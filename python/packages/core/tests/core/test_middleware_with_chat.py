@@ -11,6 +11,7 @@ from agent_framework import (
     ChatResponse,
     Content,
     FunctionInvocationContext,
+    FunctionTool,
     Role,
     chat_middleware,
     function_middleware,
@@ -337,6 +338,13 @@ class TestChatMiddleware:
             """Get weather for a location."""
             return f"Weather in {location}: sunny"
 
+        sample_tool_wrapped = FunctionTool(
+            func=sample_tool,
+            name="sample_tool",
+            description="Get weather for a location",
+            approval_mode="never_require",
+        )
+
         # Create function-invocation enabled chat client
         chat_client = use_chat_middleware(use_function_invocation(MockBaseChatClient))()
 
@@ -366,7 +374,7 @@ class TestChatMiddleware:
 
         # Execute the chat client directly with tools - this should trigger function invocation and middleware
         messages = [ChatMessage(role=Role.USER, text="What's the weather in San Francisco?")]
-        response = await chat_client.get_response(messages, options={"tools": [sample_tool]})
+        response = await chat_client.get_response(messages, options={"tools": [sample_tool_wrapped]})
 
         # Verify response
         assert response is not None
@@ -396,6 +404,13 @@ class TestChatMiddleware:
             """Get weather for a location."""
             return f"Weather in {location}: sunny"
 
+        sample_tool_wrapped = FunctionTool(
+            func=sample_tool,
+            name="sample_tool",
+            description="Get weather for a location",
+            approval_mode="never_require",
+        )
+
         # Create function-invocation enabled chat client
         chat_client = use_function_invocation(MockBaseChatClient)()
 
@@ -423,7 +438,7 @@ class TestChatMiddleware:
         # Execute the chat client directly with run-level middleware and tools
         messages = [ChatMessage(role=Role.USER, text="What's the weather in New York?")]
         response = await chat_client.get_response(
-            messages, options={"tools": [sample_tool]}, middleware=[run_level_function_middleware]
+            messages, options={"tools": [sample_tool_wrapped]}, middleware=[run_level_function_middleware]
         )
 
         # Verify response

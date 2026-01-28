@@ -23,7 +23,7 @@ from agent_framework import (
     Content,
     Role,
     ToolProtocol,
-    ai_function,
+    tool,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -65,10 +65,10 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def ai_function_tool() -> ToolProtocol:
+def tool_tool() -> ToolProtocol:
     """Returns a executable ToolProtocol."""
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def simple_function(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y

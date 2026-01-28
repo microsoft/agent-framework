@@ -57,6 +57,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     executor,
     handler,
+    tool,
 )
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from typing import Annotated, Any
 
 import pytest
@@ -20,7 +20,7 @@ from agent_framework import (
     SequentialBuilder,
     WorkflowRunState,
     WorkflowStatusEvent,
-    ai_function,
+    tool,
 )
 from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
 
@@ -28,7 +28,7 @@ from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
 _received_kwargs: list[dict[str, Any]] = []
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def tool_with_kwargs(
     action: Annotated[str, "The action to perform"],
     **kwargs: Any,
@@ -51,7 +51,7 @@ class _KwargsCapturingAgent(BaseAgent):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -61,7 +61,7 @@ class _KwargsCapturingAgent(BaseAgent):
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -187,7 +187,7 @@ async def test_groupchat_kwargs_flow_to_agents() -> None:
     workflow = (
         GroupChatBuilder()
         .participants([agent1, agent2])
-        .with_select_speaker_func(simple_selector)
+        .with_orchestrator(selection_func=simple_selector)
         .with_max_rounds(2)  # Limit rounds to prevent infinite loop
         .build()
     )
@@ -408,7 +408,7 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
 
-    workflow = MagenticBuilder().participants([agent]).with_standard_manager(manager=manager).build()
+    workflow = MagenticBuilder().participants([agent]).with_manager(manager=manager).build()
 
     custom_data = {"session_id": "magentic123"}
 
@@ -457,7 +457,7 @@ async def test_magentic_kwargs_stored_in_shared_state() -> None:
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
 
-    magentic_workflow = MagenticBuilder().participants([agent]).with_standard_manager(manager=manager).build()
+    magentic_workflow = MagenticBuilder().participants([agent]).with_manager(manager=manager).build()
 
     # Use MagenticWorkflow.run_stream() which goes through the kwargs attachment path
     custom_data = {"magentic_key": "magentic_value"}

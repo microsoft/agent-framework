@@ -26,6 +26,8 @@ namespace Microsoft.Agents.AI.A2A;
 /// </remarks>
 public sealed class A2AAgent : AIAgent
 {
+    private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
+
     private readonly A2AClient _a2aClient;
     private readonly string? _id;
     private readonly string? _name;
@@ -210,6 +212,13 @@ public sealed class A2AAgent : AIAgent
 
     /// <inheritdoc/>
     public override string? Description => this._description;
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => base.GetService(serviceType, serviceKey)
+           ?? (serviceType == typeof(A2AClient) ? this._a2aClient
+            : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
+            : null);
 
     private async ValueTask<A2AAgentSession> GetA2ASessionAsync(AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken)
     {

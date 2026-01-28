@@ -5,8 +5,8 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Literal, cast
 
 from agent_framework import (
-    AIFunction,
     Content,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedImageGenerationTool,
@@ -29,7 +29,6 @@ from azure.ai.projects.models import (
     ApproximateLocation,
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
-    FunctionTool,
     ImageGenTool,
     ImageGenToolInputImageMask,
     MCPTool,
@@ -41,6 +40,9 @@ from azure.ai.projects.models import (
 )
 from azure.ai.projects.models import (
     FileSearchTool as ProjectsFileSearchTool,
+)
+from azure.ai.projects.models import (
+    FunctionTool as AzureFunctionTool,
 )
 from pydantic import BaseModel
 
@@ -141,7 +143,7 @@ def to_azure_ai_agent_tools(
     tool_definitions: list[ToolDefinition | dict[str, Any]] = []
     for tool in tools:
         match tool:
-            case AIFunction():
+            case FunctionTool():
                 tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
             case HostedWebSearchTool():
                 additional_props = tool.additional_properties or {}
@@ -439,11 +441,11 @@ def to_azure_ai_tools(
                     container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
                     ci_tool: CodeInterpreterTool = CodeInterpreterTool(container=container)
                     azure_tools.append(ci_tool)
-                case AIFunction():
+                case FunctionTool():
                     params = tool.parameters()
                     params["additionalProperties"] = False
                     azure_tools.append(
-                        FunctionTool(
+                        AzureFunctionTool(
                             name=tool.name,
                             parameters=params,
                             strict=False,

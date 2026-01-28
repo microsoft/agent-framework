@@ -4,10 +4,10 @@
 
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, tool
 
 
-@ai_function
+@tool
 def get_weather(location: str) -> dict[str, Any]:
     """Get the current weather for a location.
 
@@ -39,7 +39,7 @@ def get_weather(location: str) -> dict[str, Any]:
     }
 
 
-@ai_function
+@tool
 def get_forecast(location: str, days: int = 3) -> str:
     """Get the weather forecast for a location.
 

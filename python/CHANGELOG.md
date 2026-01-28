@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260127] - 2026-01-27
+
+### Added
+
+- **agent-framework-github-copilot**: Add BaseAgent implementation for GitHub Copilot SDK ([#3404](https://github.com/microsoft/agent-framework/pull/3404))
+
 ## [1.0.0b260123] - 2026-01-23
 
 ### Added
@@ -542,7 +548,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260123...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...HEAD
+[1.0.0b260127]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260123...python-1.0.0b260127
 [1.0.0b260123]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260116...python-1.0.0b260123
 [1.0.0b260116]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260114...python-1.0.0b260116
 [1.0.0b260114]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260107...python-1.0.0b260114

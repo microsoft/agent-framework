@@ -53,7 +53,7 @@ python samples/autogen-migration/orchestrations/04_magentic_one.py
 
 - **Default behavior differences**: AutoGen's `AssistantAgent` is single-turn by default (`max_tool_iterations=1`), while AF's `ChatAgent` is multi-turn and continues tool execution automatically.
 - **Thread management**: AF agents are stateless by default. Use `agent.get_new_thread()` and pass it to `run()`/`run_stream()` to maintain conversation state, similar to AutoGen's conversation context.
-- **Tools**: AutoGen uses `FunctionTool` wrappers; AF uses `@ai_function` decorators with automatic schema inference.
+- **Tools**: AutoGen uses `FunctionTool` wrappers; AF uses `@tool` decorators with automatic schema inference.
 - **Orchestration patterns**:
   - `RoundRobinGroupChat` → `SequentialBuilder` or `WorkflowBuilder`
   - `SelectorGroupChat` → `GroupChatBuilder` with LLM-based speaker selection

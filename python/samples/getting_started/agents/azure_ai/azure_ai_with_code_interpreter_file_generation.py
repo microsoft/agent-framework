@@ -5,6 +5,7 @@ import asyncio
 from agent_framework import (
     AgentResponseUpdate,
     HostedCodeInterpreterTool,
+    tool,
 )
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential

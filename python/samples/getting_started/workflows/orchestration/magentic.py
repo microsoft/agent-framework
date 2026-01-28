@@ -15,6 +15,7 @@ from agent_framework import (
     MagenticOrchestratorEvent,
     MagenticProgressLedger,
     WorkflowOutputEvent,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
@@ -80,7 +81,7 @@ async def main() -> None:
     workflow = (
         MagenticBuilder()
         .participants([researcher_agent, coder_agent])
-        .with_standard_manager(
+        .with_manager(
             agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
