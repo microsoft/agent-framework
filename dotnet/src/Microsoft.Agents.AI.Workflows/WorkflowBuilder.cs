@@ -38,9 +38,7 @@ public class WorkflowBuilder
     private readonly string _startExecutorId;
     private string? _name;
     private string? _description;
-
-    private static readonly string s_namespace = typeof(WorkflowBuilder).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
+    private WorkflowTelemetryContext _telemetryContext = WorkflowTelemetryContext.Disabled;
 
     /// <summary>
     /// Initializes a new instance of the WorkflowBuilder class with the specified starting executor.
@@ -135,6 +133,15 @@ public class WorkflowBuilder
     {
         this._description = description;
         return this;
+    }
+
+    /// <summary>
+    /// Sets the telemetry context for the workflow.
+    /// </summary>
+    /// <param name="context">The telemetry context to use.</param>
+    internal void SetTelemetryContext(WorkflowTelemetryContext context)
+    {
+        this._telemetryContext = Throw.IfNull(context);
     }
 
     /// <summary>
@@ -563,7 +570,7 @@ public class WorkflowBuilder
 
         activity?.AddEvent(new ActivityEvent(EventNames.BuildValidationCompleted));
 
-        var workflow = new Workflow(this._startExecutorId, this._name, this._description)
+        var workflow = new Workflow(this._startExecutorId, this._name, this._description, this._telemetryContext)
         {
             ExecutorBindings = this._executorBindings,
             Edges = this._edges,
@@ -601,7 +608,7 @@ public class WorkflowBuilder
     /// or if the start executor is not bound.</exception>
     public Workflow Build(bool validateOrphans = true)
     {
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowBuild);
+        using Activity? activity = this._telemetryContext.StartWorkflowBuildActivity();
 
         var workflow = this.BuildInternal(validateOrphans, activity);
 
