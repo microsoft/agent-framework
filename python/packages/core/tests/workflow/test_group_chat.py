@@ -1056,7 +1056,7 @@ def test_group_chat_builder_rejects_multiple_orchestrator_configurations():
     def selector(state: GroupChatState) -> str:
         return list(state.participants.keys())[0]
 
-    def orchestrator_factory() -> ChatAgent:
+    def agent_factory() -> ChatAgent:
         return cast(ChatAgent, StubManagerAgent())
 
     builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
@@ -1065,10 +1065,10 @@ def test_group_chat_builder_rejects_multiple_orchestrator_configurations():
     with pytest.raises(ValueError, match=r"A selection function has already been configured"):
         builder.with_orchestrator(selection_func=selector)
 
-    # Test with orchestrator_factory
-    builder2 = GroupChatBuilder().with_orchestrator(orchestrator_factory=orchestrator_factory)
-    with pytest.raises(ValueError, match=r"An orchestrator factory has already been configured"):
-        builder2.with_orchestrator(orchestrator_factory=orchestrator_factory)
+    # Test with agent_factory
+    builder2 = GroupChatBuilder().with_orchestrator(agent=agent_factory)
+    with pytest.raises(ValueError, match=r"A factory has already been configured"):
+        builder2.with_orchestrator(agent=agent_factory)
 
 
 def test_group_chat_builder_requires_exactly_one_orchestrator_option():
@@ -1077,7 +1077,7 @@ def test_group_chat_builder_requires_exactly_one_orchestrator_option():
     def selector(state: GroupChatState) -> str:
         return list(state.participants.keys())[0]
 
-    def orchestrator_factory() -> ChatAgent:
+    def agent_factory() -> ChatAgent:
         return cast(ChatAgent, StubManagerAgent())
 
     # No options provided
@@ -1086,7 +1086,7 @@ def test_group_chat_builder_requires_exactly_one_orchestrator_option():
 
     # Multiple options provided
     with pytest.raises(ValueError, match="Exactly one of"):
-        GroupChatBuilder().with_orchestrator(selection_func=selector, orchestrator_factory=orchestrator_factory)  # type: ignore
+        GroupChatBuilder().with_orchestrator(selection_func=selector, agent=agent_factory)  # type: ignore
 
 
 async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
@@ -1149,7 +1149,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                 value=payload,
             )
 
-    def orchestrator_factory() -> ChatAgent:
+    def agent_factory() -> ChatAgent:
         nonlocal factory_call_count
         factory_call_count += 1
         return cast(ChatAgent, DynamicManagerAgent())
@@ -1157,12 +1157,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
     alpha = StubAgent("alpha", "reply from alpha")
     beta = StubAgent("beta", "reply from beta")
 
-    workflow = (
-        GroupChatBuilder()
-        .participants([alpha, beta])
-        .with_orchestrator(orchestrator_factory=orchestrator_factory)
-        .build()
-    )
+    workflow = GroupChatBuilder().participants([alpha, beta]).with_orchestrator(agent=agent_factory).build()
 
     # Factory should be called during build
     assert factory_call_count == 1
@@ -1205,9 +1200,7 @@ def test_group_chat_with_orchestrator_factory_returning_base_orchestrator():
 
     alpha = StubAgent("alpha", "reply from alpha")
 
-    workflow = (
-        GroupChatBuilder().participants([alpha]).with_orchestrator(orchestrator_factory=orchestrator_factory).build()
-    )
+    workflow = GroupChatBuilder().participants([alpha]).with_orchestrator(orchestrator=orchestrator_factory).build()
 
     # Factory should be called during build
     assert factory_call_count == 1
@@ -1219,7 +1212,7 @@ async def test_group_chat_orchestrator_factory_reusable_builder():
     """Test that the builder can be reused to build multiple workflows with orchestrator factory."""
     factory_call_count = 0
 
-    def orchestrator_factory() -> ChatAgent:
+    def agent_factory() -> ChatAgent:
         nonlocal factory_call_count
         factory_call_count += 1
         return cast(ChatAgent, StubManagerAgent())
@@ -1227,9 +1220,7 @@ async def test_group_chat_orchestrator_factory_reusable_builder():
     alpha = StubAgent("alpha", "reply from alpha")
     beta = StubAgent("beta", "reply from beta")
 
-    builder = (
-        GroupChatBuilder().participants([alpha, beta]).with_orchestrator(orchestrator_factory=orchestrator_factory)
-    )
+    builder = GroupChatBuilder().participants([alpha, beta]).with_orchestrator(agent=agent_factory)
 
     # Build first workflow
     wf1 = builder.build()
@@ -1255,13 +1246,19 @@ def test_group_chat_orchestrator_factory_invalid_return_type():
         TypeError,
         match=r"Orchestrator factory must return ChatAgent or BaseGroupChatOrchestrator instance",
     ):
-        (GroupChatBuilder().participants([alpha]).with_orchestrator(orchestrator_factory=invalid_factory).build())
+        (GroupChatBuilder().participants([alpha]).with_orchestrator(orchestrator=invalid_factory).build())
+
+    with pytest.raises(
+        TypeError,
+        match=r"Orchestrator factory must return ChatAgent or BaseGroupChatOrchestrator instance",
+    ):
+        (GroupChatBuilder().participants([alpha]).with_orchestrator(agent=invalid_factory).build())
 
 
 def test_group_chat_with_both_participant_and_orchestrator_factories():
     """Test workflow creation using both participant_factories and orchestrator_factory."""
     participant_factory_call_count = 0
-    orchestrator_factory_call_count = 0
+    agent_factory_call_count = 0
 
     def create_alpha() -> StubAgent:
         nonlocal participant_factory_call_count
@@ -1273,21 +1270,21 @@ def test_group_chat_with_both_participant_and_orchestrator_factories():
         participant_factory_call_count += 1
         return StubAgent("beta", "reply from beta")
 
-    def orchestrator_factory() -> ChatAgent:
-        nonlocal orchestrator_factory_call_count
-        orchestrator_factory_call_count += 1
+    def agent_factory() -> ChatAgent:
+        nonlocal agent_factory_call_count
+        agent_factory_call_count += 1
         return cast(ChatAgent, StubManagerAgent())
 
     workflow = (
         GroupChatBuilder()
         .register_participants([create_alpha, create_beta])
-        .with_orchestrator(orchestrator_factory=orchestrator_factory)
+        .with_orchestrator(agent=agent_factory)
         .build()
     )
 
     # All factories should be called during build
     assert participant_factory_call_count == 2
-    assert orchestrator_factory_call_count == 1
+    assert agent_factory_call_count == 1
 
     # Verify all executors are present in the workflow
     assert "alpha" in workflow.executors
@@ -1298,7 +1295,7 @@ def test_group_chat_with_both_participant_and_orchestrator_factories():
 async def test_group_chat_factories_reusable_for_multiple_workflows():
     """Test that both factories are reused correctly for multiple workflow builds."""
     participant_factory_call_count = 0
-    orchestrator_factory_call_count = 0
+    agent_factory_call_count = 0
 
     def create_alpha() -> StubAgent:
         nonlocal participant_factory_call_count
@@ -1310,26 +1307,24 @@ async def test_group_chat_factories_reusable_for_multiple_workflows():
         participant_factory_call_count += 1
         return StubAgent("beta", "reply from beta")
 
-    def orchestrator_factory() -> ChatAgent:
-        nonlocal orchestrator_factory_call_count
-        orchestrator_factory_call_count += 1
+    def agent_factory() -> ChatAgent:
+        nonlocal agent_factory_call_count
+        agent_factory_call_count += 1
         return cast(ChatAgent, StubManagerAgent())
 
     builder = (
-        GroupChatBuilder()
-        .register_participants([create_alpha, create_beta])
-        .with_orchestrator(orchestrator_factory=orchestrator_factory)
+        GroupChatBuilder().register_participants([create_alpha, create_beta]).with_orchestrator(agent=agent_factory)
     )
 
     # Build first workflow
     wf1 = builder.build()
     assert participant_factory_call_count == 2
-    assert orchestrator_factory_call_count == 1
+    assert agent_factory_call_count == 1
 
     # Build second workflow
     wf2 = builder.build()
     assert participant_factory_call_count == 4
-    assert orchestrator_factory_call_count == 2
+    assert agent_factory_call_count == 2
 
     # Verify that the workflows have different agent and orchestrator instances
     assert wf1.executors["alpha"] is not wf2.executors["alpha"]
