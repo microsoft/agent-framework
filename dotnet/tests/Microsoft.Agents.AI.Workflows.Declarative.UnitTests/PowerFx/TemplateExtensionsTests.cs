@@ -2,7 +2,7 @@
 
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 

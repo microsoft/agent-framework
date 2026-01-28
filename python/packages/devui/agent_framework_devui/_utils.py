@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from agent_framework import ChatMessage
 
@@ -270,8 +270,6 @@ def generate_schema_from_serialization_mixin(cls: type[Any]) -> dict[str, Any]:
 
     # Get type hints
     try:
-        from typing import get_type_hints
-
         type_hints = get_type_hints(cls)
     except Exception:
         type_hints = {}
@@ -348,8 +346,6 @@ def extract_response_type_from_executor(executor: Any, request_type: type) -> ty
         The response type class, or None if not found
     """
     try:
-        from typing import get_type_hints
-
         # Introspect handler methods for @response_handler pattern
         for attr_name in dir(executor):
             if attr_name.startswith("_"):

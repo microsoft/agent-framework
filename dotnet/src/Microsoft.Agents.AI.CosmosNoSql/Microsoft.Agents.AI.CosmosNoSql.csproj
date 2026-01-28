@@ -21,7 +21,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Cosmos DB NoSQL Integration</Title>
-    <Description>Provides Cosmos DB NoSQL implementations for Microsoft Agent Framework storage abstractions including ChatMessageStore and CheckpointStore.</Description>
+    <Description>Provides Cosmos DB NoSQL implementations for Microsoft Agent Framework storage abstractions including ChatHistoryProvider and CheckpointStore.</Description>
   </PropertyGroup>
 
   <ItemGroup>

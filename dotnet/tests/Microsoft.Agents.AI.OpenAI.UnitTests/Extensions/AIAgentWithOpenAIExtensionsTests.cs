@@ -65,7 +65,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        var mockThread = new Mock<AgentThread>();
+        var mockSession = new Mock<AgentSession>();
         var options = new AgentRunOptions();
         var cancellationToken = new CancellationToken(false);
         const string TestMessageText = "Hello, assistant!";
@@ -81,13 +81,13 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentResponse([responseMessage]));
 
         // Act
-        var result = await mockAgent.Object.RunAsync(openAiMessages, mockThread.Object, options, cancellationToken);
+        var result = await mockAgent.Object.RunAsync(openAiMessages, mockSession.Object, options, cancellationToken);
 
         // Assert
         mockAgent.Protected()
@@ -96,7 +96,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
                 ItExpr.Is<IEnumerable<ChatMessage>>(msgs =>
                     msgs.ToList().Count == 1 &&
                     msgs.ToList()[0].Text == TestMessageText),
-                mockThread.Object,
+                mockSession.Object,
                 options,
                 cancellationToken
         );
@@ -150,7 +150,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        var mockThread = new Mock<AgentThread>();
+        var mockSession = new Mock<AgentSession>();
         var options = new AgentRunOptions();
         var cancellationToken = new CancellationToken(false);
         const string TestMessageText = "Hello, assistant!";
@@ -171,13 +171,13 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         // Act
-        var result = mockAgent.Object.RunStreamingAsync(openAiMessages, mockThread.Object, options, cancellationToken);
+        var result = mockAgent.Object.RunStreamingAsync(openAiMessages, mockSession.Object, options, cancellationToken);
         var updateCount = 0;
         await foreach (var update in result)
         {
@@ -191,7 +191,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
                 ItExpr.Is<IEnumerable<ChatMessage>>(msgs =>
                     msgs.ToList().Count == 1 &&
                     msgs.ToList()[0].Text == TestMessageText),
-                mockThread.Object,
+                mockSession.Object,
                 options,
                 cancellationToken
             );
@@ -254,7 +254,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        var mockThread = new Mock<AgentThread>();
+        var mockSession = new Mock<AgentSession>();
         var options = new AgentRunOptions();
         var cancellationToken = new CancellationToken(false);
         const string TestMessageText = "Hello, assistant!";
@@ -267,20 +267,20 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentResponse([responseMessage]));
 
         // Act
-        ResponseResult result = await mockAgent.Object.RunAsync(responseItemMessages, mockThread.Object, options, cancellationToken);
+        ResponseResult result = await mockAgent.Object.RunAsync(responseItemMessages, mockSession.Object, options, cancellationToken);
 
         // Assert
         mockAgent.Protected()
             .Verify("RunCoreAsync",
                 Times.Once(),
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                mockThread.Object,
+                mockSession.Object,
                 options,
                 cancellationToken
             );
@@ -329,7 +329,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        var mockThread = new Mock<AgentThread>();
+        var mockSession = new Mock<AgentSession>();
         var options = new AgentRunOptions();
         var cancellationToken = new CancellationToken(false);
         const string TestMessageText = "Hello, assistant!";
@@ -347,13 +347,13 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         // Act
-        var result = mockAgent.Object.RunStreamingAsync(responseItemMessages, mockThread.Object, options, cancellationToken);
+        var result = mockAgent.Object.RunStreamingAsync(responseItemMessages, mockSession.Object, options, cancellationToken);
         var updateCount = 0;
         await foreach (var update in result)
         {
@@ -365,7 +365,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Verify("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                mockThread.Object,
+                mockSession.Object,
                 options,
                 cancellationToken
             );

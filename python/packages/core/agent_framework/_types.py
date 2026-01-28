@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import base64
 import json
 import re
+import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -12,14 +12,23 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Final, Literal, TypedDict, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
-from ._tools import ToolProtocol, ai_function
+from ._tools import ToolProtocol, tool
 from .exceptions import AdditionItemMismatch, ContentError
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = [
     "AgentResponse",
@@ -312,6 +321,8 @@ TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
 TToolMode = TypeVar("TToolMode", bound="ToolMode")
 TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentResponse")
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -1911,7 +1922,7 @@ def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
         _coalesce_text_content(msg.contents, "text_reasoning")
 
 
-class ChatResponse(SerializationMixin):
+class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     """Represents the response to a chat request.
 
     Attributes:
@@ -1974,7 +1985,7 @@ class ChatResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2009,7 +2020,7 @@ class ChatResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         usage_details: UsageDetails | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2044,7 +2055,7 @@ class ChatResponse(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | dict[str, Any] | None = None,
         usage_details: UsageDetails | dict[str, Any] | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2101,12 +2112,30 @@ class ChatResponse(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self._value: Any | None = value
+        self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
         self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    @overload
+    @classmethod
+    def from_chat_response_updates(
+        cls: type["ChatResponse[Any]"],
+        updates: Sequence["ChatResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "ChatResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    def from_chat_response_updates(
+        cls: type["ChatResponse[Any]"],
+        updates: Sequence["ChatResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "ChatResponse[Any]": ...
 
     @classmethod
     def from_chat_response_updates(
@@ -2146,12 +2175,30 @@ class ChatResponse(SerializationMixin):
             msg.try_parse_value(output_format_type)
         return msg
 
+    @overload
+    @classmethod
+    async def from_chat_response_generator(
+        cls: type["ChatResponse[Any]"],
+        updates: AsyncIterable["ChatResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "ChatResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    async def from_chat_response_generator(
+        cls: type["ChatResponse[Any]"],
+        updates: AsyncIterable["ChatResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "ChatResponse[Any]": ...
+
     @classmethod
     async def from_chat_response_generator(
         cls: type[TChatResponse],
         updates: AsyncIterable["ChatResponseUpdate"],
         *,
-        output_format_type: type[BaseModel] | Mapping[str, Any] | None = None,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2187,7 +2234,7 @@ class ChatResponse(SerializationMixin):
         return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
 
     @property
-    def value(self) -> Any | None:
+    def value(self) -> TResponseModel | None:
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
@@ -2203,14 +2250,20 @@ class ChatResponse(SerializationMixin):
             and isinstance(self._response_format, type)
             and issubclass(self._response_format, BaseModel)
         ):
-            self._value = self._response_format.model_validate_json(self.text)
+            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
             self._value_parsed = True
         return self._value
 
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+    @overload
+    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
+
+    @overload
+    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
+
+    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
         """Try to parse the text into a typed value.
 
         This is the safe alternative to accessing the value property directly.
@@ -2238,7 +2291,7 @@ class ChatResponse(SerializationMixin):
         try:
             parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             if use_cache:
-                self._value = parsed_value
+                self._value = cast(TResponseModel, parsed_value)
                 self._value_parsed = True
             return parsed_value  # type: ignore[return-value]
         except ValidationError as ex:
@@ -2376,7 +2429,7 @@ class ChatResponseUpdate(SerializationMixin):
 # region AgentResponse
 
 
-class AgentResponse(SerializationMixin):
+class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     """Represents the response to an Agent run request.
 
     Provides one or more response messages and metadata about the response.
@@ -2428,7 +2481,7 @@ class AgentResponse(SerializationMixin):
         response_id: str | None = None,
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
-        value: Any | None = None,
+        value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -2469,7 +2522,7 @@ class AgentResponse(SerializationMixin):
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
-        self._value: Any | None = value
+        self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
@@ -2482,7 +2535,7 @@ class AgentResponse(SerializationMixin):
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
     @property
-    def value(self) -> Any | None:
+    def value(self) -> TResponseModel | None:
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
@@ -2498,7 +2551,7 @@ class AgentResponse(SerializationMixin):
             and isinstance(self._response_format, type)
             and issubclass(self._response_format, BaseModel)
         ):
-            self._value = self._response_format.model_validate_json(self.text)
+            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
             self._value_parsed = True
         return self._value
 
@@ -2511,6 +2564,24 @@ class AgentResponse(SerializationMixin):
             for content in msg.contents
             if isinstance(content, Content) and content.user_input_request
         ]
+
+    @overload
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type["AgentResponse[Any]"],
+        updates: Sequence["AgentResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "AgentResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    def from_agent_run_response_updates(
+        cls: type["AgentResponse[Any]"],
+        updates: Sequence["AgentResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "AgentResponse[Any]": ...
 
     @classmethod
     def from_agent_run_response_updates(
@@ -2534,6 +2605,24 @@ class AgentResponse(SerializationMixin):
         if output_format_type:
             msg.try_parse_value(output_format_type)
         return msg
+
+    @overload
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type["AgentResponse[Any]"],
+        updates: AsyncIterable["AgentResponseUpdate"],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> "AgentResponse[TResponseModelT]": ...
+
+    @overload
+    @classmethod
+    async def from_agent_response_generator(
+        cls: type["AgentResponse[Any]"],
+        updates: AsyncIterable["AgentResponseUpdate"],
+        *,
+        output_format_type: None = None,
+    ) -> "AgentResponse[Any]": ...
 
     @classmethod
     async def from_agent_response_generator(
@@ -2561,7 +2650,13 @@ class AgentResponse(SerializationMixin):
     def __str__(self) -> str:
         return self.text
 
-    def try_parse_value(self, output_format_type: type[_T] | None = None) -> _T | None:
+    @overload
+    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
+
+    @overload
+    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
+
+    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
         """Try to parse the text into a typed value.
 
         This is the safe alternative when you need to parse the response text into a typed value.
@@ -2589,7 +2684,7 @@ class AgentResponse(SerializationMixin):
         try:
             parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
             if use_cache:
-                self._value = parsed_value
+                self._value = cast(TResponseModel, parsed_value)
                 self._value_parsed = True
             return parsed_value  # type: ignore[return-value]
         except ValidationError as ex:
@@ -2718,7 +2813,7 @@ class ToolMode(TypedDict, total=False):
 # region TypedDict-based Chat Options
 
 
-class ChatOptions(TypedDict, total=False):
+class _ChatOptionsBase(TypedDict, total=False):
     """Common request settings for AI services as a TypedDict.
 
     All fields are optional (total=False) to allow partial specification.
@@ -2771,7 +2866,7 @@ class ChatOptions(TypedDict, total=False):
     allow_multiple_tool_calls: bool
 
     # Response configuration
-    response_format: type[BaseModel] | dict[str, Any]
+    response_format: type[BaseModel] | Mapping[str, Any] | None
 
     # Metadata
     metadata: dict[str, Any]
@@ -2781,6 +2876,15 @@ class ChatOptions(TypedDict, total=False):
 
     # System/instructions
     instructions: str
+
+
+if TYPE_CHECKING:
+
+    class ChatOptions(_ChatOptionsBase, Generic[TResponseModel], total=False):
+        response_format: type[TResponseModel] | Mapping[str, Any] | None  # type: ignore[misc]
+
+else:
+    ChatOptions = _ChatOptionsBase
 
 
 # region Chat Options Utility Functions
@@ -2854,7 +2958,7 @@ def normalize_tools(
 ) -> list[ToolProtocol | MutableMapping[str, Any]]:
     """Normalize tools into a list.
 
-    Converts callables to AIFunction objects and ensures all tools are either
+    Converts callables to FunctionTool objects and ensures all tools are either
     ToolProtocol instances or MutableMappings.
 
     Args:
@@ -2866,10 +2970,10 @@ def normalize_tools(
     Examples:
         .. code-block:: python
 
-            from agent_framework import normalize_tools, ai_function
+            from agent_framework import normalize_tools, tool
 
 
-            @ai_function
+            @tool
             def my_tool(x: int) -> int:
                 return x * 2
 
@@ -2886,14 +2990,14 @@ def normalize_tools(
     if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
         # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
         if not isinstance(tools, (ToolProtocol, MutableMapping)):
-            return [ai_function(tools)]
+            return [tool(tools)]
         return [tools]
-    for tool in tools:
-        if isinstance(tool, (ToolProtocol, MutableMapping)):
-            final_tools.append(tool)
+    for tool_item in tools:
+        if isinstance(tool_item, (ToolProtocol, MutableMapping)):
+            final_tools.append(tool_item)
         else:
-            # Convert callable to AIFunction
-            final_tools.append(ai_function(tool))
+            # Convert callable to FunctionTool
+            final_tools.append(tool(tool_item))
     return final_tools
 
 
@@ -2908,7 +3012,7 @@ async def validate_tools(
 ) -> list[ToolProtocol | MutableMapping[str, Any]]:
     """Validate and normalize tools into a list.
 
-    Converts callables to AIFunction objects, expands MCP tools to their constituent
+    Converts callables to FunctionTool objects, expands MCP tools to their constituent
     functions (connecting them if needed), and ensures all tools are either ToolProtocol
     instances or MutableMappings.
 
@@ -2921,10 +3025,10 @@ async def validate_tools(
     Examples:
         .. code-block:: python
 
-            from agent_framework import validate_tools, ai_function
+            from agent_framework import validate_tools, tool
 
 
-            @ai_function
+            @tool
             def my_tool(x: int) -> int:
                 return x * 2
 
@@ -2935,22 +3039,22 @@ async def validate_tools(
             # List of tools
             tools = await validate_tools([my_tool, another_tool])
     """
-    # Use normalize_tools for common sync logic (converts callables to AIFunction)
+    # Use normalize_tools for common sync logic (converts callables to FunctionTool)
     normalized = normalize_tools(tools)
 
     # Handle MCP tool expansion (async-only)
     final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
-    for tool in normalized:
+    for tool_ in normalized:
         # Import MCPTool here to avoid circular imports
         from ._mcp import MCPTool
 
-        if isinstance(tool, MCPTool):
+        if isinstance(tool_, MCPTool):
             # Expand MCP tools to their constituent functions
-            if not tool.is_connected:
-                await tool.connect()
-            final_tools.extend(tool.functions)  # type: ignore
+            if not tool_.is_connected:
+                await tool_.connect()
+            final_tools.extend(tool_.functions)  # type: ignore
         else:
-            final_tools.append(tool)
+            final_tools.append(tool_)
 
     return final_tools
 

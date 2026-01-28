@@ -9,7 +9,7 @@ from agent_framework import (
     SequentialBuilder,
     WorkflowExecutor,
     WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -32,7 +32,8 @@ Prerequisites:
 
 
 # Define tools that access custom context via **kwargs
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_authenticated_data(
     resource: Annotated[str, "The resource to fetch"],
     **kwargs: Any,
@@ -48,7 +49,7 @@ def get_authenticated_data(
     return f"Fetched '{resource}' for user {user_name} ({access_level} access)"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def call_configured_service(
     service_name: Annotated[str, "Name of the service to call"],
     **kwargs: Any,

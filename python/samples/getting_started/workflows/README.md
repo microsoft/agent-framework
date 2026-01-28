@@ -92,7 +92,7 @@ Once comfortable with these, explore the rest of the samples below.
 
 ### tool-approval
 
-Tool approval samples demonstrate using `@ai_function(approval_mode="always_require")` to gate sensitive tool executions with human approval. These work with the high-level builder APIs.
+Tool approval samples demonstrate using `@tool(approval_mode="always_require")` to gate sensitive tool executions with human approval. These work with the high-level builder APIs.
 
 | Sample                          | File                                                                                                     | Concepts                                                              |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -116,7 +116,7 @@ For additional observability samples in Agent Framework, see the [observability 
 | Concurrent Orchestration (Custom Aggregator)      | [orchestration/concurrent_custom_aggregator.py](./orchestration/concurrent_custom_aggregator.py)           | Override aggregator via callback; summarize results with an LLM                                                  |
 | Concurrent Orchestration (Custom Agent Executors) | [orchestration/concurrent_custom_agent_executors.py](./orchestration/concurrent_custom_agent_executors.py) | Child executors own ChatAgents; concurrent fan-out/fan-in via ConcurrentBuilder                                  |
 | Concurrent Orchestration (Participant Factory)    | [orchestration/concurrent_participant_factory.py](./orchestration/concurrent_participant_factory.py)       | Use participant factories for state isolation between workflow instances                                         |
-| Group Chat with Agent Manager                     | [orchestration/group_chat_agent_manager.py](./orchestration/group_chat_agent_manager.py)                   | Agent-based manager using `with_agent_orchestrator()` to select next speaker                                     |
+| Group Chat with Agent Manager                     | [orchestration/group_chat_agent_manager.py](./orchestration/group_chat_agent_manager.py)                   | Agent-based manager using `with_orchestrator(agent=)` to select next speaker                                     |
 | Group Chat Philosophical Debate                   | [orchestration/group_chat_philosophical_debate.py](./orchestration/group_chat_philosophical_debate.py)     | Agent manager moderates long-form, multi-round debate across diverse participants                                |
 | Group Chat with Simple Function Selector          | [orchestration/group_chat_simple_selector.py](./orchestration/group_chat_simple_selector.py)               | Group chat with a simple function selector for next speaker                                                      |
 | Handoff (Simple)                                  | [orchestration/handoff_simple.py](./orchestration/handoff_simple.py)                                       | Single-tier routing: triage agent routes to specialists, control returns to user after each specialist response  |
@@ -150,6 +150,12 @@ to configure which agents can route to which others with a fluent, type-safe API
 | -------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
 | Shared States                    | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents                   |
 | Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py)                     | Pass custom context (data, user tokens) via kwargs to `@ai_function` tools |
+
+=======
+| Sample | File | Concepts |
+|---|---|---|
+| Shared States | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents |
+| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py) | Pass custom context (data, user tokens) via kwargs to `@tool` tools |
 
 ### visualization
 

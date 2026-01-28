@@ -21,8 +21,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Role,
     UsageDetails,
-    ai_function,
     prepend_agent_framework_to_user_agent,
+    tool,
 )
 from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
 from agent_framework.observability import (
@@ -606,7 +606,7 @@ async def test_function_call_with_error_handling(span_exporter: InMemorySpanExpo
     """Test that function call errors are properly captured in telemetry."""
 
     # Create a function that raises an error using the decorator
-    @ai_function(name="failing_function", description="A function that fails")
+    @tool(name="failing_function", description="A function that fails")
     async def failing_function(param: str) -> str:
         raise ValueError("Function execution failed")
 

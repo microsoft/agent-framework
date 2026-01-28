@@ -11,6 +11,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
+    tool,
 )
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential

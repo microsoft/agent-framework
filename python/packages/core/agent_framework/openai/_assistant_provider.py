@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
@@ -11,7 +11,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 from .._agents import ChatAgent
 from .._memory import ContextProvider
 from .._middleware import Middleware
-from .._tools import AIFunction, ToolProtocol
+from .._tools import FunctionTool, ToolProtocol
 from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
@@ -21,10 +21,13 @@ if TYPE_CHECKING:
     from ._assistants_client import OpenAIAssistantsOptions
 
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import TypeVar  # type:ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
-
+    from typing_extensions import TypeVar  # type:ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # type:ignore # pragma: no cover
+else:
+    from typing_extensions import Self, TypedDict  # type:ignore # pragma: no cover
 
 __all__ = ["OpenAIAssistantProvider"]
 
@@ -215,7 +218,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             instructions: System instructions for the assistant.
             description: A description of the assistant.
             tools: Tools available to the assistant. Can include:
-                - AIFunction instances or callables decorated with @ai_function
+                - FunctionTool instances or callables decorated with @tool
                 - HostedCodeInterpreterTool for code execution
                 - HostedFileSearchTool for vector store search
                 - Raw tool dictionaries
@@ -467,7 +470,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         if provided_tools is not None:
             normalized = normalize_tools(provided_tools)
             for tool in normalized:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     provided_functions.add(tool.name)
                 elif isinstance(tool, MutableMapping) and "function" in tool:
                     func_spec = tool.get("function", {})

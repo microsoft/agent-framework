@@ -3,10 +3,10 @@
 import base64
 from collections.abc import AsyncIterable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
@@ -24,10 +24,10 @@ from agent_framework import (
     ToolMode,
     ToolProtocol,
     UsageDetails,
-    ai_function,
     detect_media_type_from_base64,
     merge_chat_options,
     prepare_function_call_results,
+    tool,
 )
 from agent_framework.exceptions import ContentError
 
@@ -51,10 +51,10 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def ai_function_tool() -> ToolProtocol:
+def tool_tool() -> ToolProtocol:
     """Returns a executable ToolProtocol."""
 
-    @ai_function
+    @tool
     def simple_function(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y
@@ -665,9 +665,6 @@ def test_chat_response_with_format_init():
 
 def test_chat_response_value_raises_on_invalid_schema():
     """Test that value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -689,9 +686,6 @@ def test_chat_response_value_raises_on_invalid_schema():
 
 def test_chat_response_try_parse_value_returns_none_on_invalid():
     """Test that try_parse_value returns None on validation failure with Field constraints."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -707,7 +701,6 @@ def test_chat_response_try_parse_value_returns_none_on_invalid():
 
 def test_chat_response_try_parse_value_returns_value_on_success():
     """Test that try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -724,9 +717,6 @@ def test_chat_response_try_parse_value_returns_value_on_success():
 
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -748,9 +738,6 @@ def test_agent_response_value_raises_on_invalid_schema():
 
 def test_agent_response_try_parse_value_returns_none_on_invalid():
     """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -766,7 +753,6 @@ def test_agent_response_try_parse_value_returns_none_on_invalid():
 
 def test_agent_response_try_parse_value_returns_value_on_success():
     """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -1017,13 +1003,13 @@ def test_chat_options_tool_choice_validation():
         validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
 
 
-def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
+def test_chat_options_merge(tool_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""
     from agent_framework import merge_chat_options
 
     options1: ChatOptions = {
         "model_id": "gpt-4o",
-        "tools": [ai_function_tool],
+        "tools": [tool_tool],
         "logit_bias": {"x": 1},
         "metadata": {"a": "b"},
     }
@@ -1034,7 +1020,7 @@ def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
     options3 = merge_chat_options(options1, options2)
 
     assert options3.get("model_id") == "gpt-4.1"
-    assert options3.get("tools") == [ai_function_tool, ai_tool]  # tools are combined
+    assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
 

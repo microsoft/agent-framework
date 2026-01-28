@@ -18,6 +18,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     HostedCodeInterpreterTool,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from agent_framework.exceptions import ServiceInitializationError
@@ -253,6 +254,7 @@ def test_azure_assistants_client_serialize(azure_openai_unit_test_env: dict[str,
     assert "User-Agent" not in dumped_settings["default_headers"]
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

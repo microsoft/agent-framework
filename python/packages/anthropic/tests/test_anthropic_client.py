@@ -16,7 +16,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from anthropic.types.beta import (
@@ -259,11 +259,11 @@ def test_prepare_messages_for_anthropic_without_system(mock_anthropic_client: Ma
 # Tool Conversion Tests
 
 
-def test_prepare_tools_for_anthropic_ai_function(mock_anthropic_client: MagicMock) -> None:
-    """Test converting AIFunction to Anthropic format."""
+def test_prepare_tools_for_anthropic_tool(mock_anthropic_client: MagicMock) -> None:
+    """Test converting FunctionTool to Anthropic format."""
     chat_client = create_test_anthropic_client(mock_anthropic_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(location: Annotated[str, Field(description="Location to get weather for")]) -> str:
         """Get weather for a location."""
         return f"Weather for {location}"
@@ -443,7 +443,7 @@ async def test_prepare_options_with_tools(mock_anthropic_client: MagicMock) -> N
     """Test _prepare_options with tools."""
     chat_client = create_test_anthropic_client(mock_anthropic_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get weather for a location."""
         return f"Weather for {location}"
@@ -709,7 +709,7 @@ async def test_inner_get_streaming_response(mock_anthropic_client: MagicMock) ->
 # Integration Tests
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
