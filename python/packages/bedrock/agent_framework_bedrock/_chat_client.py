@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
@@ -18,6 +17,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionTool,
     Role,
     ToolProtocol,
     UsageDetails,
@@ -548,7 +548,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             if isinstance(tool, MutableMapping):
                 converted.append(dict(tool))
                 continue
-            if isinstance(tool, AIFunction):
+            if isinstance(tool, FunctionTool):
                 converted.append({
                     "toolSpec": {
                         "name": tool.name,

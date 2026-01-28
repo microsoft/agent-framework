@@ -138,7 +138,7 @@ class WorkflowAgent(BaseAgent):
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
             **kwargs: Additional keyword arguments passed through to underlying workflow
-                and ai_function tools.
+                and tool functions.
 
         Returns:
             The final workflow response as an AgentResponse.
@@ -185,7 +185,7 @@ class WorkflowAgent(BaseAgent):
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
             **kwargs: Additional keyword arguments passed through to underlying workflow
-                and ai_function tools.
+                and tool functions.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.
@@ -225,7 +225,7 @@ class WorkflowAgent(BaseAgent):
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
             **kwargs: Additional keyword arguments passed through to the underlying
-                workflow and ai_function tools.
+                workflow and tool functions.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.

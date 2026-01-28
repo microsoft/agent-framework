@@ -25,10 +25,10 @@ from agent_framework import (
     ToolMode,
     ToolProtocol,
     UsageDetails,
-    ai_function,
     detect_media_type_from_base64,
     merge_chat_options,
     prepare_function_call_results,
+    tool,
 )
 from agent_framework._types import (
     _get_data_bytes,
@@ -60,10 +60,10 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def ai_function_tool() -> ToolProtocol:
+def tool_tool() -> ToolProtocol:
     """Returns a executable ToolProtocol."""
 
-    @ai_function
+    @tool
     def simple_function(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y
@@ -1006,11 +1006,11 @@ def test_chat_options_tool_choice_validation():
         validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
 
 
-def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
+def test_chat_options_merge(tool_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""
     options1: ChatOptions = {
         "model_id": "gpt-4o",
-        "tools": [ai_function_tool],
+        "tools": [tool_tool],
         "logit_bias": {"x": 1},
         "metadata": {"a": "b"},
     }
@@ -1021,7 +1021,7 @@ def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
     options3 = merge_chat_options(options1, options2)
 
     assert options3.get("model_id") == "gpt-4.1"
-    assert options3.get("tools") == [ai_function_tool, ai_tool]  # tools are combined
+    assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
 

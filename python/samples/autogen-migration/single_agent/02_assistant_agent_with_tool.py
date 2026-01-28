@@ -46,12 +46,13 @@ async def run_autogen() -> None:
 
 
 async def run_agent_framework() -> None:
-    """Agent Framework agent with @ai_function decorator."""
-    from agent_framework import ai_function
+    """Agent Framework agent with @tool decorator."""
+    from agent_framework import tool
     from agent_framework.openai import OpenAIChatClient
 
-    # Define tool with @ai_function decorator (automatic schema inference)
-    @ai_function
+    # Define tool with @tool decorator (automatic schema inference)
+    # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+    @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get the weather for a location.
 

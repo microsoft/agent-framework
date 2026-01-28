@@ -34,10 +34,10 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework._tools import ai_function
+    from agent_framework._tools import tool
     from agent_framework.openai import OpenAIChatClient
 
-    @ai_function(name="specials", description="List daily specials")
+    @tool(name="specials", description="List daily specials")
     async def specials() -> str:
         return "Clam chowder, Cobb salad, Chai tea"
 

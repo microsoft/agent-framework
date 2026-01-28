@@ -11,7 +11,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 from .._agents import ChatAgent
 from .._memory import ContextProvider
 from .._middleware import Middleware
-from .._tools import AIFunction, ToolProtocol
+from .._tools import FunctionTool, ToolProtocol
 from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
@@ -215,7 +215,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             instructions: System instructions for the assistant.
             description: A description of the assistant.
             tools: Tools available to the assistant. Can include:
-                - AIFunction instances or callables decorated with @ai_function
+                - FunctionTool instances or callables decorated with @tool
                 - HostedCodeInterpreterTool for code execution
                 - HostedFileSearchTool for vector store search
                 - Raw tool dictionaries
@@ -467,7 +467,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         if provided_tools is not None:
             normalized = normalize_tools(provided_tools)
             for tool in normalized:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     provided_functions.add(tool.name)
                 elif isinstance(tool, MutableMapping) and "function" in tool:
                     func_spec = tool.get("function", {})

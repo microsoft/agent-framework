@@ -14,6 +14,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     executor,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential

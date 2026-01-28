@@ -12,7 +12,7 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
@@ -222,7 +222,7 @@ async def test_create_agent_with_tools(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -366,7 +366,7 @@ async def test_get_agent_with_provided_function_tools(
     mock_agent.tools = [mock_function_tool]
     mock_agents_client.get_agent = AsyncMock(return_value=mock_agent)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -483,9 +483,9 @@ def test_to_azure_ai_agent_tools_empty() -> None:
 
 
 def test_to_azure_ai_agent_tools_function() -> None:
-    """Test converting AIFunction to Azure tool definition."""
+    """Test converting FunctionTool to Azure tool definition."""
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"

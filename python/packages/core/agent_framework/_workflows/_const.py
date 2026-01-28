@@ -11,7 +11,7 @@ INTERNAL_SOURCE_PREFIX = "internal"
 
 # SharedState key for storing run kwargs that should be passed to agent invocations.
 # Used by all orchestration patterns (Sequential, Concurrent, GroupChat, Handoff, Magentic)
-# to pass kwargs from workflow.run_stream() through to agent.run_stream() and @ai_function tools.
+# to pass kwargs from workflow.run_stream() through to agent.run_stream() and @tool functions.
 WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 
 

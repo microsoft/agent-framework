@@ -3,20 +3,20 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import ai_function
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
-This sample demonstrates using ai_function within a class,
+This sample demonstrates using tool within a class,
 showing how to manage state within the class that affects tool behavior.
 
-And how to use ai_function-decorated methods as tools in an agent in order to adjust the behavior of a tool.
+And how to use tool-decorated methods as tools in an agent in order to adjust the behavior of a tool.
 """
 
 
 class MyFunctionClass:
     def __init__(self, safe: bool = False) -> None:
-        """Simple class with two ai_functions: divide and add.
+        """Simple class with two tools: divide and add.
 
         The safe parameter controls whether divide raises on division by zero or returns `infinity` for divide by zero.
         """
@@ -42,8 +42,8 @@ class MyFunctionClass:
 async def main():
     # Creating my function class with safe division enabled
     tools = MyFunctionClass(safe=True)
-    # Applying the ai_function decorator to one of the methods of the class
-    add_function = ai_function(description="Add two numbers.")(tools.add)
+    # Applying the tool decorator to one of the methods of the class
+    add_function = tool(description="Add two numbers.")(tools.add)
 
     agent = OpenAIResponsesClient().as_agent(
         name="ToolAgent",

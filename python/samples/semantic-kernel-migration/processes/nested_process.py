@@ -19,6 +19,7 @@ from agent_framework import (
     WorkflowExecutor,
     WorkflowOutputEvent,
     handler,
+    tool,
 )
 from pydantic import BaseModel, Field
 

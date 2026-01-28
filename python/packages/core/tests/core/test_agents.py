@@ -25,7 +25,7 @@ from agent_framework import (
     ContextProvider,
     HostedCodeInterpreterTool,
     Role,
-    ai_function,
+    tool,
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
@@ -426,7 +426,7 @@ async def test_chat_agent_as_tool_no_name(chat_client: ChatClientProtocol) -> No
 
 
 async def test_chat_agent_as_tool_function_execution(chat_client: ChatClientProtocol) -> None:
-    """Test that the generated AIFunction can be executed."""
+    """Test that the generated FunctionTool can be executed."""
     agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent")
 
     tool = agent.as_tool()
@@ -567,7 +567,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
 
     captured: dict[str, Any] = {}
 
-    @ai_function(name="echo_thread_info")
+    @tool(name="echo_thread_info", approval_mode="never_require")
     def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
         thread = kwargs.get("thread")
         captured["has_thread"] = thread is not None
@@ -599,9 +599,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
     assert captured.get("has_message_store") is True
 
 
-async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
-    chat_client_base: Any, ai_function_tool: Any
-) -> None:
+async def test_chat_agent_tool_choice_run_level_overrides_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
     """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
 
     captured_options: list[dict[str, Any]] = []
@@ -620,7 +618,7 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     # Create agent with agent-level tool_choice="auto" and a tool (tools required for tool_choice to be meaningful)
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         options={"tool_choice": "auto"},
     )
 
@@ -633,7 +631,7 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
 
 
 async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
-    chat_client_base: Any, ai_function_tool: Any
+    chat_client_base: Any, tool_tool: Any
 ) -> None:
     """Verify that agent-level tool_choice is used when run() doesn't specify one."""
     captured_options: list[ChatOptions] = []
@@ -651,7 +649,7 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     # Create agent with agent-level tool_choice="required" and a tool
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         default_options={"tool_choice": "required"},
     )
 
@@ -665,9 +663,7 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     assert captured_options[0]["tool_choice"] == "required"
 
 
-async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
-    chat_client_base: Any, ai_function_tool: Any
-) -> None:
+async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
     """Verify that tool_choice=None at run() uses agent-level default."""
     captured_options: list[ChatOptions] = []
 
@@ -684,7 +680,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     # Create agent with agent-level tool_choice="auto" and a tool
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         default_options={"tool_choice": "auto"},
     )
 

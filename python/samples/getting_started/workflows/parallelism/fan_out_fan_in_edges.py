@@ -16,6 +16,7 @@ from agent_framework import (  # Core chat primitives to build LLM requests
     WorkflowContext,  # Per run context and event bus
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     handler,  # Decorator to mark an Executor method as invokable
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials

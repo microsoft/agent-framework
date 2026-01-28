@@ -252,13 +252,13 @@ def test_make_json_safe_dataclass_with_nested_to_dict_object():
     assert json_str is not None
 
 
-def test_convert_tools_to_agui_format_with_ai_function():
-    """Test converting AIFunction to AG-UI format."""
-    from agent_framework import ai_function
+def test_convert_tools_to_agui_format_with_tool():
+    """Test converting FunctionTool to AG-UI format."""
+    from agent_framework import tool
 
     from agent_framework_ag_ui._utils import convert_tools_to_agui_format
 
-    @ai_function
+    @tool
     def test_func(param: str, count: int = 5) -> str:
         """Test function."""
         return f"{param} {count}"
@@ -318,11 +318,11 @@ def test_convert_tools_to_agui_format_with_none():
 
 def test_convert_tools_to_agui_format_with_single_tool():
     """Test converting single tool (not in list)."""
-    from agent_framework import ai_function
+    from agent_framework import tool
 
     from agent_framework_ag_ui._utils import convert_tools_to_agui_format
 
-    @ai_function
+    @tool
     def single_tool(arg: str) -> str:
         """Single tool."""
         return arg
@@ -336,16 +336,16 @@ def test_convert_tools_to_agui_format_with_single_tool():
 
 def test_convert_tools_to_agui_format_with_multiple_tools():
     """Test converting multiple tools."""
-    from agent_framework import ai_function
+    from agent_framework import tool
 
     from agent_framework_ag_ui._utils import convert_tools_to_agui_format
 
-    @ai_function
+    @tool
     def tool1(x: int) -> int:
         """Tool 1."""
         return x
 
-    @ai_function
+    @tool
     def tool2(y: str) -> str:
         """Tool 2."""
         return y

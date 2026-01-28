@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated, Any
 
-from agent_framework import AgentThread, ai_function
+from agent_framework import AgentThread, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -16,7 +16,8 @@ and accessing that thread in AI function.
 
 
 # Define the function tool with **kwargs
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
     **kwargs: Any,
