@@ -22,6 +22,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
@@ -1025,6 +1026,7 @@ def test_from_azure_ai_tools() -> None:
 # region Integration Tests
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

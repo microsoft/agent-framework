@@ -25,8 +25,8 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
-    ai_function,
     executor,
+    tool,
     use_function_invocation,
 )
 
@@ -132,7 +132,7 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     assert "sunny" in events[3].data.contents[0].text
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def mock_tool_requiring_approval(query: str) -> str:
     """Mock tool that requires approval before execution."""
     return f"Executed tool with query: {query}"

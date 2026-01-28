@@ -10,6 +10,7 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
+from collections.abc import Generator
 from typing import Any, cast
 
 import azure.functions as func
@@ -51,7 +52,7 @@ app.add_agent(agents[1])
 
 # 4. Durable Functions orchestration that runs both agents in parallel.
 @app.orchestration_trigger(context_name="context")
-def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
+def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, dict[str, str]]:
     """Fan out to two domain-specific agents and aggregate their responses."""
 
     prompt = context.get_input()
@@ -137,12 +138,6 @@ async def get_orchestration_status(
         )
 
     status = await client.get_status(instance_id)
-    if status is None:
-        return func.HttpResponse(
-            body=json.dumps({"error": "Instance not found"}),
-            status_code=404,
-            mimetype="application/json",
-        )
 
     response_data: dict[str, Any] = {
         "instanceId": status.instance_id,

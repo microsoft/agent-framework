@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content, Role
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentThread,
+    ChatMessage,
+    Content,
+    Role,
+)
 from agent_framework.exceptions import ServiceException
 from copilot.generated.session_events import Data, SessionEvent, SessionEventType
 
@@ -733,10 +740,10 @@ class TestGithubCopilotAgentToolConversion:
         mock_client: MagicMock,
     ) -> None:
         """Test that mixed tool types are handled correctly."""
-        from agent_framework._tools import ai_function
+        from agent_framework import tool
         from copilot.types import Tool as CopilotTool
 
-        @ai_function
+        @tool(approval_mode="never_require")
         def my_function(arg: str) -> str:
             """A function tool."""
             return arg
@@ -754,7 +761,7 @@ class TestGithubCopilotAgentToolConversion:
         result = agent._prepare_tools([my_function, copilot_tool])  # type: ignore
 
         assert len(result) == 2
-        # First tool is converted AIFunction
+        # First tool is converted FunctionTool
         assert result[0].name == "my_function"
         # Second tool is CopilotTool passthrough
         assert result[1] == copilot_tool

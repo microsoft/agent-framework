@@ -40,7 +40,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import (
     ServiceInitializationError,
@@ -96,7 +96,7 @@ async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vecto
     await client.client.files.delete(file_id=file_id)
 
 
-@ai_function
+@tool(approval_mode="never_require")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
@@ -642,7 +642,7 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.arguments == '{"location": "Seattle"}'
 
 
-def test_prepare_content_for_openai_function_approval_response() -> None:
+def test_prepare_content_for_opentool_approval_response() -> None:
     """Test _prepare_content_for_openai with function approval response content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 

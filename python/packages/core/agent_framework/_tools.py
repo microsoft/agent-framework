@@ -33,7 +33,7 @@ from typing import (
     runtime_checkable,
 )
 
-from opentelemetry.metrics import Histogram
+from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
 
 from ._logging import get_logger
@@ -64,12 +64,20 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
+# TypeVar with defaults support for Python < 3.13
+if sys.version_info >= (3, 13):
+    from typing import TypeVar as TypeVarWithDefaults  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import (
+        TypeVar as TypeVarWithDefaults,  # type: ignore[import] # pragma: no cover
+    )
+
 logger = get_logger()
 
 __all__ = [
     "FUNCTION_INVOKING_CHAT_CLIENT_MARKER",
-    "AIFunction",
     "FunctionInvocationConfiguration",
+    "FunctionTool",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
     "HostedImageGenerationTool",
@@ -77,7 +85,7 @@ __all__ = [
     "HostedMCPTool",
     "HostedWebSearchTool",
     "ToolProtocol",
-    "ai_function",
+    "tool",
     "use_function_invocation",
 ]
 
@@ -89,16 +97,8 @@ DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 # region Helpers
 
-ArgsT = TypeVar("ArgsT", bound=BaseModel)
-ReturnT = TypeVar("ReturnT")
-
-
-class _NoOpHistogram:
-    def record(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - trivial
-        return None
-
-
-_NOOP_HISTOGRAM = _NoOpHistogram()
+ArgsT = TypeVarWithDefaults("ArgsT", bound=BaseModel, default=BaseModel)
+ReturnT = TypeVarWithDefaults("ReturnT", default=Any)
 
 
 def _parse_inputs(
@@ -163,7 +163,7 @@ class ToolProtocol(Protocol):
 
     This protocol defines the interface that all tools must implement to be compatible
     with the agent framework. It is implemented by various tool classes such as HostedMCPTool,
-    HostedWebSearchTool, and AIFunction's. A AIFunction is usually created by the `ai_function` decorator.
+    HostedWebSearchTool, and FunctionTool's. A FunctionTool is usually created by the `tool` decorator.
 
     Since each connector needs to parse tools differently, users can pass a dict to
     specify a service-specific tool when no abstraction is available.
@@ -190,7 +190,7 @@ class BaseTool(SerializationMixin):
     """Base class for AI tools, providing common attributes and methods.
 
     Used as the base class for the various tools in the agent framework, such as HostedMCPTool,
-    HostedWebSearchTool, and AIFunction.
+    HostedWebSearchTool, and FunctionTool.
 
     Since each connector needs to parse tools differently, this class is not exposed directly to end users.
     In most cases, users can pass a dict to specify a service-specific tool when no abstraction is available.
@@ -543,7 +543,10 @@ def _default_histogram() -> Histogram:
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
     if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
-        return _NOOP_HISTOGRAM  # type: ignore[return-value]
+        return NoOpHistogram(
+            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+            unit=OtelAttr.DURATION_UNIT,
+        )
     meter = get_meter()
     try:
         return meter.create_histogram(
@@ -567,7 +570,7 @@ class EmptyInputModel(BaseModel):
     """An empty input model for functions with no parameters."""
 
 
-class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
+class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
     """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
@@ -578,11 +581,11 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
             from typing import Annotated
             from pydantic import BaseModel, Field
-            from agent_framework import AIFunction, ai_function
+            from agent_framework import FunctionTool, tool
 
 
             # Using the decorator with string annotations
-            @ai_function
+            @tool(approval_mode="never_require")
             def get_weather(
                 location: Annotated[str, "The city name"],
                 unit: Annotated[str, "Temperature unit"] = "celsius",
@@ -597,7 +600,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
 
 
-            weather_func = AIFunction(
+            weather_func = FunctionTool(
                 name="get_weather",
                 description="Get the weather for a location",
                 func=lambda location, unit="celsius": f"Weather in {location}: 22°{unit[0].upper()}",
@@ -625,13 +628,13 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         input_model: type[ArgsT] | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize the AIFunction.
+        """Initialize the FunctionTool.
 
         Keyword Args:
             name: The name of the function.
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
-                Default is that approval is not needed.
+                Default is that approval is required.
             max_invocations: The maximum number of times this function can be invoked.
                 If None, there is no limit. Should be at least 1.
             max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
@@ -652,7 +655,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.func = func
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
-        self._cached_parameters: dict[str, Any] | None = None  # Cache for model_json_schema()
+        self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
             raise ValueError("max_invocations must be at least 1 or None.")
@@ -663,7 +666,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.max_invocation_exceptions = max_invocation_exceptions
         self.invocation_exception_count = 0
         self._invocation_duration_histogram = _default_histogram()
-        self.type: Literal["ai_function"] = "ai_function"
+        self.type: Literal["function_tool"] = "function_tool"
         self._forward_runtime_kwargs: bool = False
         if self.func:
             sig = inspect.signature(self.func)
@@ -680,10 +683,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             return True
         return self.func is None
 
-    def __get__(self, obj: Any, objtype: type | None = None) -> "AIFunction[ArgsT, ReturnT]":
+    def __get__(self, obj: Any, objtype: type | None = None) -> "FunctionTool[ArgsT, ReturnT]":
         """Implement the descriptor protocol to support bound methods.
 
-        When an AIFunction is accessed as an attribute of a class instance,
+        When a FunctionTool is accessed as an attribute of a class instance,
         this method is called to bind the instance to the function.
 
         Args:
@@ -691,7 +694,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             objtype: The type that owns the descriptor.
 
         Returns:
-            A new AIFunction with the instance bound to the wrapped function.
+            A new FunctionTool with the instance bound to the wrapped function.
         """
         if obj is None:
             # Accessed from the class, not an instance
@@ -702,7 +705,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             sig = inspect.signature(self.func)
             params = list(sig.parameters.keys())
             if params and params[0] in {"self", "cls"}:
-                # Create a new AIFunction with the bound method
+                # Create a new FunctionTool with the bound method
                 import copy
 
                 bound_func = copy.copy(self)
@@ -849,7 +852,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         return self._cached_parameters
 
     def to_json_schema_spec(self) -> dict[str, Any]:
-        """Convert a AIFunction to the JSON Schema function specification format.
+        """Convert a FunctionTool to the JSON Schema function specification format.
 
         Returns:
             A dictionary containing the function specification in JSON Schema format.
@@ -892,29 +895,29 @@ def _tools_to_dict(
     if not tools:
         return None
     if not isinstance(tools, list):
-        if isinstance(tools, AIFunction):
+        if isinstance(tools, FunctionTool):
             return [tools.to_json_schema_spec()]
         if isinstance(tools, SerializationMixin):
             return [tools.to_dict()]
         if isinstance(tools, dict):
             return [tools]
         if callable(tools):
-            return [ai_function(tools).to_json_schema_spec()]
+            return [tool(tools).to_json_schema_spec()]
         logger.warning("Can't parse tool.")
         return None
     results: list[str | dict[str, Any]] = []
-    for tool in tools:
-        if isinstance(tool, AIFunction):
-            results.append(tool.to_json_schema_spec())
+    for tool_item in tools:
+        if isinstance(tool_item, FunctionTool):
+            results.append(tool_item.to_json_schema_spec())
             continue
-        if isinstance(tool, SerializationMixin):
-            results.append(tool.to_dict())
+        if isinstance(tool_item, SerializationMixin):
+            results.append(tool_item.to_dict())
             continue
-        if isinstance(tool, dict):
-            results.append(tool)
+        if isinstance(tool_item, dict):
+            results.append(tool_item)
             continue
-        if callable(tool):
-            results.append(ai_function(tool).to_json_schema_spec())
+        if callable(tool_item):
+            results.append(tool(tool_item).to_json_schema_spec())
             continue
         logger.warning("Can't parse tool.")
     return results
@@ -958,10 +961,8 @@ def _parse_annotation(annotation: Any) -> Any:
 
 def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
     """Create a Pydantic model from a function's signature."""
-    # Unwrap AIFunction objects to get the underlying function
-    from agent_framework._tools import AIFunction
-
-    if isinstance(func, AIFunction):
+    # Unwrap FunctionTool objects to get the underlying function
+    if isinstance(func, FunctionTool):
         func = func.func  # type: ignore[assignment]
 
     sig = inspect.signature(func)
@@ -1212,7 +1213,7 @@ def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any
 
 
 @overload
-def ai_function(
+def tool(
     func: Callable[..., ReturnT | Awaitable[ReturnT]],
     *,
     name: str | None = None,
@@ -1221,11 +1222,11 @@ def ai_function(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> AIFunction[Any, ReturnT]: ...
+) -> FunctionTool[Any, ReturnT]: ...
 
 
 @overload
-def ai_function(
+def tool(
     func: None = None,
     *,
     name: str | None = None,
@@ -1234,10 +1235,10 @@ def ai_function(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]: ...
+) -> Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], FunctionTool[Any, ReturnT]]: ...
 
 
-def ai_function(
+def tool(
     func: Callable[..., ReturnT | Awaitable[ReturnT]] | None = None,
     *,
     name: str | None = None,
@@ -1246,8 +1247,8 @@ def ai_function(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> AIFunction[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]:
-    """Decorate a function to turn it into a AIFunction that can be passed to models and executed automatically.
+) -> FunctionTool[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], FunctionTool[Any, ReturnT]]:
+    """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 
     This decorator creates a Pydantic model from the function's signature,
     which will be used to validate the arguments passed to the function
@@ -1266,7 +1267,7 @@ def ai_function(
         description: A description of the function. If not provided, the function's
             docstring will be used.
         approval_mode: Whether or not approval is required to run this tool.
-            Default is that approval is not needed.
+            Default is that approval is required.
         max_invocations: The maximum number of times this function can be invoked.
             If None, there is no limit, should be at least 1.
         max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
@@ -1283,12 +1284,12 @@ def ai_function(
 
         .. code-block:: python
 
-            from agent_framework import ai_function
+            from agent_framework import tool
             from typing import Annotated
 
 
-            @ai_function
-            def ai_function_example(
+            @tool(approval_mode="never_require")
+            def tool_example(
                 arg1: Annotated[str, "The first argument"],
                 arg2: Annotated[int, "The second argument"],
             ) -> str:
@@ -1297,8 +1298,8 @@ def ai_function(
 
 
             # the same function but with approval required to run
-            @ai_function(approval_mode="always_require")
-            def ai_function_example(
+            @tool(approval_mode="always_require")
+            def tool_example(
                 arg1: Annotated[str, "The first argument"],
                 arg2: Annotated[int, "The second argument"],
             ) -> str:
@@ -1307,13 +1308,13 @@ def ai_function(
 
 
             # With custom name and description
-            @ai_function(name="custom_weather", description="Custom weather function")
+            @tool(name="custom_weather", description="Custom weather function")
             def another_weather_func(location: str) -> str:
                 return f"Weather in {location}"
 
 
             # Async functions are also supported
-            @ai_function
+            @tool(approval_mode="never_require")
             async def async_get_weather(location: str) -> str:
                 '''Get weather asynchronously.'''
                 # Simulate async operation
@@ -1321,12 +1322,12 @@ def ai_function(
 
     """
 
-    def decorator(func: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
+    def decorator(func: Callable[..., ReturnT | Awaitable[ReturnT]]) -> FunctionTool[Any, ReturnT]:
         @wraps(func)
-        def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
+        def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> FunctionTool[Any, ReturnT]:
             tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
             tool_desc: str = description or (f.__doc__ or "")
-            return AIFunction[Any, ReturnT](
+            return FunctionTool[Any, ReturnT](
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
@@ -1490,7 +1491,7 @@ async def _auto_invoke_function(
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
-    tool_map: dict[str, AIFunction[BaseModel, Any]],
+    tool_map: dict[str, FunctionTool[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
@@ -1503,7 +1504,7 @@ async def _auto_invoke_function(
 
     Keyword Args:
         config: The function invocation configuration.
-        tool_map: A mapping of tool names to AIFunction instances.
+        tool_map: A mapping of tool names to FunctionTool instances.
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
@@ -1522,7 +1523,7 @@ async def _auto_invoke_function(
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
 
-    tool: AIFunction[BaseModel, Any] | None = None
+    tool: FunctionTool[BaseModel, Any] | None = None
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
@@ -1645,17 +1646,17 @@ def _get_tool_map(
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
-) -> dict[str, AIFunction[Any, Any]]:
-    ai_function_list: dict[str, AIFunction[Any, Any]] = {}
-    for tool in tools if isinstance(tools, list) else [tools]:
-        if isinstance(tool, AIFunction):
-            ai_function_list[tool.name] = tool
+) -> dict[str, FunctionTool[Any, Any]]:
+    tool_list: dict[str, FunctionTool[Any, Any]] = {}
+    for tool_item in tools if isinstance(tools, list) else [tools]:
+        if isinstance(tool_item, FunctionTool):
+            tool_list[tool_item.name] = tool_item
             continue
-        if callable(tool):
+        if callable(tool_item):
             # Convert to AITool if it's a function or callable
-            ai_tool = ai_function(tool)
-            ai_function_list[ai_tool.name] = ai_tool
-    return ai_function_list
+            ai_tool = tool(tool_item)
+            tool_list[ai_tool.name] = ai_tool
+    return tool_list
 
 
 async def _try_execute_function_calls(

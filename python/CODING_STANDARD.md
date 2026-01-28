@@ -92,7 +92,7 @@ The package follows a flat import structure:
 
 - **Core**: Import directly from `agent_framework`
   ```python
-  from agent_framework import ChatAgent, ai_function
+  from agent_framework import ChatAgent, tool
   ```
 
 - **Components**: Import from `agent_framework.<component>`
@@ -336,7 +336,7 @@ Think about caching where appropriate. Cache the results of expensive operations
 
 ```python
 # ✅ Preferred - cache expensive computations
-class AIFunction:
+class FunctionTool:
     def __init__(self, ...):
         self._cached_parameters: dict[str, Any] | None = None
 
