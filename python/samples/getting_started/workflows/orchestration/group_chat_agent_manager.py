@@ -69,7 +69,7 @@ async def main() -> None:
     # Build the group chat workflow
     workflow = (
         GroupChatBuilder()
-        .with_agent_orchestrator(orchestrator_agent)
+        .with_orchestrator(agent=orchestrator_agent)
         .participants([researcher, writer])
         # Set a hard termination condition: stop after 4 assistant messages
         # The agent orchestrator will intelligently decide when to end before this limit but just in case
