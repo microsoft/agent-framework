@@ -85,7 +85,7 @@ internal static partial class DurableAgentJsonUtilities
 
     // Durable Agent State Types
     [JsonSerializable(typeof(DurableAgentState))]
-    [JsonSerializable(typeof(DurableAgentThread))]
+    [JsonSerializable(typeof(DurableAgentSession))]
 
     // Request Types
     [JsonSerializable(typeof(RunRequest))]

@@ -174,8 +174,8 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
-        var agentThreadStore = endpoints.ServiceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
-        var taskManager = agent.MapA2A(loggerFactory: loggerFactory, agentThreadStore: agentThreadStore);
+        var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(agent.Name);
+        var taskManager = agent.MapA2A(loggerFactory: loggerFactory, agentSessionStore: agentSessionStore);
         var endpointConventionBuilder = endpoints.MapA2A(taskManager, path);
 
         configureTaskManager(taskManager);
@@ -218,8 +218,8 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
-        var agentThreadStore = endpoints.ServiceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
-        var taskManager = agent.MapA2A(agentCard: agentCard, agentThreadStore: agentThreadStore, loggerFactory: loggerFactory);
+        var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(agent.Name);
+        var taskManager = agent.MapA2A(agentCard: agentCard, agentSessionStore: agentSessionStore, loggerFactory: loggerFactory);
         var endpointConventionBuilder = endpoints.MapA2A(taskManager, path);
 
         configureTaskManager(taskManager);

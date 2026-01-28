@@ -61,7 +61,7 @@ public abstract class ChatHistoryProvider
     /// </list>
     /// </para>
     /// <para>
-    /// Each <see cref="ChatHistoryProvider"/> instance should be associated with a single <see cref="AgentThread"/> to ensure proper message isolation
+    /// Each <see cref="ChatHistoryProvider"/> instance should be associated with a single <see cref="AgentSession"/> to ensure proper message isolation
     /// and context management.
     /// </para>
     /// </remarks>

@@ -60,8 +60,8 @@ Console.ResetColor();
 Console.WriteLine("Enter a message for the Joker agent (or 'exit' to quit):");
 Console.WriteLine();
 
-// Create a thread for the conversation
-AgentThread thread = await agentProxy.GetNewThreadAsync();
+// Create a session for the conversation
+AgentSession session = await agentProxy.GetNewSessionAsync();
 
 while (true)
 {
@@ -85,7 +85,7 @@ while (true)
     {
         AgentResponse agentResponse = await agentProxy.RunAsync(
             message: input,
-            thread: thread,
+            session: session,
             cancellationToken: CancellationToken.None);
 
         Console.WriteLine(agentResponse.Text);

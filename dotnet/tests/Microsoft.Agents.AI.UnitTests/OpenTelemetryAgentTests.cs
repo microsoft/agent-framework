@@ -79,7 +79,7 @@ public class OpenTelemetryAgentTests
             NameFunc = () => "TestAgent",
             DescriptionFunc = () => "This is a test agent.",
 
-            RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = async (messages, session, options, cancellationToken) =>
             {
                 await Task.Yield();
                 return new AgentResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
@@ -108,7 +108,7 @@ public class OpenTelemetryAgentTests
         };
 
         async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
 
@@ -304,7 +304,7 @@ public class OpenTelemetryAgentTests
             NameFunc = () => name,
             DescriptionFunc = () => description,
 
-            RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = async (messages, session, options, cancellationToken) =>
             {
                 await Task.Yield();
                 return new AgentResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
@@ -333,7 +333,7 @@ public class OpenTelemetryAgentTests
         };
 
         async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
 
