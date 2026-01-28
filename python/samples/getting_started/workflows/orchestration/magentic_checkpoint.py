@@ -18,7 +18,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity._credentials import AzureCliCredential
 
 """
@@ -60,14 +60,14 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="ResearcherAgent",
         description="Collects background facts and references for the project.",
         instructions=("You are the research lead. Gather crisp bullet points the team should know."),
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
     )
 
     writer = ChatAgent(
         name="WriterAgent",
         description="Synthesizes the final brief for stakeholders.",
         instructions=("You convert the research notes into a structured brief with milestones and risks."),
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
     )
 
     # Create a manager agent for orchestration
@@ -75,7 +75,7 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="MagenticManager",
         description="Orchestrator that coordinates the research and writing workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
     )
 
     # The builder wires in the Magentic orchestrator, sets the plan review path, and

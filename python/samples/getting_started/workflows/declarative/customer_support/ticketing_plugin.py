@@ -3,9 +3,9 @@
 """Ticketing plugin for CustomerSupport workflow."""
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from collections.abc import Callable
 
 # ANSI color codes
 MAGENTA = "\033[35m"

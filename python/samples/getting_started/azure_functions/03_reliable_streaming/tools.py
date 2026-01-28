@@ -153,13 +153,12 @@ def _get_weather_recommendation(condition: str) -> str:
 
     if "rain" in condition_lower or "drizzle" in condition_lower:
         return "Bring an umbrella and waterproof jacket. Consider indoor activities for backup."
-    elif "fog" in condition_lower:
+    if "fog" in condition_lower:
         return "Morning visibility may be limited. Plan outdoor sightseeing for afternoon."
-    elif "cold" in condition_lower:
+    if "cold" in condition_lower:
         return "Layer up with warm clothing. Hot drinks and cozy cafés recommended."
-    elif "hot" in condition_lower or "warm" in condition_lower:
+    if "hot" in condition_lower or "warm" in condition_lower:
         return "Stay hydrated and use sunscreen. Plan strenuous activities for cooler morning hours."
-    elif "thunder" in condition_lower or "storm" in condition_lower:
+    if "thunder" in condition_lower or "storm" in condition_lower:
         return "Keep an eye on weather updates. Have indoor alternatives ready."
-    else:
-        return "Pleasant conditions expected. Great day for outdoor exploration!"
+    return "Pleasant conditions expected. Great day for outdoor exploration!"

@@ -1,7 +1,7 @@
 """Fan out concurrent runs across two agents inside a Durable Functions orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient to create domain-specific agents hosted by Agent Framework.
+- OpenAIChatClient to create domain-specific agents hosted by Agent Framework.
 - AgentFunctionApp to expose orchestration and HTTP triggers.
 - Durable Functions orchestration that executes agent calls in parallel and aggregates results.
 
@@ -15,7 +15,8 @@ from typing import Any, cast
 
 import azure.functions as func
 from agent_framework import AgentResponse
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 
@@ -28,7 +29,7 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     physicist = chat_client.as_agent(
         name=PHYSICIST_AGENT_NAME,

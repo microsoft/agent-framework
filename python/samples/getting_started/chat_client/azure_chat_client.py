@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from agent_framework import tool
@@ -29,7 +29,7 @@ def get_weather(
 async def main() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     stream = False
     print(f"User: {message}")

@@ -13,7 +13,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -60,7 +60,7 @@ async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
 
 def create_agent() -> ChatAgent:
     """Factory function to create a Writer agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=("You decode messages. Try to reconstruct the original message."),
         name="decoder",
     )

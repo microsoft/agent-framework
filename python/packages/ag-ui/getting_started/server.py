@@ -7,7 +7,7 @@ import os
 
 from agent_framework import ChatAgent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -117,9 +117,10 @@ def get_time_zone(location: str) -> str:
 agent = ChatAgent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant. Use get_weather for weather and get_time_zone for time zones.",
-    chat_client=AzureOpenAIChatClient(
+    chat_client=OpenAIChatClient(
+        backend="azure",
         endpoint=endpoint,
-        deployment_name=deployment_name,
+        model_id=deployment_name,
     ),
     tools=[get_time_zone],  # ONLY server-side tools
 )

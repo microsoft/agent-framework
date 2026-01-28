@@ -340,7 +340,6 @@ dependencies = [
     { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pydantic-settings", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -392,7 +391,6 @@ requires-dist = [
     { name = "opentelemetry-semantic-conventions-ai", specifier = ">=0.4.13" },
     { name = "packaging", specifier = ">=24.1" },
     { name = "pydantic", specifier = ">=2,<3" },
-    { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "typing-extensions" },
 ]
 provides-extras = ["all"]

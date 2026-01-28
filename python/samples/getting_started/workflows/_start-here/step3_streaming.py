@@ -16,7 +16,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._workflows._events import WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from typing_extensions import Never
 
@@ -28,14 +28,14 @@ then passes the conversation to a Reviewer agent that finalizes the result.
 The workflow is invoked with run_stream so you can observe events as they occur.
 
 Purpose:
-Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors, wire them with WorkflowBuilder,
+Show how to wrap chat agents created by OpenAIChatClient inside workflow executors, wire them with WorkflowBuilder,
 and consume streaming events from the workflow. Demonstrate the @handler pattern with typed inputs and typed
 WorkflowContext[T_Out, T_W_Out] outputs. Agents automatically yield outputs when they complete.
 The streaming loop also surfaces WorkflowEvent.origin so you can distinguish runner-generated lifecycle events
 from executor-generated data-plane events.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for OpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -51,8 +51,8 @@ class Writer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
-        # Create a domain specific agent using your configured AzureOpenAIChatClient.
+    def __init__(self, chat_client: OpenAIChatClient, id: str = "writer"):
+        # Create a domain specific agent using your configured OpenAIChatClient.
         self.agent = chat_client.as_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
@@ -88,7 +88,7 @@ class Reviewer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
+    def __init__(self, chat_client: OpenAIChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
         self.agent = chat_client.as_agent(
             instructions=(
@@ -111,7 +111,7 @@ class Reviewer(Executor):
 async def main():
     """Build the two node workflow and run it with streaming to observe events."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     # Instantiate the two agent backed executors.
     writer = Writer(chat_client)
     reviewer = Reviewer(chat_client)

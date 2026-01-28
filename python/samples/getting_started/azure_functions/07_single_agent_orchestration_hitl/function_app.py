@@ -1,7 +1,7 @@
 """Iterate on generated content with a human-in-the-loop Durable orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient for a single writer agent that emits structured JSON.
+- OpenAIChatClient for a single writer agent that emits structured JSON.
 - AgentFunctionApp with Durable orchestration, HTTP triggers, and activity triggers.
 - External events that pause the workflow until a human decision arrives or times out.
 
@@ -15,7 +15,8 @@ from datetime import timedelta
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -51,7 +52,7 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

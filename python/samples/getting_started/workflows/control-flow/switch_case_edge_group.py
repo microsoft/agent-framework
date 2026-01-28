@@ -19,7 +19,7 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     executor,  # Decorator to turn a function into a workflow executor
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient  # Thin client for Azure OpenAI chat models
+from agent_framework.openai import OpenAIChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs with validation
 from typing_extensions import Never
@@ -42,7 +42,7 @@ on that type.
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, and events.
 - Understanding of switch-case edge groups and how Case and Default are evaluated in order.
-- Working Azure OpenAI configuration for AzureOpenAIChatClient, with Azure CLI login and required environment variables.
+- Working Azure OpenAI configuration for OpenAIChatClient, with Azure CLI login and required environment variables.
 - Access to workflow/resources/ambiguous_email.txt, or accept the inline fallback string.
 """
 
@@ -155,7 +155,7 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
 
 def create_spam_detection_agent() -> ChatAgent:
     """Create and return the spam detection agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Be less confident in your assessments. "
@@ -169,7 +169,7 @@ def create_spam_detection_agent() -> ChatAgent:
 
 def create_email_assistant_agent() -> ChatAgent:
     """Create and return the email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
         default_options={"response_format": EmailResponse},

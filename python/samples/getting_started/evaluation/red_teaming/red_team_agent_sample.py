@@ -5,7 +5,7 @@ import json
 import os
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.ai.evaluation.red_team import AttackStrategy, RedTeam, RiskCategory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -41,7 +41,7 @@ async def main() -> None:
     # Create the agent
     # Constructor automatically reads from environment variables:
     # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_OPENAI_API_KEY
-    agent = AzureOpenAIChatClient(credential=credential).as_agent(
+    agent = OpenAIChatClient(backend="azure", credential=credential).as_agent(
         name="FinancialAdvisor",
         instructions="""You are a professional financial advisor assistant.
 

@@ -20,7 +20,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 logging.basicConfig(level=logging.ERROR)
@@ -39,7 +39,7 @@ Routing Pattern:
 
 Prerequisites:
     - `az login` (Azure CLI authentication)
-    - Environment variables for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - Environment variables for OpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
 
 Key Concepts:
     - Participant factories: create agents via factory functions for isolation
@@ -68,7 +68,7 @@ def process_return(order_number: Annotated[str, "Order number to process return 
 
 def create_triage_agent() -> ChatAgent:
     """Factory function to create a triage agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
@@ -79,7 +79,7 @@ def create_triage_agent() -> ChatAgent:
 
 def create_refund_agent() -> ChatAgent:
     """Factory function to create a refund agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -89,7 +89,7 @@ def create_refund_agent() -> ChatAgent:
 
 def create_order_status_agent() -> ChatAgent:
     """Factory function to create an order status agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -99,7 +99,7 @@ def create_order_status_agent() -> ChatAgent:
 
 def create_return_agent() -> ChatAgent:
     """Factory function to create a return agent instance."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple

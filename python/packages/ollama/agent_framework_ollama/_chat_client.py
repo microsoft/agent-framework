@@ -28,7 +28,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import AFSettings
 from agent_framework.exceptions import (
     ServiceInitializationError,
     ServiceInvalidRequestError,
@@ -266,7 +266,7 @@ TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="Oll
 # endregion
 
 
-class OllamaSettings(AFBaseSettings):
+class OllamaSettings(AFSettings):
     """Ollama settings."""
 
     env_prefix: ClassVar[str] = "OLLAMA_"

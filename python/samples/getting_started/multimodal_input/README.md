@@ -42,7 +42,7 @@ Optionally for Azure OpenAI:
 **Note:** You can also provide configuration directly in code instead of using environment variables:
 ```python
 # Example: Pass deployment_name directly
-client = AzureOpenAIChatClient(
+client = OpenAIChatClient(
     credential=AzureCliCredential(),
     deployment_name="your-deployment-name",
     endpoint="https://your-resource.openai.azure.com"

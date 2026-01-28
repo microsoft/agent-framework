@@ -19,7 +19,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -44,7 +44,7 @@ Pattern:
 
 Prerequisites:
 - Azure CLI authentication (az login).
-- Environment variables configured for AzureOpenAIChatClient.
+- Environment variables configured for OpenAIChatClient.
 """
 
 CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
@@ -57,7 +57,7 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
 
 
-def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(client: OpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
     triage = client.as_agent(
@@ -94,7 +94,7 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, 
 def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow, ChatAgent, ChatAgent, ChatAgent]:
     """Build the handoff workflow with checkpointing enabled."""
 
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
     triage, refund, order = create_agents(client)
 
     workflow = (

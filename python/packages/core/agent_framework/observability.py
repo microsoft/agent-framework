@@ -19,7 +19,7 @@ from pydantic import PrivateAttr
 
 from . import __version__ as version_info
 from ._logging import get_logger
-from ._pydantic import AFBaseSettings
+from ._settings import AFSettings
 from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -554,7 +554,7 @@ def create_metric_views() -> list["View"]:
     ]
 
 
-class ObservabilitySettings(AFBaseSettings):
+class ObservabilitySettings(AFSettings):
     """Settings for Agent Framework Observability.
 
     If the environment variables are not found, the settings can

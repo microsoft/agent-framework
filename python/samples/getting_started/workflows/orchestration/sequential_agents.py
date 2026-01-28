@@ -4,7 +4,7 @@ import asyncio
 from typing import cast
 
 from agent_framework import ChatMessage, Role, SequentialBuilder, WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -23,13 +23,13 @@ Note on internal adapters:
   You can safely ignore them when focusing on agent progress.
 
 Prerequisites:
-- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- Azure OpenAI access configured for OpenAIChatClient (use az login + env vars)
 """
 
 
 async def main() -> None:
     # 1) Create agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    chat_client = OpenAIChatClient(backend="azure", credential=AzureCliCredential())
 
     writer = chat_client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),

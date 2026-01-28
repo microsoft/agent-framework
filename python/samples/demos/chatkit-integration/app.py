@@ -18,9 +18,8 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, Role, tool
+from agent_framework.openai import OpenAIChatClient
 
 # Agent Framework ChatKit integration
 from agent_framework_chatkit import ThreadItemConverter, stream_agent_response
@@ -131,6 +130,7 @@ async def stream_widget(
 
     yield ThreadItemDoneEvent(type="thread.item.done", item=widget_item)
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_weather(
@@ -170,12 +170,14 @@ def get_weather(
     )
     return WeatherResponse(text, weather_data)
 
+
 @tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
     logger.info("Getting current UTC time")
     return f"Current UTC time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
 
 @tool(approval_mode="never_require")
 def show_city_selector() -> str:
@@ -206,7 +208,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         # For authentication, run `az login` command in terminal
         try:
             self.weather_agent = ChatAgent(
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+                chat_client=OpenAIChatClient(backend="azure", credential=AzureCliCredential()),
                 instructions=(
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "
@@ -330,7 +332,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
-        from agent_framework import FunctionResultContent
 
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
@@ -373,7 +374,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -470,7 +471,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)

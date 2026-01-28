@@ -3,7 +3,7 @@
 """Backend tool rendering endpoint."""
 
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from fastapi import FastAPI
 
 from ...agents.weather_agent import weather_agent
@@ -16,7 +16,7 @@ def register_backend_tool_rendering(app: FastAPI) -> None:
         app: The FastAPI application.
     """
     # Create a chat client and call the factory function
-    chat_client = AzureOpenAIChatClient()
+    chat_client = OpenAIChatClient(backend="azure")
 
     add_agent_framework_fastapi_endpoint(
         app,

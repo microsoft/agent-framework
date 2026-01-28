@@ -55,8 +55,8 @@ class TestAzureAISearchSettings:
         )
         assert settings.endpoint == "https://test.search.windows.net"
         assert settings.index_name == "test-index"
-        # api_key is now SecretStr
-        assert settings.api_key.get_secret_value() == "test-key"
+        # api_key is now SecretString (acts like str)
+        assert settings.api_key == "test-key"
 
     def test_settings_with_env_file_path(self) -> None:
         """Test settings with env_file_path parameter."""

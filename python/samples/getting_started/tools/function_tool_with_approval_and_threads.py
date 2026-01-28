@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import ChatAgent, ChatMessage, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 
 """
 Tool Approvals with Threads
@@ -16,9 +16,7 @@ the thread stores and retrieves them automatically.
 
 
 @tool(approval_mode="always_require")
-def add_to_calendar(
-    event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]
-) -> str:
+def add_to_calendar(event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]) -> str:
     """Add an event to the calendar (requires approval)."""
     print(f">>> EXECUTING: add_to_calendar(event_name='{event_name}', date='{date}')")
     return f"Added '{event_name}' to calendar on {date}"
@@ -29,7 +27,9 @@ async def approval_example() -> None:
     print("=== Tool Approval with Thread ===\n")
 
     agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(),
+        chat_client=OpenAIChatClient(
+            backend="azure",
+        ),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
@@ -65,7 +65,9 @@ async def rejection_example() -> None:
     print("=== Tool Rejection with Thread ===\n")
 
     agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(),
+        chat_client=OpenAIChatClient(
+            backend="azure",
+        ),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],

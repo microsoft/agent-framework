@@ -19,7 +19,7 @@ from agent_framework import (
     chat_middleware,
     function_middleware,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_devui import register_cleanup
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ agent = ChatAgent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    chat_client=AzureOpenAIChatClient(
+    chat_client=OpenAIChatClient(backend="azure",
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast, send_email],

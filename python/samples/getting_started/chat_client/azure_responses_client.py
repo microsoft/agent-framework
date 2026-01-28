@@ -4,9 +4,8 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatResponse
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import ChatResponse, tool
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
@@ -16,6 +15,7 @@ Azure Responses Client Direct Usage Example
 Demonstrates direct AzureResponsesClient usage for structured response generation with Azure OpenAI models.
 Shows function calling capabilities with custom business logic.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
@@ -37,7 +37,7 @@ class OutputStruct(BaseModel):
 async def main() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure", credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     stream = True
     print(f"User: {message}")

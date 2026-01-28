@@ -70,7 +70,7 @@ def search_hotels(
                 "availability": "Available"
             }
         ]
-    
+
     return json.dumps({
         "location": location,
         "check_in": check_in,
@@ -140,7 +140,7 @@ def get_hotel_details(
             "nearby_attractions": ["Eiffel Tower (0.2 mi)", "Seine River Cruise Dock (0.3 mi)", "Trocadéro (0.5 mi)"]
         }
     }
-    
+
     details = hotel_details.get(hotel_name, {
         "name": hotel_name,
         "description": "Comfortable hotel with modern amenities",
@@ -150,7 +150,7 @@ def get_hotel_details(
         "reviews": {"total": 0, "recent_comments": []},
         "nearby_attractions": []
     })
-    
+
     return json.dumps({
         "hotel_name": hotel_name,
         "details": details
@@ -270,7 +270,7 @@ def search_flights(
                 "stops": "Nonstop"
             }
         ]
-    
+
     return json.dumps({
         "origin": origin,
         "destination": destination,
@@ -317,7 +317,7 @@ def get_flight_details(
         },
         "amenities": ["WiFi", "In-flight entertainment", "Meals included"]
     }
-    
+
     return json.dumps({
         "flight_details": mock_details
     })
@@ -439,7 +439,7 @@ def search_activities(
                 "booking_required": False
             }
         ]
-        
+
         if category:
             activities = [act for act in all_activities if act["category"] == category]
         else:
@@ -456,7 +456,7 @@ def search_activities(
                 "availability": "Daily at 10:00 AM and 2:00 PM"
             }
         ]
-    
+
     return json.dumps({
         "location": location,
         "date": date,
@@ -523,7 +523,7 @@ def get_activity_details(
             "reviews_count": 2341
         }
     }
-    
+
     details = activity_details_map.get(activity_name, {
         "name": activity_name,
         "description": "An immersive experience that showcases the best of local culture and attractions.",
@@ -538,7 +538,7 @@ def get_activity_details(
         "rating": 4.5,
         "reviews_count": 100
     })
-    
+
     return json.dumps({
         "activity_details": details
     })
@@ -558,7 +558,7 @@ def confirm_booking(
         booking status, customer information, and next steps.
     """
     confirmation_number = f"CONF-{booking_type.upper()}-{booking_id}"
-    
+
     confirmation_data = {
         "confirmation_number": confirmation_number,
         "booking_type": booking_type,
@@ -572,7 +572,7 @@ def confirm_booking(
             "Bring confirmation number and valid ID"
         ]
     }
-    
+
     return json.dumps({
         "confirmation": confirmation_data
     })
@@ -595,7 +595,7 @@ def check_hotel_availability(
         and last checked timestamp.
     """
     availability_status = "Available"
-    
+
     availability_data = {
         "service_type": "hotel",
         "hotel_name": hotel_name,
@@ -607,7 +607,7 @@ def check_hotel_availability(
         "price_per_night": "$185",
         "last_checked": datetime.now().isoformat()
     }
-    
+
     return json.dumps({
         "availability": availability_data
     })
@@ -629,7 +629,7 @@ def check_flight_availability(
         and last checked timestamp.
     """
     availability_status = "Available"
-    
+
     availability_data = {
         "service_type": "flight",
         "flight_number": flight_number,
@@ -640,7 +640,7 @@ def check_flight_availability(
         "price_per_passenger": "$520",
         "last_checked": datetime.now().isoformat()
     }
-    
+
     return json.dumps({
         "availability": availability_data
     })
@@ -662,7 +662,7 @@ def check_activity_availability(
         and last checked timestamp.
     """
     availability_status = "Available"
-    
+
     availability_data = {
         "service_type": "activity",
         "activity_name": activity_name,
@@ -673,7 +673,7 @@ def check_activity_availability(
         "price_per_person": "$45",
         "last_checked": datetime.now().isoformat()
     }
-    
+
     return json.dumps({
         "availability": availability_data
     })
@@ -694,7 +694,7 @@ def process_payment(
         payment method details, and receipt URL.
     """
     transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
+
     payment_result = {
         "transaction_id": transaction_id,
         "amount": amount,
@@ -706,11 +706,10 @@ def process_payment(
         "timestamp": datetime.now().isoformat(),
         "receipt_url": f"https://payments.travelagency.com/receipt/{transaction_id}"
     }
-    
+
     return json.dumps({
         "payment_result": payment_result
     })
-
 
 
 # Mock payment validation tool
@@ -725,11 +724,11 @@ def validate_payment_method(
         validation messages, supported currencies, and processing fee information.
     """
     method_type = payment_method.get("type", "credit_card")
-    
+
     # Validation logic
     is_valid = True
     validation_messages = []
-    
+
     if method_type == "credit_card":
         if not payment_method.get("number"):
             is_valid = False
@@ -740,7 +739,7 @@ def validate_payment_method(
         if not payment_method.get("cvv"):
             is_valid = False
             validation_messages.append("CVV is required")
-    
+
     validation_result = {
         "is_valid": is_valid,
         "payment_method_type": method_type,
@@ -748,7 +747,7 @@ def validate_payment_method(
         "supported_currencies": ["USD", "EUR", "GBP", "JPY"],
         "processing_fee": "2.5%"
     }
-    
+
     return json.dumps({
         "validation_result": validation_result
     })

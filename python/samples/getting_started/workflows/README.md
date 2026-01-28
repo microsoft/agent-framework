@@ -194,8 +194,8 @@ concurrent’s dispatcher and aggregator and can be ignored if you only care abo
 
 ### Environment Variables
 
-- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
-  These variables are required for samples that construct `AzureOpenAIChatClient`
+- **OpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
+  These variables are required for samples that construct `OpenAIChatClient`
 
 - **OpenAI** (used in orchestration samples):
   - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)

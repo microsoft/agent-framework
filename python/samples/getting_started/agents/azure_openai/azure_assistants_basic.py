@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureOpenAIAssistantsClient
+from agent_framework.openai import OpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from agent_framework import tool
@@ -12,7 +12,7 @@ from agent_framework import tool
 """
 Azure OpenAI Assistants Basic Example
 
-This sample demonstrates basic usage of AzureOpenAIAssistantsClient with automatic
+This sample demonstrates basic usage of OpenAIAssistantsClient with automatic
 assistant lifecycle management, showing both streaming and non-streaming responses.
 """
 
@@ -34,7 +34,7 @@ async def non_streaming_example() -> None:
     # and deleted after getting a response
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()).as_agent(
+    async with OpenAIAssistantsClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -50,7 +50,7 @@ async def streaming_example() -> None:
 
     # Since no assistant ID is provided, the assistant will be automatically created
     # and deleted after getting a response
-    async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()).as_agent(
+    async with OpenAIAssistantsClient(backend="azure", credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:

@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from agent_framework import ChatClientProtocol
 from agent_framework.exceptions import ServiceInitializationError
-from pydantic import ValidationError
 
 from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
@@ -29,9 +28,10 @@ def test_foundry_local_settings_init_with_explicit_values() -> None:
 
 @pytest.mark.parametrize("exclude_list", [["FOUNDRY_LOCAL_MODEL_ID"]], indirect=True)
 def test_foundry_local_settings_missing_model_id(foundry_local_unit_test_env: dict[str, str]) -> None:
-    """Test FoundryLocalSettings when model_id is missing raises ValidationError."""
-    with pytest.raises(ValidationError):
-        FoundryLocalSettings(env_file_path="test.env")
+    """Test FoundryLocalSettings when model_id is missing."""
+    # With AFSettings, missing fields are set to None (no validation)
+    settings = FoundryLocalSettings(env_file_path="test.env")
+    assert settings.model_id is None
 
 
 def test_foundry_local_settings_explicit_overrides_env(foundry_local_unit_test_env: dict[str, str]) -> None:

@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
@@ -33,7 +33,7 @@ async def main():
 
     # Build an agent backed by Azure OpenAI Responses
     # (endpoint/deployment/api_version can also come from env vars above)
-    responses_client = AzureOpenAIResponsesClient(
+    responses_client = OpenAIResponsesClient(backend="azure",
         credential=credential,
     )
 
