@@ -79,7 +79,7 @@ internal static class Step5EntryPoint
                 switch (evt)
                 {
                     case WorkflowOutputEvent outputEvent:
-                        switch (outputEvent.SourceId)
+                        switch (outputEvent.ExecutorId)
                         {
                             case Step4EntryPoint.JudgeId:
                                 if (outputEvent.Is(out NumberSignal newSignal))
