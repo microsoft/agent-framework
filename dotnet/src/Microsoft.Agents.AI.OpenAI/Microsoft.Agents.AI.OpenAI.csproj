@@ -17,6 +17,10 @@
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.OpenAI.UnitTests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework OpenAI</Title>

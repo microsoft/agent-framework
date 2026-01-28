@@ -65,7 +65,7 @@ internal static partial class AgentJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
+    [JsonSerializable(typeof(ChatClientAgentSession.SessionState))]
     [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
     [JsonSerializable(typeof(ChatHistoryMemoryProvider.ChatHistoryMemoryProviderState))]
 

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage, Role, TextContent
+from agent_framework import AgentResponse, ChatMessage, Content, Role
 
 from agent_framework_devui import register_cleanup
 from agent_framework_devui._discovery import EntityDiscovery
@@ -36,7 +36,7 @@ class MockAgent:
     async def run_stream(self, messages=None, *, thread=None, **kwargs):
         """Mock streaming run method."""
         yield AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Test response")])],
         )
 
 
@@ -259,7 +259,7 @@ async def test_cleanup_with_file_based_discovery():
         # Write agent module with cleanup registration
         agent_file = agent_dir / "__init__.py"
         agent_file.write_text("""
-from agent_framework import AgentResponse, ChatMessage, Role, TextContent
+from agent_framework import AgentResponse, ChatMessage, Role, Content
 from agent_framework_devui import register_cleanup
 
 class MockCredential:
@@ -279,7 +279,7 @@ class TestAgent:
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):
         yield AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, content=[TextContent(text="Test")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, content=[Content.from_text(text="Test")])],
             inner_messages=[],
         )
 

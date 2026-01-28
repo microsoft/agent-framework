@@ -44,7 +44,7 @@ Console.WriteLine($"Age: {response.Result.Age}");
 Console.WriteLine($"Occupation: {response.Result.Occupation}");
 
 // Create the ChatClientAgent with the specified name, instructions, and expected structured output the agent should produce.
-ChatClientAgent agentWithPersonInfo = aiProjectClient.CreateAIAgent(
+ChatClientAgent agentWithPersonInfo = await aiProjectClient.CreateAIAgentAsync(
     model: deploymentName,
     new ChatClientAgentOptions()
     {

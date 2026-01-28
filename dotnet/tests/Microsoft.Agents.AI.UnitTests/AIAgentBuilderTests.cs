@@ -328,7 +328,7 @@ public class AIAgentBuilderTests
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>("sharedFunc", () =>
-            builder.Use((Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>)null!));
+            builder.Use((Func<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>)null!));
     }
 
     /// <summary>

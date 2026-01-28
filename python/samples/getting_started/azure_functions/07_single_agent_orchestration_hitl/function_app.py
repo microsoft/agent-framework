@@ -101,10 +101,10 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
         options={"response_format": GeneratedContent},
     )
 
-    content = initial_raw.value
+    content = initial_raw.try_parse_value(GeneratedContent)
     logger.info("Type of content after extraction: %s", type(content))
 
-    if content is None or not isinstance(content, GeneratedContent):
+    if content is None:
         raise ValueError("Agent returned no content after extraction.")
 
     attempt = 0
@@ -146,11 +146,9 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
                 options={"response_format": GeneratedContent},
             )
 
-            rewritten_value = rewritten_raw.value
-            if rewritten_value is None or not isinstance(rewritten_value, GeneratedContent):
+            content = rewritten_raw.try_parse_value(GeneratedContent)
+            if content is None:
                 raise ValueError("Agent returned no content after rewrite.")
-
-            content = rewritten_value
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."

@@ -289,40 +289,6 @@ wrapped_agent = AgentFrameworkAgent(
 )
 ```
 
-### Custom Confirmation Strategies
-
-Provide domain-specific confirmation messages:
-
-```python
-from typing import Any
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.ag_ui import AgentFrameworkAgent, ConfirmationStrategy
-
-class CustomConfirmationStrategy(ConfirmationStrategy):
-    def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
-        return "Your custom approval message!"
-
-    def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
-        return "Your custom rejection message!"
-
-    def on_state_confirmed(self) -> str:
-        return "State changes confirmed!"
-
-    def on_state_rejected(self) -> str:
-        return "State changes rejected!"
-
-agent = ChatAgent(
-    name="custom_agent",
-    chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
-)
-
-wrapped_agent = AgentFrameworkAgent(
-    agent=agent,
-    confirmation_strategy=CustomConfirmationStrategy(),
-)
-```
-
 ### Human in the Loop
 
 Human-in-the-loop is automatically handled when tools are marked for approval:

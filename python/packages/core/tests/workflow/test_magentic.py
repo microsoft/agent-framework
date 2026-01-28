@@ -15,6 +15,7 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Content,
     Executor,
     GroupChatRequestMessage,
     MagenticBuilder,
@@ -28,7 +29,6 @@ from agent_framework import (
     RequestInfoEvent,
     Role,
     StandardMagenticManager,
-    TextContent,
     Workflow,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
@@ -172,7 +172,7 @@ class StubAgent(BaseAgent):
     ) -> AsyncIterable[AgentResponseUpdate]:
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             yield AgentResponseUpdate(
-                contents=[TextContent(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
+                contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
         return _stream()
@@ -541,7 +541,7 @@ class StubThreadAgent(BaseAgent):
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
         yield AgentResponseUpdate(
-            contents=[TextContent(text="thread-ok")],
+            contents=[Content.from_text(text="thread-ok")],
             author_name=self.name,
             role=Role.ASSISTANT,
         )
@@ -563,7 +563,7 @@ class StubAssistantsAgent(BaseAgent):
 
     async def run_stream(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
         yield AgentResponseUpdate(
-            contents=[TextContent(text="assistants-ok")],
+            contents=[Content.from_text(text="assistants-ok")],
             author_name=self.name,
             role=Role.ASSISTANT,
         )

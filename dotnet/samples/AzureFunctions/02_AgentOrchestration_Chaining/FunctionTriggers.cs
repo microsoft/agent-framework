@@ -19,15 +19,15 @@ public static class FunctionTriggers
     public static async Task<string> RunOrchestrationAsync([OrchestrationTrigger] TaskOrchestrationContext context)
     {
         DurableAIAgent writer = context.GetAgent("WriterAgent");
-        AgentThread writerThread = await writer.GetNewThreadAsync();
+        AgentSession writerSession = await writer.GetNewSessionAsync();
 
         AgentResponse<TextResponse> initial = await writer.RunAsync<TextResponse>(
             message: "Write a concise inspirational sentence about learning.",
-            thread: writerThread);
+            session: writerSession);
 
         AgentResponse<TextResponse> refined = await writer.RunAsync<TextResponse>(
             message: $"Improve this further while keeping it under 25 words: {initial.Result.Text}",
-            thread: writerThread);
+            session: writerSession);
 
         return refined.Result.Text;
     }

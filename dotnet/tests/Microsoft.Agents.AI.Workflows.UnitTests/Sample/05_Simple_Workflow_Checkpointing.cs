@@ -42,7 +42,7 @@ internal static class Step5EntryPoint
         {
             await handle.DisposeAsync().ConfigureAwait(false);
 
-            checkpointed = await environment.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellationToken: CancellationToken.None)
+            checkpointed = await environment.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, cancellationToken: CancellationToken.None)
                                             .ConfigureAwait(false);
             handle = checkpointed.Run;
         }

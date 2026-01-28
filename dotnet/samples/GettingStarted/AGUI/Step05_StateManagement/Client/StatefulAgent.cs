@@ -37,18 +37,18 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
     /// <inheritdoc />
     protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken)
             .ToAgentResponseAsync(cancellationToken);
     }
 
     /// <inheritdoc />
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -64,7 +64,7 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
         messagesWithState.Add(stateMessage);
 
         // Stream the response and update state when received
-        await foreach (AgentResponseUpdate update in this.InnerAgent.RunStreamingAsync(messagesWithState, thread, options, cancellationToken))
+        await foreach (AgentResponseUpdate update in this.InnerAgent.RunStreamingAsync(messagesWithState, session, options, cancellationToken))
         {
             // Check if this update contains a state snapshot
             foreach (AIContent content in update.Contents)
