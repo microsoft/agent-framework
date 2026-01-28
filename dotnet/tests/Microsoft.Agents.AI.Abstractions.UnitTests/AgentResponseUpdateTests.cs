@@ -199,4 +199,30 @@ public class AgentResponseUpdateTests
         Assert.NotNull(result.ContinuationToken);
         Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), result.ContinuationToken);
     }
+
+    [Fact]
+    public void UserInputRequests_ReturnsEmptyWhenNoContents()
+    {
+        // Arrange
+        AgentResponseUpdate update = new();
+
+        // Act
+        IEnumerable<UserInputRequestContent> requests = update.UserInputRequests;
+
+        // Assert
+        Assert.Empty(requests);
+    }
+
+    [Fact]
+    public void UserInputRequests_ReturnsEmptyWhenNoUserInputRequestContent()
+    {
+        // Arrange
+        AgentResponseUpdate update = new(ChatRole.Assistant, "Hello");
+
+        // Act
+        IEnumerable<UserInputRequestContent> requests = update.UserInputRequests;
+
+        // Assert
+        Assert.Empty(requests);
+    }
 }
