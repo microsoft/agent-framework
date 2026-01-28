@@ -789,6 +789,7 @@ class TestOpenAIAssistantProviderIntegration:
         """Integration test with function tools."""
         provider = OpenAIAssistantProvider()
 
+        @tool(approval_mode="never_require")
         def get_current_time() -> str:
             """Get the current time."""
             from datetime import datetime
