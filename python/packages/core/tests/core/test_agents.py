@@ -807,9 +807,9 @@ def test_sanitize_agent_name_replaces_invalid_chars():
 
 
 @pytest.mark.asyncio
-async def test_agent_get_new_thread(chat_client_base, ai_function_tool):
+async def test_agent_get_new_thread(chat_client_base, tool_tool):
     """Test that get_new_thread returns a new AgentThread."""
-    agent = ChatAgent(chat_client=chat_client_base, tools=[ai_function_tool])
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
 
     thread = agent.get_new_thread()
 
