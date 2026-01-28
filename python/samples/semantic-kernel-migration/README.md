@@ -71,5 +71,5 @@ Swap the script path for any other workflow or process sample. Deactivate the sa
 ## Tips for Migration
 - Keep the original SK sample open while iterating on the AF equivalent; the code is intentionally formatted so you can copy/paste across SDKs.
 - Threads/conversation state are explicit in AF. When porting SK code that relies on implicit thread reuse, call `agent.get_new_thread()` and pass it into each `run`/`run_stream` call.
-- Tools map cleanly: SK `@kernel_function` plugins translate to AF `@ai_function` callables. Hosted tools (code interpreter, web search, MCP) are available only in AF—introduce them once parity is achieved.
+- Tools map cleanly: SK `@kernel_function` plugins translate to AF `@tool` callables. Hosted tools (code interpreter, web search, MCP) are available only in AF—introduce them once parity is achieved.
 - For multi-agent orchestration, AF workflows expose checkpoints and resume capabilities that SK Process/Team abstractions do not. Use the workflow samples as a blueprint when modernizing complex agent graphs.

@@ -39,9 +39,9 @@ Console.WriteLine();
 
 try
 {
-    AgentThread thread = agent.GetNewThread();
+    AgentSession session = await agent.GetNewSessionAsync();
 
-    await foreach (var response in agent.RunStreamingAsync(Task, thread))
+    await foreach (var response in agent.RunStreamingAsync(Task, session))
     {
         Console.Write(response.Text);
     }

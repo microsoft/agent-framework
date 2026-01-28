@@ -45,9 +45,9 @@ internal sealed class Program
 
         string workflowInput = GetWorkflowInput(args);
 
-        AIAgent agent = aiProjectClient.GetAIAgent(agentVersion);
+        AIAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
-        AgentThread thread = agent.GetNewThread();
+        AgentSession session = await agent.GetNewSessionAsync();
 
         ProjectConversation conversation =
             await aiProjectClient
@@ -65,10 +65,10 @@ internal sealed class Program
             };
         ChatClientAgentRunOptions runOptions = new(chatOptions);
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentResponseUpdates = agent.RunStreamingAsync(workflowInput, thread, runOptions);
+        IAsyncEnumerable<AgentResponseUpdate> agentResponseUpdates = agent.RunStreamingAsync(workflowInput, session, runOptions);
 
         string? lastMessageId = null;
-        await foreach (AgentRunResponseUpdate responseUpdate in agentResponseUpdates)
+        await foreach (AgentResponseUpdate responseUpdate in agentResponseUpdates)
         {
             if (responseUpdate.MessageId != lastMessageId)
             {

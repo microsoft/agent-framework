@@ -5,6 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.anthropic import AnthropicClient
+from agent_framework import tool
 
 """
 Anthropic Chat Agent Example
@@ -12,7 +13,8 @@ Anthropic Chat Agent Example
 This sample demonstrates using Anthropic with an agent and a single custom tool.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
@@ -26,7 +28,7 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     agent = AnthropicClient(
-    ).create_agent(
+    ).as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -43,7 +45,7 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = AnthropicClient(
-    ).create_agent(
+    ).as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,

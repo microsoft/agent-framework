@@ -8,7 +8,7 @@ from azure.identity import DefaultAzureCredential
 
 def main():
     # Create an Agent using the Azure OpenAI Chat Client with a MCP Tool that connects to Microsoft Learn MCP
-    agent = AzureOpenAIChatClient(credential=DefaultAzureCredential()).create_agent(
+    agent = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=HostedMCPTool(

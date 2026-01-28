@@ -55,7 +55,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
     {
         Console.WriteLine("\nRESUMING WORKFLOW...");
         Assert.NotNull(this._lastCheckpoint);
-        Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this._lastCheckpoint, this.GetCheckpointManager(), runId);
+        Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this._lastCheckpoint, this.GetCheckpointManager());
         IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
         return new WorkflowEvents(workflowEvents);
     }
@@ -142,7 +142,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     Console.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
                     break;
 
-                case AgentRunResponseEvent responseEvent:
+                case AgentResponseEvent responseEvent:
                     if (!string.IsNullOrEmpty(responseEvent.Response.Text))
                     {
                         Console.WriteLine($"AGENT: {responseEvent.Response.AgentId}: {responseEvent.Response.Text}");

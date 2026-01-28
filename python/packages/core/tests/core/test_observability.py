@@ -13,17 +13,16 @@ from opentelemetry.trace import StatusCode
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
-    AgentRunResponse,
+    AgentResponse,
     AgentThread,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Role,
     UsageDetails,
-    ai_function,
     prepend_agent_framework_to_user_agent,
+    tool,
 )
 from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
 from agent_framework.observability import (
@@ -215,7 +214,7 @@ def mock_chat_client():
             return "https://test.example.com"
 
         async def _inner_get_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             return ChatResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
@@ -224,7 +223,7 @@ def mock_chat_client():
             )
 
         async def _inner_get_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
             yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
@@ -278,6 +277,133 @@ async def test_chat_client_streaming_observability(
     if enable_sensitive_data:
         assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None
         assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions from options are captured in LLM span."""
+    import json
+
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute is set
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "You are a helpful assistant."
+
+    # Verify input_messages contains system message
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert any(msg.get("role") == "system" for msg in input_messages)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_streaming_observability_with_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test streaming telemetry captures system_instructions from options."""
+    import json
+
+    client = use_instrumentation(mock_chat_client)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
+    span_exporter.clear()
+
+    updates = []
+    async for update in client.get_streaming_response(messages=messages, options=options):
+        updates.append(update)
+
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute is set
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "You are a helpful assistant."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_without_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions attribute is not set when instructions are not provided."""
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test"}  # No instructions
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute is NOT set
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_empty_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions attribute is not set when instructions is an empty string."""
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test", "instructions": ""}  # Empty string
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Empty string should not set system_instructions
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_list_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that list-type instructions are correctly captured."""
+    import json
+
+    client = use_instrumentation(mock_chat_client)()
+
+    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system_instructions attribute contains both instructions
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 2
+    assert system_instructions[0]["content"] == "Instruction 1"
+    assert system_instructions[1]["content"] == "Instruction 2"
 
 
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
@@ -342,7 +468,6 @@ def test_agent_decorator_with_valid_class():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
             self.description = "Test agent description"
 
         async def run(self, messages=None, *, thread=None, **kwargs):
@@ -384,7 +509,6 @@ def test_agent_decorator_with_partial_methods():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return Mock()
@@ -406,12 +530,11 @@ def mock_chat_agent():
         def __init__(self):
             self.id = "test_agent_id"
             self.name = "test_agent"
-            self.display_name = "Test Agent"
             self.description = "Test agent description"
-            self.chat_options = ChatOptions(model_id="TestModel")
+            self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentRunResponse(
+            return AgentResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
@@ -419,10 +542,10 @@ def mock_chat_agent():
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            from agent_framework import AgentRunResponseUpdate
+            from agent_framework import AgentResponseUpdate
 
-            yield AgentRunResponseUpdate(text="Hello", role=Role.ASSISTANT)
-            yield AgentRunResponseUpdate(text=" from agent", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text=" from agent", role=Role.ASSISTANT)
 
     return MockChatClientAgent
 
@@ -441,10 +564,10 @@ async def test_agent_instrumentation_enabled(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "invoke_agent Test Agent"
+    assert span.name == "invoke_agent test_agent"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
@@ -469,10 +592,10 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "invoke_agent Test Agent"
+    assert span.name == "invoke_agent test_agent"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     if enable_sensitive_data:
@@ -483,7 +606,7 @@ async def test_function_call_with_error_handling(span_exporter: InMemorySpanExpo
     """Test that function call errors are properly captured in telemetry."""
 
     # Create a function that raises an error using the decorator
-    @ai_function(name="failing_function", description="A function that fails")
+    @tool(name="failing_function", description="A function that fails")
     async def failing_function(param: str) -> str:
         raise ValueError("Function execution failed")
 

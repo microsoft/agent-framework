@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from agent_framework import tool
 
 """
 Azure AI Agent with Function Tools Example
@@ -17,7 +17,8 @@ This sample demonstrates function tool integration with Azure AI Agents,
 showing both agent-level and query-level tool configuration patterns.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -25,7 +26,7 @@ def get_weather(
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
-
+@tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
@@ -42,12 +43,14 @@ async def tools_on_agent_level() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(credential=credential),
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="AssistantAgent",
             instructions="You are a helpful assistant that can provide weather and time information.",
             tools=[get_weather, get_time],  # Tools defined at agent creation
-        ) as agent,
-    ):
+        )
+
         # First query - agent can use weather tool
         query1 = "What's the weather like in New York?"
         print(f"User: {query1}")
@@ -76,12 +79,14 @@ async def tools_on_run_level() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(credential=credential),
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="AssistantAgent",
             instructions="You are a helpful assistant.",
             # No tools defined here
-        ) as agent,
-    ):
+        )
+
         # First query with weather tool
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
@@ -110,12 +115,14 @@ async def mixed_tools_example() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(credential=credential),
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="AssistantAgent",
             instructions="You are a comprehensive assistant that can help with various information requests.",
             tools=[get_weather],  # Base tool available for all queries
-        ) as agent,
-    ):
+        )
+
         # Query using both agent tool and additional run-method tools
         query = "What's the weather in Denver and what's the current UTC time?"
         print(f"User: {query}")

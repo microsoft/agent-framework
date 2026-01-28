@@ -10,7 +10,7 @@ either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func sta
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from datetime import timedelta
 from typing import Any
 
@@ -51,7 +51,7 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -62,7 +62,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 
 # 3. Activities encapsulate external work for review notifications and publishing.
 @app.activity_trigger(input_name="content")
-def notify_user_for_approval(content: dict) -> None:
+def notify_user_for_approval(content: dict[str, str]) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("NOTIFICATION: Please review the following content for approval:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -71,7 +71,7 @@ def notify_user_for_approval(content: dict) -> None:
 
 
 @app.activity_trigger(input_name="content")
-def publish_content(content: dict) -> None:
+def publish_content(content: dict[str, str]) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("PUBLISHING: Content has been published successfully:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -80,7 +80,7 @@ def publish_content(content: dict) -> None:
 
 # 4. Orchestration loops until the human approves, times out, or attempts are exhausted.
 @app.orchestration_trigger(context_name="context")
-def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
+def content_generation_hitl_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, dict[str, str]]:
     payload_raw = context.get_input()
     if not isinstance(payload_raw, Mapping):
         raise ValueError("Content generation input is required")
@@ -98,13 +98,12 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
     initial_raw = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         thread=writer_thread,
-        response_format=GeneratedContent,
+        options={"response_format": GeneratedContent},
     )
 
     content = initial_raw.value
-    logger.info("Type of content after extraction: %s", type(content))
 
-    if content is None or not isinstance(content, GeneratedContent):
+    if content is None:
         raise ValueError("Agent returned no content after extraction.")
 
     attempt = 0
@@ -114,7 +113,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
             f"Requesting human feedback. Iteration #{attempt}. Timeout: {payload.approval_timeout_hours} hour(s)."
         )
 
-        yield context.call_activity("notify_user_for_approval", content.model_dump())
+        yield context.call_activity("notify_user_for_approval", content.model_dump())  # type: ignore[misc]
 
         approval_task = context.wait_for_external_event(HUMAN_APPROVAL_EVENT)
         timeout_task = context.create_timer(
@@ -129,7 +128,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
 
             if approval_payload.approved:
                 context.set_custom_status("Content approved by human reviewer. Publishing content...")
-                yield context.call_activity("publish_content", content.model_dump())
+                yield context.call_activity("publish_content", content.model_dump())  # type: ignore[misc]
                 context.set_custom_status(
                     f"Content published successfully at {context.current_utc_datetime:%Y-%m-%dT%H:%M:%S}"
                 )
@@ -138,6 +137,11 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
             context.set_custom_status(
                 "Content rejected by human reviewer. Incorporating feedback and regenerating..."
             )
+            
+            # Check if we've exhausted attempts
+            if attempt >= payload.max_review_attempts:
+                break
+            
             rewrite_prompt = (
                 "The content was rejected by a human reviewer. Please rewrite the article incorporating their feedback.\n\n"
                 f"Human Feedback: {approval_payload.feedback or 'No feedback provided.'}"
@@ -145,14 +149,12 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
             rewritten_raw = yield writer.run(
                 messages=rewrite_prompt,
                 thread=writer_thread,
-                response_format=GeneratedContent,
+                options={"response_format": GeneratedContent},
             )
 
-            rewritten_value = rewritten_raw.value
-            if rewritten_value is None or not isinstance(rewritten_value, GeneratedContent):
+            content = rewritten_raw.try_parse_value(GeneratedContent)
+            if content is None:
                 raise ValueError("Agent returned no content after rewrite.")
-
-            content = rewritten_value
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
@@ -160,8 +162,12 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
             raise TimeoutError(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s)."
             )
-
-    raise RuntimeError(f"Content could not be approved after {payload.max_review_attempts} iteration(s).")
+    
+    # If we exit the loop without returning, max attempts were exhausted
+    context.set_custom_status("Max review attempts exhausted.")
+    raise RuntimeError(
+        f"Content could not be approved after {payload.max_review_attempts} iteration(s)."
+    )
 
 
 # 5. HTTP endpoint that starts the human-in-the-loop orchestration.
@@ -287,7 +293,7 @@ async def get_orchestration_status(
     )
 
     # Check if status is None or if the instance doesn't exist (runtime_status is None)
-    if status is None or getattr(status, "runtime_status", None) is None:
+    if getattr(status, "runtime_status", None) is None:
         return func.HttpResponse(
             body=json.dumps({"error": "Instance not found."}),
             status_code=404,

@@ -5,6 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework.openai import OpenAIChatClient
+from agent_framework import tool
 
 """
 OpenAI Chat Client Basic Example
@@ -13,7 +14,8 @@ This sample demonstrates basic usage of OpenAIChatClient for direct chat-based
 interactions, showing both streaming and non-streaming responses.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
@@ -26,7 +28,7 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -42,7 +44,7 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,

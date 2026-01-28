@@ -42,7 +42,7 @@ public static class Program
         // Create the Host agent
         var hostAgent = new HostClientAgent(loggerFactory);
         await hostAgent.InitializeAgentAsync(modelId, apiKey, agentUrls!.Split(";"));
-        AgentThread thread = hostAgent.Agent!.GetNewThread();
+        AgentSession session = await hostAgent.Agent!.GetNewSessionAsync(cancellationToken);
         try
         {
             while (true)
@@ -61,7 +61,7 @@ public static class Program
                     break;
                 }
 
-                var agentResponse = await hostAgent.Agent!.RunAsync(message, thread, cancellationToken: cancellationToken);
+                var agentResponse = await hostAgent.Agent!.RunAsync(message, session, cancellationToken: cancellationToken);
                 foreach (var chatMessage in agentResponse.Messages)
                 {
                     Console.ForegroundColor = ConsoleColor.Cyan;

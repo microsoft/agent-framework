@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field
 
 from agent_framework import (
     AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
+    Content,
     Role,
-    TextContent,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -24,7 +24,7 @@ from agent_framework._middleware import (
     FunctionMiddleware,
     FunctionMiddlewarePipeline,
 )
-from agent_framework._tools import AIFunction
+from agent_framework._tools import FunctionTool
 
 from .conftest import MockChatClient
 
@@ -40,7 +40,7 @@ class TestResultOverrideMiddleware:
 
     async def test_agent_middleware_response_override_non_streaming(self, mock_agent: AgentProtocol) -> None:
         """Test that agent middleware can override response for non-streaming execution."""
-        override_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="overridden response")])
+        override_response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="overridden response")])
 
         class ResponseOverrideMiddleware(AgentMiddleware):
             async def process(
@@ -57,10 +57,10 @@ class TestResultOverrideMiddleware:
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="original response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="original response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -74,9 +74,9 @@ class TestResultOverrideMiddleware:
     async def test_agent_middleware_response_override_streaming(self, mock_agent: AgentProtocol) -> None:
         """Test that agent middleware can override response for streaming execution."""
 
-        async def override_stream() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(contents=[TextContent(text="overridden")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text=" stream")])
+        async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="overridden")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" stream")])
 
         class StreamResponseOverrideMiddleware(AgentMiddleware):
             async def process(
@@ -91,10 +91,10 @@ class TestResultOverrideMiddleware:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(contents=[TextContent(text="original")])
+        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
 
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
             updates.append(update)
 
@@ -103,7 +103,7 @@ class TestResultOverrideMiddleware:
         assert updates[0].text == "overridden"
         assert updates[1].text == " stream"
 
-    async def test_function_middleware_result_override(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_result_override(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that function middleware can override result."""
         override_result = "overridden function result"
 
@@ -148,7 +148,7 @@ class TestResultOverrideMiddleware:
                 await next(context)
                 # Then conditionally override based on content
                 if any("special" in msg.text for msg in context.messages if msg.text):
-                    context.result = AgentRunResponse(
+                    context.result = AgentResponse(
                         messages=[ChatMessage(role=Role.ASSISTANT, text="Special response from middleware!")]
                     )
 
@@ -174,10 +174,10 @@ class TestResultOverrideMiddleware:
         """Test streaming result override functionality with ChatAgent integration."""
         mock_chat_client = MockChatClient()
 
-        async def custom_stream() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(contents=[TextContent(text="Custom")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text=" streaming")])
-            yield AgentRunResponseUpdate(contents=[TextContent(text=" response!")])
+        async def custom_stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Custom")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" streaming")])
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" response!")])
 
         class ChatAgentStreamOverrideMiddleware(AgentMiddleware):
             async def process(
@@ -195,7 +195,7 @@ class TestResultOverrideMiddleware:
 
         # Test streaming override case
         override_messages = [ChatMessage(role=Role.USER, text="Give me a custom stream")]
-        override_updates: list[AgentRunResponseUpdate] = []
+        override_updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(override_messages):
             override_updates.append(update)
 
@@ -206,7 +206,7 @@ class TestResultOverrideMiddleware:
 
         # Test normal streaming case
         normal_messages = [ChatMessage(role=Role.USER, text="Normal streaming request")]
-        normal_updates: list[AgentRunResponseUpdate] = []
+        normal_updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(normal_messages):
             normal_updates.append(update)
 
@@ -231,19 +231,19 @@ class TestResultOverrideMiddleware:
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="executed response")])
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="executed response")])
 
         # Test case where next() is NOT called
         no_execute_messages = [ChatMessage(role=Role.USER, text="Don't run this")]
         no_execute_context = AgentRunContext(agent=mock_agent, messages=no_execute_messages)
         no_execute_result = await pipeline.execute(mock_agent, no_execute_messages, no_execute_context, final_handler)
 
-        # When middleware doesn't call next(), result should be empty AgentRunResponse
+        # When middleware doesn't call next(), result should be empty AgentResponse
         assert no_execute_result is not None
-        assert isinstance(no_execute_result, AgentRunResponse)
+        assert isinstance(no_execute_result, AgentResponse)
         assert no_execute_result.messages == []  # Empty response
         assert not handler_called
         assert no_execute_context.result is None
@@ -260,7 +260,7 @@ class TestResultOverrideMiddleware:
         assert execute_result.messages[0].text == "executed response"
         assert handler_called
 
-    async def test_function_middleware_conditional_no_next(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_conditional_no_next(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that when function middleware conditionally doesn't call next(), no execution happens."""
 
         class ConditionalNoNextFunctionMiddleware(FunctionMiddleware):
@@ -313,7 +313,7 @@ class TestResultObservability:
 
     async def test_agent_middleware_response_observability(self, mock_agent: AgentProtocol) -> None:
         """Test that middleware can observe response after execution."""
-        observed_responses: list[AgentRunResponse] = []
+        observed_responses: list[AgentResponse] = []
 
         class ObservabilityMiddleware(AgentMiddleware):
             async def process(
@@ -327,7 +327,7 @@ class TestResultObservability:
 
                 # Context should now contain the response for observability
                 assert context.result is not None
-                assert isinstance(context.result, AgentRunResponse)
+                assert isinstance(context.result, AgentResponse)
                 observed_responses.append(context.result)
 
         middleware = ObservabilityMiddleware()
@@ -335,8 +335,8 @@ class TestResultObservability:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="executed response")])
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="executed response")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -345,7 +345,7 @@ class TestResultObservability:
         assert observed_responses[0].messages[0].text == "executed response"
         assert result == observed_responses[0]
 
-    async def test_function_middleware_result_observability(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_result_observability(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that middleware can observe function result after execution."""
         observed_results: list[str] = []
 
@@ -392,11 +392,11 @@ class TestResultObservability:
 
                 # Now observe and conditionally override
                 assert context.result is not None
-                assert isinstance(context.result, AgentRunResponse)
+                assert isinstance(context.result, AgentResponse)
 
                 if "modify" in context.result.messages[0].text:
                     # Override after observing
-                    context.result = AgentRunResponse(
+                    context.result = AgentResponse(
                         messages=[ChatMessage(role=Role.ASSISTANT, text="modified after execution")]
                     )
 
@@ -405,8 +405,8 @@ class TestResultObservability:
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
-            return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response to modify")])
+        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response to modify")])
 
         result = await pipeline.execute(mock_agent, messages, context, final_handler)
 
@@ -414,7 +414,7 @@ class TestResultObservability:
         assert result is not None
         assert result.messages[0].text == "modified after execution"
 
-    async def test_function_middleware_post_execution_override(self, mock_function: AIFunction[Any, Any]) -> None:
+    async def test_function_middleware_post_execution_override(self, mock_function: FunctionTool[Any, Any]) -> None:
         """Test that middleware can override function result after observing execution."""
 
         class PostExecutionOverrideMiddleware(FunctionMiddleware):
@@ -456,8 +456,8 @@ def mock_agent() -> AgentProtocol:
 
 
 @pytest.fixture
-def mock_function() -> AIFunction[Any, Any]:
+def mock_function() -> FunctionTool[Any, Any]:
     """Mock function for testing."""
-    function = MagicMock(spec=AIFunction[Any, Any])
+    function = MagicMock(spec=FunctionTool[Any, Any])
     function.name = "test_function"
     return function

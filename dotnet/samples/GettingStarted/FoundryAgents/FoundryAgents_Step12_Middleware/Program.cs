@@ -34,7 +34,7 @@ AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDate
 AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent originalAgent = aiProjectClient.CreateAIAgent(
+AIAgent originalAgent = await aiProjectClient.CreateAIAgentAsync(
     name: AssistantName,
     model: deploymentName,
     instructions: AssistantInstructions,
@@ -49,27 +49,27 @@ AIAgent middlewareEnabledAgent = originalAgent
     .Use(GuardrailMiddleware, null)
     .Build();
 
-AgentThread thread = middlewareEnabledAgent.GetNewThread();
+AgentSession session = await middlewareEnabledAgent.GetNewSessionAsync();
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
-AgentRunResponse guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");
+AgentResponse guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");
 Console.WriteLine($"Guard railed response: {guardRailedResponse}");
 
 Console.WriteLine("\n\n=== Example 2: PII detection ===");
-AgentRunResponse piiResponse = await middlewareEnabledAgent.RunAsync("My name is John Doe, call me at 123-456-7890 or email me at john@something.com");
+AgentResponse piiResponse = await middlewareEnabledAgent.RunAsync("My name is John Doe, call me at 123-456-7890 or email me at john@something.com");
 Console.WriteLine($"Pii filtered response: {piiResponse}");
 
 Console.WriteLine("\n\n=== Example 3: Agent function middleware ===");
 
 // Agent function middleware support is limited to agents that wraps a upstream ChatClientAgent or derived from it.
 
-AgentRunResponse functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", thread);
+AgentResponse functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", session);
 Console.WriteLine($"Function calling response: {functionCallResponse}");
 
 // Special per-request middleware agent.
 Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
-AIAgent humanInTheLoopAgent = aiProjectClient.CreateAIAgent(
+AIAgent humanInTheLoopAgent = await aiProjectClient.CreateAIAgentAsync(
     name: "HumanInTheLoopAgent",
     model: deploymentName,
     instructions: "You are an Human in the loop testing AI assistant that helps people find information.",
@@ -78,7 +78,7 @@ AIAgent humanInTheLoopAgent = aiProjectClient.CreateAIAgent(
     tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]);
 
 // Using the ConsolePromptingApprovalMiddleware for a specific request to handle user approval during function calls.
-AgentRunResponse response = await humanInTheLoopAgent
+AgentResponse response = await humanInTheLoopAgent
     .AsBuilder()
     .Use(ConsolePromptingApprovalMiddleware, null)
     .Build()
@@ -113,13 +113,13 @@ async ValueTask<object?> FunctionCallOverrideWeather(AIAgent agent, FunctionInvo
 }
 
 // This middleware redacts PII information from input and output messages.
-async Task<AgentRunResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact PII information from input messages
     var filteredMessages = FilterMessages(messages);
     Console.WriteLine("Pii Middleware - Filtered Messages Pre-Run");
 
-    var response = await innerAgent.RunAsync(filteredMessages, thread, options, cancellationToken).ConfigureAwait(false);
+    var response = await innerAgent.RunAsync(filteredMessages, session, options, cancellationToken).ConfigureAwait(false);
 
     // Redact PII information from output messages
     response.Messages = FilterMessages(response.Messages);
@@ -152,7 +152,7 @@ async Task<AgentRunResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Ag
 }
 
 // This middleware enforces guardrails by redacting certain keywords from input and output messages.
-async Task<AgentRunResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact keywords from input messages
     var filteredMessages = FilterMessages(messages);
@@ -160,7 +160,7 @@ async Task<AgentRunResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messag
     Console.WriteLine("Guardrail Middleware - Filtered messages Pre-Run");
 
     // Proceed with the agent run
-    var response = await innerAgent.RunAsync(filteredMessages, thread, options, cancellationToken);
+    var response = await innerAgent.RunAsync(filteredMessages, session, options, cancellationToken);
 
     // Redact keywords from output messages
     response.Messages = FilterMessages(response.Messages);
@@ -189,9 +189,9 @@ async Task<AgentRunResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messag
 }
 
 // This middleware handles Human in the loop console interaction for any user approval required during function calling.
-async Task<AgentRunResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
-    AgentRunResponse response = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+    AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
 
     List<UserInputRequestContent> userInputRequests = response.UserInputRequests.ToList();
 
@@ -211,7 +211,7 @@ async Task<AgentRunResponse> ConsolePromptingApprovalMiddleware(IEnumerable<Chat
             })
             .ToList();
 
-        response = await innerAgent.RunAsync(response.Messages, thread, options, cancellationToken);
+        response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);
 
         userInputRequests = response.UserInputRequests.ToList();
     }

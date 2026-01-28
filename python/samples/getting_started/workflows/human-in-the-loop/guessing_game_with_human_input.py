@@ -18,6 +18,7 @@ from agent_framework import (
     WorkflowStatusEvent,  # Event emitted on run state changes
     handler,
     response_handler,  # Decorator to expose an Executor method as a step
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -103,7 +104,7 @@ class TurnManager(Executor):
         2) Request info with a HumanFeedbackRequest as the payload.
         """
         # Parse structured model output
-        text = result.agent_run_response.text
+        text = result.agent_response.text
         last_guess = GuessOutput.model_validate_json(text).guess
 
         # Craft a precise human prompt that defines higher and lower relative to the agent's guess.
@@ -145,7 +146,7 @@ class TurnManager(Executor):
 
 def create_guessing_agent() -> ChatAgent:
     """Create the guessing agent with instructions to guess a number between 1 and 10."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "
@@ -154,7 +155,7 @@ def create_guessing_agent() -> ChatAgent:
             "No explanations or additional text."
         ),
         # response_format enforces that the model produces JSON compatible with GuessOutput.
-        response_format=GuessOutput,
+        default_options={"response_format": GuessOutput},
     )
 
 

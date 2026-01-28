@@ -37,7 +37,7 @@ public static class Program
         // Create the workflow and turn it into an agent
         var workflow = WorkflowFactory.BuildWorkflow(chatClient);
         var agent = workflow.AsAgent("workflow-agent", "Workflow Agent");
-        var thread = agent.GetNewThread();
+        var session = await agent.GetNewSessionAsync();
 
         // Start an interactive loop to interact with the workflow as if it were an agent
         while (true)
@@ -50,16 +50,16 @@ public static class Program
                 break;
             }
 
-            await ProcessInputAsync(agent, thread, input);
+            await ProcessInputAsync(agent, session, input);
         }
 
         // Helper method to process user input and display streaming responses. To display
         // multiple interleaved responses correctly, we buffer updates by message ID and
         // re-render all messages on each update.
-        static async Task ProcessInputAsync(AIAgent agent, AgentThread thread, string input)
+        static async Task ProcessInputAsync(AIAgent agent, AgentSession? session, string input)
         {
-            Dictionary<string, List<AgentRunResponseUpdate>> buffer = [];
-            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, thread))
+            Dictionary<string, List<AgentResponseUpdate>> buffer = [];
+            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, session))
             {
                 if (update.MessageId is null || string.IsNullOrEmpty(update.Text))
                 {
@@ -68,7 +68,7 @@ public static class Program
                 }
                 Console.Clear();
 
-                if (!buffer.TryGetValue(update.MessageId, out List<AgentRunResponseUpdate>? value))
+                if (!buffer.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? value))
                 {
                     value = [];
                     buffer[update.MessageId] = value;

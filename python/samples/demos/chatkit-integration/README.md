@@ -62,7 +62,7 @@ graph TB
     AttStore -.->|save metadata| SQLite
 
     Converter -->|ChatMessage array| Agent
-    Agent -->|AgentRunResponseUpdate| Streamer
+    Agent -->|AgentResponseUpdate| Streamer
     Streamer -->|ThreadStreamEvent| ChatKit
 
     ChatKit --> Widgets

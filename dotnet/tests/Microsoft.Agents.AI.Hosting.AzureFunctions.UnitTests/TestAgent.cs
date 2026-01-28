@@ -11,23 +11,23 @@ internal sealed class TestAgent(string name, string description) : AIAgent
 
     public override string? Description => description;
 
-    public override AgentThread GetNewThread() => new DummyAgentThread();
+    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) => new(new DummyAgentSession());
 
-    public override AgentThread DeserializeThread(
-        JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null) => new DummyAgentThread();
+    public override ValueTask<AgentSession> DeserializeSessionAsync(
+        JsonElement serializedSession,
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new DummyAgentSession());
 
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) => Task.FromResult(new AgentRunResponse([.. messages]));
+        CancellationToken cancellationToken = default) => Task.FromResult(new AgentResponse([.. messages]));
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-    private sealed class DummyAgentThread : AgentThread;
+    private sealed class DummyAgentSession : AgentSession;
 }

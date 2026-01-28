@@ -36,13 +36,13 @@ This package provides a `ConfigureDurableAgents` extension method on the `Functi
 // Invocable via HTTP via http://localhost:7071/api/agents/SpamDetectionAgent/run
 AIAgent spamDetector = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a spam detection assistant that identifies spam emails.",
         name: "SpamDetectionAgent");
 
 AIAgent emailAssistant = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are an email assistant that helps users draft responses to emails with professionalism.",
         name: "EmailAssistantAgent");
 
@@ -74,17 +74,17 @@ public static async Task<string> SpamDetectionOrchestration(
 
     // Get the spam detection agent
     DurableAIAgent spamDetectionAgent = context.GetAgent("SpamDetectionAgent");
-    AgentThread spamThread = spamDetectionAgent.GetNewThread();
+    AgentSession spamSession = await spamDetectionAgent.GetNewSessionAsync();
 
     // Step 1: Check if the email is spam
-    AgentRunResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
+    AgentResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
         message:
             $"""
             Analyze this email for spam content and return a JSON response with 'is_spam' (boolean) and 'reason' (string) fields:
             Email ID: {email.EmailId}
             Content: {email.EmailContent}
             """,
-        thread: spamThread);
+        session: spamSession);
     DetectionResult result = spamDetectionResponse.Result;
 
     // Step 2: Conditional logic based on spam detection result
@@ -97,9 +97,9 @@ public static async Task<string> SpamDetectionOrchestration(
     {
         // Generate and send response for legitimate email
         DurableAIAgent emailAssistantAgent = context.GetAgent("EmailAssistantAgent");
-        AgentThread emailThread = emailAssistantAgent.GetNewThread();
+        AgentSession emailSession = await emailAssistantAgent.GetNewSessionAsync();
 
-        AgentRunResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
+        AgentResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
             message:
                 $"""
                 Draft a professional response to this email. Return a JSON response with a 'response' field containing the reply:
@@ -107,7 +107,7 @@ public static async Task<string> SpamDetectionOrchestration(
                 Email ID: {email.EmailId}
                 Content: {email.EmailContent}
                 """,
-            thread: emailThread);
+            session: emailSession);
 
         EmailResponse emailResponse = emailAssistantResponse.Result;
         return await context.CallActivityAsync<string>(nameof(SendEmail), emailResponse.Response);
@@ -156,7 +156,7 @@ These tools are registered with the agent using the `tools` parameter when creat
 Tools tools = new();
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a content generation assistant that helps users generate content.",
         name: "ContentGenerationAgent",
         tools: [

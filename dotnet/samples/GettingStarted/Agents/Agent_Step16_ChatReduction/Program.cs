@@ -20,30 +20,30 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(new ChatClientAgentOptions
+    .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = ctx => new InMemoryChatMessageStore(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions)
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.GetNewSessionAsync();
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Get the chat history to see how many messages are stored.
-IList<ChatMessage>? chatHistory = thread.GetService<IList<ChatMessage>>();
+IList<ChatMessage>? chatHistory = session.GetService<IList<ChatMessage>>();
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // Invoke the agent a few more times.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a robot.", thread));
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a robot.", session));
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a lemur.", thread));
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a lemur.", session));
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // At this point, the chat history has exceeded the limit and the original message will not exist anymore,
 // so asking a follow up question about it will not work as expected.
-Console.WriteLine(await agent.RunAsync("Tell me the joke about the pirate again, but add emojis and use the voice of a parrot.", thread));
+Console.WriteLine(await agent.RunAsync("Tell me the joke about the pirate again, but add emojis and use the voice of a parrot.", session));
 
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");

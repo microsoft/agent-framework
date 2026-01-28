@@ -25,14 +25,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var typedSession = (ChatClientAgentSession)session;
 
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedThread.ConversationId).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(typedThread.ConversationId);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedSession.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(typedSession.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -50,7 +50,12 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+        if (typedSession.ChatHistoryProvider is null)
+        {
+            return [];
+        }
+
+        return (await typedSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -85,7 +90,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         // Chat Completion does not require/support deleting agents, so this is a no-op.
         Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
+    public Task DeleteSessionAsync(AgentSession session) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 

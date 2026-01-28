@@ -2,6 +2,7 @@
 
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
+using System.ClientModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -14,16 +15,27 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJEC
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
+AIProjectClient aIProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+
+// Create a new agent if one doesn't exist already.
+ChatClientAgent agent;
+try
+{
+    agent = await aIProjectClient.GetAIAgentAsync(name: JokerName);
+}
+catch (ClientResultException ex) when (ex.Status == 404)
+{
+    agent = await aIProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
+}
+
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add the agents client to the service collection.
-builder.Services.AddSingleton((sp) => new AIProjectClient(new Uri(endpoint), new AzureCliCredential()));
+builder.Services.AddSingleton((sp) => aIProjectClient);
 
 // Add the AI agent to the service collection.
-builder.Services.AddSingleton<AIAgent>((sp)
-    => sp.GetRequiredService<AIProjectClient>()
-        .CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions));
+builder.Services.AddSingleton<AIAgent>((sp) => agent);
 
 // Add a sample service that will use the agent to respond to user input.
 builder.Services.AddHostedService<SampleService>();
@@ -37,12 +49,12 @@ await host.RunAsync().ConfigureAwait(false);
 /// </summary>
 internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
 {
-    private AgentThread? _thread;
+    private AgentSession? _session;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Create a thread that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-        this._thread = agent.GetNewThread();
+        // Create a session that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
+        this._session = await agent.GetNewSessionAsync(cancellationToken);
         _ = this.RunAsync(appLifetime.ApplicationStopping);
     }
 
@@ -65,7 +77,7 @@ internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHost
             }
 
             // Stream the output to the console as it is generated.
-            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
+            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, this._session, cancellationToken: cancellationToken))
             {
                 Console.Write(update);
             }

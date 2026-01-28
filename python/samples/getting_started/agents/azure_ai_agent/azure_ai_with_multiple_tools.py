@@ -9,8 +9,9 @@ from agent_framework import (
     AgentThread,
     HostedMCPTool,
     HostedWebSearchTool,
+    tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -33,6 +34,8 @@ To set up Bing Grounding:
 4. Copy the connection ID and set it as the BING_CONNECTION_ID environment variable
 """
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 
 def get_time() -> str:
     """Get the current UTC time."""
@@ -67,9 +70,9 @@ async def main() -> None:
     """Example showing Hosted MCP tools for a Azure AI Agent."""
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential) as chat_client,
+        AzureAIAgentsProvider(credential=credential) as provider,
     ):
-        agent = chat_client.create_agent(
+        agent = await provider.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
             tools=[

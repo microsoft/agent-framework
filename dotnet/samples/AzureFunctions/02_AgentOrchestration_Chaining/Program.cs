@@ -21,7 +21,7 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
     : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
 
-// Single agent used by the orchestration to demonstrate sequential calls on the same thread.
+// Single agent used by the orchestration to demonstrate sequential calls on the same session.
 const string WriterName = "WriterAgent";
 const string WriterInstructions =
     """
@@ -29,7 +29,7 @@ const string WriterInstructions =
     when given an improved sentence you polish it further.
     """;
 
-AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterInstructions, WriterName);
+AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstructions, WriterName);
 
 using IHost app = FunctionsApplication
     .CreateBuilder(args)

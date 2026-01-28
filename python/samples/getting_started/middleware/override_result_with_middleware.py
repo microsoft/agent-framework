@@ -6,12 +6,13 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
     AgentRunContext,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
     ChatMessage,
     Role,
     TextContent,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -34,6 +35,8 @@ then replaces its result with a custom "perfect weather" message. For streaming 
 it creates a custom async generator that yields the override message in chunks.
 """
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -64,15 +67,15 @@ async def weather_override_middleware(
 
         if context.is_streaming:
             # For streaming: create an async generator that yields chunks
-            async def override_stream() -> AsyncIterable[AgentRunResponseUpdate]:
+            async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
                 for chunk in chunks:
-                    yield AgentRunResponseUpdate(contents=[TextContent(text=chunk)])
+                    yield AgentResponseUpdate(contents=[TextContent(text=chunk)])
 
             context.result = override_stream()
         else:
             # For non-streaming: just replace with the string message
             custom_message = "".join(chunks)
-            context.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
+            context.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
 
 
 async def main() -> None:
@@ -83,11 +86,11 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant. Use the weather tool to get current conditions.",
             tools=get_weather,
-            middleware=weather_override_middleware,
+            middleware=[weather_override_middleware],
         ) as agent,
     ):
         # Non-streaming example

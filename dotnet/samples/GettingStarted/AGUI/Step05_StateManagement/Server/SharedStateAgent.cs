@@ -17,19 +17,19 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken)
+            .ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -40,7 +40,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             state.ValueKind != JsonValueKind.Object)
         {
             // No state management requested, pass through to inner agent
-            await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
             {
                 yield return update;
             }
@@ -58,7 +58,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         if (!hasProperties)
         {
             // Empty state - treat as no state
-            await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
             {
                 yield return update;
             }
@@ -91,8 +91,8 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         var firstRunMessages = messages.Append(stateUpdateMessage);
 
         // Collect all updates from first run
-        var allUpdates = new List<AgentRunResponseUpdate>();
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(firstRunMessages, thread, firstRunOptions, cancellationToken).ConfigureAwait(false))
+        var allUpdates = new List<AgentResponseUpdate>();
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(firstRunMessages, session, firstRunOptions, cancellationToken).ConfigureAwait(false))
         {
             allUpdates.Add(update);
 
@@ -104,7 +104,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             }
         }
 
-        var response = allUpdates.ToAgentRunResponse();
+        var response = allUpdates.ToAgentResponse();
 
         // Try to deserialize the structured state response
         if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))
@@ -113,7 +113,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
                 stateSnapshot,
                 this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new DataContent(stateBytes, "application/json")]
             };
@@ -129,7 +129,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
                 ChatRole.System,
                 [new TextContent("Please provide a concise summary of the state changes in at most two sentences.")]));
 
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(secondRunMessages, thread, options, cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(secondRunMessages, session, options, cancellationToken).ConfigureAwait(false))
         {
             yield return update;
         }

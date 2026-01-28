@@ -16,7 +16,7 @@ using HttpClient httpClient = new()
 AGUIChatClient chatClient = new(httpClient, serverUrl);
 
 // Create agent
-ChatClientAgent baseAgent = chatClient.CreateAIAgent(
+ChatClientAgent baseAgent = chatClient.AsAIAgent(
     name: "AGUIAssistant",
     instructions: "You are a helpful assistant.");
 
@@ -27,7 +27,7 @@ JsonSerializerOptions jsonSerializerOptions = JsonSerializerOptions.Default;
 ServerFunctionApprovalClientAgent agent = new(baseAgent, jsonSerializerOptions);
 
 List<ChatMessage> messages = [];
-AgentThread? thread = null;
+AgentSession? session = null;
 
 Console.ForegroundColor = ConsoleColor.White;
 Console.WriteLine("Ask a question (or type 'exit' to quit):");
@@ -51,8 +51,8 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
     {
         approvalResponses.Clear();
 
-        List<AgentRunResponseUpdate> chatResponseUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: default))
+        List<AgentResponseUpdate> chatResponseUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, cancellationToken: default))
         {
             chatResponseUpdates.Add(update);
             foreach (AIContent content in update.Contents)
@@ -111,7 +111,7 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             }
         }
 
-        AgentRunResponse response = chatResponseUpdates.ToAgentRunResponse();
+        AgentResponse response = chatResponseUpdates.ToAgentResponse();
         messages.AddRange(response.Messages);
         foreach (AIContent approvalResponse in approvalResponses)
         {

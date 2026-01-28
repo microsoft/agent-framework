@@ -1,0 +1,45 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.Agents.AI;
+using Microsoft.Shared.Diagnostics;
+using OpenAI.Chat;
+using OpenAI.Responses;
+
+namespace Microsoft.Agents.AI;
+
+/// <summary>
+/// Provides extension methods for <see cref="AgentResponse"/> and <see cref="AgentResponseUpdate"/> instances to
+/// create or extract native OpenAI response objects from the Microsoft Agent Framework responses.
+/// </summary>
+public static class AgentResponseExtensions
+{
+    /// <summary>
+    /// Creates or extracts a native OpenAI <see cref="ChatCompletion"/> object from an <see cref="AgentResponse"/>.
+    /// </summary>
+    /// <param name="response">The agent response.</param>
+    /// <returns>The OpenAI <see cref="ChatCompletion"/> object.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
+    public static ChatCompletion AsOpenAIChatCompletion(this AgentResponse response)
+    {
+        Throw.IfNull(response);
+
+        return
+            response.RawRepresentation as ChatCompletion ??
+            response.AsChatResponse().AsOpenAIChatCompletion();
+    }
+
+    /// <summary>
+    /// Creates or extracts a native OpenAI <see cref="ResponseResult"/> object from an <see cref="AgentResponse"/>.
+    /// </summary>
+    /// <param name="response">The agent response.</param>
+    /// <returns>The OpenAI <see cref="ResponseResult"/> object.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
+    public static ResponseResult AsOpenAIResponse(this AgentResponse response)
+    {
+        Throw.IfNull(response);
+
+        return
+            response.RawRepresentation as ResponseResult ??
+            response.AsChatResponse().AsOpenAIResponseResult();
+    }
+}

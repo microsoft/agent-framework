@@ -75,10 +75,9 @@ public interface IWorkflowExecutionEnvironment
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
-    /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="StreamingRun"/> that provides access to the results of the streaming run.</returns>
-    ValueTask<Checkpointed<StreamingRun>> ResumeStreamAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default);
+    ValueTask<Checkpointed<StreamingRun>> ResumeStreamAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Initiates a non-streaming execution of the workflow with the specified input.
@@ -117,9 +116,8 @@ public interface IWorkflowExecutionEnvironment
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
-    /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
-    ValueTask<Checkpointed<Run>> ResumeAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default);
+    ValueTask<Checkpointed<Run>> ResumeAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, CancellationToken cancellationToken = default);
 }

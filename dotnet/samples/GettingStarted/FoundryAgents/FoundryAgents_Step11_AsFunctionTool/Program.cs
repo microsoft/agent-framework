@@ -25,22 +25,22 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 
 // Create the weather agent with function tools.
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
-AIAgent weatherAgent = aiProjectClient.CreateAIAgent(
+AIAgent weatherAgent = await aiProjectClient.CreateAIAgentAsync(
     name: WeatherName,
     model: deploymentName,
     instructions: WeatherInstructions,
     tools: [weatherTool]);
 
 // Create the main agent, and provide the weather agent as a function tool.
-AIAgent agent = aiProjectClient.CreateAIAgent(
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     name: MainName,
     model: deploymentName,
     instructions: MainInstructions,
     tools: [weatherAgent.AsAIFunction()]);
 
 // Invoke the agent and output the text result.
-AgentThread thread = agent.GetNewThread();
-Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", thread));
+AgentSession session = await agent.GetNewSessionAsync();
+Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", session));
 
 // Cleanup by agent name removes the agent versions created.
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

@@ -32,18 +32,18 @@ using var tracerProvider = tracerProviderBuilder.Build();
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = aiProjectClient.CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions)
+AIAgent agent = (await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions))
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();
 
 // Invoke the agent and output the text result.
-AgentThread thread = agent.GetNewThread();
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
+AgentSession session = await agent.GetNewSessionAsync();
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Invoke the agent with streaming support.
-thread = agent.GetNewThread();
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+session = await agent.GetNewSessionAsync();
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", session))
 {
     Console.WriteLine(update);
 }

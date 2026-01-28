@@ -11,31 +11,31 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    public override AgentThread DeserializeThread(
-        JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+    public override ValueTask<AgentSession> DeserializeSessionAsync(
+        JsonElement serializedSession,
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions);
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
     }
 
-    public override AgentThread GetNewThread()
+    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
     {
-        return new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!));
+        return ValueTask.FromResult<AgentSession>(new DurableAgentSession(AgentSessionId.WithRandomKey(this.Name!)));
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        thread ??= this.GetNewThread();
-        if (thread is not DurableAgentThread durableThread)
+        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
-                "The provided thread is not valid for a durable agent. " +
-                "Create a new thread using GetNewThread or provide a thread previously created by this agent.",
-                paramName: nameof(thread));
+                "The provided session is not valid for a durable agent. " +
+                "Create a new session using GetNewSession or provide a session previously created by this agent.",
+                paramName: nameof(session));
         }
 
         IList<string>? enableToolNames = null;
@@ -57,22 +57,22 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         }
 
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
-        AgentSessionId sessionId = durableThread.SessionId;
+        AgentSessionId sessionId = durableSession.SessionId;
 
         AgentRunHandle agentRunHandle = await this._agentClient.RunAgentAsync(sessionId, request, cancellationToken);
 
         if (isFireAndForget)
         {
             // If the request is fire and forget, return an empty response.
-            return new AgentRunResponse();
+            return new AgentResponse();
         }
 
         return await agentRunHandle.ReadAgentResponseAsync(cancellationToken);
     }
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {

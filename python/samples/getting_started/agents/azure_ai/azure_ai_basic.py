@@ -4,18 +4,20 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from agent_framework import tool
 
 """
 Azure AI Agent Basic Example
 
-This sample demonstrates basic usage of AzureAIClient.
+This sample demonstrates basic usage of AzureAIProjectAgentProvider.
 Shows both streaming and non-streaming responses with function tools.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -28,17 +30,18 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)
@@ -49,17 +52,18 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         query = "What's the weather like in Tokyo?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)

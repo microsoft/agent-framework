@@ -47,7 +47,7 @@ internal sealed class Tools(ILogger<Tools> logger)
     {
         this._logger.LogInformation("Getting status for workflow instance: {InstanceId}", instanceId);
 
-        // Get the current agent context using the thread-static property
+        // Get the current agent context using the session-static property
         OrchestrationMetadata? status = await DurableAgentContext.Current.GetOrchestrationStatusAsync(
             instanceId,
             includeDetails);

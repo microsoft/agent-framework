@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -21,7 +23,7 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.Name);
         Assert.Null(options.Description);
         Assert.Null(options.ChatOptions);
-        Assert.Null(options.ChatMessageStoreFactory);
+        Assert.Null(options.ChatHistoryProviderFactory);
         Assert.Null(options.AIContextProviderFactory);
     }
 
@@ -35,7 +37,7 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.Name);
         Assert.Null(options.Description);
         Assert.Null(options.AIContextProviderFactory);
-        Assert.Null(options.ChatMessageStoreFactory);
+        Assert.Null(options.ChatHistoryProviderFactory);
         Assert.NotNull(options.ChatOptions);
         Assert.Null(options.ChatOptions.Instructions);
         Assert.Null(options.ChatOptions.Tools);
@@ -115,12 +117,11 @@ public class ChatClientAgentOptionsTests
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
 
-        static ChatMessageStore ChatMessageStoreFactory(
-            ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx) => new Mock<ChatMessageStore>().Object;
+        static ValueTask<ChatHistoryProvider> ChatHistoryProviderFactoryAsync(
+            ChatClientAgentOptions.ChatHistoryProviderFactoryContext ctx, CancellationToken ct) => new(new Mock<ChatHistoryProvider>().Object);
 
-        static AIContextProvider AIContextProviderFactory(
-            ChatClientAgentOptions.AIContextProviderFactoryContext ctx) =>
-            new Mock<AIContextProvider>().Object;
+        static ValueTask<AIContextProvider> AIContextProviderFactoryAsync(
+            ChatClientAgentOptions.AIContextProviderFactoryContext ctx, CancellationToken ct) => new(new Mock<AIContextProvider>().Object);
 
         var original = new ChatClientAgentOptions()
         {
@@ -128,8 +129,8 @@ public class ChatClientAgentOptionsTests
             Description = Description,
             ChatOptions = new() { Tools = tools },
             Id = "test-id",
-            ChatMessageStoreFactory = ChatMessageStoreFactory,
-            AIContextProviderFactory = AIContextProviderFactory
+            ChatHistoryProviderFactory = ChatHistoryProviderFactoryAsync,
+            AIContextProviderFactory = AIContextProviderFactoryAsync
         };
 
         // Act
@@ -140,7 +141,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Id, clone.Id);
         Assert.Equal(original.Name, clone.Name);
         Assert.Equal(original.Description, clone.Description);
-        Assert.Same(original.ChatMessageStoreFactory, clone.ChatMessageStoreFactory);
+        Assert.Same(original.ChatHistoryProviderFactory, clone.ChatHistoryProviderFactory);
         Assert.Same(original.AIContextProviderFactory, clone.AIContextProviderFactory);
 
         // ChatOptions should be cloned, not the same reference
@@ -169,7 +170,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Name, clone.Name);
         Assert.Equal(original.Description, clone.Description);
         Assert.Null(original.ChatOptions);
-        Assert.Null(clone.ChatMessageStoreFactory);
+        Assert.Null(clone.ChatHistoryProviderFactory);
         Assert.Null(clone.AIContextProviderFactory);
     }
 

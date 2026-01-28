@@ -6,8 +6,10 @@ import uuid
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0Provider
 from azure.identity.aio import AzureCliCredential
+from agent_framework import tool
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_user_preferences(user_id: str) -> str:
     """Mock function to get user preferences."""
     preferences = {
@@ -27,11 +29,11 @@ async def example_global_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 user_id=user_id,
                 thread_id=global_thread_id,
                 scope_to_per_operation_thread_id=False,  # Share memories across all threads
@@ -65,11 +67,11 @@ async def example_per_operation_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 user_id=user_id,
                 scope_to_per_operation_thread_id=True,  # Isolate memories per thread
             ),
@@ -113,17 +115,17 @@ async def example_multiple_agents() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 agent_id=agent_id_1,
             ),
         ) as personal_agent,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
-            context_providers=Mem0Provider(
+            context_provider=Mem0Provider(
                 agent_id=agent_id_2,
             ),
         ) as work_agent,

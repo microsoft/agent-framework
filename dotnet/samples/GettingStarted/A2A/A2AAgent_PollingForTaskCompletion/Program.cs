@@ -14,12 +14,12 @@ A2ACardResolver agentCardResolver = new(new Uri(a2aAgentHost));
 AgentCard agentCard = await agentCardResolver.GetAgentCardAsync();
 
 // Create an instance of the AIAgent for an existing A2A agent specified by the agent card.
-AIAgent agent = agentCard.GetAIAgent();
+AIAgent agent = agentCard.AsAIAgent();
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.GetNewSessionAsync();
 
 // Start the initial run with a long-running task.
-AgentRunResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", thread);
+AgentResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", session);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
@@ -28,7 +28,7 @@ while (response.ContinuationToken is { } token)
     await Task.Delay(TimeSpan.FromSeconds(2));
 
     // Continue with the token.
-    response = await agent.RunAsync(thread, options: new AgentRunOptions { ContinuationToken = token });
+    response = await agent.RunAsync(session, options: new AgentRunOptions { ContinuationToken = token });
 }
 
 // Display the result

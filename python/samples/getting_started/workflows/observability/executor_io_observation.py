@@ -11,6 +11,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     handler,
+    tool,
 )
 from typing_extensions import Never
 
@@ -119,6 +120,7 @@ async def main() -> None:
         Input: str: 'HELLO WORLD'
     [WORKFLOW OUTPUT] str: 'DLROW OLLEH'
     [COMPLETED] reverse_text
+        Output: list: [str: 'DLROW OLLEH']
     """
 
 

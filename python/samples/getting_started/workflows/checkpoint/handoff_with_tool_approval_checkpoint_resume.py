@@ -17,7 +17,7 @@ from agent_framework import (
     Workflow,
     WorkflowOutputEvent,
     WorkflowStatusEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -51,7 +51,7 @@ CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     """Capture a refund request for manual review before processing."""
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
@@ -60,7 +60,7 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
 def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
-    triage = client.create_agent(
+    triage = client.as_agent(
         name="triage_agent",
         instructions=(
             "You are a customer service triage agent. Listen to customer issues and determine "
@@ -69,7 +69,7 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, 
         ),
     )
 
-    refund = client.create_agent(
+    refund = client.as_agent(
         name="refund_agent",
         instructions=(
             "You are a refund specialist. Help customers with refund requests. "
@@ -80,7 +80,7 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, 
         tools=[submit_refund],
     )
 
-    order = client.create_agent(
+    order = client.as_agent(
         name="order_agent",
         instructions=(
             "You are an order tracking specialist. Help customers track their orders. "

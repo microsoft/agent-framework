@@ -61,12 +61,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string agentName = this.GetAgentName();
         bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
-        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
+        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
         ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
         if (actionableMessages.Length > 0)
         {
-            AgentRunResponse filteredResponse =
+            AgentResponse filteredResponse =
                 new(actionableMessages)
                 {
                     AdditionalProperties = agentResponse.AdditionalProperties,
@@ -137,7 +137,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return userInput?.ToChatMessages();
     }
 
-    private static IEnumerable<ChatMessage> FilterActionableContent(AgentRunResponse agentResponse)
+    private static IEnumerable<ChatMessage> FilterActionableContent(AgentResponse agentResponse)
     {
         HashSet<string> functionResultIds =
             [.. agentResponse.Messages

@@ -14,7 +14,7 @@ from agent_framework import (
     FunctionApprovalResponseContent,
     WorkflowBuilder,
     WorkflowContext,
-    ai_function,
+    tool,
     executor,
     handler,
 )
@@ -53,14 +53,15 @@ Prerequisites:
 """
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_current_date() -> str:
     """Get the current date in YYYY-MM-DD format."""
     # For demonstration purposes, we return a fixed date.
     return "2025-11-07"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_team_members_email_addresses() -> list[dict[str, str]]:
     """Get the email addresses of team members."""
     # In a real implementation, this might query a database or directory service.
@@ -92,7 +93,7 @@ def get_team_members_email_addresses() -> list[dict[str, str]]:
     ]
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_my_information() -> dict[str, str]:
     """Get my personal information."""
     return {
@@ -103,7 +104,7 @@ def get_my_information() -> dict[str, str]:
     }
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 async def read_historical_email_data(
     email_address: Annotated[str, "The email address to read historical data from"],
     start_date: Annotated[str, "The start date in YYYY-MM-DD format"],
@@ -165,7 +166,7 @@ async def read_historical_email_data(
     return [email for email in emails if start_date <= email["date"] <= end_date]
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 async def send_email(
     to: Annotated[str, "The recipient email address"],
     subject: Annotated[str, "The email subject"],
@@ -208,12 +209,12 @@ async def conclude_workflow(
     ctx: WorkflowContext[Never, str],
 ) -> None:
     """Conclude the workflow by yielding the final email response."""
-    await ctx.yield_output(email_response.agent_run_response.text)
+    await ctx.yield_output(email_response.agent_response.text)
 
 
 def create_email_writer_agent() -> ChatAgent:
     """Create the Email Writer agent with tools that require approval."""
-    return OpenAIChatClient().create_agent(
+    return OpenAIChatClient().as_agent(
         name="Email Writer",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
         # tools with `approval_mode="always_require"` will trigger approval requests

@@ -33,7 +33,7 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
 
             if (isWorkflowConversation)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, new AgentRunResponse([.. inputMessages])), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, new AgentResponse([.. inputMessages])), cancellationToken).ConfigureAwait(false);
             }
         }
 

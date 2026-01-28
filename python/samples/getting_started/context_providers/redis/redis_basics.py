@@ -31,12 +31,14 @@ import asyncio
 import os
 
 from agent_framework import ChatMessage, Role
+from agent_framework import tool
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_redis._provider import RedisProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.
 
@@ -178,14 +180,14 @@ async def main() -> None:
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_providers=provider,
+        context_provider=provider,
     )
 
     # Teach a user preference; the agent writes this to the provider's memory
@@ -220,14 +222,14 @@ async def main() -> None:
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
             "Before answering, always check for stored context"
         ),
         tools=search_flights,
-        context_providers=provider,
+        context_provider=provider,
     )
     # Invoke the tool; outputs become part of memory/context
     query = "Are there any flights from new york city (jfk) to la? Give me details"

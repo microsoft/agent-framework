@@ -24,16 +24,16 @@ public class RepresentationTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override AgentThread GetNewThread()
+        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
 
@@ -85,7 +85,7 @@ public class RepresentationTests
     [Fact]
     public async Task Test_SpecializedExecutor_InfosAsync()
     {
-        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
+        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent(), new()));
         await RunExecutorBindingInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 

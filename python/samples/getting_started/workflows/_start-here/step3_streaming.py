@@ -13,6 +13,7 @@ from agent_framework import (
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
+    tool,
 )
 from agent_framework._workflows._events import WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
@@ -52,7 +53,7 @@ class Writer(Executor):
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
         # Create a domain specific agent using your configured AzureOpenAIChatClient.
-        self.agent = chat_client.create_agent(
+        self.agent = chat_client.as_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -89,7 +90,7 @@ class Reviewer(Executor):
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        self.agent = chat_client.create_agent(
+        self.agent = chat_client.as_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),

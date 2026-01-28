@@ -18,7 +18,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallStartEvent,
 )
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
@@ -39,7 +39,7 @@ class TaskStep(BaseModel):
     status: StepStatus = Field(default=StepStatus.PENDING, description="The status of the step")
 
 
-@ai_function
+@tool
 def generate_task_steps(steps: list[TaskStep]) -> str:
     """Generate a list of task steps for completing a task.
 
@@ -52,7 +52,7 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return "Steps generated."
 
 
-def _create_task_steps_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
     """Create the task steps agent using tool-based approach for streaming.
 
     Args:
@@ -61,7 +61,7 @@ def _create_task_steps_agent(chat_client: ChatClientProtocol) -> AgentFrameworkA
     Returns:
         A configured AgentFrameworkAgent instance
     """
-    agent = ChatAgent(
+    agent = ChatAgent[Any](
         name="task_steps_agent",
         instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
 
@@ -221,7 +221,6 @@ class TaskStepsAgentWithExecution:
             chat_client = chat_agent.chat_client  # type: ignore
 
             # Build messages for summary call
-            from agent_framework._types import ChatMessage, TextContent
 
             original_messages = input_data.get("messages", [])
 
@@ -234,7 +233,7 @@ class TaskStepsAgentWithExecution:
                         messages.append(
                             ChatMessage(
                                 role=msg.get("role", "user"),
-                                contents=[TextContent(text=content_str)],
+                                contents=[Content.from_text(text=content_str)],
                             )
                         )
                 elif isinstance(msg, ChatMessage):
@@ -245,7 +244,7 @@ class TaskStepsAgentWithExecution:
                 ChatMessage(
                     role="user",
                     contents=[
-                        TextContent(
+                        Content.from_text(
                             text="The steps have been successfully executed. Provide a brief one-sentence summary."
                         )
                     ],
@@ -331,7 +330,7 @@ class TaskStepsAgentWithExecution:
             yield run_finished_event
 
 
-def task_steps_agent_wrapped(chat_client: ChatClientProtocol) -> TaskStepsAgentWithExecution:
+def task_steps_agent_wrapped(chat_client: ChatClientProtocol[Any]) -> TaskStepsAgentWithExecution:
     """Create a task steps agent with execution simulation.
 
     Args:

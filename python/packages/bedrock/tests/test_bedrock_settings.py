@@ -6,14 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import (
-    AIFunction,
     ChatMessage,
     ChatOptions,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
+    FunctionTool,
     Role,
-    TextContent,
-    ToolMode,
 )
 from pydantic import BaseModel
 
@@ -45,11 +42,14 @@ def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
 def test_build_request_includes_tool_config() -> None:
     client = _build_client()
 
-    tool = AIFunction(name="get_weather", description="desc", func=_dummy_weather, input_model=_WeatherArgs)
-    options = ChatOptions(tools=[tool], tool_choice=ToolMode.REQUIRED("get_weather"))
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="hi")])]
+    tool = FunctionTool(name="get_weather", description="desc", func=_dummy_weather, input_model=_WeatherArgs)
+    options = {
+        "tools": [tool],
+        "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
+    }
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="hi")])]
 
-    request = client._build_converse_request(messages, options)
+    request = client._prepare_options(messages, options)
 
     assert request["toolConfig"]["tools"][0]["toolSpec"]["name"] == "get_weather"
     assert request["toolConfig"]["toolChoice"] == {"tool": {"name": "get_weather"}}
@@ -57,20 +57,22 @@ def test_build_request_includes_tool_config() -> None:
 
 def test_build_request_serializes_tool_history() -> None:
     client = _build_client()
-    options = ChatOptions()
+    options: ChatOptions = {}
     messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="how's weather?")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="how's weather?")]),
         ChatMessage(
             role=Role.ASSISTANT,
-            contents=[FunctionCallContent(call_id="call-1", name="get_weather", arguments='{"location": "SEA"}')],
+            contents=[
+                Content.from_function_call(call_id="call-1", name="get_weather", arguments='{"location": "SEA"}')
+            ],
         ),
         ChatMessage(
             role=Role.TOOL,
-            contents=[FunctionResultContent(call_id="call-1", result={"answer": "72F"})],
+            contents=[Content.from_function_result(call_id="call-1", result={"answer": "72F"})],
         ),
     ]
 
-    request = client._build_converse_request(messages, options)
+    request = client._prepare_options(messages, options)
     assistant_block = request["messages"][1]["content"][0]["toolUse"]
     result_block = request["messages"][2]["content"][0]["toolResult"]
 
@@ -99,9 +101,9 @@ def test_process_response_parses_tool_use_and_result() -> None:
     chat_response = client._process_converse_response(response)
     contents = chat_response.messages[0].contents
 
-    assert isinstance(contents[0], FunctionCallContent)
+    assert contents[0].type == "function_call"
     assert contents[0].name == "get_weather"
-    assert isinstance(contents[1], TextContent)
+    assert contents[1].type == "text"
     assert chat_response.finish_reason == client._map_finish_reason("tool_use")
 
 
@@ -129,5 +131,5 @@ def test_process_response_parses_tool_result() -> None:
     chat_response = client._process_converse_response(response)
     contents = chat_response.messages[0].contents
 
-    assert isinstance(contents[0], FunctionResultContent)
+    assert contents[0].type == "function_result"
     assert contents[0].result == {"answer": 42}

@@ -35,9 +35,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     }
 
     /// <inheritdoc/>
-    public async Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken)
+    public async Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken)
     {
-        List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, threadId, activity, purviewSettings, userId, cancellationToken).ConfigureAwait(false);
+        List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, sessionId, activity, purviewSettings, userId, cancellationToken).ConfigureAwait(false);
 
         bool shouldBlock = false;
         string? resolvedUserId = null;
@@ -93,13 +93,13 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// Transform a list of ChatMessages into a list of ProcessContentRequests.
     /// </summary>
     /// <param name="messages">The messages to transform.</param>
-    /// <param name="threadId">The id of the message thread.</param>
+    /// <param name="sessionId">The id of the message session.</param>
     /// <param name="activity">The activity performed on the content.</param>
     /// <param name="settings">The settings used for purview integration.</param>
     /// <param name="userId">The entra id of the user who made the interaction.</param>
     /// <param name="cancellationToken">The cancellation token used to cancel async operations.</param>
     /// <returns>A list of process content requests.</returns>
-    private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
+    private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = [];
         TokenInfo? tokenInfo = null;
@@ -123,7 +123,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             ContentBase content = new PurviewTextContent(message.Text);
             ProcessConversationMetadata conversationmetadata = new(content, messageId, false, $"Agent Framework Message {messageId}")
             {
-                CorrelationId = threadId ?? Guid.NewGuid().ToString()
+                CorrelationId = sessionId ?? Guid.NewGuid().ToString()
             };
             ActivityMetadata activityMetadata = new(activity);
             PolicyLocation policyLocation;

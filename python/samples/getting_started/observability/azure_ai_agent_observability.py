@@ -7,6 +7,7 @@ from typing import Annotated
 
 import dotenv
 from agent_framework import ChatAgent
+from agent_framework import tool
 from agent_framework.azure import AzureAIClient
 from agent_framework.observability import get_tracer
 from azure.ai.projects.aio import AIProjectClient
@@ -28,7 +29,8 @@ for this sample to work.
 # For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
 dotenv.load_dotenv()
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -64,7 +66,7 @@ async def main():
             thread = agent.get_new_thread()
             for question in questions:
                 print(f"\nUser: {question}")
-                print(f"{agent.display_name}: ", end="")
+                print(f"{agent.name}: ", end="")
                 async for update in agent.run_stream(
                     question,
                     thread=thread,

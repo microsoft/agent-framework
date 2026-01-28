@@ -26,6 +26,7 @@ from agent_framework import (
     get_checkpoint_summary,
     handler,
     response_handler,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -127,7 +128,7 @@ class ReviewGateway(Executor):
         await ctx.request_info(
             request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
-                draft=response.agent_run_response.text,
+                draft=response.agent_response.text,
                 iteration=self._iteration,
             ),
             response_type=str,
@@ -178,7 +179,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     workflow_builder = (
         WorkflowBuilder(max_iterations=6)
         .register_agent(
-            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
                 instructions="Write concise, warm release notes that sound human and helpful.",
                 # The agent name is stable across runs which keeps checkpoints deterministic.
                 name="writer",

@@ -31,8 +31,8 @@ AIAgent agent2 = await persistentAgentsClient.CreateAIAgentAsync(
     instructions: JokerInstructions);
 
 // You can then invoke the agent like any other AIAgent.
-AgentThread thread = agent1.GetNewThread();
-Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", thread));
+AgentSession session = await agent1.GetNewSessionAsync();
+Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", session));
 
 // Cleanup for sample purposes.
 await persistentAgentsClient.Administration.DeleteAgentAsync(agent1.Id);

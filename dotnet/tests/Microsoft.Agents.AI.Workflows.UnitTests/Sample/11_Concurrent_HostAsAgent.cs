@@ -33,14 +33,14 @@ internal static class Step11EntryPoint
     {
         AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
 
-        AgentThread thread = hostAgent.GetNewThread();
+        AgentSession session = await hostAgent.GetNewSessionAsync();
         foreach (string input in inputs)
         {
-            AgentRunResponse response;
+            AgentResponse response;
             ResponseContinuationToken? continuationToken = null;
             do
             {
-                response = await hostAgent.RunAsync(input, thread, new AgentRunOptions { ContinuationToken = continuationToken });
+                response = await hostAgent.RunAsync(input, session, new AgentRunOptions { ContinuationToken = continuationToken });
             } while ((continuationToken = response.ContinuationToken) is { });
 
             foreach (ChatMessage message in response.Messages)

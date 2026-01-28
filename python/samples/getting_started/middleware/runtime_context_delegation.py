@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext, ai_function, function_middleware
+from agent_framework import FunctionInvocationContext, tool, function_middleware
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -81,7 +81,8 @@ class SessionContextContainer:
 runtime_context = SessionContextContainer()
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def send_email(
     to: Annotated[str, Field(description="Recipient email address")],
     subject: Annotated[str, Field(description="Email subject line")],
@@ -112,7 +113,7 @@ async def send_email(
     return f"Email sent to {to} from user {user_id} (tenant: {tenant}). Subject: '{subject}'"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 async def send_notification(
     message: Annotated[str, Field(description="Notification message to send")],
     priority: Annotated[str, Field(description="Priority level: low, medium, high")] = "medium",
@@ -147,7 +148,7 @@ async def pattern_1_single_agent_with_closure() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-mini")
 
     # Create agent with both tools and shared context via middleware
-    communication_agent = client.create_agent(
+    communication_agent = client.as_agent(
         name="communication_agent",
         instructions=(
             "You are a communication assistant that can send emails and notifications. "
@@ -241,7 +242,7 @@ async def pattern_1_single_agent_with_closure() -> None:
 
 
 # Create tools for sub-agents (these will use kwargs propagation)
-@ai_function
+@tool(approval_mode="never_require")
 async def send_email_v2(
     to: Annotated[str, Field(description="Recipient email")],
     subject: Annotated[str, Field(description="Subject")],
@@ -253,7 +254,7 @@ async def send_email_v2(
     return f"Email sent to {to} with subject '{subject}'"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 async def send_sms(
     phone: Annotated[str, Field(description="Phone number")],
     message: Annotated[str, Field(description="SMS message")],
@@ -294,14 +295,14 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-mini")
 
     # Create specialized sub-agents
-    email_agent = client.create_agent(
+    email_agent = client.as_agent(
         name="email_agent",
         instructions="You send emails using the send_email_v2 tool.",
         tools=[send_email_v2],
         middleware=[email_kwargs_tracker],
     )
 
-    sms_agent = client.create_agent(
+    sms_agent = client.as_agent(
         name="sms_agent",
         instructions="You send SMS messages using the send_sms tool.",
         tools=[send_sms],
@@ -309,7 +310,7 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
     )
 
     # Create coordinator that delegates to sub-agents
-    coordinator = client.create_agent(
+    coordinator = client.as_agent(
         name="coordinator",
         instructions=(
             "You coordinate communication tasks. "
@@ -377,7 +378,7 @@ class AuthContextMiddleware:
         await next(context)
 
 
-@ai_function
+@tool(approval_mode="never_require")
 async def protected_operation(operation: Annotated[str, Field(description="Operation to perform")]) -> str:
     """Protected operation that requires authentication."""
     return f"Executed protected operation: {operation}"
@@ -396,7 +397,7 @@ async def pattern_3_hierarchical_with_middleware() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-mini")
 
     # Sub-agent with validation middleware
-    protected_agent = client.create_agent(
+    protected_agent = client.as_agent(
         name="protected_agent",
         instructions="You perform protected operations that require authentication.",
         tools=[protected_operation],
@@ -404,7 +405,7 @@ async def pattern_3_hierarchical_with_middleware() -> None:
     )
 
     # Coordinator delegates to protected agent
-    coordinator = client.create_agent(
+    coordinator = client.as_agent(
         name="coordinator",
         instructions="You coordinate protected operations. Delegate to protected_executor.",
         tools=[
