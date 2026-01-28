@@ -155,7 +155,7 @@ public class AgentResponseUpdate
     /// except for the last update, for which the token will be <see langword="null"/>.
     /// <para>
     /// This property should be used for stream resumption, where the continuation token of the latest received update should be
-    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
+    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentSession?, AgentRunOptions?, System.Threading.CancellationToken)"/>
     /// to resume streaming from the point of interruption.
     /// </para>
     /// </remarks>

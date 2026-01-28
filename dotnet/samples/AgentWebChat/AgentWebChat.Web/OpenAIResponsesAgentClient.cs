@@ -18,7 +18,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
     public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
-        string? threadId = null,
+        string? sessionId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         OpenAIClientOptions options = new()
@@ -30,7 +30,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
         var openAiClient = new ResponsesClient(model: agentName, credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
         var chatOptions = new ChatOptions()
         {
-            ConversationId = threadId
+            ConversationId = sessionId
         };
 
         await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))

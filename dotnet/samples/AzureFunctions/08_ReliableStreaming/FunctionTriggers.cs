@@ -94,15 +94,15 @@ public sealed class FunctionTriggers
 
         AIAgent agentProxy = durableClient.AsDurableAgentProxy(context, "TravelPlanner");
 
-        // Create a new agent thread
-        AgentThread thread = await agentProxy.GetNewThreadAsync(cancellationToken);
-        string agentSessionId = thread.GetService<AgentSessionId>().ToString();
+        // Create a new agent session
+        AgentSession session = await agentProxy.GetNewSessionAsync(cancellationToken);
+        string agentSessionId = session.GetService<AgentSessionId>().ToString();
 
         this._logger.LogInformation("Creating new agent session: {AgentSessionId}", agentSessionId);
 
         // Run the agent in the background (fire-and-forget)
         DurableAgentRunOptions options = new() { IsFireAndForget = true };
-        await agentProxy.RunAsync(prompt, thread, options, cancellationToken);
+        await agentProxy.RunAsync(prompt, session, options, cancellationToken);
 
         this._logger.LogInformation("Agent run started for session: {AgentSessionId}", agentSessionId);
 

@@ -59,7 +59,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
 {
     // Get the writer agent
     DurableAIAgent writerAgent = context.GetAgent(WriterAgentName);
-    AgentThread writerThread = await writerAgent.GetNewThreadAsync();
+    AgentSession writerSession = await writerAgent.GetNewSessionAsync();
 
     // Set initial status
     context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
@@ -67,7 +67,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
     // Step 1: Generate initial content
     AgentResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
         message: $"Write a short article about '{input.Topic}'.",
-        thread: writerThread);
+        session: writerSession);
     GeneratedContent content = writerResponse.Result;
 
     // Human-in-the-loop iteration - we set a maximum number of attempts to avoid infinite loops
@@ -141,7 +141,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
                 
                 Human Feedback: {humanResponse.Feedback}
                 """,
-            thread: writerThread);
+            session: writerSession);
 
         content = writerResponse.Result;
     }
@@ -203,7 +203,7 @@ static async Task<object> GetWorkflowStatusAsync(
     [Description("The instance ID of the workflow to check")] string instanceId,
     [Description("Whether to include detailed information")] bool includeDetails = true)
 {
-    // Get the current agent context using the thread-static property
+    // Get the current agent context using the session-static property
     OrchestrationMetadata? status = await DurableAgentContext.Current.GetOrchestrationStatusAsync(
         instanceId,
         includeDetails);
@@ -298,8 +298,8 @@ Console.ResetColor();
 Console.WriteLine("Enter a topic for the Publisher agent to write about (or 'exit' to quit):");
 Console.WriteLine();
 
-// Create a thread for the conversation
-AgentThread thread = await agentProxy.GetNewThreadAsync();
+// Create a session for the conversation
+AgentSession session = await agentProxy.GetNewSessionAsync();
 
 using CancellationTokenSource cts = new();
 Console.CancelKeyPress += (sender, e) =>
@@ -330,7 +330,7 @@ while (!cts.Token.IsCancellationRequested)
     {
         AgentResponse agentResponse = await agentProxy.RunAsync(
             message: input,
-            thread: thread,
+            session: session,
             cancellationToken: cts.Token);
 
         Console.WriteLine(agentResponse.Text);

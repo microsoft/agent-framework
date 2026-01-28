@@ -24,17 +24,17 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
 
     protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken)
             .ToAgentResponseAsync(cancellationToken);
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -43,7 +43,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
 
         // Run the inner agent and intercept any approval requests
         await foreach (var update in this.InnerAgent.RunStreamingAsync(
-            processedMessages, thread, options, cancellationToken).ConfigureAwait(false))
+            processedMessages, session, options, cancellationToken).ConfigureAwait(false))
         {
             yield return ProcessIncomingServerApprovalRequests(update, this._jsonSerializerOptions);
         }

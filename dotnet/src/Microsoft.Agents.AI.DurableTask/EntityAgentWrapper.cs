@@ -23,13 +23,13 @@ internal sealed class EntityAgentWrapper(
 
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         AgentResponse response = await base.RunCoreAsync(
             messages,
-            thread,
+            session,
             this.GetAgentEntityRunOptions(options),
             cancellationToken);
 
@@ -39,13 +39,13 @@ internal sealed class EntityAgentWrapper(
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (AgentResponseUpdate update in base.RunCoreStreamingAsync(
             messages,
-            thread,
+            session,
             this.GetAgentEntityRunOptions(options),
             cancellationToken))
         {
