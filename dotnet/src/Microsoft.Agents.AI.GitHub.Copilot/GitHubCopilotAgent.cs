@@ -13,12 +13,12 @@ using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI.GithubCopilot;
+namespace Microsoft.Agents.AI.GitHub.Copilot;
 
 /// <summary>
 /// Represents an <see cref="AIAgent"/> that uses the GitHub Copilot SDK to provide agentic capabilities.
 /// </summary>
-public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
+public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 {
     private const string DefaultName = "GitHub Copilot Agent";
     private const string DefaultDescription = "An AI agent powered by GitHub Copilot";
@@ -31,7 +31,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly bool _ownsClient;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class.
+    /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
     /// <param name="sessionConfig">Optional session configuration for the agent.</param>
@@ -39,7 +39,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
-    public GithubCopilotAgent(
+    public GitHubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
         bool ownsClient = false,
@@ -58,7 +58,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GithubCopilotAgent"/> class.
+    /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
@@ -67,7 +67,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
-    public GithubCopilotAgent(
+    public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
         string? id = null,
@@ -87,7 +87,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
     /// <inheritdoc/>
     public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
-        => new(new GithubCopilotAgentSession());
+        => new(new GitHubCopilotAgentSession());
 
     /// <summary>
     /// Get a new <see cref="AgentSession"/> instance using an existing session id, to continue that conversation.
@@ -95,14 +95,14 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="sessionId">The session id to continue.</param>
     /// <returns>A new <see cref="AgentSession"/> instance.</returns>
     public ValueTask<AgentSession> GetNewSessionAsync(string sessionId)
-        => new(new GithubCopilotAgentSession() { SessionId = sessionId });
+        => new(new GitHubCopilotAgentSession() { SessionId = sessionId });
 
     /// <inheritdoc/>
     public override ValueTask<AgentSession> DeserializeSessionAsync(
         JsonElement serializedSession,
         JsonSerializerOptions? jsonSerializerOptions = null,
         CancellationToken cancellationToken = default)
-        => new(new GithubCopilotAgentSession(serializedSession, jsonSerializerOptions));
+        => new(new GitHubCopilotAgentSession(serializedSession, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override Task<AgentResponse> RunCoreAsync(
@@ -123,7 +123,7 @@ public sealed class GithubCopilotAgent : AIAgent, IAsyncDisposable
 
         // Ensure we have a valid session
         session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
-        if (session is not GithubCopilotAgentSession typedSession)
+        if (session is not GitHubCopilotAgentSession typedSession)
         {
             throw new InvalidOperationException(
                 $"The provided session type {session.GetType()} is not compatible with the agent. Only GitHub Copilot agent created sessions are supported.");

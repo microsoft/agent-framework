@@ -4,7 +4,7 @@
 GitHub Copilot Agent with MCP Servers
 
 This sample demonstrates how to configure MCP (Model Context Protocol) servers
-with GithubCopilotAgent. It shows both local (stdio) and remote (HTTP) server
+with GitHubCopilotAgent. It shows both local (stdio) and remote (HTTP) server
 configurations, giving the agent access to external tools and data sources.
 
 SECURITY NOTE: MCP servers can expose powerful capabilities. Only configure
@@ -14,7 +14,7 @@ of MCP-related actions.
 
 import asyncio
 
-from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestResult
 
 
@@ -49,7 +49,7 @@ async def main() -> None:
         },
     }
 
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         default_options={
             "instructions": "You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
             "on_permission_request": prompt_permission,

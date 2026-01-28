@@ -1,6 +1,6 @@
 # GitHub Copilot Agent Examples
 
-This directory contains examples demonstrating how to use the `GithubCopilotAgent` from the Microsoft Agent Framework.
+This directory contains examples demonstrating how to use the `GitHubCopilotAgent` from the Microsoft Agent Framework.
 
 > **Security Note**: These examples demonstrate various permission types (shell, read, write, url). Only enable permissions that are necessary for your use case. Each permission grants the agent additional capabilities that could affect your system.
 
@@ -28,7 +28,7 @@ The following environment variables can be configured:
 
 | File | Description |
 |------|-------------|
-| [`github_copilot_basic.py`](github_copilot_basic.py) | The simplest way to create an agent using `GithubCopilotAgent`. Demonstrates both streaming and non-streaming responses with function tools. |
+| [`github_copilot_basic.py`](github_copilot_basic.py) | The simplest way to create an agent using `GitHubCopilotAgent`. Demonstrates both streaming and non-streaming responses with function tools. |
 | [`github_copilot_with_session.py`](github_copilot_with_session.py) | Shows session management with automatic creation, persistence via thread objects, and resuming sessions by ID. |
 | [`github_copilot_with_shell.py`](github_copilot_with_shell.py) | Shows how to enable shell command execution permissions. Demonstrates running system commands like listing files and getting system information. |
 | [`github_copilot_with_file_operations.py`](github_copilot_with_file_operations.py) | Shows how to enable file read and write permissions. Demonstrates reading file contents and creating new files. |

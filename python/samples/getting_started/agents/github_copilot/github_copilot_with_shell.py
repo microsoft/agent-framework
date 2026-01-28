@@ -3,7 +3,7 @@
 """
 GitHub Copilot Agent with Shell Permissions
 
-This sample demonstrates how to enable shell command execution with GithubCopilotAgent.
+This sample demonstrates how to enable shell command execution with GitHubCopilotAgent.
 By providing a permission handler that approves "shell" requests, the agent can execute
 shell commands to perform tasks like listing files, running scripts, or executing system commands.
 
@@ -13,7 +13,7 @@ Shell commands have full access to your system within the permissions of the run
 
 import asyncio
 
-from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 
@@ -34,7 +34,7 @@ def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> Pe
 async def main() -> None:
     print("=== GitHub Copilot Agent with Shell Permissions ===\n")
 
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         default_options={
             "instructions": "You are a helpful assistant that can execute shell commands.",
             "on_permission_request": prompt_permission,
