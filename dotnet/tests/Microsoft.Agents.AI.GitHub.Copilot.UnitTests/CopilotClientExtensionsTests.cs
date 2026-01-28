@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
+namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="CopilotClientExtensions"/> class.
@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
 public sealed class CopilotClientExtensionsTests
 {
     [Fact]
-    public void AsAIAgent_WithAllParameters_ReturnsGithubCopilotAgentWithSpecifiedProperties()
+    public void AsAIAgent_WithAllParameters_ReturnsGitHubCopilotAgentWithSpecifiedProperties()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
@@ -27,14 +27,14 @@ public sealed class CopilotClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<GithubCopilotAgent>(agent);
+        Assert.IsType<GitHubCopilotAgent>(agent);
         Assert.Equal(TestId, agent.Id);
         Assert.Equal(TestName, agent.Name);
         Assert.Equal(TestDescription, agent.Description);
     }
 
     [Fact]
-    public void AsAIAgent_WithMinimalParameters_ReturnsGithubCopilotAgent()
+    public void AsAIAgent_WithMinimalParameters_ReturnsGitHubCopilotAgent()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
@@ -44,7 +44,7 @@ public sealed class CopilotClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<GithubCopilotAgent>(agent);
+        Assert.IsType<GitHubCopilotAgent>(agent);
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public sealed class CopilotClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<GithubCopilotAgent>(agent);
+        Assert.IsType<GitHubCopilotAgent>(agent);
     }
 
     [Fact]
@@ -83,6 +83,6 @@ public sealed class CopilotClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<GithubCopilotAgent>(agent);
+        Assert.IsType<GitHubCopilotAgent>(agent);
     }
 }

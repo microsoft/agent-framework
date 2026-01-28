@@ -5,12 +5,12 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Microsoft.Agents.AI.GithubCopilot;
+namespace Microsoft.Agents.AI.GitHub.Copilot;
 
 /// <summary>
 /// Provides utility methods and configurations for JSON serialization operations within the GitHub Copilot agent implementation.
 /// </summary>
-internal static partial class GithubCopilotJsonUtilities
+internal static partial class GitHubCopilotJsonUtilities
 {
     /// <summary>
     /// Gets the default <see cref="JsonSerializerOptions"/> instance used for JSON serialization operations.
@@ -42,7 +42,7 @@ internal static partial class GithubCopilotJsonUtilities
         UseStringEnumConverter = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
-    [JsonSerializable(typeof(GithubCopilotAgentSession.State))]
+    [JsonSerializable(typeof(GitHubCopilotAgentSession.State))]
     [ExcludeFromCodeCoverage]
     private sealed partial class JsonContext : JsonSerializerContext;
 }

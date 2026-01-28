@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -38,9 +38,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
@@ -551,7 +551,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIClientOptions | None = None,
+        default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[Middleware] | None = None,
