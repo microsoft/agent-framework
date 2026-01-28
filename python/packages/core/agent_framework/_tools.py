@@ -656,7 +656,7 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
         self._cached_parameters: dict[str, Any] | None = None
-        self.approval_mode = approval_mode or "always_require"
+        self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
             raise ValueError("max_invocations must be at least 1 or None.")
         if max_invocation_exceptions is not None and max_invocation_exceptions < 1:
