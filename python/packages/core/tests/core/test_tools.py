@@ -67,7 +67,7 @@ def test_tool_decorator_without_args():
         "type": "object",
     }
     assert test_tool(1, 2) == 3
-    assert test_tool.approval_mode == "always_require"
+    assert test_tool.approval_mode == "never_require"
 
 
 def test_tool_without_args():
