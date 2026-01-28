@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
 
 namespace Microsoft.Agents.AI.DurableTask;
@@ -7,6 +8,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <summary>
 /// Provides configuration options for managing durable workflows within an application.
 /// </summary>
+[DebuggerDisplay("Workflows = {Workflows.Count}")]
 public sealed class DurableWorkflowOptions
 {
     private readonly Dictionary<string, Workflow> _workflows = new(StringComparer.OrdinalIgnoreCase);

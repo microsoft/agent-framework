@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
 
 namespace Microsoft.Agents.AI.DurableTask;
@@ -10,6 +11,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <param name="ExecutorId">The unique identifier of the executor.</param>
 /// <param name="IsAgenticExecutor">Indicates whether this executor is an agentic executor.</param>
 /// <param name="RequestPort">The request port if this executor is a request port executor; otherwise, null.</param>
+[DebuggerDisplay("{ExecutorId}, Agentic = {IsAgenticExecutor}, HITL = {IsRequestPortExecutor}")]
 internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor, RequestPort? RequestPort = null)
 {
     /// <summary>
@@ -25,6 +27,7 @@ internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExe
 /// <param name="Level">The level number (0-based, starting from the root executor).</param>
 /// <param name="Executors">The executors that can run in parallel at this level.</param>
 /// <param name="IsFanIn">Indicates if this level is a Fan-In point (has executors with multiple predecessors).</param>
+[DebuggerDisplay("Level {Level}: {Executors.Count} executor(s), FanIn = {IsFanIn}")]
 internal sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
 
 /// <summary>
@@ -118,13 +121,6 @@ internal static class WorkflowHelper
         // Detect back-edges using DFS from start executor
         HashSet<(string Source, string Target)> backEdges = DetectBackEdges(workflow.StartExecutorId, successors);
 
-        // Mark cycles in plan
-        plan.HasCycles = backEdges.Count > 0;
-        foreach ((string source, string target) in backEdges)
-        {
-            plan.BackEdges.Add((source, target));
-        }
-
         // Calculate in-degrees, EXCLUDING back-edges
         int[] inDegree = new int[executors.Count];
         foreach (string executorId in executors.Keys)
@@ -145,7 +141,7 @@ internal static class WorkflowHelper
             plan.EdgeConditions[condition.Key] = condition.Value;
         }
 
-        // Store the graph structure in the plan (reuse the built lists directly)
+        // Store the graph structure in the plan
         foreach (string executorId in executors.Keys)
         {
             plan.Predecessors[executorId] = predecessors[executorId];

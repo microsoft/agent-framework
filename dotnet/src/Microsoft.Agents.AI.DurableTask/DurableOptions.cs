@@ -1,10 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
+
 namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
 /// Provides configuration options for durable agents and workflows.
 /// </summary>
+[DebuggerDisplay("Workflows = {Workflows.Workflows.Count}, Agents = {Agents.AgentCount}")]
 public sealed class DurableOptions
 {
     /// <summary>

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
 
 namespace Microsoft.Agents.AI.DurableTask;
@@ -11,6 +12,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// This is the durable equivalent of <see cref="WorkflowOutputEvent"/> since that class has an internal
 /// constructor not accessible from outside the Workflows assembly.
 /// </remarks>
+[DebuggerDisplay("Yielded by {ExecutorId}: {Output}")]
 public sealed class DurableYieldedOutputEvent : WorkflowEvent
 {
     /// <summary>

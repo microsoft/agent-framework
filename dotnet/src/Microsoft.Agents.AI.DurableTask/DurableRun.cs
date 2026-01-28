@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
@@ -14,6 +15,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// This class provides a similar API to <see cref="Run"/> but for workflows executed as durable orchestrations.
 /// Events are received by raising external events to the orchestration and can be streamed to the caller.
 /// </remarks>
+[DebuggerDisplay("{WorkflowName} ({InstanceId})")]
 public sealed class DurableRun : IRun
 {
     private readonly DurableTaskClient _client;

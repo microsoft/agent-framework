@@ -1,10 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
+
 namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
 /// Represents the complete execution plan for a workflow, including parallel execution levels.
 /// </summary>
+[DebuggerDisplay("Start = {StartExecutorId}, Levels = {Levels.Count}")]
 internal sealed class WorkflowExecutionPlan
 {
     /// <summary>
@@ -32,27 +35,6 @@ internal sealed class WorkflowExecutionPlan
     /// Maps executor IDs to their output types (for proper deserialization during condition evaluation).
     /// </summary>
     public Dictionary<string, Type?> ExecutorOutputTypes { get; } = [];
-
-    /// <summary>
-    /// Gets whether this workflow has any parallel execution opportunities.
-    /// </summary>
-    public bool HasParallelism => this.Levels.Any(l => l.Executors.Count > 1);
-
-    /// <summary>
-    /// Gets whether this workflow has any Fan-In points.
-    /// </summary>
-    public bool HasFanIn => this.Levels.Any(l => l.IsFanIn);
-
-    /// <summary>
-    /// Gets or sets whether this workflow contains cycles requiring iterative message-driven execution.
-    /// </summary>
-    public bool HasCycles { get; set; }
-
-    /// <summary>
-    /// Gets the back-edges that create cycles in the workflow graph.
-    /// These edges are excluded from topological level computation but are followed during message-driven execution.
-    /// </summary>
-    public List<(string SourceId, string TargetId)> BackEdges { get; } = [];
 
     /// <summary>
     /// Gets or sets the starting executor ID for the workflow.

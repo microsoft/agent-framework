@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
@@ -14,6 +15,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <param name="RequestType">The full type name of the request type.</param>
 /// <param name="ResponseType">The full type name of the expected response type.</param>
 /// <param name="RequestPort">The request port definition, if available.</param>
+[DebuggerDisplay("RequestPort = {RequestPortId}")]
 public sealed class DurableRequestInfoEvent(
     string RequestPortId,
     string Input,

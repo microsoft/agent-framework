@@ -366,28 +366,13 @@ internal class DurableWorkflowRunner
     /// <item><description>Maximum superstep limit is reached (safety limit)</description></item>
     /// </list>
     /// <para>
-    /// <strong>Message Routing Rules:</strong>
+    /// <strong>Fan-In Handling:</strong>
     /// </para>
-    /// <list type="number">
-    /// <item>
-    /// <description>
-    /// Messages sent via <c>SendMessageAsync</c> take priority and include explicit type information.
-    /// This is the primary mechanism for void-returning executors.
-    /// </description>
-    /// </item>
-    /// <item>
-    /// <description>
-    /// If no messages were sent explicitly, the executor's return value is routed to successors.
-    /// The type information comes from <see cref="WorkflowExecutionPlan.ExecutorOutputTypes"/>.
-    /// </description>
-    /// </item>
-    /// <item>
-    /// <description>
-    /// Edge conditions are evaluated before routing. If a condition returns false, the message
-    /// is not forwarded to that particular successor.
-    /// </description>
-    /// </item>
-    /// </list>
+    /// <para>
+    /// For executors with multiple predecessors (Fan-In), the implementation waits for all predecessor
+    /// results before invoking the executor. If the executor accepts an array type, all messages are
+    /// aggregated into a JSON array.
+    /// </para>
     /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
@@ -441,54 +426,93 @@ internal class DurableWorkflowRunner
             activeExecutors.Count,
             string.Join(", ", activeExecutors));
 
-            // Process each active executor
+            // Prepare execution tasks for all active executors (for parallel dispatch)
+            List<(string ExecutorId, string Input, string? InputTypeName, WorkflowExecutorInfo Info)> executorInputs = [];
+
             foreach (string executorId in activeExecutors)
             {
                 Queue<(string Message, string? InputTypeName)> queue = messageQueues[executorId];
 
-                // Process all messages for this executor in this superstep
-                while (queue.Count > 0)
+                // Check if this is a Fan-In executor that expects aggregated input
+                bool isFanIn = plan.Predecessors.TryGetValue(executorId, out List<string>? predecessors) && predecessors.Count > 1;
+
+                string input;
+                string? inputTypeName;
+
+                if (isFanIn && queue.Count > 1)
                 {
-                    (string input, string? inputTypeName) = queue.Dequeue();
-
-                    // Create executor info
-                    WorkflowExecutorInfo executorInfo = CreateExecutorInfo(executorId, executorBindings);
-
-                    // Execute the activity with type information
-                    string rawResult = await this.DispatchExecutorAsync(
-                        context, executorInfo, input, inputTypeName, logger, customStatus, sharedState).ConfigureAwait(true);
-
-                    (string result, List<SentMessageInfo> sentMessages) = UnwrapActivityResult(rawResult, customStatus, sharedState);
-                    lastResults[executorId] = result;
-
-                    // Check for explicit halt request (via RequestHaltAsync)
-                    if (HasHaltBeenRequested(customStatus, executorId))
+                    // Fan-In: Aggregate all messages into a JSON array
+                    List<string> messages = [];
+                    while (queue.Count > 0)
                     {
-                        haltRequested = true;
-                        finalOutput = result;
-                        logger.LogDebug("Halt requested by executor {ExecutorId}", executorId);
-                        break;
+                        (string msg, _) = queue.Dequeue();
+                        messages.Add(msg);
                     }
 
-                    // Route messages sent via SendMessageAsync (takes priority for void-returning executors)
-                    if (sentMessages.Count > 0)
+                    input = AggregateMessagesToJsonArray(messages);
+                    inputTypeName = typeof(string[]).FullName;
+
+                    logger.LogDebug("Fan-In executor {ExecutorId}: aggregated {Count} messages", executorId, messages.Count);
+                }
+                else
+                {
+                    // Normal case: process single message
+                    (input, inputTypeName) = queue.Dequeue();
+                }
+
+                WorkflowExecutorInfo executorInfo = CreateExecutorInfo(executorId, executorBindings);
+                executorInputs.Add((executorId, input, inputTypeName, executorInfo));
+            }
+
+            // Dispatch all executors in parallel by starting all tasks first, then awaiting together
+            List<Task<string>> executorTasks = [];
+            foreach ((string executorId, string input, string? inputTypeName, WorkflowExecutorInfo executorInfo) in executorInputs)
+            {
+                // Start the task without awaiting - this enables parallel dispatch
+                Task<string> task = this.DispatchExecutorAsync(
+                    context, executorInfo, input, inputTypeName, logger, customStatus, sharedState);
+                executorTasks.Add(task);
+            }
+
+            // Wait for all executors to complete in parallel
+            string[] rawResults = await Task.WhenAll(executorTasks).ConfigureAwait(true);
+
+            // Process results and route messages
+            for (int i = 0; i < executorInputs.Count; i++)
+            {
+                string executorId = executorInputs[i].ExecutorId;
+                string rawResult = rawResults[i];
+
+                (string result, List<SentMessageInfo> sentMessages) = UnwrapActivityResult(rawResult, customStatus, sharedState);
+                lastResults[executorId] = result;
+
+                // Check for explicit halt request (via RequestHaltAsync)
+                if (HasHaltBeenRequested(customStatus, executorId))
+                {
+                    haltRequested = true;
+                    finalOutput = result;
+                    logger.LogDebug("Halt requested by executor {ExecutorId}", executorId);
+                    break;
+                }
+
+                // Route messages sent via SendMessageAsync (takes priority for void-returning executors)
+                if (sentMessages.Count > 0)
+                {
+                    foreach (SentMessageInfo sentMessage in sentMessages)
                     {
-                        foreach (SentMessageInfo sentMessage in sentMessages)
+                        if (!string.IsNullOrEmpty(sentMessage.Message))
                         {
-                            if (!string.IsNullOrEmpty(sentMessage.Message))
-                            {
-                                // Route to successors with the sent message's type
-                                RouteMessageToSuccessors(
-                                    executorId, sentMessage.Message, sentMessage.TypeName, plan, messageQueues, logger);
-                            }
+                            // Route to successors with the sent message's type
+                            RouteMessageToSuccessors(
+                                executorId, sentMessage.Message, sentMessage.TypeName, plan, messageQueues, logger);
                         }
                     }
-                    else if (!string.IsNullOrEmpty(result))
-                    {
-                        // Route executor's return value to successor executors via edges (for non-void executors)
-                        RouteMessageToSuccessors(
-                            executorId, result, plan, messageQueues, logger);
-                    }
+                }
+                else if (!string.IsNullOrEmpty(result))
+                {
+                    // Route executor's return value to successor executors via edges (for non-void executors)
+                    RouteMessageToSuccessors(
+                        executorId, result, plan, messageQueues, logger);
                 }
 
                 if (haltRequested)
@@ -507,6 +531,18 @@ internal class DurableWorkflowRunner
 
         // Return final output or last result from output executors
         return finalOutput ?? DetermineFinalResult(workflow, lastResults, customStatus);
+    }
+
+    /// <summary>
+    /// Aggregates multiple messages into a JSON array.
+    /// </summary>
+    /// <param name="messages">The messages to aggregate.</param>
+    /// <returns>A JSON array string containing all messages.</returns>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing string array.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing string array.")]
+    private static string AggregateMessagesToJsonArray(List<string> messages)
+    {
+        return JsonSerializer.Serialize(messages);
     }
 
     /// <summary>

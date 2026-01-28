@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
 
 namespace Microsoft.Agents.AI.DurableTask;
@@ -7,6 +8,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <summary>
 /// Event raised when a durable workflow fails.
 /// </summary>
+[DebuggerDisplay("Failed: {ErrorMessage}")]
 public sealed class DurableWorkflowFailedEvent : WorkflowEvent
 {
     /// <summary>

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -16,6 +17,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// Events are detected by monitoring the orchestration status for <see cref="RequestPort"/> executors that are waiting
 /// for external input (human-in-the-loop scenarios).
 /// </remarks>
+[DebuggerDisplay("{WorkflowName} ({InstanceId})")]
 public sealed class DurableStreamingRun : IStreamingRun
 {
     private readonly DurableTaskClient _client;
