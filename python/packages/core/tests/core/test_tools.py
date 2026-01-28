@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
 import pytest
@@ -8,12 +8,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import BaseModel, ValidationError
 
 from agent_framework import (
-    AIFunction,
+    Content,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedImageGenerationTool,
     HostedMCPTool,
     ToolProtocol,
-    ai_function,
+    tool,
 )
 from agent_framework._tools import (
     _build_pydantic_model_from_json_schema,
@@ -23,19 +24,19 @@ from agent_framework._tools import (
 from agent_framework.exceptions import ToolException
 from agent_framework.observability import OtelAttr
 
-# region AIFunction and ai_function decorator tests
+# region FunctionTool and tool decorator tests
 
 
-def test_ai_function_decorator():
-    """Test the ai_function decorator."""
+def test_tool_decorator():
+    """Test the tool decorator."""
 
-    @ai_function(name="test_tool", description="A test tool")
+    @tool(name="test_tool", description="A test tool")
     def test_tool(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y
 
     assert isinstance(test_tool, ToolProtocol)
-    assert isinstance(test_tool, AIFunction)
+    assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
     assert test_tool.parameters() == {
@@ -47,16 +48,16 @@ def test_ai_function_decorator():
     assert test_tool(1, 2) == 3
 
 
-def test_ai_function_decorator_without_args():
-    """Test the ai_function decorator."""
+def test_tool_decorator_without_args():
+    """Test the tool decorator."""
 
-    @ai_function
+    @tool
     def test_tool(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y
 
     assert isinstance(test_tool, ToolProtocol)
-    assert isinstance(test_tool, AIFunction)
+    assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
     assert test_tool.parameters() == {
@@ -66,18 +67,19 @@ def test_ai_function_decorator_without_args():
         "type": "object",
     }
     assert test_tool(1, 2) == 3
+    assert test_tool.approval_mode == "never_require"
 
 
-def test_ai_function_without_args():
-    """Test the ai_function decorator."""
+def test_tool_without_args():
+    """Test the tool decorator."""
 
-    @ai_function
+    @tool
     def test_tool() -> int:
         """A simple function that adds two numbers."""
         return 1 + 2
 
     assert isinstance(test_tool, ToolProtocol)
-    assert isinstance(test_tool, AIFunction)
+    assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
     assert test_tool.parameters() == {
@@ -88,16 +90,16 @@ def test_ai_function_without_args():
     assert test_tool() == 3
 
 
-async def test_ai_function_decorator_with_async():
-    """Test the ai_function decorator with an async function."""
+async def test_tool_decorator_with_async():
+    """Test the tool decorator with an async function."""
 
-    @ai_function(name="async_test_tool", description="An async test tool")
+    @tool(name="async_test_tool", description="An async test tool")
     async def async_test_tool(x: int, y: int) -> int:
         """An async function that adds two numbers."""
         return x + y
 
     assert isinstance(async_test_tool, ToolProtocol)
-    assert isinstance(async_test_tool, AIFunction)
+    assert isinstance(async_test_tool, FunctionTool)
     assert async_test_tool.name == "async_test_tool"
     assert async_test_tool.description == "An async test tool"
     assert async_test_tool.parameters() == {
@@ -109,11 +111,11 @@ async def test_ai_function_decorator_with_async():
     assert (await async_test_tool(1, 2)) == 3
 
 
-def test_ai_function_decorator_in_class():
-    """Test the ai_function decorator."""
+def test_tool_decorator_in_class():
+    """Test the tool decorator."""
 
     class my_tools:
-        @ai_function(name="test_tool", description="A test tool")
+        @tool(name="test_tool", description="A test tool")
         def test_tool(self, x: int, y: int) -> int:
             """A simple function that adds two numbers."""
             return x + y
@@ -121,7 +123,7 @@ def test_ai_function_decorator_in_class():
     test_tool = my_tools().test_tool
 
     assert isinstance(test_tool, ToolProtocol)
-    assert isinstance(test_tool, AIFunction)
+    assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
     assert test_tool.parameters() == {
@@ -133,15 +135,15 @@ def test_ai_function_decorator_in_class():
     assert test_tool(1, 2) == 3
 
 
-def test_ai_function_with_literal_type_parameter():
-    """Test ai_function decorator with Literal type parameter (issue #2891)."""
+def test_tool_with_literal_type_parameter():
+    """Test tool decorator with Literal type parameter (issue #2891)."""
 
-    @ai_function
+    @tool
     def search_flows(category: Literal["Data", "Security", "Network"], issue: str) -> str:
         """Search flows by category."""
         return f"{category}: {issue}"
 
-    assert isinstance(search_flows, AIFunction)
+    assert isinstance(search_flows, FunctionTool)
     schema = search_flows.parameters()
     assert schema == {
         "properties": {
@@ -156,18 +158,18 @@ def test_ai_function_with_literal_type_parameter():
     assert search_flows("Data", "test issue") == "Data: test issue"
 
 
-def test_ai_function_with_literal_type_in_class_method():
-    """Test ai_function decorator with Literal type parameter in a class method (issue #2891)."""
+def test_tool_with_literal_type_in_class_method():
+    """Test tool decorator with Literal type parameter in a class method (issue #2891)."""
 
     class MyTools:
-        @ai_function
+        @tool
         def search_flows(self, category: Literal["Data", "Security", "Network"], issue: str) -> str:
             """Search flows by category."""
             return f"{category}: {issue}"
 
     tools = MyTools()
     search_tool = tools.search_flows
-    assert isinstance(search_tool, AIFunction)
+    assert isinstance(search_tool, FunctionTool)
     schema = search_tool.parameters()
     assert schema == {
         "properties": {
@@ -182,15 +184,15 @@ def test_ai_function_with_literal_type_in_class_method():
     assert search_tool("Security", "test issue") == "Security: test issue"
 
 
-def test_ai_function_with_literal_int_type():
-    """Test ai_function decorator with Literal int type parameter."""
+def test_tool_with_literal_int_type():
+    """Test tool decorator with Literal int type parameter."""
 
-    @ai_function
+    @tool
     def set_priority(priority: Literal[1, 2, 3], task: str) -> str:
         """Set priority for a task."""
         return f"Priority {priority}: {task}"
 
-    assert isinstance(set_priority, AIFunction)
+    assert isinstance(set_priority, FunctionTool)
     schema = set_priority.parameters()
     assert schema == {
         "properties": {
@@ -204,10 +206,10 @@ def test_ai_function_with_literal_int_type():
     assert set_priority(1, "important task") == "Priority 1: important task"
 
 
-def test_ai_function_with_literal_and_annotated():
-    """Test ai_function decorator with Literal type combined with Annotated for description."""
+def test_tool_with_literal_and_annotated():
+    """Test tool decorator with Literal type combined with Annotated for description."""
 
-    @ai_function
+    @tool
     def categorize(
         category: Annotated[Literal["A", "B", "C"], "The category to assign"],
         name: str,
@@ -215,14 +217,14 @@ def test_ai_function_with_literal_and_annotated():
         """Categorize an item."""
         return f"{category}: {name}"
 
-    assert isinstance(categorize, AIFunction)
+    assert isinstance(categorize, FunctionTool)
     schema = categorize.parameters()
     # Literal type inside Annotated should preserve enum values
     assert schema["properties"]["category"]["enum"] == ["A", "B", "C"]
     assert categorize("A", "test") == "A: test"
 
 
-async def test_ai_function_decorator_shared_state():
+async def test_tool_decorator_shared_state():
     """Test that decorated methods maintain shared state across multiple calls and tool usage."""
 
     class StatefulCounter:
@@ -232,20 +234,20 @@ async def test_ai_function_decorator_shared_state():
             self.counter = initial_value
             self.operation_log: list[str] = []
 
-        @ai_function(name="increment", description="Increment the counter")
+        @tool(name="increment", description="Increment the counter")
         def increment(self, amount: int) -> str:
             """Increment the counter by the given amount."""
             self.counter += amount
             self.operation_log.append(f"increment({amount})")
             return f"Counter incremented by {amount}. New value: {self.counter}"
 
-        @ai_function(name="get_value", description="Get the current counter value")
+        @tool(name="get_value", description="Get the current counter value")
         def get_value(self) -> str:
             """Get the current counter value."""
             self.operation_log.append("get_value()")
             return f"Current counter value: {self.counter}"
 
-        @ai_function(name="multiply", description="Multiply the counter")
+        @tool(name="multiply", description="Multiply the counter")
         def multiply(self, factor: int) -> str:
             """Multiply the counter by the given factor."""
             self.counter *= factor
@@ -260,10 +262,10 @@ async def test_ai_function_decorator_shared_state():
     get_value_tool = counter_instance.get_value
     multiply_tool = counter_instance.multiply
 
-    # Verify they are AIFunction instances
-    assert isinstance(increment_tool, AIFunction)
-    assert isinstance(get_value_tool, AIFunction)
-    assert isinstance(multiply_tool, AIFunction)
+    # Verify they are FunctionTool instances
+    assert isinstance(increment_tool, FunctionTool)
+    assert isinstance(get_value_tool, FunctionTool)
+    assert isinstance(multiply_tool, FunctionTool)
 
     # Tool 1 (increment) is used
     result1 = increment_tool(5)
@@ -328,10 +330,10 @@ async def test_ai_function_decorator_shared_state():
     assert counter_instance.counter == 60
 
 
-async def test_ai_function_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter):
-    """Test the ai_function invoke method with telemetry enabled."""
+async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter):
+    """Test the tool invoke method with telemetry enabled."""
 
-    @ai_function(
+    @tool(
         name="telemetry_test_tool",
         description="A test tool for telemetry",
     )
@@ -372,10 +374,10 @@ async def test_ai_function_invoke_telemetry_enabled(span_exporter: InMemorySpanE
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
-async def test_ai_function_invoke_telemetry_sensitive_disabled(span_exporter: InMemorySpanExporter):
-    """Test the ai_function invoke method with telemetry enabled."""
+async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemorySpanExporter):
+    """Test the tool invoke method with telemetry enabled."""
 
-    @ai_function(
+    @tool(
         name="telemetry_test_tool",
         description="A test tool for telemetry",
     )
@@ -415,10 +417,10 @@ async def test_ai_function_invoke_telemetry_sensitive_disabled(span_exporter: In
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
-async def test_ai_function_invoke_ignores_additional_kwargs() -> None:
-    """Ensure ai_function tools drop unknown kwargs when invoked with validated arguments."""
+async def test_tool_invoke_ignores_additional_kwargs() -> None:
+    """Ensure tools drop unknown kwargs when invoked with validated arguments."""
 
-    @ai_function
+    @tool
     async def simple_tool(message: str) -> str:
         """Echo tool."""
         return message.upper()
@@ -435,10 +437,10 @@ async def test_ai_function_invoke_ignores_additional_kwargs() -> None:
     assert result == "HELLO WORLD"
 
 
-async def test_ai_function_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
-    """Test the ai_function invoke method with Pydantic model arguments."""
+async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
+    """Test the tool invoke method with Pydantic model arguments."""
 
-    @ai_function(
+    @tool(
         name="pydantic_test_tool",
         description="A test tool with Pydantic args",
     )
@@ -469,10 +471,10 @@ async def test_ai_function_invoke_telemetry_with_pydantic_args(span_exporter: In
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
 
 
-async def test_ai_function_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
-    """Test the ai_function invoke method with telemetry when an exception occurs."""
+async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
+    """Test the tool invoke method with telemetry when an exception occurs."""
 
-    @ai_function(
+    @tool(
         name="exception_test_tool",
         description="A test tool that raises an exception",
     )
@@ -506,10 +508,10 @@ async def test_ai_function_invoke_telemetry_with_exception(span_exporter: InMemo
     assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
 
 
-async def test_ai_function_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
-    """Test the ai_function invoke method with telemetry on async function."""
+async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
+    """Test the tool invoke method with telemetry on async function."""
 
-    @ai_function(
+    @tool(
         name="async_telemetry_test",
         description="An async test tool for telemetry",
     )
@@ -543,10 +545,10 @@ async def test_ai_function_invoke_telemetry_async_function(span_exporter: InMemo
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
 
 
-async def test_ai_function_invoke_invalid_pydantic_args():
-    """Test the ai_function invoke method with invalid Pydantic model arguments."""
+async def test_tool_invoke_invalid_pydantic_args():
+    """Test the tool invoke method with invalid Pydantic model arguments."""
 
-    @ai_function(name="invalid_args_test", description="A test tool for invalid args")
+    @tool(name="invalid_args_test", description="A test tool for invalid args")
     def invalid_args_test(x: int, y: int) -> int:
         """A function for testing invalid Pydantic args."""
         return x + y
@@ -563,20 +565,18 @@ async def test_ai_function_invoke_invalid_pydantic_args():
         await invalid_args_test.invoke(arguments=wrong_args)
 
 
-def test_ai_function_serialization():
-    """Test AIFunction serialization and deserialization."""
+def test_tool_serialization():
+    """Test FunctionTool serialization and deserialization."""
 
     def serialize_test(x: int, y: int) -> int:
         """A function for testing serialization."""
         return x - y
 
-    serialize_test_ai_function = ai_function(name="serialize_test", description="A test tool for serialization")(
-        serialize_test
-    )
+    serialize_test_tool = tool(name="serialize_test", description="A test tool for serialization")(serialize_test)
 
     # Serialize to dict
-    tool_dict = serialize_test_ai_function.to_dict()
-    assert tool_dict["type"] == "ai_function"
+    tool_dict = serialize_test_tool.to_dict()
+    assert tool_dict["type"] == "function_tool"
     assert tool_dict["name"] == "serialize_test"
     assert tool_dict["description"] == "A test tool for serialization"
     assert tool_dict["input_model"] == {
@@ -587,21 +587,21 @@ def test_ai_function_serialization():
     }
 
     # Deserialize from dict
-    restored_tool = AIFunction.from_dict(tool_dict, dependencies={"ai_function": {"func": serialize_test}})
-    assert isinstance(restored_tool, AIFunction)
+    restored_tool = FunctionTool.from_dict(tool_dict, dependencies={"function_tool": {"func": serialize_test}})
+    assert isinstance(restored_tool, FunctionTool)
     assert restored_tool.name == "serialize_test"
     assert restored_tool.description == "A test tool for serialization"
-    assert restored_tool.parameters() == serialize_test_ai_function.parameters()
+    assert restored_tool.parameters() == serialize_test_tool.parameters()
     assert restored_tool(10, 4) == 6
 
     # Deserialize from dict with instance name
-    restored_tool_2 = AIFunction.from_dict(
-        tool_dict, dependencies={"ai_function": {"name:serialize_test": {"func": serialize_test}}}
+    restored_tool_2 = FunctionTool.from_dict(
+        tool_dict, dependencies={"function_tool": {"name:serialize_test": {"func": serialize_test}}}
     )
-    assert isinstance(restored_tool_2, AIFunction)
+    assert isinstance(restored_tool_2, FunctionTool)
     assert restored_tool_2.name == "serialize_test"
     assert restored_tool_2.description == "A test tool for serialization"
-    assert restored_tool_2.parameters() == serialize_test_ai_function.parameters()
+    assert restored_tool_2.parameters() == serialize_test_tool.parameters()
     assert restored_tool_2(10, 4) == 6
 
 
@@ -639,24 +639,22 @@ def test_parse_inputs_none():
 
 def test_parse_inputs_string():
     """Test _parse_inputs with string input."""
-    from agent_framework import UriContent
 
     result = _parse_inputs("http://example.com")
     assert len(result) == 1
-    assert isinstance(result[0], UriContent)
+    assert result[0].type == "uri"
     assert result[0].uri == "http://example.com"
     assert result[0].media_type == "text/plain"
 
 
 def test_parse_inputs_list_of_strings():
     """Test _parse_inputs with list of strings."""
-    from agent_framework import UriContent
 
     inputs = ["http://example.com", "https://test.org"]
     result = _parse_inputs(inputs)
 
     assert len(result) == 2
-    assert all(isinstance(item, UriContent) for item in result)
+    assert all(item.type == "uri" for item in result)
     assert result[0].uri == "http://example.com"
     assert result[1].uri == "https://test.org"
     assert all(item.media_type == "text/plain" for item in result)
@@ -664,88 +662,84 @@ def test_parse_inputs_list_of_strings():
 
 def test_parse_inputs_uri_dict():
     """Test _parse_inputs with URI dictionary."""
-    from agent_framework import UriContent
 
     input_dict = {"uri": "http://example.com", "media_type": "application/json"}
     result = _parse_inputs(input_dict)
 
     assert len(result) == 1
-    assert isinstance(result[0], UriContent)
+    assert result[0].type == "uri"
     assert result[0].uri == "http://example.com"
     assert result[0].media_type == "application/json"
 
 
 def test_parse_inputs_hosted_file_dict():
     """Test _parse_inputs with hosted file dictionary."""
-    from agent_framework import HostedFileContent
 
     input_dict = {"file_id": "file-123"}
     result = _parse_inputs(input_dict)
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedFileContent)
+    assert result[0].type == "hosted_file"
     assert result[0].file_id == "file-123"
 
 
 def test_parse_inputs_hosted_vector_store_dict():
     """Test _parse_inputs with hosted vector store dictionary."""
-    from agent_framework import HostedVectorStoreContent
+    from agent_framework import Content
 
     input_dict = {"vector_store_id": "vs-789"}
     result = _parse_inputs(input_dict)
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedVectorStoreContent)
+    assert isinstance(result[0], Content)
+    assert result[0].type == "hosted_vector_store"
     assert result[0].vector_store_id == "vs-789"
 
 
 def test_parse_inputs_data_dict():
     """Test _parse_inputs with data dictionary."""
-    from agent_framework import DataContent
 
     input_dict = {"data": b"test data", "media_type": "application/octet-stream"}
     result = _parse_inputs(input_dict)
 
     assert len(result) == 1
-    assert isinstance(result[0], DataContent)
+    assert result[0].type == "data"
     assert result[0].uri == "data:application/octet-stream;base64,dGVzdCBkYXRh"
     assert result[0].media_type == "application/octet-stream"
 
 
 def test_parse_inputs_ai_contents_instance():
-    """Test _parse_inputs with Contents instance."""
-    from agent_framework import TextContent
+    """Test _parse_inputs with Content instance."""
 
-    text_content = TextContent(text="Hello, world!")
+    text_content = Content.from_text(text="Hello, world!")
     result = _parse_inputs(text_content)
 
     assert len(result) == 1
-    assert isinstance(result[0], TextContent)
+    assert result[0].type == "text"
     assert result[0].text == "Hello, world!"
 
 
 def test_parse_inputs_mixed_list():
     """Test _parse_inputs with mixed input types."""
-    from agent_framework import HostedFileContent, TextContent, UriContent
 
     inputs = [
         "http://example.com",  # string
         {"uri": "https://test.org", "media_type": "text/html"},  # URI dict
         {"file_id": "file-456"},  # hosted file dict
-        TextContent(text="Hello"),  # Contents instance
+        Content.from_text(text="Hello"),  # Content instance
     ]
 
     result = _parse_inputs(inputs)
 
     assert len(result) == 4
-    assert isinstance(result[0], UriContent)
+    assert result[0].type == "uri"
     assert result[0].uri == "http://example.com"
-    assert isinstance(result[1], UriContent)
+    assert result[1].type == "uri"
     assert result[1].uri == "https://test.org"
     assert result[1].media_type == "text/html"
-    assert isinstance(result[2], HostedFileContent)
+    assert result[2].type == "hosted_file"
     assert result[2].file_id == "file-456"
-    assert isinstance(result[3], TextContent)
+    assert result[3].type == "text"
     assert result[3].text == "Hello"
 
 
@@ -765,55 +759,51 @@ def test_parse_inputs_unsupported_type():
 
 def test_hosted_code_interpreter_tool_with_string_input():
     """Test HostedCodeInterpreterTool with string input."""
-    from agent_framework import UriContent
 
     tool = HostedCodeInterpreterTool(inputs="http://example.com")
 
     assert len(tool.inputs) == 1
-    assert isinstance(tool.inputs[0], UriContent)
+    assert tool.inputs[0].type == "uri"
     assert tool.inputs[0].uri == "http://example.com"
 
 
 def test_hosted_code_interpreter_tool_with_dict_inputs():
     """Test HostedCodeInterpreterTool with dictionary inputs."""
-    from agent_framework import HostedFileContent, UriContent
 
     inputs = [{"uri": "http://example.com", "media_type": "text/html"}, {"file_id": "file-123"}]
 
     tool = HostedCodeInterpreterTool(inputs=inputs)
 
     assert len(tool.inputs) == 2
-    assert isinstance(tool.inputs[0], UriContent)
+    assert tool.inputs[0].type == "uri"
     assert tool.inputs[0].uri == "http://example.com"
     assert tool.inputs[0].media_type == "text/html"
-    assert isinstance(tool.inputs[1], HostedFileContent)
+    assert tool.inputs[1].type == "hosted_file"
     assert tool.inputs[1].file_id == "file-123"
 
 
 def test_hosted_code_interpreter_tool_with_ai_contents():
-    """Test HostedCodeInterpreterTool with Contents instances."""
-    from agent_framework import DataContent, TextContent
+    """Test HostedCodeInterpreterTool with Content instances."""
 
-    inputs = [TextContent(text="Hello, world!"), DataContent(data=b"test", media_type="text/plain")]
+    inputs = [Content.from_text(text="Hello, world!"), Content.from_data(data=b"test", media_type="text/plain")]
 
     tool = HostedCodeInterpreterTool(inputs=inputs)
 
     assert len(tool.inputs) == 2
-    assert isinstance(tool.inputs[0], TextContent)
+    assert tool.inputs[0].type == "text"
     assert tool.inputs[0].text == "Hello, world!"
-    assert isinstance(tool.inputs[1], DataContent)
+    assert tool.inputs[1].type == "data"
     assert tool.inputs[1].media_type == "text/plain"
 
 
 def test_hosted_code_interpreter_tool_with_single_input():
     """Test HostedCodeInterpreterTool with single input (not in list)."""
-    from agent_framework import HostedFileContent
 
     input_dict = {"file_id": "file-single"}
     tool = HostedCodeInterpreterTool(inputs=input_dict)
 
     assert len(tool.inputs) == 1
-    assert isinstance(tool.inputs[0], HostedFileContent)
+    assert tool.inputs[0].type == "hosted_file"
     assert tool.inputs[0].file_id == "file-single"
 
 
@@ -983,18 +973,22 @@ def mock_chat_client():
                         yield ChatResponseUpdate(contents=[content], role=msg.role)
             else:
                 # Default response
-                yield ChatResponseUpdate(contents=["Default response"], role="assistant")
+                yield ChatResponseUpdate(text="Default response", role="assistant")
 
     return MockChatClient()
 
 
-@ai_function(name="no_approval_tool", description="Tool that doesn't require approval")
+@tool(
+    name="no_approval_tool",
+    description="Tool that doesn't require approval",
+    approval_mode="never_require",
+)
 def no_approval_tool(x: int) -> int:
     """A tool that doesn't require approval."""
     return x * 2
 
 
-@ai_function(
+@tool(
     name="requires_approval_tool",
     description="Tool that requires approval",
     approval_mode="always_require",
@@ -1006,7 +1000,7 @@ def requires_approval_tool(x: int) -> int:
 
 async def test_non_streaming_single_function_no_approval():
     """Test non-streaming handler with single function call that doesn't require approval."""
-    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework import ChatMessage, ChatResponse
     from agent_framework._tools import _handle_function_calls_response
 
     # Create mock client
@@ -1017,11 +1011,11 @@ async def test_non_streaming_single_function_no_approval():
         messages=[
             ChatMessage(
                 role="assistant",
-                contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+                contents=[Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
             )
         ]
     )
-    final_response = ChatResponse(messages=[ChatMessage(role="assistant", contents=["The result is 10"])])
+    final_response = ChatResponse(messages=[ChatMessage(role="assistant", text="The result is 10")])
 
     call_count = [0]
     responses = [initial_response, final_response]
@@ -1039,17 +1033,16 @@ async def test_non_streaming_single_function_no_approval():
 
     # Verify: should have 3 messages: function call, function result, final answer
     assert len(result.messages) == 3
-    assert isinstance(result.messages[0].contents[0], FunctionCallContent)
-    from agent_framework import FunctionResultContent
+    assert result.messages[0].contents[0].type == "function_call"
 
-    assert isinstance(result.messages[1].contents[0], FunctionResultContent)
+    assert result.messages[1].contents[0].type == "function_result"
     assert result.messages[1].contents[0].result == 10  # 5 * 2
-    assert result.messages[2].contents[0] == "The result is 10"
+    assert result.messages[2].text == "The result is 10"
 
 
 async def test_non_streaming_single_function_requires_approval():
     """Test non-streaming handler with single function call that requires approval."""
-    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework import ChatMessage, ChatResponse
     from agent_framework._tools import _handle_function_calls_response
 
     mock_client = type("MockClient", (), {})()
@@ -1059,7 +1052,9 @@ async def test_non_streaming_single_function_requires_approval():
         messages=[
             ChatMessage(
                 role="assistant",
-                contents=[FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')],
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')
+                ],
             )
         ]
     )
@@ -1078,18 +1073,17 @@ async def test_non_streaming_single_function_requires_approval():
     result = await wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]})
 
     # Verify: should return 1 message with function call and approval request
-    from agent_framework import FunctionApprovalRequestContent
 
     assert len(result.messages) == 1
     assert len(result.messages[0].contents) == 2
-    assert isinstance(result.messages[0].contents[0], FunctionCallContent)
-    assert isinstance(result.messages[0].contents[1], FunctionApprovalRequestContent)
+    assert result.messages[0].contents[0].type == "function_call"
+    assert result.messages[0].contents[1].type == "function_approval_request"
     assert result.messages[0].contents[1].function_call.name == "requires_approval_tool"
 
 
 async def test_non_streaming_two_functions_both_no_approval():
     """Test non-streaming handler with two function calls, neither requiring approval."""
-    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework import ChatMessage, ChatResponse
     from agent_framework._tools import _handle_function_calls_response
 
     mock_client = type("MockClient", (), {})()
@@ -1100,15 +1094,13 @@ async def test_non_streaming_two_functions_both_no_approval():
             ChatMessage(
                 role="assistant",
                 contents=[
-                    FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
-                    FunctionCallContent(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}'),
+                    Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
+                    Content.from_function_call(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}'),
                 ],
             )
         ]
     )
-    final_response = ChatResponse(
-        messages=[ChatMessage(role="assistant", contents=["Both tools executed successfully"])]
-    )
+    final_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Both tools executed successfully")])
 
     call_count = [0]
     responses = [initial_response, final_response]
@@ -1124,21 +1116,20 @@ async def test_non_streaming_two_functions_both_no_approval():
     result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]})
 
     # Verify: should have function calls, results, and final answer
-    from agent_framework import FunctionResultContent
 
     assert len(result.messages) == 3
     # First message has both function calls
     assert len(result.messages[0].contents) == 2
     # Second message has both results
     assert len(result.messages[1].contents) == 2
-    assert all(isinstance(c, FunctionResultContent) for c in result.messages[1].contents)
+    assert all(c.type == "function_result" for c in result.messages[1].contents)
     assert result.messages[1].contents[0].result == 10  # 5 * 2
     assert result.messages[1].contents[1].result == 6  # 3 * 2
 
 
 async def test_non_streaming_two_functions_both_require_approval():
     """Test non-streaming handler with two function calls, both requiring approval."""
-    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework import ChatMessage, ChatResponse
     from agent_framework._tools import _handle_function_calls_response
 
     mock_client = type("MockClient", (), {})()
@@ -1149,8 +1140,8 @@ async def test_non_streaming_two_functions_both_require_approval():
             ChatMessage(
                 role="assistant",
                 contents=[
-                    FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}'),
-                    FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
+                    Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}'),
+                    Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
                 ],
             )
         ]
@@ -1170,12 +1161,11 @@ async def test_non_streaming_two_functions_both_require_approval():
     result = await wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]})
 
     # Verify: should return 1 message with function calls and approval requests
-    from agent_framework import FunctionApprovalRequestContent
 
     assert len(result.messages) == 1
     assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
-    function_calls = [c for c in result.messages[0].contents if isinstance(c, FunctionCallContent)]
-    approval_requests = [c for c in result.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    function_calls = [c for c in result.messages[0].contents if c.type == "function_call"]
+    approval_requests = [c for c in result.messages[0].contents if c.type == "function_approval_request"]
     assert len(function_calls) == 2
     assert len(approval_requests) == 2
     assert approval_requests[0].function_call.name == "requires_approval_tool"
@@ -1184,7 +1174,7 @@ async def test_non_streaming_two_functions_both_require_approval():
 
 async def test_non_streaming_two_functions_mixed_approval():
     """Test non-streaming handler with two function calls, one requiring approval."""
-    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework import ChatMessage, ChatResponse
     from agent_framework._tools import _handle_function_calls_response
 
     mock_client = type("MockClient", (), {})()
@@ -1195,8 +1185,8 @@ async def test_non_streaming_two_functions_mixed_approval():
             ChatMessage(
                 role="assistant",
                 contents=[
-                    FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
-                    FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
+                    Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
+                    Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
                 ],
             )
         ]
@@ -1216,17 +1206,16 @@ async def test_non_streaming_two_functions_mixed_approval():
     result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool, requires_approval_tool]})
 
     # Verify: should return approval requests for both (when one needs approval, all are sent for approval)
-    from agent_framework import FunctionApprovalRequestContent
 
     assert len(result.messages) == 1
     assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
-    approval_requests = [c for c in result.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    approval_requests = [c for c in result.messages[0].contents if c.type == "function_approval_request"]
     assert len(approval_requests) == 2
 
 
 async def test_streaming_single_function_no_approval():
     """Test streaming handler with single function call that doesn't require approval."""
-    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework import ChatResponseUpdate
     from agent_framework._tools import _handle_function_calls_streaming_response
 
     mock_client = type("MockClient", (), {})()
@@ -1234,11 +1223,11 @@ async def test_streaming_single_function_no_approval():
     # Initial response with function call, then final response after function execution
     initial_updates = [
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+            contents=[Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
             role="assistant",
         )
     ]
-    final_updates = [ChatResponseUpdate(contents=["The result is 10"], role="assistant")]
+    final_updates = [ChatResponseUpdate(text="The result is 10", role="assistant")]
 
     call_count = [0]
     updates_list = [initial_updates, final_updates]
@@ -1257,22 +1246,23 @@ async def test_streaming_single_function_no_approval():
         updates.append(update)
 
     # Verify: should have function call update, tool result update (injected), and final update
-    from agent_framework import FunctionResultContent, Role
+    from agent_framework import Role
 
     assert len(updates) >= 3
     # First update is the function call
-    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    assert updates[0].contents[0].type == "function_call"
     # Second update should be the tool result (injected by the wrapper)
     assert updates[1].role == Role.TOOL
-    assert isinstance(updates[1].contents[0], FunctionResultContent)
+    assert updates[1].contents[0].type == "function_result"
     assert updates[1].contents[0].result == 10  # 5 * 2
     # Last update is the final message
-    assert updates[-1].contents[0] == "The result is 10"
+    assert updates[-1].contents[0].type == "text"
+    assert updates[-1].contents[0].text == "The result is 10"
 
 
 async def test_streaming_single_function_requires_approval():
     """Test streaming handler with single function call that requires approval."""
-    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework import ChatResponseUpdate
     from agent_framework._tools import _handle_function_calls_streaming_response
 
     mock_client = type("MockClient", (), {})()
@@ -1280,7 +1270,9 @@ async def test_streaming_single_function_requires_approval():
     # Initial response with function call
     initial_updates = [
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')],
+            contents=[
+                Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')
+            ],
             role="assistant",
         )
     ]
@@ -1302,17 +1294,17 @@ async def test_streaming_single_function_requires_approval():
         updates.append(update)
 
     # Verify: should yield function call and then approval request
-    from agent_framework import FunctionApprovalRequestContent, Role
+    from agent_framework import Role
 
     assert len(updates) == 2
-    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    assert updates[0].contents[0].type == "function_call"
     assert updates[1].role == Role.ASSISTANT
-    assert isinstance(updates[1].contents[0], FunctionApprovalRequestContent)
+    assert updates[1].contents[0].type == "function_approval_request"
 
 
 async def test_streaming_two_functions_both_no_approval():
     """Test streaming handler with two function calls, neither requiring approval."""
-    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework import ChatResponseUpdate
     from agent_framework._tools import _handle_function_calls_streaming_response
 
     mock_client = type("MockClient", (), {})()
@@ -1320,15 +1312,14 @@ async def test_streaming_two_functions_both_no_approval():
     # Initial response with two function calls to the same tool
     initial_updates = [
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
-            role="assistant",
-        ),
-        ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}')],
+            contents=[
+                Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
+                Content.from_function_call(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}'),
+            ],
             role="assistant",
         ),
     ]
-    final_updates = [ChatResponseUpdate(contents=["Both tools executed successfully"], role="assistant")]
+    final_updates = [ChatResponseUpdate(text="Both tools executed successfully", role="assistant")]
 
     call_count = [0]
     updates_list = [initial_updates, final_updates]
@@ -1347,22 +1338,23 @@ async def test_streaming_two_functions_both_no_approval():
         updates.append(update)
 
     # Verify: should have both function calls, one tool result update with both results, and final message
-    from agent_framework import FunctionResultContent, Role
+    from agent_framework import Role
 
-    assert len(updates) >= 3
-    # First two updates are function calls
-    assert isinstance(updates[0].contents[0], FunctionCallContent)
-    assert isinstance(updates[1].contents[0], FunctionCallContent)
+    assert len(updates) >= 2
+    # First update has both function calls
+    assert len(updates[0].contents) == 2
+    assert updates[0].contents[0].type == "function_call"
+    assert updates[0].contents[1].type == "function_call"
     # Should have a tool result update with both results
     tool_updates = [u for u in updates if u.role == Role.TOOL]
     assert len(tool_updates) == 1
     assert len(tool_updates[0].contents) == 2
-    assert all(isinstance(c, FunctionResultContent) for c in tool_updates[0].contents)
+    assert all(c.type == "function_result" for c in tool_updates[0].contents)
 
 
 async def test_streaming_two_functions_both_require_approval():
     """Test streaming handler with two function calls, both requiring approval."""
-    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework import ChatResponseUpdate
     from agent_framework._tools import _handle_function_calls_streaming_response
 
     mock_client = type("MockClient", (), {})()
@@ -1370,11 +1362,15 @@ async def test_streaming_two_functions_both_require_approval():
     # Initial response with two function calls to the same tool
     initial_updates = [
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')],
+            contents=[
+                Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')
+            ],
             role="assistant",
         ),
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')],
+            contents=[
+                Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')
+            ],
             role="assistant",
         ),
     ]
@@ -1396,20 +1392,20 @@ async def test_streaming_two_functions_both_require_approval():
         updates.append(update)
 
     # Verify: should yield both function calls and then approval requests
-    from agent_framework import FunctionApprovalRequestContent, Role
+    from agent_framework import Role
 
     assert len(updates) == 3
-    assert isinstance(updates[0].contents[0], FunctionCallContent)
-    assert isinstance(updates[1].contents[0], FunctionCallContent)
+    assert updates[0].contents[0].type == "function_call"
+    assert updates[1].contents[0].type == "function_call"
     # Assistant update with both approval requests
     assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
+    assert all(c.type == "function_approval_request" for c in updates[2].contents)
 
 
 async def test_streaming_two_functions_mixed_approval():
     """Test streaming handler with two function calls, one requiring approval."""
-    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework import ChatResponseUpdate
     from agent_framework._tools import _handle_function_calls_streaming_response
 
     mock_client = type("MockClient", (), {})()
@@ -1417,11 +1413,13 @@ async def test_streaming_two_functions_mixed_approval():
     # Initial response with two function calls
     initial_updates = [
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+            contents=[Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
             role="assistant",
         ),
         ChatResponseUpdate(
-            contents=[FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')],
+            contents=[
+                Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')
+            ],
             role="assistant",
         ),
     ]
@@ -1445,21 +1443,21 @@ async def test_streaming_two_functions_mixed_approval():
         updates.append(update)
 
     # Verify: should yield both function calls and then approval requests (when one needs approval, all wait)
-    from agent_framework import FunctionApprovalRequestContent, Role
+    from agent_framework import Role
 
     assert len(updates) == 3
-    assert isinstance(updates[0].contents[0], FunctionCallContent)
-    assert isinstance(updates[1].contents[0], FunctionCallContent)
+    assert updates[0].contents[0].type == "function_call"
+    assert updates[1].contents[0].type == "function_call"
     # Assistant update with both approval requests
     assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
+    assert all(c.type == "function_approval_request" for c in updates[2].contents)
 
 
-async def test_ai_function_with_kwargs_injection():
-    """Test that ai_function correctly handles kwargs injection and hides them from schema."""
+async def test_tool_with_kwargs_injection():
+    """Test that tool correctly handles kwargs injection and hides them from schema."""
 
-    @ai_function
+    @tool
     def tool_with_kwargs(x: int, **kwargs: Any) -> str:
         """A tool that accepts kwargs."""
         user_id = kwargs.get("user_id", "unknown")
@@ -1495,8 +1493,6 @@ async def test_ai_function_with_kwargs_injection():
 
 def test_parse_annotation_with_literal_type():
     """Test that _parse_annotation returns Literal types unchanged (issue #2891)."""
-    from typing import get_args, get_origin
-
     # Literal with string values
     literal_annotation = Literal["Data", "Security", "Network"]
     result = _parse_annotation(literal_annotation)
@@ -1507,7 +1503,6 @@ def test_parse_annotation_with_literal_type():
 
 def test_parse_annotation_with_literal_int_type():
     """Test that _parse_annotation returns Literal int types unchanged."""
-    from typing import get_args, get_origin
 
     literal_annotation = Literal[1, 2, 3]
     result = _parse_annotation(literal_annotation)
@@ -1518,7 +1513,6 @@ def test_parse_annotation_with_literal_int_type():
 
 def test_parse_annotation_with_literal_bool_type():
     """Test that _parse_annotation returns Literal bool types unchanged."""
-    from typing import get_args, get_origin
 
     literal_annotation = Literal[True, False]
     result = _parse_annotation(literal_annotation)
@@ -1537,7 +1531,6 @@ def test_parse_annotation_with_simple_types():
 
 def test_parse_annotation_with_annotated_and_literal():
     """Test that Annotated[Literal[...], description] works correctly."""
-    from typing import get_args, get_origin
 
     # When Literal is inside Annotated, it should still be preserved
     annotated_literal = Annotated[Literal["A", "B", "C"], "The category"]
@@ -1652,11 +1645,11 @@ def test_build_pydantic_model_from_json_schema_array_of_objects_issue():
     # CRITICAL: Validate using the same methods that actual chat clients use
     # This is what would actually be sent to the LLM
 
-    # Create an AIFunction wrapper to access the client-facing APIs
+    # Create a FunctionTool wrapper to access the client-facing APIs
     def dummy_func(**kwargs):
         return kwargs
 
-    test_func = AIFunction(
+    test_func = FunctionTool(
         func=dummy_func,
         name="create_sales_order",
         description="Create a sales order",

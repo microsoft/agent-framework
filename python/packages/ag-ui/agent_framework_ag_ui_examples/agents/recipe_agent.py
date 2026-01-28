@@ -5,8 +5,8 @@
 from enum import Enum
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
-from agent_framework.ag_ui import AgentFrameworkAgent, RecipeConfirmationStrategy
+from agent_framework import ChatAgent, ChatClientProtocol, tool
+from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
 
@@ -49,7 +49,7 @@ class Recipe(BaseModel):
     instructions: list[str] = Field(..., description="Step-by-step cooking instructions")
 
 
-@ai_function
+@tool
 def update_recipe(recipe: Recipe) -> str:
     """Update the recipe with new or modified content.
 
@@ -128,6 +128,5 @@ def recipe_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
         predict_state_config={
             "recipe": {"tool": "update_recipe", "tool_argument": "recipe"},
         },
-        confirmation_strategy=RecipeConfirmationStrategy(),
         require_confirmation=False,
     )

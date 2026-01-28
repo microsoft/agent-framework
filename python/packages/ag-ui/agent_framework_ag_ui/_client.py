@@ -12,17 +12,15 @@ from typing import TYPE_CHECKING, Any, Generic, cast
 
 import httpx
 from agent_framework import (
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    DataContent,
-    FunctionCallContent,
+    Content,
+    FunctionTool,
+    use_chat_middleware,
+    use_function_invocation,
 )
-from agent_framework._middleware import use_chat_middleware
-from agent_framework._tools import use_function_invocation
-from agent_framework._types import BaseContent, Contents
 from agent_framework.observability import use_instrumentation
 
 from ._event_converters import AGUIEventConverter
@@ -30,49 +28,30 @@ from ._http_service import AGUIHttpService
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
 
-if TYPE_CHECKING:
-    from ._types import AGUIChatOptions
-
-from typing import TypedDict
-
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # pragma: no cover
+
+if TYPE_CHECKING:
+    from ._types import AGUIChatOptions
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class ServerFunctionCallContent(BaseContent):
-    """Wrapper for server function calls to prevent client re-execution.
-
-    All function calls from the remote server are server-side executions.
-    This wrapper prevents @use_function_invocation from trying to execute them again.
-    """
-
-    function_call_content: FunctionCallContent
-
-    def __init__(self, function_call_content: FunctionCallContent) -> None:
-        """Initialize with the function call content."""
-        super().__init__(type="server_function_call")
-        self.function_call_content = function_call_content
-
-
-def _unwrap_server_function_call_contents(contents: MutableSequence[Contents | dict[str, Any]]) -> None:
-    """Replace ServerFunctionCallContent instances with their underlying call content."""
+def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
+    """Replace server_function_call instances with their underlying call content."""
     for idx, content in enumerate(contents):
-        if isinstance(content, ServerFunctionCallContent):
-            contents[idx] = content.function_call_content  # type: ignore[assignment]
+        if content.type == "server_function_call":  # type: ignore[union-attr]
+            contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
 TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
@@ -91,9 +70,9 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
     original_get_streaming_response = chat_client.get_streaming_response
 
     @wraps(original_get_streaming_response)
-    async def streaming_wrapper(self, *args: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+    async def streaming_wrapper(self: Any, *args: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
         async for update in original_get_streaming_response(self, *args, **kwargs):
-            _unwrap_server_function_call_contents(cast(MutableSequence[Contents | dict[str, Any]], update.contents))
+            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
             yield update
 
     chat_client.get_streaming_response = streaming_wrapper  # type: ignore[assignment]
@@ -101,13 +80,11 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
     original_get_response = chat_client.get_response
 
     @wraps(original_get_response)
-    async def response_wrapper(self, *args: Any, **kwargs: Any) -> ChatResponse:
-        response = await original_get_response(self, *args, **kwargs)
+    async def response_wrapper(self: Any, *args: Any, **kwargs: Any) -> ChatResponse:
+        response: ChatResponse[Any] = await original_get_response(self, *args, **kwargs)  # type: ignore[var-annotated]
         if response.messages:
             for message in response.messages:
-                _unwrap_server_function_call_contents(
-                    cast(MutableSequence[Contents | dict[str, Any]], message.contents)
-                )
+                _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
         return response
 
     chat_client.get_response = response_wrapper  # type: ignore[assignment]
@@ -258,7 +235,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         if any(getattr(tool, "name", None) == tool_name for tool in config.additional_tools):
             return
 
-        placeholder: AIFunction[Any, Any] = AIFunction(
+        placeholder: FunctionTool[Any, Any] = FunctionTool(
             name=tool_name,
             description="Server-managed tool placeholder (AG-UI)",
             func=None,
@@ -289,13 +266,13 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         last_message = messages[-1]
 
         for content in last_message.contents:
-            if isinstance(content, DataContent) and content.media_type == "application/json":
+            if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
                 try:
                     uri = content.uri
-                    if uri.startswith("data:application/json;base64,"):
+                    if uri.startswith("data:application/json;base64,"):  # type: ignore[union-attr]
                         import base64
 
-                        encoded_data = uri.split(",", 1)[1]
+                        encoded_data = uri.split(",", 1)[1]  # type: ignore[union-attr]
                         decoded_bytes = base64.b64decode(encoded_data)
                         state = json.loads(decoded_bytes.decode("utf-8"))
 
@@ -433,19 +410,19 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
                 )
                 # Distinguish client vs server tools
                 for i, content in enumerate(update.contents):
-                    if isinstance(content, FunctionCallContent):
+                    if content.type == "function_call":  # type: ignore[attr-defined]
                         logger.debug(
-                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
+                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"  # type: ignore[attr-defined]
                         )
-                        if content.name in client_tool_set:
+                        if content.name in client_tool_set:  # type: ignore[attr-defined]
                             # Client tool - let @use_function_invocation execute it
-                            if not content.additional_properties:
-                                content.additional_properties = {}
-                            content.additional_properties["agui_thread_id"] = thread_id
+                            if not content.additional_properties:  # type: ignore[attr-defined]
+                                content.additional_properties = {}  # type: ignore[attr-defined]
+                            content.additional_properties["agui_thread_id"] = thread_id  # type: ignore[attr-defined]
                         else:
                             # Server tool - wrap so @use_function_invocation ignores it
-                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
-                            self._register_server_tool_placeholder(content.name)
-                            update.contents[i] = ServerFunctionCallContent(content)  # type: ignore
+                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")  # type: ignore[union-attr]
+                            self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
+                            update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
                 yield update

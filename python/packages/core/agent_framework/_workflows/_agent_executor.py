@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from typing_extensions import Never
 
-from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResponseContent
+from agent_framework import Content
 
 from .._agents import AgentProtocol
 from .._threads import AgentThread
@@ -23,9 +23,9 @@ from ._typing_utils import is_chat_agent
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +99,9 @@ class AgentExecutor(Executor):
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
-        self._pending_agent_requests: dict[str, FunctionApprovalRequestContent] = {}
-        self._pending_responses_to_agent: list[FunctionApprovalResponseContent] = []
+
+        self._pending_agent_requests: dict[str, Content] = {}
+        self._pending_responses_to_agent: list[Content] = []
 
         # AgentExecutor maintains an internal cache of messages in between runs
         self._cache: list[ChatMessage] = []
@@ -176,8 +177,8 @@ class AgentExecutor(Executor):
     @response_handler
     async def handle_user_input_response(
         self,
-        original_request: FunctionApprovalRequestContent,
-        response: FunctionApprovalResponseContent,
+        original_request: Content,
+        response: Content,
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Handle user input responses for function approvals during agent execution.
@@ -190,7 +191,7 @@ class AgentExecutor(Executor):
             ctx: The workflow context for emitting events and outputs.
         """
         self._pending_responses_to_agent.append(response)
-        self._pending_agent_requests.pop(original_request.id, None)
+        self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
 
         if not self._pending_agent_requests:
             # All pending requests have been resolved; resume agent execution
@@ -342,8 +343,8 @@ class AgentExecutor(Executor):
         # Handle any user input requests
         if response.user_input_requests:
             for user_input_request in response.user_input_requests:
-                self._pending_agent_requests[user_input_request.id] = user_input_request
-                await ctx.request_info(user_input_request, FunctionApprovalResponseContent)
+                self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
+                await ctx.request_info(user_input_request, Content)
             return None
 
         return response
@@ -360,7 +361,7 @@ class AgentExecutor(Executor):
         run_kwargs: dict[str, Any] = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY)
 
         updates: list[AgentResponseUpdate] = []
-        user_input_requests: list[FunctionApprovalRequestContent] = []
+        user_input_requests: list[Content] = []
         async for update in self._agent.run_stream(
             self._cache,
             thread=self._agent_thread,
@@ -385,8 +386,8 @@ class AgentExecutor(Executor):
         # Handle any user input requests after the streaming completes
         if user_input_requests:
             for user_input_request in user_input_requests:
-                self._pending_agent_requests[user_input_request.id] = user_input_request
-                await ctx.request_info(user_input_request, FunctionApprovalResponseContent)
+                self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
+                await ctx.request_info(user_input_request, Content)
             return None
 
         return response

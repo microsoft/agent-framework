@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import base64
 import logging
 import re
 import sys
@@ -23,19 +25,14 @@ from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, create_model
 
 from ._tools import (
-    AIFunction,
+    FunctionTool,
     HostedMCPSpecificApproval,
     _build_pydantic_model_from_json_schema,
 )
 from ._types import (
     ChatMessage,
-    Contents,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -82,7 +79,7 @@ def _parse_message_from_mcp(
 
 def _parse_contents_from_mcp_tool_result(
     mcp_type: types.CallToolResult,
-) -> list[Contents]:
+) -> list[Content]:
     """Parse an MCP CallToolResult into Agent Framework content types.
 
     This function extracts the complete _meta field from CallToolResult objects
@@ -147,25 +144,27 @@ def _parse_content_from_mcp(
         | types.ToolUseContent
         | types.ToolResultContent
     ],
-) -> list[Contents]:
+) -> list[Content]:
     """Parse an MCP type into an Agent Framework type."""
     mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
-    return_types: list[Contents] = []
+    return_types: list[Content] = []
     for mcp_type in mcp_types:
         match mcp_type:
             case types.TextContent():
-                return_types.append(TextContent(text=mcp_type.text, raw_representation=mcp_type))
+                return_types.append(Content.from_text(text=mcp_type.text, raw_representation=mcp_type))
             case types.ImageContent() | types.AudioContent():
+                # MCP protocol uses base64-encoded strings, convert to bytes
+                data_bytes = base64.b64decode(mcp_type.data) if isinstance(mcp_type.data, str) else mcp_type.data
                 return_types.append(
-                    DataContent(
-                        data=mcp_type.data,
+                    Content.from_data(
+                        data=data_bytes,
                         media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
                     )
                 )
             case types.ResourceLink():
                 return_types.append(
-                    UriContent(
+                    Content.from_uri(
                         uri=str(mcp_type.uri),
                         media_type=mcp_type.mimeType or "application/json",
                         raw_representation=mcp_type,
@@ -173,7 +172,7 @@ def _parse_content_from_mcp(
                 )
             case types.ToolUseContent():
                 return_types.append(
-                    FunctionCallContent(
+                    Content.from_function_call(
                         call_id=mcp_type.id,
                         name=mcp_type.name,
                         arguments=mcp_type.input,
@@ -182,12 +181,12 @@ def _parse_content_from_mcp(
                 )
             case types.ToolResultContent():
                 return_types.append(
-                    FunctionResultContent(
+                    Content.from_function_result(
                         call_id=mcp_type.toolUseId,
                         result=_parse_content_from_mcp(mcp_type.content)
                         if mcp_type.content
                         else mcp_type.structuredContent,
-                        exception=Exception() if mcp_type.isError else None,
+                        exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
                         raw_representation=mcp_type,
                     )
                 )
@@ -195,7 +194,7 @@ def _parse_content_from_mcp(
                 match mcp_type.resource:
                     case types.TextResourceContents():
                         return_types.append(
-                            TextContent(
+                            Content.from_text(
                                 text=mcp_type.resource.text,
                                 raw_representation=mcp_type,
                                 additional_properties=(
@@ -205,7 +204,7 @@ def _parse_content_from_mcp(
                         )
                     case types.BlobResourceContents():
                         return_types.append(
-                            DataContent(
+                            Content.from_uri(
                                 uri=mcp_type.resource.blob,
                                 media_type=mcp_type.resource.mimeType,
                                 raw_representation=mcp_type,
@@ -218,45 +217,41 @@ def _parse_content_from_mcp(
 
 
 def _prepare_content_for_mcp(
-    content: Contents,
+    content: Content,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
     """Prepare an Agent Framework content type for MCP."""
-    match content:
-        case TextContent():
-            return types.TextContent(type="text", text=content.text)
-        case DataContent():
-            if content.media_type and content.media_type.startswith("image/"):
-                return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)
-            if content.media_type and content.media_type.startswith("audio/"):
-                return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)
-            if content.media_type and content.media_type.startswith("application/"):
-                return types.EmbeddedResource(
-                    type="resource",
-                    resource=types.BlobResourceContents(
-                        blob=content.uri,
-                        mimeType=content.media_type,
-                        # uri's are not limited in MCP but they have to be set.
-                        # the uri of data content, contains the data uri, which
-                        # is not the uri meant here, UriContent would match this.
-                        uri=(
-                            content.additional_properties.get("uri", "af://binary")
-                            if content.additional_properties
-                            else "af://binary"
-                        ),  # type: ignore[reportArgumentType]
-                    ),
-                )
-            return None
-        case UriContent():
-            return types.ResourceLink(
-                type="resource_link",
-                uri=content.uri,  # type: ignore[reportArgumentType]
-                mimeType=content.media_type,
-                name=(
-                    content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"
+    if content.type == "text":
+        return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
+    if content.type == "data":
+        if content.media_type and content.media_type.startswith("image/"):  # type: ignore[attr-defined]
+            return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+        if content.media_type and content.media_type.startswith("audio/"):  # type: ignore[attr-defined]
+            return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+        if content.media_type and content.media_type.startswith("application/"):  # type: ignore[attr-defined]
+            return types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    blob=content.uri,  # type: ignore[attr-defined]
+                    mimeType=content.media_type,  # type: ignore[attr-defined]
+                    # uri's are not limited in MCP but they have to be set.
+                    # the uri of data content, contains the data uri, which
+                    # is not the uri meant here, UriContent would match this.
+                    uri=(
+                        content.additional_properties.get("uri", "af://binary")
+                        if content.additional_properties
+                        else "af://binary"
+                    ),  # type: ignore[reportArgumentType]
                 ),
             )
-        case _:
-            return None
+        return None
+    if content.type == "uri":
+        return types.ResourceLink(
+            type="resource_link",
+            uri=content.uri,  # type: ignore[reportArgumentType,attr-defined]
+            mimeType=content.media_type,  # type: ignore[attr-defined]
+            name=(content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"),
+        )
+    return None
 
 
 def _prepare_message_for_mcp(
@@ -361,7 +356,7 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.chat_client = chat_client
-        self._functions: list[AIFunction[Any, Any]] = []
+        self._functions: list[FunctionTool[Any, Any]] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -370,11 +365,43 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[AIFunction[Any, Any]]:
+    def functions(self) -> list[FunctionTool[Any, Any]]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
         return [func for func in self._functions if func.name in self.allowed_tools]
+
+    async def _safe_close_exit_stack(self) -> None:
+        """Safely close the exit stack, handling cross-task boundary errors.
+
+        anyio's cancel scopes are bound to the task they were created in.
+        If aclose() is called from a different task (e.g., during streaming reconnection),
+        anyio will raise a RuntimeError or CancelledError. In this case, we log a warning
+        and allow garbage collection to clean up the resources.
+
+        Known error variants:
+        - "Attempted to exit cancel scope in a different task than it was entered in"
+        - "Attempted to exit a cancel scope that isn't the current task's current cancel scope"
+        - CancelledError from anyio cancel scope cleanup
+        """
+        try:
+            await self._exit_stack.aclose()
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            # Check for anyio cancel scope errors (multiple variants exist)
+            if "cancel scope" in error_msg:
+                logger.warning(
+                    "Could not cleanly close MCP exit stack due to cancel scope error. "
+                    "Old resources will be garbage collected. Error: %s",
+                    e,
+                )
+            else:
+                raise
+        except asyncio.CancelledError:
+            # CancelledError can occur during cleanup when cancel scopes are involved
+            logger.warning(
+                "Could not cleanly close MCP exit stack due to cancellation. Old resources will be garbage collected."
+            )
 
     async def connect(self, *, reset: bool = False) -> None:
         """Connect to the MCP server.
@@ -389,7 +416,7 @@ class MCPTool:
             ToolException: If connection or session initialization fails.
         """
         if reset:
-            await self._exit_stack.aclose()
+            await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
             self._exit_stack = AsyncExitStack()
@@ -397,7 +424,7 @@ class MCPTool:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
             except Exception as ex:
-                await self._exit_stack.aclose()
+                await self._safe_close_exit_stack()
                 command = getattr(self, "command", None)
                 if command:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
@@ -418,7 +445,7 @@ class MCPTool:
                     )
                 )
             except Exception as ex:
-                await self._exit_stack.aclose()
+                await self._safe_close_exit_stack()
                 raise ToolException(
                     message="Failed to create MCP session. Please check your configuration.",
                     inner_exception=ex,
@@ -426,7 +453,7 @@ class MCPTool:
             try:
                 await session.initialize()
             except Exception as ex:
-                await self._exit_stack.aclose()
+                await self._safe_close_exit_stack()
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
                 if command:
@@ -582,7 +609,7 @@ class MCPTool:
         """Load prompts from the MCP server.
 
         Retrieves available prompts from the connected MCP server and converts
-        them into AIFunction instances. Handles pagination automatically.
+        them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
@@ -606,7 +633,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: AIFunction[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = AIFunction(
+                func: FunctionTool[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -625,7 +652,7 @@ class MCPTool:
         """Load tools from the MCP server.
 
         Retrieves available tools from the connected MCP server and converts
-        them into AIFunction instances. Handles pagination automatically.
+        them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
@@ -649,8 +676,8 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
-                # Create AIFunctions out of each tool
-                func: AIFunction[BaseModel, list[Contents] | Any | types.CallToolResult] = AIFunction(
+                # Create FunctionTools out of each tool
+                func: FunctionTool[BaseModel, list[Content] | Any | types.CallToolResult] = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
@@ -670,7 +697,7 @@ class MCPTool:
 
         Closes the connection and cleans up resources.
         """
-        await self._exit_stack.aclose()
+        await self._safe_close_exit_stack()
         self.session = None
         self.is_connected = False
 
@@ -704,7 +731,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents] | Any | types.CallToolResult:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Content] | Any | types.CallToolResult:
         """Call a tool with the given arguments.
 
         Args:
@@ -727,8 +754,12 @@ class MCPTool:
         # Filter out framework kwargs that cannot be serialized by the MCP SDK.
         # These are internal objects passed through the function invocation pipeline
         # that should not be forwarded to external MCP servers.
+        # conversation_id is an internal tracking ID used by services like Azure AI.
+        # options contains metadata/store used by AG-UI for Azure AI client requirements.
         filtered_kwargs = {
-            k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
+            k: v
+            for k, v in kwargs.items()
+            if k not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options"}
         }
 
         # Try the operation, reconnecting once if the connection is closed
@@ -842,7 +873,7 @@ class MCPTool:
         except ToolException:
             raise
         except Exception as ex:
-            await self._exit_stack.aclose()
+            await self._safe_close_exit_stack()
             raise ToolExecutionException("Failed to enter context manager.", inner_exception=ex) from ex
 
     async def __aexit__(

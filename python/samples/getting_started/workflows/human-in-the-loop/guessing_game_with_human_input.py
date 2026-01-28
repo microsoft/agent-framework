@@ -18,6 +18,7 @@ from agent_framework import (
     WorkflowStatusEvent,  # Event emitted on run state changes
     handler,
     response_handler,  # Decorator to expose an Executor method as a step
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential

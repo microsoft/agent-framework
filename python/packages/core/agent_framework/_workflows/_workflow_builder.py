@@ -6,9 +6,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import AgentThread
-
 from .._agents import AgentProtocol
+from .._threads import AgentThread
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent_executor import AgentExecutor
 from ._agent_utils import resolve_agent_id
@@ -33,9 +32,9 @@ from ._validation import validate_workflow_graph
 from ._workflow import Workflow
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self  # type: ignore # pragma: no cover
 
 
 logger = logging.getLogger(__name__)

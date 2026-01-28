@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -12,7 +12,6 @@ from agent_framework import (
     ContextProvider,
     HostedMCPTool,
     Middleware,
-    TextContent,
     ToolProtocol,
     get_logger,
     use_chat_middleware,
@@ -20,21 +19,15 @@ from agent_framework import (
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
+from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import (
-    MCPTool,
-    PromptAgentDefinition,
-    PromptAgentDefinitionText,
-)
+from azure.ai.projects.models import MCPTool, PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
-from ._shared import AzureAISettings, create_text_format_config
-
-if TYPE_CHECKING:
-    from agent_framework.openai import OpenAIResponsesOptions
+from ._shared import AzureAISettings, _extract_project_connection_id, create_text_format_config
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -45,17 +38,28 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
 
+
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
+    """Azure AI Project Agent options."""
+
+    rai_config: RaiConfig
+    """Configuration for Responsible AI (RAI) content filtering and safety features."""
+
+    reasoning: Reasoning  # type: ignore[misc]
+    """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
+
+
 TAzureAIClientOptions = TypeVar(
     "TAzureAIClientOptions",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIResponsesOptions",
+    default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
@@ -337,6 +341,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                 args["temperature"] = run_options["temperature"]
             if "top_p" in run_options:
                 args["top_p"] = run_options["top_p"]
+            if "reasoning" in run_options:
+                args["reasoning"] = run_options["reasoning"]
+            if "rai_config" in run_options:
+                args["rai_config"] = run_options["rai_config"]
 
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
@@ -397,10 +405,12 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             "model",
             "tools",
             "response_format",
+            "rai_config",
             "temperature",
             "top_p",
             "text",
             "text_format",
+            "reasoning",
         ]
 
         for property in exclude:
@@ -469,8 +479,8 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
         for message in messages:
             if message.role.value in ["system", "developer"]:
-                for text_content in [content for content in message.contents if isinstance(content, TextContent)]:
-                    instructions_list.append(text_content.text)
+                for text_content in [content for content in message.contents if content.type == "text"]:
+                    instructions_list.append(text_content.text)  # type: ignore[arg-type]
             else:
                 result.append(message)
 
@@ -502,6 +512,17 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         """Get MCP tool from HostedMCPTool."""
         mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
+        if tool.description:
+            mcp["server_description"] = tool.description
+
+        # Check for project_connection_id in additional_properties (for Azure AI Foundry connections)
+        project_connection_id = _extract_project_connection_id(tool.additional_properties)
+        if project_connection_id:
+            mcp["project_connection_id"] = project_connection_id
+        elif tool.headers:
+            # Only use headers if no project_connection_id is available
+            mcp["headers"] = tool.headers
+
         if tool.allowed_tools:
             mcp["allowed_tools"] = list(tool.allowed_tools)
 
@@ -530,7 +551,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIClientOptions | None = None,
+        default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[Middleware] | None = None,

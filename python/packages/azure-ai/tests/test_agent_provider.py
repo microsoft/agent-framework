@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import (
     ChatAgent,
+    Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
@@ -222,7 +222,7 @@ async def test_create_agent_with_tools(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -366,7 +366,7 @@ async def test_get_agent_with_provided_function_tools(
     mock_agent.tools = [mock_function_tool]
     mock_agents_client.get_agent = AsyncMock(return_value=mock_agent)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -483,9 +483,9 @@ def test_to_azure_ai_agent_tools_empty() -> None:
 
 
 def test_to_azure_ai_agent_tools_function() -> None:
-    """Test converting AIFunction to Azure tool definition."""
+    """Test converting FunctionTool to Azure tool definition."""
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -509,7 +509,7 @@ def test_to_azure_ai_agent_tools_code_interpreter() -> None:
 
 def test_to_azure_ai_agent_tools_file_search() -> None:
     """Test converting HostedFileSearchTool with vector stores."""
-    tool = HostedFileSearchTool(inputs=[HostedVectorStoreContent(vector_store_id="vs-123")])
+    tool = HostedFileSearchTool(inputs=[Content.from_hosted_vector_store(vector_store_id="vs-123")])
     run_options: dict[str, Any] = {}
 
     result = to_azure_ai_agent_tools([tool], run_options)

@@ -28,13 +28,13 @@ internal sealed class A2AAgentClient : AgentClientBase
     public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
-        string? threadId = null,
+        string? sessionId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         this._logger.LogInformation("Running agent {AgentName} with {MessageCount} messages via A2A", agentName, messages.Count);
 
         var (a2aClient, _) = this.ResolveClient(agentName);
-        var contextId = threadId ?? Guid.NewGuid().ToString("N");
+        var contextId = sessionId ?? Guid.NewGuid().ToString("N");
 
         // Convert and send messages via A2A without try-catch in yield method
         var results = new List<AgentResponseUpdate>();

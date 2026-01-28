@@ -18,17 +18,14 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionApprovalRequestContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     RequestInfoEvent,
     Role,
-    TextContent,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
-    ai_function,
     executor,
+    tool,
     use_function_invocation,
 )
 
@@ -59,14 +56,14 @@ class _ToolCallingAgent(BaseAgent):
         """Simulate streaming with tool calls and results."""
         # First update: some text
         yield AgentResponseUpdate(
-            contents=[TextContent(text="Let me search for that...")],
+            contents=[Content.from_text(text="Let me search for that...")],
             role=Role.ASSISTANT,
         )
 
         # Second update: tool call (no text!)
         yield AgentResponseUpdate(
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id="call_123",
                     name="search",
                     arguments={"query": "weather"},
@@ -78,7 +75,7 @@ class _ToolCallingAgent(BaseAgent):
         # Third update: tool result (no text!)
         yield AgentResponseUpdate(
             contents=[
-                FunctionResultContent(
+                Content.from_function_result(
                     call_id="call_123",
                     result={"temperature": 72, "condition": "sunny"},
                 )
@@ -88,7 +85,7 @@ class _ToolCallingAgent(BaseAgent):
 
         # Fourth update: final text response
         yield AgentResponseUpdate(
-            contents=[TextContent(text="The weather is sunny, 72°F.")],
+            contents=[Content.from_text(text="The weather is sunny, 72°F.")],
             role=Role.ASSISTANT,
         )
 
@@ -112,29 +109,29 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
 
     # First event: text update
     assert events[0].data is not None
-    assert isinstance(events[0].data.contents[0], TextContent)
+    assert events[0].data.contents[0].type == "text"
     assert "Let me search" in events[0].data.contents[0].text
 
     # Second event: function call
     assert events[1].data is not None
-    assert isinstance(events[1].data.contents[0], FunctionCallContent)
+    assert events[1].data.contents[0].type == "function_call"
     func_call = events[1].data.contents[0]
     assert func_call.call_id == "call_123"
     assert func_call.name == "search"
 
     # Third event: function result
     assert events[2].data is not None
-    assert isinstance(events[2].data.contents[0], FunctionResultContent)
+    assert events[2].data.contents[0].type == "function_result"
     func_result = events[2].data.contents[0]
     assert func_result.call_id == "call_123"
 
     # Fourth event: final text
     assert events[3].data is not None
-    assert isinstance(events[3].data.contents[0], TextContent)
+    assert events[3].data.contents[0].type == "text"
     assert "sunny" in events[3].data.contents[0].text
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def mock_tool_requiring_approval(query: str) -> str:
     """Mock tool that requires approval before execution."""
     return f"Executed tool with query: {query}"
@@ -160,10 +157,10 @@ class MockChatClient:
                     messages=ChatMessage(
                         role="assistant",
                         contents=[
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                             ),
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                             ),
                         ],
@@ -174,7 +171,7 @@ class MockChatClient:
                     messages=ChatMessage(
                         role="assistant",
                         contents=[
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                             )
                         ],
@@ -195,10 +192,10 @@ class MockChatClient:
             if self._parallel_request:
                 yield ChatResponseUpdate(
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                         ),
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                         ),
                     ],
@@ -207,15 +204,15 @@ class MockChatClient:
             else:
                 yield ChatResponseUpdate(
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                         )
                     ],
                     role="assistant",
                 )
         else:
-            yield ChatResponseUpdate(text=TextContent(text="Tool executed "), role="assistant")
-            yield ChatResponseUpdate(contents=[TextContent(text="successfully.")], role="assistant")
+            yield ChatResponseUpdate(text=Content.from_text(text="Tool executed "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
         self._iteration += 1
 
@@ -248,12 +245,14 @@ async def test_agent_executor_tool_call_with_approval() -> None:
     # Assert
     assert len(events.get_request_info_events()) == 1
     approval_request = events.get_request_info_events()[0]
-    assert isinstance(approval_request.data, FunctionApprovalRequestContent)
+    assert approval_request.data.type == "function_approval_request"
     assert approval_request.data.function_call.name == "mock_tool_requiring_approval"
     assert approval_request.data.function_call.arguments == '{"query": "test"}'
 
     # Act
-    events = await workflow.send_responses({approval_request.request_id: approval_request.data.create_response(True)})
+    events = await workflow.send_responses({
+        approval_request.request_id: approval_request.data.to_function_approval_response(True)
+    })
 
     # Assert
     final_response = events.get_outputs()
@@ -281,14 +280,14 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
     # Assert
     assert len(request_info_events) == 1
     approval_request = request_info_events[0]
-    assert isinstance(approval_request.data, FunctionApprovalRequestContent)
+    assert approval_request.data.type == "function_approval_request"
     assert approval_request.data.function_call.name == "mock_tool_requiring_approval"
     assert approval_request.data.function_call.arguments == '{"query": "test"}'
 
     # Act
     output: str | None = None
     async for event in workflow.send_responses_streaming({
-        approval_request.request_id: approval_request.data.create_response(True)
+        approval_request.request_id: approval_request.data.to_function_approval_response(True)
     }):
         if isinstance(event, WorkflowOutputEvent):
             output = event.data
@@ -321,13 +320,13 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
     # Assert
     assert len(events.get_request_info_events()) == 2
     for approval_request in events.get_request_info_events():
-        assert isinstance(approval_request.data, FunctionApprovalRequestContent)
+        assert approval_request.data.type == "function_approval_request"
         assert approval_request.data.function_call.name == "mock_tool_requiring_approval"
         assert approval_request.data.function_call.arguments == '{"query": "test"}'
 
     # Act
     responses = {
-        approval_request.request_id: approval_request.data.create_response(True)  # type: ignore
+        approval_request.request_id: approval_request.data.to_function_approval_response(True)  # type: ignore
         for approval_request in events.get_request_info_events()
     }
     events = await workflow.send_responses(responses)
@@ -358,13 +357,13 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
     # Assert
     assert len(request_info_events) == 2
     for approval_request in request_info_events:
-        assert isinstance(approval_request.data, FunctionApprovalRequestContent)
+        assert approval_request.data.type == "function_approval_request"
         assert approval_request.data.function_call.name == "mock_tool_requiring_approval"
         assert approval_request.data.function_call.arguments == '{"query": "test"}'
 
     # Act
     responses = {
-        approval_request.request_id: approval_request.data.create_response(True)  # type: ignore
+        approval_request.request_id: approval_request.data.to_function_approval_response(True)  # type: ignore
         for approval_request in request_info_events
     }
 

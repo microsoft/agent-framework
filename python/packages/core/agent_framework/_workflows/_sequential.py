@@ -160,9 +160,7 @@ class SequentialBuilder:
     ) -> "SequentialBuilder":
         """Register participant factories for this sequential workflow."""
         if self._participants:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
-            )
+            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
 
         if self._participant_factories:
             raise ValueError("register_participants() has already been called on this builder instance.")
@@ -180,9 +178,7 @@ class SequentialBuilder:
         Raises if empty or duplicates are provided for clarity.
         """
         if self._participant_factories:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
-            )
+            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
 
         if self._participants:
             raise ValueError("participants() has already been called on this builder instance.")
@@ -248,6 +244,10 @@ class SequentialBuilder:
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
+        if not self._participants and not self._participant_factories:
+            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
+        # We don't need to check if both are set since that is handled in the respective methods
+
         participants: list[Executor | AgentProtocol] = []
         if self._participant_factories:
             # Resolve the participant factories now. This doesn't break the factory pattern
@@ -287,18 +287,6 @@ class SequentialBuilder:
             - Else (custom Executor): pass conversation directly to the executor
         - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
-        if not self._participants and not self._participant_factories:
-            raise ValueError(
-                "No participants or participant factories provided to the builder. "
-                "Use .participants([...]) or .register_participants([...])."
-            )
-
-        if self._participants and self._participant_factories:
-            # Defensive strategy: this should never happen due to checks in respective methods
-            raise ValueError(
-                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
-            )
-
         # Internal nodes
         input_conv = _InputToConversation(id="input-conversation")
         end = _EndWithConversation(id="end")

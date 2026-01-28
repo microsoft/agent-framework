@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 using Moq.Protected;
+using OpenAI.Responses;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using ChatRole = Microsoft.Extensions.AI.ChatRole;
 using OpenAIChatMessage = OpenAI.Chat.ChatMessage;
@@ -64,7 +65,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        var mockThread = new Mock<AgentThread>();
+        var mockSession = new Mock<AgentSession>();
         var options = new AgentRunOptions();
         var cancellationToken = new CancellationToken(false);
         const string TestMessageText = "Hello, assistant!";
@@ -80,13 +81,13 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentResponse([responseMessage]));
 
         // Act
-        var result = await mockAgent.Object.RunAsync(openAiMessages, mockThread.Object, options, cancellationToken);
+        var result = await mockAgent.Object.RunAsync(openAiMessages, mockSession.Object, options, cancellationToken);
 
         // Assert
         mockAgent.Protected()
@@ -95,7 +96,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
                 ItExpr.Is<IEnumerable<ChatMessage>>(msgs =>
                     msgs.ToList().Count == 1 &&
                     msgs.ToList()[0].Text == TestMessageText),
-                mockThread.Object,
+                mockSession.Object,
                 options,
                 cancellationToken
         );
@@ -149,7 +150,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        var mockThread = new Mock<AgentThread>();
+        var mockSession = new Mock<AgentSession>();
         var options = new AgentRunOptions();
         var cancellationToken = new CancellationToken(false);
         const string TestMessageText = "Hello, assistant!";
@@ -170,13 +171,13 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         // Act
-        var result = mockAgent.Object.RunStreamingAsync(openAiMessages, mockThread.Object, options, cancellationToken);
+        var result = mockAgent.Object.RunStreamingAsync(openAiMessages, mockSession.Object, options, cancellationToken);
         var updateCount = 0;
         await foreach (var update in result)
         {
@@ -190,7 +191,7 @@ public sealed class AIAgentWithOpenAIExtensionsTests
                 ItExpr.Is<IEnumerable<ChatMessage>>(msgs =>
                     msgs.ToList().Count == 1 &&
                     msgs.ToList()[0].Text == TestMessageText),
-                mockThread.Object,
+                mockSession.Object,
                 options,
                 cancellationToken
             );
@@ -208,4 +209,167 @@ public sealed class AIAgentWithOpenAIExtensionsTests
             yield return await Task.FromResult(update);
         }
     }
+
+    #region ResponseItem overload tests
+
+    /// <summary>
+    /// Verify that RunAsync with ResponseItem throws ArgumentNullException when agent is null.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ResponseItem_WithNullAgent_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        AIAgent? agent = null;
+        IEnumerable<ResponseItem> messages = [ResponseItem.CreateUserMessageItem("Test message")];
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(
+            () => agent!.RunAsync(messages));
+
+        Assert.Equal("agent", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync with ResponseItem throws ArgumentNullException when messages is null.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ResponseItem_WithNullMessages_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        IEnumerable<ResponseItem>? messages = null;
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(
+            () => mockAgent.Object.RunAsync(messages!));
+
+        Assert.Equal("messages", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that the RunAsync with ResponseItem extension method calls the underlying agent's RunAsync with converted messages and parameters.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ResponseItem_CallsUnderlyingAgentAsync()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var mockSession = new Mock<AgentSession>();
+        var options = new AgentRunOptions();
+        var cancellationToken = new CancellationToken(false);
+        const string TestMessageText = "Hello, assistant!";
+        const string ResponseText = "This is the assistant's response.";
+        IEnumerable<ResponseItem> responseItemMessages = [ResponseItem.CreateUserMessageItem(TestMessageText)];
+
+        var responseMessage = new ChatMessage(ChatRole.Assistant, [new TextContent(ResponseText)]);
+
+        mockAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new AgentResponse([responseMessage]));
+
+        // Act
+        ResponseResult result = await mockAgent.Object.RunAsync(responseItemMessages, mockSession.Object, options, cancellationToken);
+
+        // Assert
+        mockAgent.Protected()
+            .Verify("RunCoreAsync",
+                Times.Once(),
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                mockSession.Object,
+                options,
+                cancellationToken
+            );
+
+        Assert.NotNull(result);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with ResponseItem throws ArgumentNullException when agent is null.
+    /// </summary>
+    [Fact]
+    public void RunStreamingAsync_ResponseItem_WithNullAgent_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIAgent? agent = null;
+        IEnumerable<ResponseItem> messages = [ResponseItem.CreateUserMessageItem("Test message")];
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(
+            "agent",
+            () => agent!.RunStreamingAsync(messages));
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync with ResponseItem throws ArgumentNullException when messages is null.
+    /// </summary>
+    [Fact]
+    public void RunStreamingAsync_ResponseItem_WithNullMessages_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        IEnumerable<ResponseItem>? messages = null;
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(
+            () => mockAgent.Object.RunStreamingAsync(messages!));
+
+        Assert.Equal("messages", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that the RunStreamingAsync with ResponseItem extension method calls the underlying agent's RunStreamingAsync with converted messages and parameters.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_ResponseItem_CallsUnderlyingAgentAsync()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var mockSession = new Mock<AgentSession>();
+        var options = new AgentRunOptions();
+        var cancellationToken = new CancellationToken(false);
+        const string TestMessageText = "Hello, assistant!";
+        const string ResponseText1 = "This is ";
+        const string ResponseText2 = "the assistant's response.";
+        IEnumerable<ResponseItem> responseItemMessages = [ResponseItem.CreateUserMessageItem(TestMessageText)];
+
+        var responseUpdates = new List<AgentResponseUpdate>
+        {
+            new(ChatRole.Assistant, ResponseText1),
+            new(ChatRole.Assistant, ResponseText2)
+        };
+
+        mockAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(ToAsyncEnumerableAsync(responseUpdates));
+
+        // Act
+        var result = mockAgent.Object.RunStreamingAsync(responseItemMessages, mockSession.Object, options, cancellationToken);
+        var updateCount = 0;
+        await foreach (var update in result)
+        {
+            updateCount++;
+        }
+
+        // Assert
+        mockAgent.Protected()
+            .Verify("RunCoreStreamingAsync",
+                Times.Once(),
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                mockSession.Object,
+                options,
+                cancellationToken
+            );
+    }
+
+    #endregion
 }

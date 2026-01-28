@@ -1,14 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from enum import Enum
 from functools import update_wrapper
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypedDict, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
 
 from ._serialization import SerializationMixin
-from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, prepare_messages
+from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, normalize_messages, prepare_messages
 from .exceptions import MiddlewareException
 
 if TYPE_CHECKING:
@@ -17,9 +18,13 @@ if TYPE_CHECKING:
     from ._agents import AgentProtocol
     from ._clients import ChatClientProtocol
     from ._threads import AgentThread
-    from ._tools import AIFunction
+    from ._tools import FunctionTool
     from ._types import ChatResponse, ChatResponseUpdate
 
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = [
     "AgentMiddleware",
@@ -172,7 +177,7 @@ class FunctionInvocationContext(SerializationMixin):
 
     def __init__(
         self,
-        function: "AIFunction[Any, Any]",
+        function: "FunctionTool[Any, Any]",
         arguments: "BaseModel",
         metadata: dict[str, Any] | None = None,
         result: Any = None,
@@ -1225,7 +1230,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         if chat_middlewares:
             kwargs["middleware"] = chat_middlewares
 
-        normalized_messages = self._normalize_messages(messages)
+        normalized_messages = normalize_messages(messages)
 
         # Execute with middleware if available
         if agent_pipeline.has_middlewares:
@@ -1273,7 +1278,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         if chat_middlewares:
             kwargs["middleware"] = chat_middlewares
 
-        normalized_messages = self._normalize_messages(messages)
+        normalized_messages = normalize_messages(messages)
 
         # Execute with middleware if available
         if agent_pipeline.has_middlewares:

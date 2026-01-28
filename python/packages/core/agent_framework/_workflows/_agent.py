@@ -2,29 +2,25 @@
 
 import json
 import logging
+import sys
 import uuid
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    BaseContent,
     ChatMessage,
-    Contents,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     Role,
-    TextContent,
     UsageDetails,
 )
 
+from .._types import add_usage_details
 from ..exceptions import AgentExecutionException
 from ._checkpoint import CheckpointStorage
 from ._events import (
@@ -34,6 +30,11 @@ from ._events import (
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_type_compatible
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -115,7 +116,7 @@ class WorkflowAgent(BaseAgent):
         self._pending_requests: dict[str, RequestInfoEvent] = {}
 
         # Output related members
-        self._output_executors: set[str] = set([executor.id for executor in workflow.get_output_executors()])
+        self._output_executors: set[str] = {executor.id for executor in workflow.get_output_executors()}
 
     @property
     def workflow(self) -> "Workflow":
@@ -150,7 +151,7 @@ class WorkflowAgent(BaseAgent):
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
             **kwargs: Additional keyword arguments passed through to underlying workflow
-                and ai_function tools.
+                and tool functions.
 
         Returns:
             The final workflow response as an AgentResponse.
@@ -197,7 +198,7 @@ class WorkflowAgent(BaseAgent):
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
             **kwargs: Additional keyword arguments passed through to underlying workflow
-                and ai_function tools.
+                and tool functions.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.
@@ -237,7 +238,7 @@ class WorkflowAgent(BaseAgent):
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
             **kwargs: Additional keyword arguments passed through to the underlying
-                workflow and ai_function tools.
+                workflow and tool functions.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.
@@ -350,12 +351,12 @@ class WorkflowAgent(BaseAgent):
 
                 args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
 
-                function_call = FunctionCallContent(
+                function_call = Content.from_function_call(
                     call_id=request_id,
                     name=self.REQUEST_INFO_FUNCTION_NAME,
                     arguments=args,
                 )
-                approval_request = FunctionApprovalRequestContent(
+                approval_request = Content.from_function_approval_request(
                     id=request_id,
                     function_call=function_call,
                     additional_properties={"request_id": request_id},
@@ -378,9 +379,9 @@ class WorkflowAgent(BaseAgent):
         function_responses: dict[str, Any] = {}
         for message in input_messages:
             for content in message.contents:
-                if isinstance(content, FunctionApprovalResponseContent):
+                if content.type == "function_approval_response":
                     # Parse the function arguments to recover request payload
-                    arguments_payload = content.function_call.arguments
+                    arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
                     if isinstance(arguments_payload, str):
                         try:
                             parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
@@ -395,8 +396,8 @@ class WorkflowAgent(BaseAgent):
                             "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
                         )
 
-                    request_id = parsed_args.request_id or content.id
-                    if not content.approved:
+                    request_id = parsed_args.request_id or content.id  # type: ignore[attr-defined]
+                    if not content.approved:  # type: ignore[attr-defined]
                         raise AgentExecutionException(f"Request '{request_id}' was not approved by the caller.")
 
                     if request_id in self.pending_requests:
@@ -405,10 +406,10 @@ class WorkflowAgent(BaseAgent):
                         raise AgentExecutionException(
                             "Only responses for pending requests are allowed when there are outstanding approvals."
                         )
-                elif isinstance(content, FunctionResultContent):
-                    request_id = content.call_id
+                elif content.type == "function_result":
+                    request_id = content.call_id  # type: ignore[attr-defined]
                     if request_id in self.pending_requests:
-                        response_data = content.result if hasattr(content, "result") else str(content)
+                        response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
                         function_responses[request_id] = response_data
                     elif bool(self.pending_requests):
                         raise AgentExecutionException(
@@ -419,17 +420,17 @@ class WorkflowAgent(BaseAgent):
                         raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
         return function_responses
 
-    def _extract_contents(self, data: Any) -> list[Contents]:
-        """Recursively extract Contents from workflow output data."""
+    def _extract_contents(self, data: Any) -> list[Content]:
+        """Recursively extract Content from workflow output data."""
         if isinstance(data, ChatMessage):
             return list(data.contents)
         if isinstance(data, list):
             return [c for item in data for c in self._extract_contents(item)]
-        if isinstance(data, BaseContent):
-            return [cast(Contents, data)]
+        if isinstance(data, Content):
+            return [data]  # type: ignore[redundant-cast]
         if isinstance(data, str):
-            return [TextContent(text=data)]
-        return [TextContent(text=str(data))]
+            return [Content.from_text(text=data)]
+        return [Content.from_text(text=str(data))]
 
     class _ResponseState(TypedDict):
         """State for grouping response updates by message_id."""
@@ -461,7 +462,7 @@ class WorkflowAgent(BaseAgent):
         for u in updates:
             if u.response_id:
                 for content in u.contents:
-                    if isinstance(content, FunctionCallContent) and content.call_id:
+                    if content.type == "function_call" and content.call_id:
                         call_id_to_response_id[content.call_id] = u.response_id
 
         # Second pass: group updates, associating FunctionResultContent with their calls
@@ -473,7 +474,7 @@ class WorkflowAgent(BaseAgent):
             # If no response_id, check if this is a FunctionResultContent that matches a call
             if not effective_response_id:
                 for content in u.contents:
-                    if isinstance(content, FunctionResultContent) and content.call_id:
+                    if content.type == "function_result" and content.call_id:
                         effective_response_id = call_id_to_response_id.get(content.call_id)
                         if effective_response_id:
                             break
@@ -501,13 +502,6 @@ class WorkflowAgent(BaseAgent):
             except Exception:
                 return (0, v)
 
-        def _sum_usage(a: UsageDetails | None, b: UsageDetails | None) -> UsageDetails | None:
-            if a is None:
-                return b
-            if b is None:
-                return a
-            return a + b
-
         def _merge_responses(current: AgentResponse | None, incoming: AgentResponse) -> AgentResponse:
             if current is None:
                 return incoming
@@ -527,7 +521,7 @@ class WorkflowAgent(BaseAgent):
                 messages=(current.messages or []) + (incoming.messages or []),
                 response_id=current.response_id or incoming.response_id,
                 created_at=incoming.created_at or current.created_at,
-                usage_details=_sum_usage(current.usage_details, incoming.usage_details),
+                usage_details=add_usage_details(current.usage_details, incoming.usage_details),  # type: ignore[arg-type]
                 raw_representation=raw_list if raw_list else None,
                 additional_properties=incoming.additional_properties or current.additional_properties,
             )
@@ -562,7 +556,7 @@ class WorkflowAgent(BaseAgent):
             if aggregated:
                 final_messages.extend(aggregated.messages)
                 if aggregated.usage_details:
-                    merged_usage = _sum_usage(merged_usage, aggregated.usage_details)
+                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)  # type: ignore[arg-type]
                 if aggregated.created_at and (
                     not latest_created_at or _parse_dt(aggregated.created_at) > _parse_dt(latest_created_at)
                 ):
@@ -586,7 +580,7 @@ class WorkflowAgent(BaseAgent):
             flattened = AgentResponse.from_agent_run_response_updates(global_dangling)
             final_messages.extend(flattened.messages)
             if flattened.usage_details:
-                merged_usage = _sum_usage(merged_usage, flattened.usage_details)
+                merged_usage = add_usage_details(merged_usage, flattened.usage_details)  # type: ignore[arg-type]
             if flattened.created_at and (
                 not latest_created_at or _parse_dt(flattened.created_at) > _parse_dt(latest_created_at)
             ):

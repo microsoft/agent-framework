@@ -4,19 +4,19 @@ import json
 import logging
 import sys
 from collections.abc import Mapping
-from typing import Any, Generic, TypedDict
+from typing import Any, Generic
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agent_framework import (
+    Annotation,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    TextContent,
+    Content,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -36,11 +36,17 @@ else:
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 __all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Azure OpenAI Chat Options TypedDict
@@ -68,7 +74,7 @@ class AzureUserSecurityContext(TypedDict, total=False):
     """The original client's IP address."""
 
 
-class AzureOpenAIChatOptions(OpenAIChatOptions, total=False):
+class AzureOpenAIChatOptions(OpenAIChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Azure OpenAI-specific chat options dict.
 
     Extends OpenAIChatOptions with Azure-specific options including
@@ -267,19 +273,22 @@ class AzureOpenAIChatClient(
         )
 
     @override
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> TextContent | None:
-        """Parse the choice into a TextContent object.
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse the choice into a Content object with type='text'.
 
         Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
         message = choice.message if isinstance(choice, Choice) else choice.delta
+        # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
+        if message is None:  # type: ignore
+            return None
         if hasattr(message, "refusal") and message.refusal:
-            return TextContent(text=message.refusal, raw_representation=choice)
+            return Content.from_text(text=message.refusal, raw_representation=choice)
         if not message.content:
             return None
-        text_content = TextContent(text=message.content, raw_representation=choice)
+        text_content = Content.from_text(text=message.content, raw_representation=choice)
         if not message.model_extra or "context" not in message.model_extra:
             return text_content
 
@@ -301,7 +310,8 @@ class AzureOpenAIChatClient(
             text_content.annotations = []
             for citation in citations:
                 text_content.annotations.append(
-                    CitationAnnotation(
+                    Annotation(
+                        type="citation",
                         title=citation.get("title", ""),
                         url=citation.get("url", ""),
                         snippet=citation.get("content", ""),

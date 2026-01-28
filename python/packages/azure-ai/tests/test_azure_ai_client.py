@@ -16,14 +16,13 @@ from agent_framework import (
     ChatMessage,
     ChatOptions,
     ChatResponse,
+    Content,
     HostedCodeInterpreterTool,
-    HostedFileContent,
     HostedFileSearchTool,
     HostedMCPTool,
-    HostedVectorStoreContent,
     HostedWebSearchTool,
     Role,
-    TextContent,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
@@ -298,9 +297,9 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="You are a helpful assistant.")]),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="System response")]),
+        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="You are a helpful assistant.")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="System response")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -318,8 +317,8 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hi there!")]),
+        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hi there!")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -419,7 +418,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -453,7 +452,7 @@ async def test_prepare_options_with_application_endpoint(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -492,7 +491,7 @@ async def test_prepare_options_with_application_project_client(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -848,7 +847,7 @@ async def test_prepare_options_excludes_response_format(
     """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
     chat_options: ChatOptions = {}
 
     with (
@@ -992,7 +991,7 @@ def test_from_azure_ai_tools() -> None:
 
     tool_input = parsed_tools[0].inputs[0]
 
-    assert tool_input and isinstance(tool_input, HostedFileContent) and tool_input.file_id == "file-1"
+    assert tool_input and tool_input.type == "hosted_file" and tool_input.file_id == "file-1"
 
     # Test File Search tool
     fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
@@ -1004,7 +1003,7 @@ def test_from_azure_ai_tools() -> None:
 
     tool_input = parsed_tools[0].inputs[0]
 
-    assert tool_input and isinstance(tool_input, HostedVectorStoreContent) and tool_input.vector_store_id == "vs-1"
+    assert tool_input and tool_input.type == "hosted_vector_store" and tool_input.vector_store_id == "vs-1"
     assert parsed_tools[0].max_results == 5
 
     # Test Web Search tool
@@ -1027,6 +1026,7 @@ def test_from_azure_ai_tools() -> None:
 # region Integration Tests
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

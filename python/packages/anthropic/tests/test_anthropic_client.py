@@ -10,17 +10,13 @@ from agent_framework import (
     ChatMessage,
     ChatOptions,
     ChatResponseUpdate,
-    DataContent,
+    Content,
     FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
-    TextContent,
-    TextReasoningContent,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from anthropic.types.beta import (
@@ -170,7 +166,7 @@ def test_prepare_message_for_anthropic_function_call(mock_anthropic_client: Magi
     message = ChatMessage(
         role=Role.ASSISTANT,
         contents=[
-            FunctionCallContent(
+            Content.from_function_call(
                 call_id="call_123",
                 name="get_weather",
                 arguments={"location": "San Francisco"},
@@ -194,9 +190,8 @@ def test_prepare_message_for_anthropic_function_result(mock_anthropic_client: Ma
     message = ChatMessage(
         role=Role.TOOL,
         contents=[
-            FunctionResultContent(
+            Content.from_function_result(
                 call_id="call_123",
-                name="get_weather",
                 result="Sunny, 72°F",
             )
         ],
@@ -219,7 +214,7 @@ def test_prepare_message_for_anthropic_text_reasoning(mock_anthropic_client: Mag
     chat_client = create_test_anthropic_client(mock_anthropic_client)
     message = ChatMessage(
         role=Role.ASSISTANT,
-        contents=[TextReasoningContent(text="Let me think about this...")],
+        contents=[Content.from_text_reasoning(text="Let me think about this...")],
     )
 
     result = chat_client._prepare_message_for_anthropic(message)
@@ -264,11 +259,11 @@ def test_prepare_messages_for_anthropic_without_system(mock_anthropic_client: Ma
 # Tool Conversion Tests
 
 
-def test_prepare_tools_for_anthropic_ai_function(mock_anthropic_client: MagicMock) -> None:
-    """Test converting AIFunction to Anthropic format."""
+def test_prepare_tools_for_anthropic_tool(mock_anthropic_client: MagicMock) -> None:
+    """Test converting FunctionTool to Anthropic format."""
     chat_client = create_test_anthropic_client(mock_anthropic_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(location: Annotated[str, Field(description="Location to get weather for")]) -> str:
         """Get weather for a location."""
         return f"Weather for {location}"
@@ -448,7 +443,7 @@ async def test_prepare_options_with_tools(mock_anthropic_client: MagicMock) -> N
     """Test _prepare_options with tools."""
     chat_client = create_test_anthropic_client(mock_anthropic_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get weather for a location."""
         return f"Weather for {location}"
@@ -500,19 +495,19 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
     mock_message.stop_reason = "end_turn"
 
-    response = chat_client._process_message(mock_message)
+    response = chat_client._process_message(mock_message, {})
 
     assert response.response_id == "msg_123"
     assert response.model_id == "claude-3-5-sonnet-20241022"
     assert len(response.messages) == 1
     assert response.messages[0].role == Role.ASSISTANT
     assert len(response.messages[0].contents) == 1
-    assert isinstance(response.messages[0].contents[0], TextContent)
+    assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "Hello there!"
     assert response.finish_reason == FinishReason.STOP
     assert response.usage_details is not None
-    assert response.usage_details.input_token_count == 10
-    assert response.usage_details.output_token_count == 5
+    assert response.usage_details["input_token_count"] == 10
+    assert response.usage_details["output_token_count"] == 5
 
 
 def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None:
@@ -533,10 +528,10 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
     mock_message.stop_reason = "tool_use"
 
-    response = chat_client._process_message(mock_message)
+    response = chat_client._process_message(mock_message, {})
 
     assert len(response.messages[0].contents) == 1
-    assert isinstance(response.messages[0].contents[0], FunctionCallContent)
+    assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[0].contents[0].call_id == "call_123"
     assert response.messages[0].contents[0].name == "get_weather"
     assert response.finish_reason == FinishReason.TOOL_CALLS
@@ -550,8 +545,8 @@ def test_parse_usage_from_anthropic_basic(mock_anthropic_client: MagicMock) -> N
     result = chat_client._parse_usage_from_anthropic(usage)
 
     assert result is not None
-    assert result.input_token_count == 10
-    assert result.output_token_count == 5
+    assert result["input_token_count"] == 10
+    assert result["output_token_count"] == 5
 
 
 def test_parse_usage_from_anthropic_none(mock_anthropic_client: MagicMock) -> None:
@@ -571,7 +566,7 @@ def test_parse_contents_from_anthropic_text(mock_anthropic_client: MagicMock) ->
     result = chat_client._parse_contents_from_anthropic(content)
 
     assert len(result) == 1
-    assert isinstance(result[0], TextContent)
+    assert result[0].type == "text"
     assert result[0].text == "Hello!"
 
 
@@ -590,7 +585,7 @@ def test_parse_contents_from_anthropic_tool_use(mock_anthropic_client: MagicMock
     result = chat_client._parse_contents_from_anthropic(content)
 
     assert len(result) == 1
-    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
     assert result[0].name == "get_weather"
 
@@ -613,7 +608,7 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(mock_a
 
     result = chat_client._parse_contents_from_anthropic([tool_use_content])
     assert len(result) == 1
-    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
     assert result[0].name == "get_weather"  # Initial event has name
 
@@ -624,7 +619,7 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(mock_a
 
     result = chat_client._parse_contents_from_anthropic([delta_content_1])
     assert len(result) == 1
-    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
     assert result[0].name == ""  # Delta events should have empty name
     assert result[0].arguments == '{"location":'
@@ -636,7 +631,7 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(mock_a
 
     result = chat_client._parse_contents_from_anthropic([delta_content_2])
     assert len(result) == 1
-    assert isinstance(result[0], FunctionCallContent)
+    assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
     assert result[0].name == ""  # Still empty name for subsequent deltas
     assert result[0].arguments == '"San Francisco"}'
@@ -714,7 +709,7 @@ async def test_inner_get_streaming_response(mock_anthropic_client: MagicMock) ->
 # Integration Tests
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -771,9 +766,7 @@ async def test_anthropic_client_integration_function_calling() -> None:
 
     assert response is not None
     # Should contain function call
-    has_function_call = any(
-        isinstance(content, FunctionCallContent) for msg in response.messages for content in msg.contents
-    )
+    has_function_call = any(content.type == "function_call" for msg in response.messages for content in msg.contents)
     assert has_function_call
 
 
@@ -872,8 +865,8 @@ async def test_anthropic_client_integration_images() -> None:
         ChatMessage(
             role=Role.USER,
             contents=[
-                TextContent(text="Describe this image"),
-                DataContent(media_type="image/jpeg", data=image_bytes),
+                Content.from_text(text="Describe this image"),
+                Content.from_data(media_type="image/jpeg", data=image_bytes),
             ],
         ),
     ]

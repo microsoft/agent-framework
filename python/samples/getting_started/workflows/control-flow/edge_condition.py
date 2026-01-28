@@ -13,6 +13,7 @@ from agent_framework import (  # Core chat primitives used to build requests
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials

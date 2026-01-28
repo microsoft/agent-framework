@@ -35,12 +35,12 @@ internal sealed class PurviewWrapper : IDisposable
         this._backgroundJobRunner = backgroundJobRunner;
     }
 
-    private static string GetThreadIdFromAgentThread(AgentThread? thread, IEnumerable<ChatMessage> messages)
+    private static string GetSessionIdFromAgentSession(AgentSession? session, IEnumerable<ChatMessage> messages)
     {
-        if (thread is ChatClientAgentThread chatClientAgentThread &&
-            chatClientAgentThread.ConversationId != null)
+        if (session is ChatClientAgentSession chatClientAgentSession &&
+            chatClientAgentSession.ConversationId != null)
         {
-            return chatClientAgentThread.ConversationId;
+            return chatClientAgentSession.ConversationId;
         }
 
         foreach (ChatMessage message in messages)
@@ -129,20 +129,20 @@ internal sealed class PurviewWrapper : IDisposable
     /// Processes a prompt and response exchange at an agent level.
     /// </summary>
     /// <param name="messages">The messages sent to the agent.</param>
-    /// <param name="thread">The thread used for this agent conversation.</param>
+    /// <param name="session">The session used for this agent conversation.</param>
     /// <param name="options">The options used with this agent.</param>
     /// <param name="innerAgent">The wrapped agent.</param>
     /// <param name="cancellationToken">The cancellation token used to interrupt async operations.</param>
     /// <returns>The agent's response. This could be the response from the agent or a message indicating that Purview has blocked the prompt or response.</returns>
-    public async Task<AgentResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+    public async Task<AgentResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
     {
-        string threadId = GetThreadIdFromAgentThread(thread, messages);
+        string sessionId = GetSessionIdFromAgentSession(session, messages);
 
         string? resolvedUserId = null;
 
         try
         {
-            (bool shouldBlockPrompt, resolvedUserId) = await this._scopedProcessor.ProcessMessagesAsync(messages, threadId, Activity.UploadText, this._purviewSettings, null, cancellationToken).ConfigureAwait(false);
+            (bool shouldBlockPrompt, resolvedUserId) = await this._scopedProcessor.ProcessMessagesAsync(messages, sessionId, Activity.UploadText, this._purviewSettings, null, cancellationToken).ConfigureAwait(false);
 
             if (shouldBlockPrompt)
             {
@@ -167,11 +167,11 @@ internal sealed class PurviewWrapper : IDisposable
             }
         }
 
-        AgentResponse response = await innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
 
         try
         {
-            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, threadId, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
+            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, sessionId, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
 
             if (shouldBlockResponse)
             {

@@ -12,6 +12,7 @@ from agent_framework import (
     ChatMessage,
     Role,
     TextContent,
+    tool,
 )
 
 """

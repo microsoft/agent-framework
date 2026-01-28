@@ -1,16 +1,34 @@
 {
   "name": "C# (.NET)",
-  "image": "mcr.microsoft.com/devcontainers/dotnet:10.0",
+  //"image": "mcr.microsoft.com/devcontainers/dotnet",
+  // Workaround for https://github.com/devcontainers/images/issues/1752
+  "build": {
+    "dockerfile": "dotnet.Dockerfile"
+  },
   "features": {
-    "ghcr.io/devcontainers/features/dotnet:2.4.0": {},
-    "ghcr.io/devcontainers/features/powershell:1.5.1": {},
-    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {}
+    "ghcr.io/devcontainers/features/azure-cli:1.2.9": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "version": "2"
+    },
+    "ghcr.io/devcontainers/features/powershell:1": {
+      "version": "latest"
+    },
+    "ghcr.io/azure/azure-dev/azd:0": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/dotnet:2": {
+      "version": "none",
+      "dotnetRuntimeVersions": "10.0",
+      "aspNetCoreRuntimeVersions": "10.0"
+    },
+    "ghcr.io/devcontainers/features/copilot-cli:1": {}
   },
   "workspaceFolder": "/workspaces/agent-framework/dotnet/",
   "customizations": {
     "vscode": {
       "extensions": [
+        "GitHub.copilot",
+        "GitHub.vscode-github-actions",
         "ms-dotnettools.csdevkit",
         "vscode-icons-team.vscode-icons",
         "ms-windows-ai-studio.windows-ai-studio"

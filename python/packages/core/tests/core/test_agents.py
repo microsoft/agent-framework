@@ -18,13 +18,12 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStore,
     ChatResponse,
+    Content,
     Context,
     ContextProvider,
-    FunctionCallContent,
     HostedCodeInterpreterTool,
     Role,
-    TextContent,
-    ai_function,
+    tool,
 )
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import AgentExecutionException
@@ -136,7 +135,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
 
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
     mock_response = ChatResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+        messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
         conversation_id="123",
     )
     chat_client_base.run_responses = [mock_response]
@@ -200,7 +199,9 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
     chat_client_base.run_responses = [
         ChatResponse(
             messages=[
-                ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")], author_name="TestAuthor")
+                ChatMessage(
+                    role=Role.ASSISTANT, contents=[Content.from_text("test response")], author_name="TestAuthor"
+                )
             ]
         )
     ]
@@ -264,7 +265,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
             conversation_id="test-thread-id",
         )
     ]
@@ -345,7 +346,7 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
             conversation_id="service-thread-123",
         )
     ]
@@ -422,7 +423,7 @@ async def test_chat_agent_as_tool_no_name(chat_client: ChatClientProtocol) -> No
 
 
 async def test_chat_agent_as_tool_function_execution(chat_client: ChatClientProtocol) -> None:
-    """Test that the generated AIFunction can be executed."""
+    """Test that the generated FunctionTool can be executed."""
     agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent")
 
     tool = agent.as_tool()
@@ -563,7 +564,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
 
     captured: dict[str, Any] = {}
 
-    @ai_function(name="echo_thread_info")
+    @tool(name="echo_thread_info", approval_mode="never_require")
     def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
         thread = kwargs.get("thread")
         captured["has_thread"] = thread is not None
@@ -575,7 +576,9 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
         ChatResponse(
             messages=ChatMessage(
                 role="assistant",
-                contents=[FunctionCallContent(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')],
+                contents=[
+                    Content.from_function_call(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')
+                ],
             )
         ),
         ChatResponse(messages=ChatMessage(role="assistant", text="done")),
@@ -593,9 +596,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
     assert captured.get("has_message_store") is True
 
 
-async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
-    chat_client_base: Any, ai_function_tool: Any
-) -> None:
+async def test_chat_agent_tool_choice_run_level_overrides_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
     """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
 
     captured_options: list[dict[str, Any]] = []
@@ -614,7 +615,7 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     # Create agent with agent-level tool_choice="auto" and a tool (tools required for tool_choice to be meaningful)
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         options={"tool_choice": "auto"},
     )
 
@@ -627,7 +628,7 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
 
 
 async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
-    chat_client_base: Any, ai_function_tool: Any
+    chat_client_base: Any, tool_tool: Any
 ) -> None:
     """Verify that agent-level tool_choice is used when run() doesn't specify one."""
     from agent_framework import ChatOptions
@@ -647,7 +648,7 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     # Create agent with agent-level tool_choice="required" and a tool
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         default_options={"tool_choice": "required"},
     )
 
@@ -661,9 +662,7 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     assert captured_options[0]["tool_choice"] == "required"
 
 
-async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
-    chat_client_base: Any, ai_function_tool: Any
-) -> None:
+async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
     """Verify that tool_choice=None at run() uses agent-level default."""
     from agent_framework import ChatOptions
 
@@ -682,7 +681,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     # Create agent with agent-level tool_choice="auto" and a tool
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         default_options={"tool_choice": "auto"},
     )
 

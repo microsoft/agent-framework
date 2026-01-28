@@ -2,40 +2,44 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict
+from typing import Any, Generic
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     ChatAgent,
     ContextProvider,
+    FunctionTool,
     Middleware,
     ToolProtocol,
     get_logger,
     normalize_tools,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentReference,
     AgentVersionDetails,
-    FunctionTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
+)
+from azure.ai.projects.models import (
+    FunctionTool as AzureFunctionTool,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import ValidationError
 
-from ._client import AzureAIClient
+from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
-if TYPE_CHECKING:
-    from agent_framework.openai import OpenAIResponsesOptions
-
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
@@ -46,7 +50,7 @@ logger = get_logger("agent_framework.azure")
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIResponsesOptions",
+    default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
@@ -193,9 +197,11 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
 
-        # Extract response_format from default_options if present
+        # Extract options from default_options if present
         opts = dict(default_options) if default_options else {}
         response_format = opts.get("response_format")
+        rai_config = opts.get("rai_config")
+        reasoning = opts.get("reasoning")
 
         args: dict[str, Any] = {"model": resolved_model}
 
@@ -205,11 +211,37 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
             args["text"] = PromptAgentDefinitionText(
                 format=create_text_format_config(response_format)  # type: ignore[arg-type]
             )
+        if rai_config:
+            args["rai_config"] = rai_config
+        if reasoning:
+            args["reasoning"] = reasoning
 
-        # Normalize tools once and reuse for both Azure AI API and ChatAgent
+        # Normalize tools and separate MCP tools from other tools
         normalized_tools = normalize_tools(tools)
+        mcp_tools: list[MCPTool] = []
+        non_mcp_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+
         if normalized_tools:
-            args["tools"] = to_azure_ai_tools(normalized_tools)
+            for tool in normalized_tools:
+                if isinstance(tool, MCPTool):
+                    mcp_tools.append(tool)
+                else:
+                    non_mcp_tools.append(tool)
+
+        # Connect MCP tools and discover their functions BEFORE creating the agent
+        # This is required because Azure AI Responses API doesn't accept tools at request time
+        mcp_discovered_functions: list[FunctionTool] = []
+        for mcp_tool in mcp_tools:
+            if not mcp_tool.is_connected:
+                await mcp_tool.connect()
+            mcp_discovered_functions.extend(mcp_tool.functions)
+
+        # Combine non-MCP tools with discovered MCP functions for Azure AI
+        all_tools_for_azure: list[ToolProtocol | MutableMapping[str, Any]] = list(non_mcp_tools)
+        all_tools_for_azure.extend(mcp_discovered_functions)
+
+        if all_tools_for_azure:
+            args["tools"] = to_azure_ai_tools(all_tools_for_azure)
 
         created_agent = await self._project_client.agents.create_version(
             agent_name=name,
@@ -404,10 +436,12 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
                 continue
             merged.append(hosted_tool)
 
-        # Add user-provided function tools (these have the actual implementations)
+        # Add user-provided function tools and MCP tools
         if provided_tools:
             for provided_tool in provided_tools:
-                if isinstance(provided_tool, AIFunction):
+                # FunctionTool - has implementation for function calling
+                # MCPTool - ChatAgent handles MCP connection and tool discovery at runtime
+                if isinstance(provided_tool, (FunctionTool, MCPTool)):
                     merged.append(provided_tool)  # type: ignore[reportUnknownArgumentType]
 
         return merged
@@ -424,12 +458,14 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         """Validate that required function tools are provided."""
         # Normalize and validate function tools
         normalized_tools = normalize_tools(provided_tools)
-        tool_names = {tool.name for tool in normalized_tools if isinstance(tool, AIFunction)}
+        tool_names = {tool.name for tool in normalized_tools if isinstance(tool, FunctionTool)}
 
         # If function tools exist in agent definition but were not provided,
         # we need to raise an error, as it won't be possible to invoke the function.
         missing_tools = [
-            tool.name for tool in (agent_tools or []) if isinstance(tool, FunctionTool) and tool.name not in tool_names
+            tool.name
+            for tool in (agent_tools or [])
+            if isinstance(tool, AzureFunctionTool) and tool.name not in tool_names
         ]
 
         if missing_tools:

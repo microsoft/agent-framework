@@ -11,8 +11,8 @@ Functions host."""
 
 import json
 import logging
-from collections.abc import Mapping
-from typing import Any, cast
+from collections.abc import Generator, Mapping
+from typing import Any
 
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
@@ -74,7 +74,7 @@ def send_email(message: str) -> str:
 
 # 4. Orchestration validates input, runs agents, and branches on spam results.
 @app.orchestration_trigger(context_name="context")
-def spam_detection_orchestration(context: DurableOrchestrationContext):
+def spam_detection_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, str]:
     payload_raw = context.get_input()
     if not isinstance(payload_raw, Mapping):
         raise ValueError("Email data is required")
@@ -102,10 +102,12 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
         options={"response_format": SpamDetectionResult},
     )
 
-    spam_result = cast(SpamDetectionResult, spam_result_raw.value)
+    spam_result = spam_result_raw.try_parse_value(SpamDetectionResult)
+    if spam_result is None:
+        raise ValueError("Failed to parse spam detection result")
 
     if spam_result.is_spam:
-        result = yield context.call_activity("handle_spam_email", spam_result.reason)
+        result = yield context.call_activity("handle_spam_email", spam_result.reason)  # type: ignore[misc]
         return result
 
     email_thread = email_agent.get_new_thread()
@@ -123,9 +125,11 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
         options={"response_format": EmailResponse},
     )
 
-    email_result = cast(EmailResponse, email_result_raw.value)
+    email_result = email_result_raw.try_parse_value(EmailResponse)
+    if email_result is None:
+        raise ValueError("Failed to parse email response")
 
-    result = yield context.call_activity("send_email", email_result.response)
+    result = yield context.call_activity("send_email", email_result.response)  # type: ignore[misc]
     return result
 
 
@@ -196,12 +200,6 @@ async def get_orchestration_status(
         )
 
     status = await client.get_status(instance_id)
-    if status is None:
-        return func.HttpResponse(
-            body=json.dumps({"error": "Instance not found"}),
-            status_code=404,
-            mimetype="application/json",
-        )
 
     response_data: dict[str, Any] = {
         "instanceId": status.instance_id,

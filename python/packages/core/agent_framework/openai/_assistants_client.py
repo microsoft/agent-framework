@@ -9,12 +9,8 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     MutableSequence,
-    Sequence,
 )
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
-
-if TYPE_CHECKING:
-    from .._agents import ChatAgent
+from typing import Any, Generic, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -29,17 +25,14 @@ from openai.types.beta.threads import (
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
-from .._memory import ContextProvider
-from .._middleware import Middleware, use_chat_middleware
-from .._threads import ChatMessageStoreProtocol
+from .._middleware import use_chat_middleware
 from .._tools import (
-    AIFunction,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    ToolProtocol,
     use_function_invocation,
 )
 from .._types import (
@@ -47,15 +40,8 @@ from .._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CodeInterpreterToolCallContent,
-    Contents,
-    FunctionCallContent,
-    FunctionResultContent,
-    MCPServerToolCallContent,
+    Content,
     Role,
-    TextContent,
-    UriContent,
-    UsageContent,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -64,19 +50,19 @@ from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 __all__ = [
@@ -87,6 +73,8 @@ __all__ = [
 
 
 # region OpenAI Assistants Options TypedDict
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 class VectorStoreToolResource(TypedDict, total=False):
@@ -116,7 +104,7 @@ class AssistantToolResources(TypedDict, total=False):
     """Resources for file search tool, including vector store IDs."""
 
 
-class OpenAIAssistantsOptions(ChatOptions, total=False):
+class OpenAIAssistantsOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """OpenAI Assistants API-specific options dict.
 
     Extends base ChatOptions with Assistants API-specific parameters
@@ -416,7 +404,7 @@ class OpenAIAssistantsClient(
         thread_id: str | None,
         assistant_id: str,
         run_options: dict[str, Any],
-        tool_results: list[FunctionResultContent] | None,
+        tool_results: list[Content] | None,
     ) -> tuple[Any, str]:
         """Create the assistant stream for processing.
 
@@ -526,7 +514,7 @@ class OpenAIAssistantsClient(
                     and response.data.usage is not None
                 ):
                     usage = response.data.usage
-                    usage_content = UsageContent(
+                    usage_content = Content.from_usage(
                         UsageDetails(
                             input_token_count=usage.prompt_tokens,
                             output_token_count=usage.completion_tokens,
@@ -551,9 +539,9 @@ class OpenAIAssistantsClient(
                         role=Role.ASSISTANT,
                     )
 
-    def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Contents]:
+    def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Content]:
         """Parse function call contents from an assistants tool action event."""
-        contents: list[Contents] = []
+        contents: list[Content] = []
 
         if event_data.required_action is not None:
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
@@ -563,10 +551,12 @@ class OpenAIAssistantsClient(
                 if tool_type == "code_interpreter" and getattr(tool_call_any, "code_interpreter", None):
                     code_input = getattr(tool_call_any.code_interpreter, "input", None)
                     inputs = (
-                        [TextContent(text=code_input, raw_representation=tool_call)] if code_input is not None else None
+                        [Content.from_text(text=code_input, raw_representation=tool_call)]
+                        if code_input is not None
+                        else None
                     )
                     contents.append(
-                        CodeInterpreterToolCallContent(
+                        Content.from_code_interpreter_tool_call(
                             call_id=call_id,
                             inputs=inputs,
                             raw_representation=tool_call,
@@ -574,7 +564,7 @@ class OpenAIAssistantsClient(
                     )
                 elif tool_type == "mcp":
                     contents.append(
-                        MCPServerToolCallContent(
+                        Content.from_mcp_server_tool_call(
                             call_id=call_id,
                             tool_name=getattr(tool_call, "name", "") or "",
                             server_name=getattr(tool_call, "server_label", None),
@@ -586,7 +576,7 @@ class OpenAIAssistantsClient(
                     function_name = tool_call.function.name
                     function_arguments = json.loads(tool_call.function.arguments)
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=call_id,
                             name=function_name,
                             arguments=function_arguments,
@@ -600,7 +590,7 @@ class OpenAIAssistantsClient(
         messages: MutableSequence[ChatMessage],
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> tuple[dict[str, Any], list[FunctionResultContent] | None]:
+    ) -> tuple[dict[str, Any], list[Content] | None]:
         from .._types import validate_tool_mode
 
         run_options: dict[str, Any] = {**kwargs}
@@ -631,7 +621,7 @@ class OpenAIAssistantsClient(
         tool_definitions: list[MutableMapping[str, Any]] = []
         if tool_mode["mode"] != "none" and tools is not None:
             for tool in tools:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                 elif isinstance(tool, HostedCodeInterpreterTool):
                     tool_definitions.append({"type": "code_interpreter"})
@@ -672,7 +662,7 @@ class OpenAIAssistantsClient(
                 }
 
         instructions: list[str] = []
-        tool_results: list[FunctionResultContent] | None = None
+        tool_results: list[Content] | None = None
 
         additional_messages: list[AdditionalMessage] | None = None
 
@@ -681,21 +671,23 @@ class OpenAIAssistantsClient(
         # All other messages are added 1:1.
         for chat_message in messages:
             if chat_message.role.value in ["system", "developer"]:
-                for text_content in [content for content in chat_message.contents if isinstance(content, TextContent)]:
-                    instructions.append(text_content.text)
+                for text_content in [content for content in chat_message.contents if content.type == "text"]:
+                    text = getattr(text_content, "text", None)
+                    if text:
+                        instructions.append(text)
 
                 continue
 
             message_contents: list[MessageContentPartParam] = []
 
             for content in chat_message.contents:
-                if isinstance(content, TextContent):
-                    message_contents.append(TextContentBlockParam(type="text", text=content.text))
-                elif isinstance(content, UriContent) and content.has_top_level_media_type("image"):
+                if content.type == "text":
+                    message_contents.append(TextContentBlockParam(type="text", text=content.text))  # type: ignore[attr-defined, typeddict-item]
+                elif content.type == "uri" and content.has_top_level_media_type("image"):
                     message_contents.append(
-                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))
+                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))  # type: ignore[attr-defined, typeddict-item]
                     )
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     if tool_results is None:
                         tool_results = []
                     tool_results.append(content)
@@ -720,7 +712,7 @@ class OpenAIAssistantsClient(
 
     def _prepare_tool_outputs_for_assistants(
         self,
-        tool_results: list[FunctionResultContent] | None,
+        tool_results: list[Content] | None,
     ) -> tuple[str | None, list[ToolOutput] | None]:
         """Prepare function results for submission to the assistants API."""
         run_id: str | None = None
@@ -731,7 +723,7 @@ class OpenAIAssistantsClient(
                 # When creating the FunctionCallContent, we created it with a CallId == [runId, callId].
                 # We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                 # is only the call ID.
-                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)
+                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)  # type: ignore[arg-type]
 
                 if (
                     not run_and_call_ids
@@ -768,59 +760,3 @@ class OpenAIAssistantsClient(
             self.assistant_name = agent_name
         if description and not self.assistant_description:
             self.assistant_description = description
-
-    @override
-    def as_agent(
-        self,
-        *,
-        id: str | None = None,
-        name: str | None = None,
-        description: str | None = None,
-        instructions: str | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        default_options: TOpenAIAssistantsOptions | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        **kwargs: Any,
-    ) -> "ChatAgent[TOpenAIAssistantsOptions]":
-        """Convert this chat client to a ChatAgent.
-
-        This method creates a ChatAgent instance with this client pre-configured.
-        It does NOT create an assistant on the OpenAI service - the actual assistant
-        will be created on the server during the first invocation (run).
-
-        For creating and managing persistent assistants on the server, use
-        :class:`~agent_framework.openai.OpenAIAssistantProvider` instead.
-
-        Keyword Args:
-            id: The unique identifier for the agent. Will be created automatically if not provided.
-            name: The name of the agent.
-            description: A brief description of the agent's purpose.
-            instructions: Optional instructions for the agent.
-            tools: The tools to use for the request.
-            default_options: A TypedDict containing chat options.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-            context_provider: Context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
-            kwargs: Any additional keyword arguments.
-
-        Returns:
-            A ChatAgent instance configured with this chat client.
-        """
-        return super().as_agent(
-            id=id,
-            name=name,
-            description=description,
-            instructions=instructions,
-            tools=tools,
-            default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
-            middleware=middleware,
-            **kwargs,
-        )

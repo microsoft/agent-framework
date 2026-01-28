@@ -5,7 +5,7 @@
 import logging
 import os
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.azure import AzureOpenAIChatClient
 from dotenv import load_dotenv
@@ -87,7 +87,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
 
 
 # Server-side tool (executes on server)
-@ai_function(description="Get the time zone for a location.")
+@tool(description="Get the time zone for a location.")
 def get_time_zone(location: str) -> str:
     """Get the time zone for a location.
 

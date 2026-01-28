@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from agent_framework import FileCheckpointStorage, RequestInfoEvent, WorkflowOutputEvent
+from agent_framework import tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
@@ -37,17 +38,18 @@ MENU_ITEMS = [
     MenuItem(category="Drink", name="Soda", price=1.95, is_special=False),
 ]
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_menu() -> list[dict[str, Any]]:
     """Get all menu items."""
     return [{"category": i.category, "name": i.name, "price": i.price} for i in MENU_ITEMS]
 
-
+@tool(approval_mode="never_require")
 def get_specials() -> list[dict[str, Any]]:
     """Get today's specials."""
     return [{"category": i.category, "name": i.name, "price": i.price} for i in MENU_ITEMS if i.is_special]
 
-
+@tool(approval_mode="never_require")
 def get_item_price(name: Annotated[str, Field(description="Menu item name")]) -> str:
     """Get price of a menu item."""
     for item in MENU_ITEMS:

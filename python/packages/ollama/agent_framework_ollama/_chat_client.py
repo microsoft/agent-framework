@@ -11,22 +11,17 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    Contents,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
+    FunctionTool,
     Role,
-    TextContent,
-    TextReasoningContent,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -45,26 +40,32 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Ollama Chat Options TypedDict
 
 
-class OllamaChatOptions(ChatOptions, total=False):
+class OllamaChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Ollama-specific chat options dict.
 
     Extends base ChatOptions with Ollama-specific parameters.
@@ -452,31 +453,31 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         return [OllamaMessage(role="system", content=message.text)]
 
     def _format_user_message(self, message: ChatMessage) -> list[OllamaMessage]:
-        if not any(isinstance(c, (DataContent, TextContent)) for c in message.contents) and not message.text:
+        if not any(c.type in {"text", "data"} for c in message.contents) and not message.text:
             raise ServiceInvalidRequestError(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
             )
 
-        if not any(isinstance(c, DataContent) for c in message.contents):
+        if not any(c.type == "data" for c in message.contents):
             return [OllamaMessage(role="user", content=message.text)]
 
         user_message = OllamaMessage(role="user", content=message.text)
-        data_contents = [c for c in message.contents if isinstance(c, DataContent)]
+        data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
             if not any(c.has_top_level_media_type("image") for c in data_contents):
                 raise ServiceInvalidRequestError("Only image data content is supported for user messages in Ollama.")
             # Ollama expects base64 strings without prefix
-            user_message["images"] = [c.uri.split(",")[1] for c in data_contents]
+            user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
         text_content = message.text
         # Ollama shouldn't have encrypted reasoning, so we just process text.
-        reasoning_contents = "".join((c.text or "") for c in message.contents if isinstance(c, TextReasoningContent))
+        reasoning_contents = "".join((c.text or "") for c in message.contents if c.type == "text_reasoning")
 
         assistant_message = OllamaMessage(role="assistant", content=text_content, thinking=reasoning_contents)
 
-        tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
+        tool_calls = [item for item in message.contents if item.type == "function_call"]
         if tool_calls:
             assistant_message["tool_calls"] = [
                 {
@@ -497,15 +498,15 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         return [
             OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
             for item in message.contents
-            if isinstance(item, FunctionResultContent)
+            if item.type == "function_result"
         ]
 
-    def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Contents]:
-        contents: list[Contents] = []
+    def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
+        contents: list[Content] = []
         if response.message.thinking:
-            contents.append(TextReasoningContent(text=response.message.thinking))
+            contents.append(Content.from_text_reasoning(text=response.message.thinking))
         if response.message.content:
-            contents.append(TextContent(text=response.message.content))
+            contents.append(Content.from_text(text=response.message.content))
         if response.message.tool_calls:
             tool_calls = self._parse_tool_calls_from_ollama(response.message.tool_calls)
             contents.extend(tool_calls)
@@ -533,10 +534,10 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
             ),
         )
 
-    def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Contents]:
-        resp: list[Contents] = []
+    def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
+        resp: list[Content] = []
         for tool in tool_calls:
-            fcc = FunctionCallContent(
+            fcc = Content.from_function_call(
                 call_id=tool.function.name,  # Use name of function as call ID since Ollama doesn't provide a call ID
                 name=tool.function.name,
                 arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
@@ -550,13 +551,13 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
+                    case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
                     case _:
                         raise ServiceInvalidRequestError(
                             "Unsupported tool type '"
                             f"{type(tool).__name__}"
-                            "' for Ollama client. Supported tool types: AIFunction."
+                            "' for Ollama client. Supported tool types: FunctionTool."
                         )
             else:
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
