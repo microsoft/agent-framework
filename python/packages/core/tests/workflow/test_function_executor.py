@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -12,6 +13,27 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
+
+
+# Module-level types for string forward reference tests
+@dataclass
+class FuncExecForwardRefMessage:
+    content: str
+
+
+@dataclass
+class FuncExecForwardRefTypeA:
+    value: str
+
+
+@dataclass
+class FuncExecForwardRefTypeB:
+    value: int
+
+
+@dataclass
+class FuncExecForwardRefResponse:
+    result: str
 
 
 class TestFunctionExecutor:
@@ -535,3 +557,235 @@ class TestFunctionExecutor:
             async_static = static_wrapped
 
         assert asyncio.iscoroutinefunction(C.async_static)  # Works via descriptor protocol
+
+
+class TestExecutorExplicitTypes:
+    """Test suite for @executor decorator with explicit input_type and output_type parameters."""
+
+    def test_executor_with_explicit_input_type(self):
+        """Test that explicit input_type takes precedence over introspection."""
+
+        @executor(input_type=str)
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Handler should be registered for str (explicit)
+        assert str in process._handlers
+        assert len(process._handlers) == 1
+
+        # Can handle str messages
+        assert process.can_handle(Message(data="hello", source_id="mock"))
+        # Cannot handle int messages
+        assert not process.can_handle(Message(data=42, source_id="mock"))
+
+    def test_executor_with_explicit_output_type(self):
+        """Test that explicit output_type takes precedence over introspection."""
+
+        @executor(output_type=int)
+        async def process(message: str, ctx: WorkflowContext[str]) -> None:
+            pass
+
+        # Handler spec should have int as output type (explicit), not str (introspected)
+        spec = process._handler_specs[0]
+        assert spec["output_types"] == [int]
+
+        # Executor output_types property should reflect explicit type
+        assert int in process.output_types
+        assert str not in process.output_types
+
+    def test_executor_with_explicit_input_and_output_types(self):
+        """Test that both explicit input_type and output_type work together."""
+
+        @executor(id="explicit_both", input_type=dict, output_type=list)
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Handler should be registered for dict (explicit input type)
+        assert dict in process._handlers
+        assert len(process._handlers) == 1
+
+        # Output type should be list (explicit)
+        spec = process._handler_specs[0]
+        assert spec["output_types"] == [list]
+
+        # Verify can_handle
+        assert process.can_handle(Message(data={"key": "value"}, source_id="mock"))
+        assert not process.can_handle(Message(data="string", source_id="mock"))
+
+    def test_executor_with_explicit_union_input_type(self):
+        """Test that explicit union input_type is handled correctly."""
+
+        @executor(input_type=str | int)
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Handler should be registered for the union type
+        assert len(process._handlers) == 1
+
+        # Can handle both str and int messages
+        assert process.can_handle(Message(data="hello", source_id="mock"))
+        assert process.can_handle(Message(data=42, source_id="mock"))
+        # Cannot handle float
+        assert not process.can_handle(Message(data=3.14, source_id="mock"))
+
+    def test_executor_with_explicit_union_output_type(self):
+        """Test that explicit union output_type is normalized to a list."""
+
+        @executor(output_type=str | int | bool)
+        async def process(message: Any, ctx: WorkflowContext) -> None:
+            pass
+
+        # Output types should be a list with all union members
+        assert set(process.output_types) == {str, int, bool}
+
+    def test_executor_explicit_types_precedence_over_introspection(self):
+        """Test that explicit types always take precedence over introspected types."""
+
+        # Introspection would give: input=str, output=[int]
+        # Explicit gives: input=bytes, output=[float]
+        @executor(input_type=bytes, output_type=float)
+        async def process(message: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        # Should use explicit input type (bytes), not introspected (str)
+        assert bytes in process._handlers
+        assert str not in process._handlers
+
+        # Should use explicit output type (float), not introspected (int)
+        assert float in process.output_types
+        assert int not in process.output_types
+
+    def test_executor_fallback_to_introspection_when_no_explicit_types(self):
+        """Test that introspection is used when no explicit types are provided."""
+
+        @executor
+        async def process(message: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        # Should use introspected types
+        assert str in process._handlers
+        assert int in process.output_types
+
+    def test_executor_partial_explicit_types(self):
+        """Test that partial explicit types work (only input_type or only output_type)."""
+
+        # Only explicit input_type, introspect output_type
+        @executor(input_type=bytes)
+        async def process_input(message: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        assert bytes in process_input._handlers  # Explicit
+        assert int in process_input.output_types  # Introspected
+
+        # Only explicit output_type, introspect input_type
+        @executor(output_type=float)
+        async def process_output(message: str, ctx: WorkflowContext[int]) -> None:
+            pass
+
+        assert str in process_output._handlers  # Introspected
+        assert float in process_output.output_types  # Explicit
+        assert int not in process_output.output_types  # Not introspected when explicit provided
+
+    def test_executor_explicit_input_type_allows_no_message_annotation(self):
+        """Test that explicit input_type allows function without message type annotation."""
+
+        @executor(input_type=str)
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Should work with explicit input_type
+        assert str in process._handlers
+        assert process.can_handle(Message(data="hello", source_id="mock"))
+
+    def test_executor_explicit_types_with_id(self):
+        """Test that explicit types work together with id parameter."""
+
+        @executor(id="custom_id", input_type=bytes, output_type=int)
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        assert process.id == "custom_id"
+        assert bytes in process._handlers
+        assert int in process.output_types
+
+    def test_executor_explicit_types_with_single_param_function(self):
+        """Test that explicit input_type works with single-parameter functions."""
+
+        @executor(input_type=str)
+        async def process(message):  # type: ignore[no-untyped-def]
+            return message.upper()
+
+        # Should work with explicit input_type
+        assert str in process._handlers
+        assert process.can_handle(Message(data="hello", source_id="mock"))
+        assert not process.can_handle(Message(data=42, source_id="mock"))
+
+    def test_executor_explicit_types_with_sync_function(self):
+        """Test that explicit types work with synchronous functions."""
+
+        @executor(input_type=int, output_type=str)
+        def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        assert int in process._handlers
+        assert str in process.output_types
+
+    def test_function_executor_constructor_with_explicit_types(self):
+        """Test FunctionExecutor constructor with explicit input_type and output_type."""
+
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        func_exec = FunctionExecutor(process, id="test", input_type=dict, output_type=list)
+
+        assert dict in func_exec._handlers
+        spec = func_exec._handler_specs[0]
+        assert spec["message_type"] is dict
+        assert spec["output_types"] == [list]
+
+    def test_executor_explicit_union_types_via_typing_union(self):
+        """Test that Union[] syntax also works for explicit types."""
+        from typing import Union
+
+        @executor(input_type=Union[str, int], output_type=Union[bool, float])
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Can handle both str and int
+        assert process.can_handle(Message(data="hello", source_id="mock"))
+        assert process.can_handle(Message(data=42, source_id="mock"))
+
+        # Output types should include both
+        assert set(process.output_types) == {bool, float}
+
+    def test_executor_with_string_forward_reference_input_type(self):
+        """Test that string forward references work for input_type."""
+
+        @executor(input_type="FuncExecForwardRefMessage")
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Should resolve the string to the actual type
+        assert FuncExecForwardRefMessage in process._handlers
+        assert process.can_handle(Message(data=FuncExecForwardRefMessage("hello"), source_id="mock"))
+
+    def test_executor_with_string_forward_reference_union(self):
+        """Test that string forward references work with union types."""
+
+        @executor(input_type="FuncExecForwardRefTypeA | FuncExecForwardRefTypeB")
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Should handle both types
+        assert process.can_handle(Message(data=FuncExecForwardRefTypeA("hello"), source_id="mock"))
+        assert process.can_handle(Message(data=FuncExecForwardRefTypeB(42), source_id="mock"))
+
+    def test_executor_with_string_forward_reference_output_type(self):
+        """Test that string forward references work for output_type."""
+
+        @executor(input_type=str, output_type="FuncExecForwardRefResponse")
+        async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        # Should resolve the string output type
+        assert FuncExecForwardRefResponse in process.output_types

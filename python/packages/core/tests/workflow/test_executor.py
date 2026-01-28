@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from dataclasses import dataclass
+
 import pytest
 
 from agent_framework import (
@@ -14,6 +16,27 @@ from agent_framework import (
     handler,
     response_handler,
 )
+
+
+# Module-level types for string forward reference tests
+@dataclass
+class ForwardRefMessage:
+    content: str
+
+
+@dataclass
+class ForwardRefTypeA:
+    value: str
+
+
+@dataclass
+class ForwardRefTypeB:
+    value: int
+
+
+@dataclass
+class ForwardRefResponse:
+    result: str
 
 
 def test_executor_without_id():
@@ -538,3 +561,245 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
         f"{[m.text for m in mutator_invoked.data]}"
     )
     assert mutator_invoked.data[0].text == "hello"
+
+
+# region: Tests for @handler decorator with explicit input_type and output_type
+
+
+class TestHandlerExplicitTypes:
+    """Test suite for @handler decorator with explicit input_type and output_type parameters."""
+
+    def test_handler_with_explicit_input_type(self):
+        """Test that explicit input_type takes precedence over introspection."""
+        from typing import Any
+
+        class ExplicitInputExecutor(Executor):
+            @handler(input_type=str)
+            async def handle(self, message: Any, ctx: WorkflowContext) -> None:
+                pass
+
+        exec_instance = ExplicitInputExecutor(id="explicit_input")
+
+        # Handler should be registered for str (explicit), not Any (introspected)
+        assert str in exec_instance._handlers
+        assert len(exec_instance._handlers) == 1
+
+        # Can handle str messages
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
+        # Cannot handle int messages (since explicit type is str)
+        assert not exec_instance.can_handle(Message(data=42, source_id="mock"))
+
+    def test_handler_with_explicit_output_type(self):
+        """Test that explicit output_type takes precedence over introspection."""
+
+        class ExplicitOutputExecutor(Executor):
+            @handler(output_type=int)
+            async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        exec_instance = ExplicitOutputExecutor(id="explicit_output")
+
+        # Handler spec should have int as output type (explicit), not str (introspected)
+        handler_func = exec_instance._handlers[str]
+        assert handler_func._handler_spec["output_types"] == [int]
+
+        # Executor output_types property should reflect explicit type
+        assert int in exec_instance.output_types
+        assert str not in exec_instance.output_types
+
+    def test_handler_with_explicit_input_and_output_types(self):
+        """Test that both explicit input_type and output_type work together."""
+        from typing import Any
+
+        class ExplicitBothExecutor(Executor):
+            @handler(input_type=dict, output_type=list)
+            async def handle(self, message: Any, ctx: WorkflowContext) -> None:
+                pass
+
+        exec_instance = ExplicitBothExecutor(id="explicit_both")
+
+        # Handler should be registered for dict (explicit input type)
+        assert dict in exec_instance._handlers
+        assert len(exec_instance._handlers) == 1
+
+        # Output type should be list (explicit)
+        handler_func = exec_instance._handlers[dict]
+        assert handler_func._handler_spec["output_types"] == [list]
+
+        # Verify can_handle
+        assert exec_instance.can_handle(Message(data={"key": "value"}, source_id="mock"))
+        assert not exec_instance.can_handle(Message(data="string", source_id="mock"))
+
+    def test_handler_with_explicit_union_input_type(self):
+        """Test that explicit union input_type is handled correctly."""
+        from typing import Any
+
+        class UnionInputExecutor(Executor):
+            @handler(input_type=str | int)
+            async def handle(self, message: Any, ctx: WorkflowContext) -> None:
+                pass
+
+        exec_instance = UnionInputExecutor(id="union_input")
+
+        # Handler should be registered for the union type
+        # The union type itself is stored as the key
+        assert len(exec_instance._handlers) == 1
+
+        # Can handle both str and int messages
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
+        assert exec_instance.can_handle(Message(data=42, source_id="mock"))
+        # Cannot handle float
+        assert not exec_instance.can_handle(Message(data=3.14, source_id="mock"))
+
+    def test_handler_with_explicit_union_output_type(self):
+        """Test that explicit union output_type is normalized to a list."""
+        from typing import Any
+
+        class UnionOutputExecutor(Executor):
+            @handler(output_type=str | int | bool)
+            async def handle(self, message: Any, ctx: WorkflowContext) -> None:
+                pass
+
+        exec_instance = UnionOutputExecutor(id="union_output")
+
+        # Output types should be a list with all union members
+        assert set(exec_instance.output_types) == {str, int, bool}
+
+    def test_handler_explicit_types_precedence_over_introspection(self):
+        """Test that explicit types always take precedence over introspected types."""
+
+        class PrecedenceExecutor(Executor):
+            # Introspection would give: input=str, output=[int]
+            # Explicit gives: input=bytes, output=[float]
+            @handler(input_type=bytes, output_type=float)
+            async def handle(self, message: str, ctx: WorkflowContext[int]) -> None:
+                pass
+
+        exec_instance = PrecedenceExecutor(id="precedence")
+
+        # Should use explicit input type (bytes), not introspected (str)
+        assert bytes in exec_instance._handlers
+        assert str not in exec_instance._handlers
+
+        # Should use explicit output type (float), not introspected (int)
+        assert float in exec_instance.output_types
+        assert int not in exec_instance.output_types
+
+    def test_handler_fallback_to_introspection_when_no_explicit_types(self):
+        """Test that introspection is used when no explicit types are provided."""
+
+        class IntrospectedExecutor(Executor):
+            @handler
+            async def handle(self, message: str, ctx: WorkflowContext[int]) -> None:
+                pass
+
+        exec_instance = IntrospectedExecutor(id="introspected")
+
+        # Should use introspected types
+        assert str in exec_instance._handlers
+        assert int in exec_instance.output_types
+
+    def test_handler_partial_explicit_types(self):
+        """Test that partial explicit types work (only input_type or only output_type)."""
+
+        # Only explicit input_type, introspect output_type
+        class OnlyInputExecutor(Executor):
+            @handler(input_type=bytes)
+            async def handle(self, message: str, ctx: WorkflowContext[int]) -> None:
+                pass
+
+        exec_input = OnlyInputExecutor(id="only_input")
+        assert bytes in exec_input._handlers  # Explicit
+        assert int in exec_input.output_types  # Introspected
+
+        # Only explicit output_type, introspect input_type
+        class OnlyOutputExecutor(Executor):
+            @handler(output_type=float)
+            async def handle(self, message: str, ctx: WorkflowContext[int]) -> None:
+                pass
+
+        exec_output = OnlyOutputExecutor(id="only_output")
+        assert str in exec_output._handlers  # Introspected
+        assert float in exec_output.output_types  # Explicit
+        assert int not in exec_output.output_types  # Not introspected when explicit provided
+
+    def test_handler_explicit_input_type_allows_no_message_annotation(self):
+        """Test that explicit input_type allows handler without message type annotation."""
+
+        class NoAnnotationExecutor(Executor):
+            @handler(input_type=str)
+            async def handle(self, message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+                pass
+
+        exec_instance = NoAnnotationExecutor(id="no_annotation")
+
+        # Should work with explicit input_type
+        assert str in exec_instance._handlers
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
+
+    def test_handler_multiple_handlers_mixed_explicit_and_introspected(self):
+        """Test executor with multiple handlers, some with explicit types and some introspected."""
+
+        class MixedExecutor(Executor):
+            @handler(input_type=str, output_type=int)
+            async def handle_explicit(self, message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+                pass
+
+            @handler
+            async def handle_introspected(self, message: float, ctx: WorkflowContext[bool]) -> None:
+                pass
+
+        exec_instance = MixedExecutor(id="mixed")
+
+        # Should have both handlers
+        assert len(exec_instance._handlers) == 2
+        assert str in exec_instance._handlers  # Explicit
+        assert float in exec_instance._handlers  # Introspected
+
+        # Should have both output types
+        assert int in exec_instance.output_types  # Explicit
+        assert bool in exec_instance.output_types  # Introspected
+
+    def test_handler_with_string_forward_reference_input_type(self):
+        """Test that string forward references work for input_type."""
+
+        class StringRefExecutor(Executor):
+            @handler(input_type="ForwardRefMessage")
+            async def handle(self, message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+                pass
+
+        exec_instance = StringRefExecutor(id="string_ref")
+
+        # Should resolve the string to the actual type
+        assert ForwardRefMessage in exec_instance._handlers
+        assert exec_instance.can_handle(Message(data=ForwardRefMessage("hello"), source_id="mock"))
+
+    def test_handler_with_string_forward_reference_union(self):
+        """Test that string forward references work with union types."""
+
+        class StringUnionExecutor(Executor):
+            @handler(input_type="ForwardRefTypeA | ForwardRefTypeB")
+            async def handle(self, message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+                pass
+
+        exec_instance = StringUnionExecutor(id="string_union")
+
+        # Should handle both types
+        assert exec_instance.can_handle(Message(data=ForwardRefTypeA("hello"), source_id="mock"))
+        assert exec_instance.can_handle(Message(data=ForwardRefTypeB(42), source_id="mock"))
+
+    def test_handler_with_string_forward_reference_output_type(self):
+        """Test that string forward references work for output_type."""
+
+        class StringOutputExecutor(Executor):
+            @handler(input_type=str, output_type="ForwardRefResponse")
+            async def handle(self, message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
+                pass
+
+        exec_instance = StringOutputExecutor(id="string_output")
+
+        # Should resolve the string output type
+        assert ForwardRefResponse in exec_instance.output_types
+
+
+# endregion: Tests for @handler decorator with explicit input_type and output_type
