@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.GithubCopilot\Microsoft.Agents.AI.GithubCopilot.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.GitHub.Copilot\Microsoft.Agents.AI.GitHub.Copilot.csproj" />
   </ItemGroup>
-  
+
 </Project>

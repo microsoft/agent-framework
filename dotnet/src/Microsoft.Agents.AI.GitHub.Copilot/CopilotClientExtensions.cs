@@ -2,7 +2,7 @@
 
 using System.Collections.Generic;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.GithubCopilot;
+using Microsoft.Agents.AI.GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -18,7 +18,7 @@ namespace GitHub.Copilot.SDK;
 /// <para>
 /// They allow developers to easily create AI agents that can interact
 /// with GitHub Copilot by handling the conversion from Copilot clients to
-/// <see cref="GithubCopilotAgent"/> instances that implement the <see cref="AIAgent"/> interface.
+/// <see cref="GitHubCopilotAgent"/> instances that implement the <see cref="AIAgent"/> interface.
 /// </para>
 /// </remarks>
 public static class CopilotClientExtensions
@@ -43,7 +43,7 @@ public static class CopilotClientExtensions
     {
         Throw.IfNull(client);
 
-        return new GithubCopilotAgent(client, sessionConfig, ownsClient, id, name, description);
+        return new GitHubCopilotAgent(client, sessionConfig, ownsClient, id, name, description);
     }
 
     /// <summary>
@@ -68,6 +68,6 @@ public static class CopilotClientExtensions
     {
         Throw.IfNull(client);
 
-        return new GithubCopilotAgent(client, ownsClient, id, name, description, tools, instructions);
+        return new GitHubCopilotAgent(client, ownsClient, id, name, description, tools, instructions);
     }
 }
