@@ -5,7 +5,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <summary>
 /// Represents the complete execution plan for a workflow, including parallel execution levels.
 /// </summary>
-public sealed class WorkflowExecutionPlan
+internal sealed class WorkflowExecutionPlan
 {
     /// <summary>
     /// The execution levels in order. Each level contains executors that can run in parallel.

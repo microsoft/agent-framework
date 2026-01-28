@@ -5,7 +5,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <summary>
 /// Provides helper methods for workflow naming conventions used in durable orchestrations.
 /// </summary>
-public static class WorkflowNamingHelper
+internal static class WorkflowNamingHelper
 {
     /// <summary>
     /// The prefix used for durable workflow orchestration function names.

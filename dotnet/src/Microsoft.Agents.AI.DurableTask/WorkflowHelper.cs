@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <param name="ExecutorId">The unique identifier of the executor.</param>
 /// <param name="IsAgenticExecutor">Indicates whether this executor is an agentic executor.</param>
 /// <param name="RequestPort">The request port if this executor is a request port executor; otherwise, null.</param>
-public sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor, RequestPort? RequestPort = null)
+internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor, RequestPort? RequestPort = null)
 {
     /// <summary>
     /// Gets a value indicating whether this executor is a request port executor (human-in-the-loop).
@@ -25,12 +25,12 @@ public sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecu
 /// <param name="Level">The level number (0-based, starting from the root executor).</param>
 /// <param name="Executors">The executors that can run in parallel at this level.</param>
 /// <param name="IsFanIn">Indicates if this level is a Fan-In point (has executors with multiple predecessors).</param>
-public sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
+internal sealed record WorkflowExecutionLevel(int Level, List<WorkflowExecutorInfo> Executors, bool IsFanIn);
 
 /// <summary>
 /// Provides helper methods for analyzing and executing workflows.
 /// </summary>
-public static class WorkflowHelper
+internal static class WorkflowHelper
 {
     /// <summary>
     /// Accepts a workflow instance and returns a list of executors with metadata in the order they should be executed.

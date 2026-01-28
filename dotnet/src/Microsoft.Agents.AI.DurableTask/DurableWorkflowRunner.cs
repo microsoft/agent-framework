@@ -29,7 +29,7 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <item><description>Understand the expected request and response types for proper serialization</description></item>
 /// </list>
 /// </remarks>
-public sealed record PendingExternalEventStatus(
+internal sealed record PendingExternalEventStatus(
     string EventName,
     string Input,
     string RequestType,
@@ -57,7 +57,7 @@ public sealed record PendingExternalEventStatus(
 /// </description></item>
 /// </list>
 /// </remarks>
-public sealed class DurableWorkflowCustomStatus
+internal sealed class DurableWorkflowCustomStatus
 {
     /// <summary>
     /// Gets or sets the pending external event status when waiting for HITL input.
@@ -184,7 +184,7 @@ public sealed class DurableWorkflowCustomStatus
 /// └─────────────────────────────────────────────────────────────────────────────────┘
 /// </code>
 /// </remarks>
-public class DurableWorkflowRunner
+internal class DurableWorkflowRunner
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableWorkflowRunner"/> class.
