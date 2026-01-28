@@ -147,23 +147,23 @@ public class DelegatingAIAgentTests
     }
 
     /// <summary>
-    /// Verify that DeserializeThreadAsync delegates to inner agent.
+    /// Verify that DeserializeSessionAsync delegates to inner agent.
     /// </summary>
     [Fact]
-    public async Task DeserializeThreadAsync_DelegatesToInnerAgentAsync()
+    public async Task DeserializeSessionAsync_DelegatesToInnerAgentAsync()
     {
         // Arrange
-        var serializedThread = JsonSerializer.SerializeToElement("test-thread-id", TestJsonSerializerContext.Default.String);
+        var serializedSession = JsonSerializer.SerializeToElement("test-session-id", TestJsonSerializerContext.Default.String);
         this._innerAgentMock
-            .Setup(x => x.DeserializeThreadAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(this._testThread);
+            .Setup(x => x.DeserializeSessionAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(this._testSession);
 
         // Act
-        var thread = await this._delegatingAgent.DeserializeThreadAsync(serializedThread);
+        var session = await this._delegatingAgent.DeserializeSessionAsync(serializedSession);
 
         // Assert
-        Assert.Same(this._testThread, thread);
-        this._innerAgentMock.Verify(x => x.DeserializeThreadAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Same(this._testSession, session);
+        this._innerAgentMock.Verify(x => x.DeserializeSessionAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
