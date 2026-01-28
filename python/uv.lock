@@ -264,11 +264,6 @@ dependencies = [
     { name = "azure-functions-durable", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "types-python-dateutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
@@ -278,7 +273,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "types-python-dateutil", specifier = ">=2.9.0" }]
+dev = []
 
 [[package]]
 name = "agent-framework-bedrock"
@@ -464,6 +459,7 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "durabletask", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "durabletask-azuremanaged", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dateutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -476,6 +472,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "durabletask", specifier = ">=1.3.0" },
     { name = "durabletask-azuremanaged", specifier = ">=1.3.0" },
+    { name = "python-dateutil", specifier = ">=2.8.0" },
 ]
 
 [package.metadata.requires-dev]
