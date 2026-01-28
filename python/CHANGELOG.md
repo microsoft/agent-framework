@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260128] - 2026-01-28
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Renamed `@ai_function` decorator to `@tool` and `AIFunction` to `FunctionTool` ([#3413](https://github.com/microsoft/agent-framework/pull/3413))
+- **agent-framework-core**: [BREAKING] Add factory pattern to `GroupChatBuilder` and `MagenticBuilder` ([#3224](https://github.com/microsoft/agent-framework/pull/3224))
+- **agent-framework-github-copilot**: [BREAKING] Renamed `Github` to `GitHub`  ([#3486](https://github.com/microsoft/agent-framework/pull/3486))
+
 ## [1.0.0b260127] - 2026-01-27
 
 ### Added
@@ -548,7 +556,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260128...HEAD
+[1.0.0b260128]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...python-1.0.0b260128
 [1.0.0b260127]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260123...python-1.0.0b260127
 [1.0.0b260123]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260116...python-1.0.0b260123
 [1.0.0b260116]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260114...python-1.0.0b260116

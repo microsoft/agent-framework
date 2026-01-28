@@ -3,7 +3,7 @@
 import sys
 from collections.abc import MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, TypedDict
+from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import ServiceInitializationError
@@ -15,9 +15,9 @@ else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import NotRequired, Self  # pragma: no cover
+    from typing import NotRequired, Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import NotRequired, Self  # pragma: no cover
+    from typing_extensions import NotRequired, Self, TypedDict  # pragma: no cover
 
 
 # Type aliases for Mem0 search response formats (v1.1 and v2; v1 is deprecated, but matches the type definition for v2)

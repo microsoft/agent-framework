@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncIterable,
     Callable,
+    Mapping,
     MutableMapping,
     MutableSequence,
     Sequence,
@@ -17,8 +18,12 @@ from typing import (
     Generic,
     Protocol,
     TypedDict,
+    cast,
+    overload,
     runtime_checkable,
 )
+
+from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._memory import ContextProvider
@@ -45,9 +50,10 @@ from ._types import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
 
 if TYPE_CHECKING:
     from ._agents import ChatAgent
@@ -120,6 +126,16 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
 
     additional_properties: dict[str, Any]
 
+    @overload
+    async def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        options: "ChatOptions[TResponseModelT]",
+        **kwargs: Any,
+    ) -> "ChatResponse[TResponseModelT]": ...
+
+    @overload
     async def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
@@ -174,6 +190,9 @@ TOptions_co = TypeVar(
     default="ChatOptions",
     covariant=True,
 )
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
 class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
@@ -319,13 +338,31 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
     # region Public method
 
+    @overload
+    async def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        options: "ChatOptions[TResponseModelT]",
+        **kwargs: Any,
+    ) -> ChatResponse[TResponseModelT]: ...
+
+    @overload
     async def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> ChatResponse: ...
+
+    async def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse[Any]:
         """Get a response from a chat client.
 
         Args:
@@ -389,7 +426,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: TOptions_co | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -410,6 +447,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             default_options: A TypedDict containing chat options. When using a typed client like
                 ``OpenAIChatClient``, this enables IDE autocomplete for provider-specific options
                 including temperature, max_tokens, model_id, tool_choice, and more.
+                Note: response_format typing does not flow into run outputs when set via default_options,
+                and dict literals are accepted without specialized option typing.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
             context_provider: Context providers to include during agent invocation.
@@ -446,7 +485,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             description=description,
             instructions=instructions,
             tools=tools,
-            default_options=default_options,
+            default_options=cast(Any, default_options),
             chat_message_store_factory=chat_message_store_factory,
             context_provider=context_provider,
             middleware=middleware,

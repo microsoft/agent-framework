@@ -7,9 +7,9 @@ using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.GithubCopilot.IntegrationTests;
+namespace Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests;
 
-public class GithubCopilotAgentTests
+public class GitHubCopilotAgentTests
 {
     private const string SkipReason = "Integration tests require GitHub Copilot CLI installed. For local execution only.";
 
@@ -23,7 +23,7 @@ public class GithubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GithubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
 
         // Act
         AgentResponse response = await agent.RunAsync("What is 2 + 2? Answer with just the number.");
@@ -41,7 +41,7 @@ public class GithubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GithubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
 
         // Act
         List<AgentResponseUpdate> updates = [];
@@ -71,7 +71,7 @@ public class GithubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GithubCopilotAgent agent = new(
+        await using GitHubCopilotAgent agent = new(
             client,
             tools: [weatherTool],
             instructions: "You are a helpful weather agent. Use the GetWeather tool to answer weather questions.");
@@ -92,7 +92,7 @@ public class GithubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GithubCopilotAgent agent = new(
+        await using GitHubCopilotAgent agent = new(
             client,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
@@ -119,21 +119,21 @@ public class GithubCopilotAgentTests
         await using CopilotClient client1 = new(new CopilotClientOptions());
         await client1.StartAsync();
 
-        await using GithubCopilotAgent agent1 = new(
+        await using GitHubCopilotAgent agent1 = new(
             client1,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session1 = await agent1.GetNewSessionAsync();
         await agent1.RunAsync("Remember this number: 42.", session1);
 
-        sessionId = ((GithubCopilotAgentSession)session1).SessionId;
+        sessionId = ((GitHubCopilotAgentSession)session1).SessionId;
         Assert.NotNull(sessionId);
 
         // Act - Second agent instance resumes the session
         await using CopilotClient client2 = new(new CopilotClientOptions());
         await client2.StartAsync();
 
-        await using GithubCopilotAgent agent2 = new(
+        await using GitHubCopilotAgent agent2 = new(
             client2,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
@@ -157,7 +157,7 @@ public class GithubCopilotAgentTests
             OnPermissionRequest = OnPermissionRequestAsync,
         };
 
-        await using GithubCopilotAgent agent = new(client, sessionConfig);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
 
         // Act
         AgentResponse response = await agent.RunAsync("Run a shell command to print 'hello world'");
@@ -180,7 +180,7 @@ public class GithubCopilotAgentTests
             OnPermissionRequest = OnPermissionRequestAsync,
         };
 
-        await using GithubCopilotAgent agent = new(client, sessionConfig);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
 
         // Act
         AgentResponse response = await agent.RunAsync(
@@ -213,7 +213,7 @@ public class GithubCopilotAgentTests
             },
         };
 
-        await using GithubCopilotAgent agent = new(client, sessionConfig);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
 
         // Act
         AgentResponse response = await agent.RunAsync("List the files in the current directory");
@@ -245,7 +245,7 @@ public class GithubCopilotAgentTests
             },
         };
 
-        await using GithubCopilotAgent agent = new(client, sessionConfig);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
 
         // Act
         AgentResponse response = await agent.RunAsync("Search Microsoft Learn for 'Azure Functions' and summarize the top result");

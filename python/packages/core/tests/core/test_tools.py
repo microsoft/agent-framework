@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
 import pytest
@@ -1493,8 +1493,6 @@ async def test_tool_with_kwargs_injection():
 
 def test_parse_annotation_with_literal_type():
     """Test that _parse_annotation returns Literal types unchanged (issue #2891)."""
-    from typing import get_args, get_origin
-
     # Literal with string values
     literal_annotation = Literal["Data", "Security", "Network"]
     result = _parse_annotation(literal_annotation)
@@ -1505,7 +1503,6 @@ def test_parse_annotation_with_literal_type():
 
 def test_parse_annotation_with_literal_int_type():
     """Test that _parse_annotation returns Literal int types unchanged."""
-    from typing import get_args, get_origin
 
     literal_annotation = Literal[1, 2, 3]
     result = _parse_annotation(literal_annotation)
@@ -1516,7 +1513,6 @@ def test_parse_annotation_with_literal_int_type():
 
 def test_parse_annotation_with_literal_bool_type():
     """Test that _parse_annotation returns Literal bool types unchanged."""
-    from typing import get_args, get_origin
 
     literal_annotation = Literal[True, False]
     result = _parse_annotation(literal_annotation)
@@ -1535,7 +1531,6 @@ def test_parse_annotation_with_simple_types():
 
 def test_parse_annotation_with_annotated_and_literal():
     """Test that Annotated[Literal[...], description] works correctly."""
-    from typing import get_args, get_origin
 
     # When Literal is inside Annotated, it should still be preserved
     annotated_literal = Annotated[Literal["A", "B", "C"], "The category"]

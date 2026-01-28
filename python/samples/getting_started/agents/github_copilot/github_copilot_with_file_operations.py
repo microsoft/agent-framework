@@ -3,7 +3,7 @@
 """
 GitHub Copilot Agent with File Operation Permissions
 
-This sample demonstrates how to enable file read and write operations with GithubCopilotAgent.
+This sample demonstrates how to enable file read and write operations with GitHubCopilotAgent.
 By providing a permission handler that approves "read" and/or "write" requests, the agent can
 read from and write to files on the filesystem.
 
@@ -14,7 +14,7 @@ SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 
 import asyncio
 
-from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 
@@ -35,7 +35,7 @@ def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> Pe
 async def main() -> None:
     print("=== GitHub Copilot Agent with File Operation Permissions ===\n")
 
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         default_options={
             "instructions": "You are a helpful assistant that can read and write files.",
             "on_permission_request": prompt_permission,
