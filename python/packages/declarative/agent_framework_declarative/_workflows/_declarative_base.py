@@ -24,10 +24,11 @@ See: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/PowerFx/
 """
 
 import logging
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, cast
 
 from agent_framework._workflows import (
     Executor,
@@ -35,6 +36,12 @@ from agent_framework._workflows import (
     WorkflowContext,
 )
 from powerfx import Engine
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
 
 logger = logging.getLogger(__name__)
 

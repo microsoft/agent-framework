@@ -2,34 +2,38 @@
 
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Generic, TypedDict
+from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
-from agent_framework import use_chat_middleware, use_function_invocation
-from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
-from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
-
+from .._middleware import use_chat_middleware
+from .._tools import use_function_invocation
+from ..exceptions import ServiceInitializationError
+from ..observability import use_instrumentation
+from ..openai._responses_client import OpenAIBaseResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
 )
 
-if TYPE_CHECKING:
-    from agent_framework.openai._responses_client import OpenAIResponsesOptions
-
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from ..openai._responses_client import OpenAIResponsesOptions
 
 __all__ = ["AzureOpenAIResponsesClient"]
 

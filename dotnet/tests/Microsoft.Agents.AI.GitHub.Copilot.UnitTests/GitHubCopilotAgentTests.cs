@@ -6,12 +6,12 @@ using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.GithubCopilot.UnitTests;
+namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="GithubCopilotAgent"/> class.
+/// Unit tests for the <see cref="GitHubCopilotAgent"/> class.
 /// </summary>
-public sealed class GithubCopilotAgentTests
+public sealed class GitHubCopilotAgentTests
 {
     [Fact]
     public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
@@ -23,7 +23,7 @@ public sealed class GithubCopilotAgentTests
         const string TestDescription = "test-description";
 
         // Act
-        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
@@ -35,7 +35,7 @@ public sealed class GithubCopilotAgentTests
     public void Constructor_WithNullCopilotClient_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GithubCopilotAgent(copilotClient: null!, sessionConfig: null));
+        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient: null!, sessionConfig: null));
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class GithubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Assert
         Assert.NotNull(agent.Id);
@@ -55,18 +55,18 @@ public sealed class GithubCopilotAgentTests
     }
 
     [Fact]
-    public async Task GetNewSessionAsync_ReturnsGithubCopilotAgentSessionAsync()
+    public async Task GetNewSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
         var session = await agent.GetNewSessionAsync();
 
         // Assert
         Assert.NotNull(session);
-        Assert.IsType<GithubCopilotAgentSession>(session);
+        Assert.IsType<GitHubCopilotAgentSession>(session);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public sealed class GithubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GithubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
         // Act
@@ -82,7 +82,7 @@ public sealed class GithubCopilotAgentTests
 
         // Assert
         Assert.NotNull(session);
-        var typedSession = Assert.IsType<GithubCopilotAgentSession>(session);
+        var typedSession = Assert.IsType<GitHubCopilotAgentSession>(session);
         Assert.Equal(TestSessionId, typedSession.SessionId);
     }
 
@@ -94,7 +94,7 @@ public sealed class GithubCopilotAgentTests
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = new GithubCopilotAgent(copilotClient, tools: tools);
+        var agent = new GitHubCopilotAgent(copilotClient, tools: tools);
 
         // Assert
         Assert.NotNull(agent);

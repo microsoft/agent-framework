@@ -9,7 +9,7 @@ from agent_framework import tool
 """
 This sample demonstrates how to expose an Agent as an MCP server.
 
-To run this sample, set up your MCP host (like Claude Desktop or VSCode Github Copilot Agents)
+To run this sample, set up your MCP host (like Claude Desktop or VSCode GitHub Copilot Agents)
 with the following configuration:
 ```json
 {

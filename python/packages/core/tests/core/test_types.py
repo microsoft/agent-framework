@@ -3,10 +3,10 @@
 import base64
 from collections.abc import AsyncIterable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
@@ -665,9 +665,6 @@ def test_chat_response_with_format_init():
 
 def test_chat_response_value_raises_on_invalid_schema():
     """Test that value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -689,9 +686,6 @@ def test_chat_response_value_raises_on_invalid_schema():
 
 def test_chat_response_try_parse_value_returns_none_on_invalid():
     """Test that try_parse_value returns None on validation failure with Field constraints."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -707,7 +701,6 @@ def test_chat_response_try_parse_value_returns_none_on_invalid():
 
 def test_chat_response_try_parse_value_returns_value_on_success():
     """Test that try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -724,9 +717,6 @@ def test_chat_response_try_parse_value_returns_value_on_success():
 
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -748,9 +738,6 @@ def test_agent_response_value_raises_on_invalid_schema():
 
 def test_agent_response_try_parse_value_returns_none_on_invalid():
     """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -766,7 +753,6 @@ def test_agent_response_try_parse_value_returns_none_on_invalid():
 
 def test_agent_response_try_parse_value_returns_value_on_success():
     """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)

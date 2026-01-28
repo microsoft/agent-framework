@@ -37,7 +37,7 @@ from copilot.types import (
 from copilot.types import Tool as CopilotTool
 from pydantic import ValidationError
 
-from ._settings import GithubCopilotSettings
+from ._settings import GitHubCopilotSettings
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -54,7 +54,7 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 logger = logging.getLogger("agent_framework.github_copilot")
 
 
-class GithubCopilotOptions(TypedDict, total=False):
+class GitHubCopilotOptions(TypedDict, total=False):
     """GitHub Copilot-specific options."""
 
     instructions: str
@@ -90,12 +90,12 @@ class GithubCopilotOptions(TypedDict, total=False):
 TOptions = TypeVar(
     "TOptions",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="GithubCopilotOptions",
+    default="GitHubCopilotOptions",
     covariant=True,
 )
 
 
-class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
+class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
     """A GitHub Copilot Agent.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
@@ -109,7 +109,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         .. code-block:: python
 
-            async with GithubCopilotAgent() as agent:
+            async with GitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
                 print(response)
 
@@ -117,9 +117,9 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         .. code-block:: python
 
-            from agent_framework_github_copilot import GithubCopilotAgent, GithubCopilotOptions
+            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
 
-            agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
                 default_options={"model": "claude-sonnet-4", "timeout": 120}
             )
 
@@ -131,7 +131,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
                 return f"Weather in {city} is sunny"
 
 
-            async with GithubCopilotAgent(tools=[get_weather]) as agent:
+            async with GitHubCopilotAgent(tools=[get_weather]) as agent:
                 response = await agent.run("What's the weather in Seattle?")
     """
 
@@ -160,9 +160,9 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
                 a new client will be created using the other parameters.
-            id: ID of the GithubCopilotAgent.
-            name: Name of the GithubCopilotAgent.
-            description: Description of the GithubCopilotAgent.
+            id: ID of the GitHubCopilotAgent.
+            name: Name of the GitHubCopilotAgent.
+            description: Description of the GitHubCopilotAgent.
             context_provider: Context Provider, to be used by the agent.
             middleware: Agent middleware used by the agent.
             tools: Tools to use for the agent. Can be functions, ToolProtocol instances,
@@ -197,7 +197,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
 
         try:
-            self._settings = GithubCopilotSettings(
+            self._settings = GitHubCopilotSettings(
                 cli_path=cli_path,
                 model=model,
                 timeout=timeout,
@@ -215,7 +215,7 @@ class GithubCopilotAgent(BaseAgent, Generic[TOptions]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> "GithubCopilotAgent[TOptions]":
+    async def __aenter__(self) -> "GitHubCopilotAgent[TOptions]":
         """Start the agent when entering async context."""
         await self.start()
         return self
