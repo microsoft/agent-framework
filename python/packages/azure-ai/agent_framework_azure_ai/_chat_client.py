@@ -10,7 +10,6 @@ from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     Annotation,
     BaseChatClient,
     ChatAgent,
@@ -21,6 +20,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     ContextProvider,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedMCPTool,
@@ -1117,7 +1117,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
         for tool in tools:
             match tool:
-                case AIFunction():
+                case FunctionTool():
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                 case HostedWebSearchTool():
                     additional_props = tool.additional_properties or {}

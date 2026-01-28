@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 
 from agent_framework_ag_ui._orchestration._tooling import (
     collect_server_tools,
@@ -25,7 +25,7 @@ class MockMCPTool:
         self.is_connected = is_connected
 
 
-@ai_function
+@tool
 def regular_tool() -> str:
     """Regular tool for testing."""
     return "result"
@@ -35,7 +35,7 @@ def _create_chat_agent_with_tool(tool_name: str = "regular_tool") -> ChatAgent:
     """Create a ChatAgent with a mocked chat client and a simple tool.
 
     Note: tool_name parameter is kept for API compatibility but the tool
-    will always be named 'regular_tool' since ai_function uses the function name.
+    will always be named 'regular_tool' since tool uses the function name.
     """
     mock_chat_client = MagicMock()
     return ChatAgent(chat_client=mock_chat_client, tools=[regular_tool])

@@ -4,7 +4,7 @@ import asyncio
 from random import randrange
 from typing import TYPE_CHECKING, Annotated, Any
 
-from agent_framework import AgentResponse, ChatAgent, ChatMessage, ai_function
+from agent_framework import AgentResponse, ChatAgent, ChatMessage, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 if TYPE_CHECKING:
@@ -20,7 +20,8 @@ It shows how to handle function call approvals without using threads.
 conditions = ["sunny", "cloudy", "raining", "snowing", "clear"]
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(location: Annotated[str, "The city and state, e.g. San Francisco, CA"]) -> str:
     """Get the current weather for a given location."""
     # Simulate weather data
@@ -28,7 +29,7 @@ def get_weather(location: Annotated[str, "The city and state, e.g. San Francisco
 
 
 # Define a simple weather tool that requires approval
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def get_weather_detail(location: Annotated[str, "The city and state, e.g. San Francisco, CA"]) -> str:
     """Get the current weather for a given location."""
     # Simulate weather data

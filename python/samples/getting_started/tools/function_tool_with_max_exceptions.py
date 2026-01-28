@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import FunctionCallContent, FunctionResultContent, ai_function
+from agent_framework import FunctionCallContent, FunctionResultContent, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -14,7 +14,7 @@ limited number of times.
 
 
 # we trick the AI into calling this function with 0 as denominator to trigger the exception
-@ai_function(max_invocation_exceptions=1)
+@tool(max_invocation_exceptions=1)
 def safe_divide(
     a: Annotated[int, "Numerator"],
     b: Annotated[int, "Denominator"],

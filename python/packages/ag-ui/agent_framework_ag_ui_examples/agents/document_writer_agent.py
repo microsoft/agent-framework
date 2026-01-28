@@ -2,11 +2,11 @@
 
 """Example agent demonstrating predictive state updates with document writing."""
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def write_document(document: str) -> str:
     """Write a document. Use markdown formatting to format the document.
 

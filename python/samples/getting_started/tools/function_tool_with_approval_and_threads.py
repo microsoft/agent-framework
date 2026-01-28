@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import ChatAgent, ChatMessage, ai_function
+from agent_framework import ChatAgent, ChatMessage, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 """
@@ -15,7 +15,7 @@ the thread stores and retrieves them automatically.
 """
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def add_to_calendar(
     event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]
 ) -> str:

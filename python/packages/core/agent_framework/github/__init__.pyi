@@ -1,15 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_github_copilot import (
-    GithubCopilotAgent,
-    GithubCopilotOptions,
-    GithubCopilotSettings,
+    GitHubCopilotAgent,
+    GitHubCopilotOptions,
+    GitHubCopilotSettings,
     __version__,
 )
 
 __all__ = [
-    "GithubCopilotAgent",
-    "GithubCopilotOptions",
-    "GithubCopilotSettings",
+    "GitHubCopilotAgent",
+    "GitHubCopilotOptions",
+    "GitHubCopilotSettings",
     "__version__",
 ]

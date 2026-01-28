@@ -25,7 +25,7 @@ from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, create_model
 
 from ._tools import (
-    AIFunction,
+    FunctionTool,
     HostedMCPSpecificApproval,
     _build_pydantic_model_from_json_schema,
 )
@@ -356,7 +356,7 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.chat_client = chat_client
-        self._functions: list[AIFunction[Any, Any]] = []
+        self._functions: list[FunctionTool[Any, Any]] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -365,7 +365,7 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[AIFunction[Any, Any]]:
+    def functions(self) -> list[FunctionTool[Any, Any]]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
@@ -609,7 +609,7 @@ class MCPTool:
         """Load prompts from the MCP server.
 
         Retrieves available prompts from the connected MCP server and converts
-        them into AIFunction instances. Handles pagination automatically.
+        them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
@@ -633,7 +633,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: AIFunction[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = AIFunction(
+                func: FunctionTool[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -652,7 +652,7 @@ class MCPTool:
         """Load tools from the MCP server.
 
         Retrieves available tools from the connected MCP server and converts
-        them into AIFunction instances. Handles pagination automatically.
+        them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
@@ -676,8 +676,8 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
-                # Create AIFunctions out of each tool
-                func: AIFunction[BaseModel, list[Content] | Any | types.CallToolResult] = AIFunction(
+                # Create FunctionTools out of each tool
+                func: FunctionTool[BaseModel, list[Content] | Any | types.CallToolResult] = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",

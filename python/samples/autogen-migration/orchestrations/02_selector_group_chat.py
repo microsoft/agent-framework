@@ -86,12 +86,11 @@ async def run_agent_framework() -> None:
     workflow = (
         GroupChatBuilder()
         .participants([python_expert, javascript_expert, database_expert])
-        .set_manager(
-            manager=client.as_agent(
+        .with_orchestrator(
+            agent=client.as_agent(
                 name="selector_manager",
                 instructions="Based on the conversation, select the most appropriate expert to respond next.",
             ),
-            display_name="SelectorManager",
         )
         .with_max_rounds(1)
         .build()

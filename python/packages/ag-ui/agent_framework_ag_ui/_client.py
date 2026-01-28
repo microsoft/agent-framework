@@ -12,12 +12,12 @@ from typing import TYPE_CHECKING, Any, Generic, cast
 
 import httpx
 from agent_framework import (
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -239,7 +239,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         if any(getattr(tool, "name", None) == tool_name for tool in config.additional_tools):
             return
 
-        placeholder: AIFunction[Any, Any] = AIFunction(
+        placeholder: FunctionTool[Any, Any] = FunctionTool(
             name=tool_name,
             description="Server-managed tool placeholder (AG-UI)",
             func=None,

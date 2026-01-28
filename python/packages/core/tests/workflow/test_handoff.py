@@ -209,7 +209,9 @@ def test_build_fails_without_start_agent():
 
 def test_build_fails_without_participants():
     """Verify that build() raises ValueError when no participants are provided."""
-    with pytest.raises(ValueError, match="No participants or participant_factories have been configured."):
+    with pytest.raises(
+        ValueError, match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first."
+    ):
         HandoffBuilder().build()
 
 
@@ -273,7 +275,7 @@ async def test_tool_choice_preserved_from_agent_config():
     agent = ChatAgent(
         chat_client=mock_client,
         name="test_agent",
-        default_options={"tool_choice": {"mode": "required"}},
+        default_options={"tool_choice": {"mode": "required"}},  # type: ignore
     )
 
     # Run the agent
@@ -293,9 +295,11 @@ def test_handoff_builder_rejects_empty_participant_factories():
     """Test that HandoffBuilder rejects empty participant_factories dictionary."""
     # Empty factories are rejected immediately when calling participant_factories()
     with pytest.raises(ValueError, match=r"participant_factories cannot be empty"):
-        HandoffBuilder().participant_factories({})
+        HandoffBuilder().register_participants({})
 
-    with pytest.raises(ValueError, match=r"No participants or participant_factories have been configured"):
+    with pytest.raises(
+        ValueError, match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\."
+    ):
         HandoffBuilder(participant_factories={}).build()
 
 
@@ -312,7 +316,7 @@ def test_handoff_builder_rejects_mixing_participants_and_participant_factories_m
 
     # Case 1: participants first, then participant_factories
     with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder(participants=[triage]).participant_factories({
+        HandoffBuilder(participants=[triage]).register_participants({
             "specialist": lambda: MockHandoffAgent(name="specialist")
         })
 
@@ -324,13 +328,13 @@ def test_handoff_builder_rejects_mixing_participants_and_participant_factories_m
 
     # Case 3: participants(), then participant_factories()
     with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder().participants([triage]).participant_factories({
+        HandoffBuilder().participants([triage]).register_participants({
             "specialist": lambda: MockHandoffAgent(name="specialist")
         })
 
     # Case 4: participant_factories(), then participants()
     with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder().participant_factories({"triage": lambda: triage}).participants([
+        HandoffBuilder().register_participants({"triage": lambda: triage}).participants([
             MockHandoffAgent(name="specialist")
         ])
 
@@ -343,11 +347,13 @@ def test_handoff_builder_rejects_mixing_participants_and_participant_factories_m
 
 def test_handoff_builder_rejects_multiple_calls_to_participant_factories():
     """Test that multiple calls to .participant_factories() raises an error."""
-    with pytest.raises(ValueError, match=r"participant_factories\(\) has already been called"):
+    with pytest.raises(
+        ValueError, match=r"register_participants\(\) has already been called on this builder instance."
+    ):
         (
             HandoffBuilder()
-            .participant_factories({"agent1": lambda: MockHandoffAgent(name="agent1")})
-            .participant_factories({"agent2": lambda: MockHandoffAgent(name="agent2")})
+            .register_participants({"agent1": lambda: MockHandoffAgent(name="agent1")})
+            .register_participants({"agent2": lambda: MockHandoffAgent(name="agent2")})
         )
 
 
@@ -386,7 +392,7 @@ def test_handoff_builder_rejects_factory_name_coordinator_with_instances():
     triage = MockHandoffAgent(name="triage")
     specialist = MockHandoffAgent(name="specialist")
 
-    with pytest.raises(ValueError, match="Call participant_factories.*before with_start_agent"):
+    with pytest.raises(ValueError, match=r"Call register_participants\(...\) before with_start_agent\(...\)"):
         (
             HandoffBuilder(participants=[triage, specialist]).with_start_agent(
                 "triage"

@@ -6,11 +6,10 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from agent_framework._tools import AIFunction
-from agent_framework._types import ChatMessage, Content, Role
+from agent_framework import ChatMessage, Content, FunctionTool, Role
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,
-    convert_tau2_tool_to_ai_function,
+    convert_tau2_tool_to_function_tool,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage, ToolCall, ToolMessage, UserMessage
 from tau2.domains.airline.data_model import FlightDB
@@ -51,8 +50,8 @@ def tau2_airline_environment() -> Environment:
     )
 
 
-def test_convert_tau2_tool_to_ai_function_basic(tau2_airline_environment):
-    """Test basic conversion from tau2 tool to AIFunction."""
+def test_convert_tau2_tool_to_function_tool_basic(tau2_airline_environment):
+    """Test basic conversion from tau2 tool to FunctionTool."""
     # Get real tools from tau2 environment
     tools = tau2_airline_environment.get_tools()
 
@@ -61,33 +60,33 @@ def test_convert_tau2_tool_to_ai_function_basic(tau2_airline_environment):
     tau2_tool = tools[0]
 
     # Convert the tool
-    ai_function = convert_tau2_tool_to_ai_function(tau2_tool)
+    tool = convert_tau2_tool_to_function_tool(tau2_tool)
 
     # Verify the conversion
-    assert isinstance(ai_function, AIFunction)
-    assert ai_function.name == tau2_tool.name
-    assert ai_function.description == tau2_tool._get_description()
-    assert ai_function.input_model == tau2_tool.params
+    assert isinstance(tool, FunctionTool)
+    assert tool.name == tau2_tool.name
+    assert tool.description == tau2_tool._get_description()
+    assert tool.input_model == tau2_tool.params
 
     # Test that the function is callable (we won't call it with real params to avoid side effects)
-    assert callable(ai_function.func)
+    assert callable(tool.func)
 
 
-def test_convert_tau2_tool_to_ai_function_multiple_tools(tau2_airline_environment):
+def test_convert_tau2_tool_to_function_tool_multiple_tools(tau2_airline_environment):
     """Test conversion with multiple tau2 tools."""
     # Get real tools from tau2 environment
     tools = tau2_airline_environment.get_tools()
 
     # Convert multiple tools
-    ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools[:3]]  # Test first 3 tools
+    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools[:3]]  # Test first 3 tools
 
     # Verify all conversions
-    for ai_function, tau2_tool in zip(ai_functions, tools[:3], strict=False):
-        assert isinstance(ai_function, AIFunction)
-        assert ai_function.name == tau2_tool.name
-        assert ai_function.description == tau2_tool._get_description()
-        assert ai_function.input_model == tau2_tool.params
-        assert callable(ai_function.func)
+    for tool, tau2_tool in zip(function_tools, tools[:3], strict=False):
+        assert isinstance(tool, FunctionTool)
+        assert tool.name == tau2_tool.name
+        assert tool.description == tau2_tool._get_description()
+        assert tool.input_model == tau2_tool.params
+        assert callable(tool.func)
 
 
 def test_convert_agent_framework_messages_to_tau2_messages_system():

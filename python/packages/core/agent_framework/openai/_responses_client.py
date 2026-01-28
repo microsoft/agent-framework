@@ -38,7 +38,7 @@ from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
 from .._tools import (
-    AIFunction,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedImageGenerationTool,
@@ -384,7 +384,7 @@ class OpenAIBaseResponsesClient(
                                 container=tool_args,
                             )
                         )
-                    case AIFunction():
+                    case FunctionTool():
                         params = tool.parameters()
                         params["additionalProperties"] = False
                         response_tools.append(

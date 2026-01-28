@@ -3,7 +3,7 @@
 """
 GitHub Copilot Agent with Multiple Permissions
 
-This sample demonstrates how to enable multiple permission types with GithubCopilotAgent.
+This sample demonstrates how to enable multiple permission types with GitHubCopilotAgent.
 By combining different permission kinds in the handler, the agent can perform complex tasks
 that require multiple capabilities.
 
@@ -20,7 +20,7 @@ More permissions mean more potential for unintended actions.
 
 import asyncio
 
-from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 
@@ -43,7 +43,7 @@ def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> Pe
 async def main() -> None:
     print("=== GitHub Copilot Agent with Multiple Permissions ===\n")
 
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         default_options={
             "instructions": "You are a helpful development assistant that can read, write files and run commands.",
             "on_permission_request": prompt_permission,

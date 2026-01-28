@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import FunctionCallContent, FunctionResultContent, ai_function
+from agent_framework import FunctionCallContent, FunctionResultContent, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -12,7 +12,7 @@ This sample shows a tool that can only be invoked once.
 """
 
 
-@ai_function(max_invocations=1)
+@tool(max_invocations=1)
 def unicorn_function(times: Annotated[int, "The number of unicorns to return."]) -> str:
     """This function returns precious unicorns!"""
     return f"{'🦄' * times}✨"

@@ -8,7 +8,7 @@ import pytest
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, Field
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedFileSearchTool, ai_function, normalize_tools
+from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedFileSearchTool, normalize_tools, tool
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantProvider
 from agent_framework.openai._shared import from_assistant_tools, to_assistant_tools
@@ -244,11 +244,11 @@ class TestOpenAIAssistantProviderCreateAgent:
         assert call_kwargs["tools"][0]["type"] == "function"
         assert call_kwargs["tools"][0]["function"]["name"] == "get_weather"
 
-    async def test_create_agent_with_ai_function(self, mock_async_openai: MagicMock) -> None:
-        """Test assistant creation with AIFunction."""
+    async def test_create_agent_with_tool(self, mock_async_openai: MagicMock) -> None:
+        """Test assistant creation with FunctionTool."""
         provider = OpenAIAssistantProvider(mock_async_openai)
 
-        @ai_function
+        @tool
         def my_function(x: int) -> int:
             """Double a number."""
             return x * 2
@@ -537,10 +537,10 @@ class TestOpenAIAssistantProviderAsAgent:
 class TestToolConversion:
     """Tests for tool conversion utilities (shared functions)."""
 
-    def test_to_assistant_tools_ai_function(self) -> None:
-        """Test AIFunction conversion to API format."""
+    def test_to_assistant_tools_tool(self) -> None:
+        """Test FunctionTool conversion to API format."""
 
-        @ai_function
+        @tool
         def test_func(x: int) -> int:
             """Test function."""
             return x
@@ -555,7 +555,7 @@ class TestToolConversion:
 
     def test_to_assistant_tools_callable(self) -> None:
         """Test raw callable conversion via normalize_tools."""
-        # normalize_tools converts callables to AIFunction
+        # normalize_tools converts callables to FunctionTool
         normalized = normalize_tools([get_weather])
         api_tools = to_assistant_tools(normalized)
 
@@ -666,12 +666,12 @@ class TestToolValidation:
         # Should not raise
         provider._validate_function_tools(assistant_tools, None)  # type: ignore[reportPrivateUsage]
 
-    def test_validate_with_ai_function(self, mock_async_openai: MagicMock) -> None:
-        """Test validation with AIFunction."""
+    def test_validate_with_tool(self, mock_async_openai: MagicMock) -> None:
+        """Test validation with FunctionTool."""
         provider = OpenAIAssistantProvider(mock_async_openai)
         assistant_tools = [create_function_tool("get_weather")]
 
-        wrapped = ai_function(get_weather)
+        wrapped = tool(get_weather)
 
         # Should not raise
         provider._validate_function_tools(assistant_tools, [wrapped])  # type: ignore[reportPrivateUsage]
@@ -789,6 +789,7 @@ class TestOpenAIAssistantProviderIntegration:
         """Integration test with function tools."""
         provider = OpenAIAssistantProvider()
 
+        @tool(approval_mode="never_require")
         def get_current_time() -> str:
             """Get the current time."""
             from datetime import datetime

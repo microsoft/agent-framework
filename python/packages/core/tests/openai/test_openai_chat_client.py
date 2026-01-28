@@ -19,8 +19,8 @@ from agent_framework import (
     Content,
     HostedWebSearchTool,
     ToolProtocol,
-    ai_function,
     prepare_function_call_results,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIChatClient
@@ -175,7 +175,7 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     """Test that unsupported tool types are handled correctly."""
     client = OpenAIChatClient()
 
-    # Create a mock ToolProtocol that's not an AIFunction
+    # Create a mock ToolProtocol that's not a FunctionTool
     unsupported_tool = MagicMock(spec=ToolProtocol)
     unsupported_tool.__class__.__name__ = "UnsupportedAITool"
 
@@ -189,7 +189,7 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
     return (
@@ -200,7 +200,7 @@ def get_story_text() -> str:
     )
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
     return f"The weather in {location} is sunny and 72°F."

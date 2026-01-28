@@ -32,7 +32,7 @@ from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
 from ._sliding_window import SlidingWindowChatMessageStore
-from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
+from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_function_tool
 
 __all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
 
@@ -179,9 +179,9 @@ class TaskRunner:
             f"Environment has {len(env.get_tools())} tools: {', '.join([tool.name for tool in env.get_tools()])}"
         )
 
-        # Convert tau2 tools to agent framework AIFunction format
+        # Convert tau2 tools to agent framework FunctionTool format
         # This bridges the gap between tau2's tool system and agent framework's expectations
-        ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools]
+        tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools]
 
         # Combines general customer service behavior with specific policy guidelines
         assistant_system_prompt = f"""<instructions>
@@ -198,7 +198,7 @@ class TaskRunner:
         return ChatAgent(
             chat_client=assistant_chat_client,
             instructions=assistant_system_prompt,
-            tools=ai_functions,
+            tools=tools,
             temperature=self.assistant_sampling_temperature,
             chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
                 system_message=assistant_system_prompt,

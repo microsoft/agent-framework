@@ -13,6 +13,7 @@ from agent_framework import (
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
+    tool,
 )
 from agent_framework._workflows._events import WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient

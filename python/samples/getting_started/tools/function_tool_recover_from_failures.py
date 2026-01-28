@@ -4,6 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import FunctionCallContent, FunctionResultContent
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -13,13 +14,16 @@ Shows how a tool that throws an exception creates gracefull recovery and can kee
 The LLM decides whether to retry the call or to respond with something else, based on the exception.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def greet(name: Annotated[str, "Name to greet"]) -> str:
     """Greet someone."""
     return f"Hello, {name}!"
 
 
+@tool(approval_mode="never_require")
 # we trick the AI into calling this function with 0 as denominator to trigger the exception
+@tool(approval_mode="never_require")
 def safe_divide(
     a: Annotated[int, "Numerator"],
     b: Annotated[int, "Denominator"],
