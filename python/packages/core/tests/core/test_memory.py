@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import MutableSequence
 from typing import Any
 
@@ -8,7 +9,7 @@ from agent_framework._memory import Context, ContextProvider
 
 
 class MockContextProvider(ContextProvider):
-    """Mock ContextProvider for testing."""
+    """Mock ContextProvider for testing that tracks all method calls."""
 
     def __init__(self, messages: list[ChatMessage] | None = None) -> None:
         self.context_messages = messages
@@ -42,6 +43,18 @@ class MockContextProvider(ContextProvider):
         context = Context()
         context.messages = self.context_messages
         return context
+
+
+class MinimalContextProvider(ContextProvider):
+    """Minimal ContextProvider that only implements the abstract method.
+
+    Used for testing the base class default implementations of thread_created,
+    invoked, __aenter__, and __aexit__.
+    """
+
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+        """Return empty context."""
+        return Context()
 
 
 class TestContext:
@@ -92,17 +105,8 @@ class TestContextProvider:
         assert len(context.messages) == 1
         assert context.messages[0].text == "Context message"
 
-
-class TestContextProviderBaseClass:
-    """Tests for ContextProvider base class default implementations."""
-
     async def test_base_thread_created_does_nothing(self) -> None:
         """Test that base ContextProvider.thread_created does nothing by default."""
-
-        class MinimalContextProvider(ContextProvider):
-            async def invoking(self, messages, **kwargs):
-                return Context()
-
         provider = MinimalContextProvider()
         # Should not raise and should do nothing
         await provider.thread_created("some-thread-id")
@@ -110,11 +114,6 @@ class TestContextProviderBaseClass:
 
     async def test_base_invoked_does_nothing(self) -> None:
         """Test that base ContextProvider.invoked does nothing by default."""
-
-        class MinimalContextProvider(ContextProvider):
-            async def invoking(self, messages, **kwargs):
-                return Context()
-
         provider = MinimalContextProvider()
         message = ChatMessage(role=Role.USER, text="Test")
         # Should not raise and should do nothing
@@ -124,22 +123,12 @@ class TestContextProviderBaseClass:
 
     async def test_base_aenter_returns_self(self) -> None:
         """Test that base ContextProvider.__aenter__ returns self."""
-
-        class MinimalContextProvider(ContextProvider):
-            async def invoking(self, messages, **kwargs):
-                return Context()
-
         provider = MinimalContextProvider()
         async with provider as p:
             assert p is provider
 
     async def test_base_aexit_does_nothing(self) -> None:
         """Test that base ContextProvider.__aexit__ handles exceptions gracefully."""
-
-        class MinimalContextProvider(ContextProvider):
-            async def invoking(self, messages, **kwargs):
-                return Context()
-
         provider = MinimalContextProvider()
         # Test exit with no exception
         await provider.__aexit__(None, None, None)
@@ -147,7 +136,5 @@ class TestContextProviderBaseClass:
         try:
             raise ValueError("test error")
         except ValueError:
-            import sys
-
             exc_info = sys.exc_info()
             await provider.__aexit__(exc_info[0], exc_info[1], exc_info[2])
