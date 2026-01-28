@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from enum import Enum
 from functools import update_wrapper
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypedDict, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
 
 from ._serialization import SerializationMixin
 from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, normalize_messages, prepare_messages
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
     from ._tools import FunctionTool
     from ._types import ChatResponse, ChatResponseUpdate
 
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = [
     "AgentMiddleware",

@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
@@ -16,7 +16,7 @@ internal static class ChatMessageExtensions
         FormulaValue.NewRecordFromFields(message.GetMessageFields());
 
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
-        FormulaValue.NewTable(TypeSchema.Message.MessageRecordType, messages.Select(message => message.ToRecord()));
+        FormulaValue.NewTable(TypeSchema.Message.RecordType, messages.Select(message => message.ToRecord()));
 
     public static IEnumerable<ChatMessage>? ToChatMessages(this DataValue? messages)
     {
@@ -158,16 +158,16 @@ internal static class ChatMessageExtensions
         {
             foreach (RecordDataValue contentItem in content.Values)
             {
-                StringDataValue? contentValue = contentItem.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentValue);
+                StringDataValue? contentValue = contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.Value);
                 if (contentValue is null || string.IsNullOrWhiteSpace(contentValue.Value))
                 {
                     continue;
                 }
                 yield return
-                    contentItem.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentType)?.Value switch
+                    contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.Type)?.Value switch
                     {
-                        TypeSchema.Message.ContentTypes.ImageUrl => GetImageContent(contentValue.Value),
-                        TypeSchema.Message.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
+                        TypeSchema.MessageContent.ContentTypes.ImageUrl => GetImageContent(contentValue.Value),
+                        TypeSchema.MessageContent.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
                         _ => new TextContent(contentValue.Value)
                     };
             }
@@ -196,7 +196,7 @@ internal static class ChatMessageExtensions
         yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormula());
-        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(TypeSchema.Message.ContentRecordType, message.GetContentRecords()));
+        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(TypeSchema.MessageContent.RecordType, message.GetContentRecords()));
         yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToRecord());
     }
@@ -209,19 +209,24 @@ internal static class ChatMessageExtensions
         return
             content switch
             {
-                UriContent uriContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
-                HostedFileContent fileContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageFile, fileContent.FileId),
-                TextContent textContent => CreateContentRecord(TypeSchema.Message.ContentTypes.Text, textContent.Text),
-                DataContent dataContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, dataContent.Uri),
+                UriContent uriContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
+                HostedFileContent fileContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.ImageFile, fileContent.FileId),
+                TextContent textContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.Text, textContent.Text),
+                DataContent dataContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.ImageUrl, dataContent.Uri),
                 _ => []
             };
 
-        static IEnumerable<NamedValue> CreateContentRecord(string type, string value)
+        static IEnumerable<NamedValue> CreateContentRecord(string type, string value, string? mediaType = null)
         {
-            yield return new NamedValue(TypeSchema.Message.Fields.ContentType, type.ToFormula());
-            yield return new NamedValue(TypeSchema.Message.Fields.ContentValue, value.ToFormula());
+            yield return new NamedValue(TypeSchema.MessageContent.Fields.Type, type.ToFormula());
+            yield return new NamedValue(TypeSchema.MessageContent.Fields.Value, value.ToFormula());
+            if (mediaType is not null)
+            {
+                yield return new NamedValue(TypeSchema.MessageContent.Fields.MediaType, mediaType.ToFormula());
+            }
         }
     }
+
     private static RecordValue ToRecord(this AdditionalPropertiesDictionary? value)
     {
         return FormulaValue.NewRecordFromFields(GetFields());

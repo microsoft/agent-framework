@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import Any, Generic, TypedDict
+from typing import Any, Generic
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -33,9 +33,13 @@ from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
