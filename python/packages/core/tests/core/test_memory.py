@@ -91,3 +91,63 @@ class TestContextProvider:
         assert context.messages is not None
         assert len(context.messages) == 1
         assert context.messages[0].text == "Context message"
+
+
+class TestContextProviderBaseClass:
+    """Tests for ContextProvider base class default implementations."""
+
+    async def test_base_thread_created_does_nothing(self) -> None:
+        """Test that base ContextProvider.thread_created does nothing by default."""
+
+        class MinimalContextProvider(ContextProvider):
+            async def invoking(self, messages, **kwargs):
+                return Context()
+
+        provider = MinimalContextProvider()
+        # Should not raise and should do nothing
+        await provider.thread_created("some-thread-id")
+        await provider.thread_created(None)
+
+    async def test_base_invoked_does_nothing(self) -> None:
+        """Test that base ContextProvider.invoked does nothing by default."""
+
+        class MinimalContextProvider(ContextProvider):
+            async def invoking(self, messages, **kwargs):
+                return Context()
+
+        provider = MinimalContextProvider()
+        message = ChatMessage(role=Role.USER, text="Test")
+        # Should not raise and should do nothing
+        await provider.invoked(message)
+        await provider.invoked(message, response_messages=message)
+        await provider.invoked(message, invoke_exception=Exception("test"))
+
+    async def test_base_aenter_returns_self(self) -> None:
+        """Test that base ContextProvider.__aenter__ returns self."""
+
+        class MinimalContextProvider(ContextProvider):
+            async def invoking(self, messages, **kwargs):
+                return Context()
+
+        provider = MinimalContextProvider()
+        async with provider as p:
+            assert p is provider
+
+    async def test_base_aexit_does_nothing(self) -> None:
+        """Test that base ContextProvider.__aexit__ handles exceptions gracefully."""
+
+        class MinimalContextProvider(ContextProvider):
+            async def invoking(self, messages, **kwargs):
+                return Context()
+
+        provider = MinimalContextProvider()
+        # Test exit with no exception
+        await provider.__aexit__(None, None, None)
+        # Test exit with exception info
+        try:
+            raise ValueError("test error")
+        except ValueError:
+            import sys
+
+            exc_info = sys.exc_info()
+            await provider.__aexit__(exc_info[0], exc_info[1], exc_info[2])
