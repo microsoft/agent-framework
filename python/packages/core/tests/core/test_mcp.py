@@ -1014,6 +1014,78 @@ async def test_local_mcp_server_function_execution_error():
             await func.invoke(param="test_value")
 
 
+async def test_mcp_tool_filters_framework_kwargs():
+    """Test that call_tool method filters out framework-specific kwargs."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {
+                                    "param": {"type": "string"},
+                                    "code": {"type": "string"},
+                                },
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Tool executed")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        # Create a mock response_format type
+        class MockResponseFormat(BaseModel):
+            result: str
+
+        # Call with framework kwargs that should be filtered out
+        result = await func.invoke(
+            param="test_value",
+            code="print('hello')",
+            chat_options={"key": "value"},
+            tools=["tool1", "tool2"],
+            tool_choice="auto",
+            thread="thread_id",
+            conversation_id="conv_123",
+            options={"store": "data"},
+            response_format=MockResponseFormat,
+        )
+
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert result[0].text == "Tool executed"
+
+        # Verify the session.call_tool was called with only the actual tool parameters
+        server.session.call_tool.assert_called_once()
+        call_args = server.session.call_tool.call_args
+        # Should only include param and code, not the framework kwargs
+        assert call_args.kwargs["arguments"] == {"param": "test_value", "code": "print('hello')"}
+        # Ensure none of the framework kwargs were passed
+        assert "chat_options" not in call_args.kwargs["arguments"]
+        assert "tools" not in call_args.kwargs["arguments"]
+        assert "tool_choice" not in call_args.kwargs["arguments"]
+        assert "thread" not in call_args.kwargs["arguments"]
+        assert "conversation_id" not in call_args.kwargs["arguments"]
+        assert "options" not in call_args.kwargs["arguments"]
+        assert "response_format" not in call_args.kwargs["arguments"]
+
+
 async def test_local_mcp_server_prompt_execution():
     """Test prompt execution through MCP server."""
 
