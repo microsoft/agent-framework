@@ -525,7 +525,7 @@ def test_as_agent_with_dict_function_tools_provided(
     mock_agent.top_p = None
     mock_agent.tools = [dict_function_tool]
 
-    @ai_function
+    @tool
     def dict_based_function() -> str:
         """A function implementation."""
         return "result"

@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import (
-    AIFunction,
     Content,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedImageGenerationTool,
@@ -53,15 +53,15 @@ def test_to_azure_ai_agent_tools_empty() -> None:
     assert to_azure_ai_agent_tools([]) == []
 
 
-def test_to_azure_ai_agent_tools_ai_function() -> None:
-    """Test converting AIFunction to tool definition."""
+def test_to_azure_ai_agent_tools_function_tool() -> None:
+    """Test converting FunctionTool to tool definition."""
 
     def my_func(arg: str) -> str:
         """My function."""
         return arg
 
-    ai_func = AIFunction(func=my_func, name="my_func", description="My function.")  # type: ignore
-    result = to_azure_ai_agent_tools([ai_func])  # type: ignore
+    func_tool = FunctionTool(func=my_func, name="my_func", description="My function.")  # type: ignore
+    result = to_azure_ai_agent_tools([func_tool])  # type: ignore
     assert len(result) == 1
     assert result[0]["type"] == "function"
     assert result[0]["function"]["name"] == "my_func"
@@ -189,15 +189,15 @@ def test_to_azure_ai_tools_code_interpreter_with_file_ids() -> None:
     assert result[0]["container"]["file_ids"] == ["file-123"]
 
 
-def test_to_azure_ai_tools_ai_function() -> None:
-    """Test converting AIFunction to FunctionTool."""
+def test_to_azure_ai_tools_function_tool() -> None:
+    """Test converting FunctionTool."""
 
     def my_func(arg: str) -> str:
         """My function."""
         return arg
 
-    ai_func = AIFunction(func=my_func, name="my_func", description="My function.")  # type: ignore
-    result = to_azure_ai_tools([ai_func])  # type: ignore
+    func_tool = FunctionTool(func=my_func, name="my_func", description="My function.")  # type: ignore
+    result = to_azure_ai_tools([func_tool])  # type: ignore
     assert len(result) == 1
     assert result[0]["type"] == "function"
     assert result[0]["name"] == "my_func"

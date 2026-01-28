@@ -428,7 +428,7 @@ def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: Mag
     """Test that _merge_tools skips function tool dicts but keeps other hosted tools."""
     provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
-    # Create a mock AIFunction to provide as implementation
+    # Create a mock FunctionTool to provide as implementation
     mock_ai_function = create_mock_ai_function("my_function", "My function description")
 
     # Definition tools include a function tool (dict) and an MCP tool
@@ -440,7 +440,7 @@ def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: Mag
     # Call _merge_tools with user-provided function implementation
     merged = provider._merge_tools(definition_tools, [mock_ai_function])  # type: ignore
 
-    # Should have 2 items: the converted HostedMCPTool and the user-provided AIFunction
+    # Should have 2 items: the converted HostedMCPTool and the user-provided FunctionTool
     assert len(merged) == 2
 
     # Check that the function tool dict was NOT included (it was skipped)
@@ -454,8 +454,8 @@ def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: Mag
     assert len(mcp_tools) == 1
     assert mcp_tools[0].name == "my mcp"  # server_label with _ replaced by space
 
-    # Check that the user-provided AIFunction was included
-    ai_functions = [t for t in merged if isinstance(t, AIFunction)]
+    # Check that the user-provided FunctionTool was included
+    ai_functions = [t for t in merged if isinstance(t, FunctionTool)]
     assert len(ai_functions) == 1
     assert ai_functions[0].name == "my_function"
 
