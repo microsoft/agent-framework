@@ -424,6 +424,42 @@ def test_provider_as_agent(mock_project_client: MagicMock) -> None:
         assert call_kwargs["model_deployment_name"] == "gpt-4"
 
 
+def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: MagicMock) -> None:
+    """Test that _merge_tools skips function tool dicts but keeps other hosted tools."""
+    provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
+
+    # Create a mock FunctionTool to provide as implementation
+    mock_ai_function = create_mock_ai_function("my_function", "My function description")
+
+    # Definition tools include a function tool (dict) and an MCP tool
+    definition_tools = [
+        {"type": "function", "name": "my_function", "parameters": {}},  # Should be skipped
+        {"type": "mcp", "server_label": "my_mcp", "server_url": "http://localhost:8080"},  # Should be converted
+    ]
+
+    # Call _merge_tools with user-provided function implementation
+    merged = provider._merge_tools(definition_tools, [mock_ai_function])  # type: ignore
+
+    # Should have 2 items: the converted HostedMCPTool and the user-provided FunctionTool
+    assert len(merged) == 2
+
+    # Check that the function tool dict was NOT included (it was skipped)
+    function_dicts = [t for t in merged if isinstance(t, dict) and t.get("type") == "function"]
+    assert len(function_dicts) == 0
+
+    # Check that the MCP tool was converted to HostedMCPTool
+    from agent_framework import HostedMCPTool
+
+    mcp_tools = [t for t in merged if isinstance(t, HostedMCPTool)]
+    assert len(mcp_tools) == 1
+    assert mcp_tools[0].name == "my mcp"  # server_label with _ replaced by space
+
+    # Check that the user-provided FunctionTool was included
+    ai_functions = [t for t in merged if isinstance(t, FunctionTool)]
+    assert len(ai_functions) == 1
+    assert ai_functions[0].name == "my_function"
+
+
 async def test_provider_context_manager(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider async context manager."""
     with patch("agent_framework_azure_ai._project_provider.AIProjectClient") as mock_ai_project_client:
