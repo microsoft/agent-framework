@@ -73,6 +73,8 @@ if TYPE_CHECKING:
         ResponseStream,
     )
 
+    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+
 
 logger = get_logger()
 
@@ -1897,6 +1899,24 @@ def _prepend_fcc_messages(response: "ChatResponse", fcc_messages: list["ChatMess
         response.messages.insert(0, msg)
 
 
+class FunctionRequestResult(TypedDict, total=False):
+    """Result of processing function requests.
+
+    Attributes:
+        action: The action to take ("return", "continue", or "stop").
+        errors_in_a_row: The number of consecutive errors encountered.
+        result_message: The message containing function call results, if any.
+        update_role: The role to update for the next message, if any.
+        function_call_results: The list of function call results, if any.
+    """
+
+    action: Literal["return", "continue", "stop"]
+    errors_in_a_row: int
+    result_message: "ChatMessage | None"
+    update_role: Literal["assistant", "tool"] | None
+    function_call_results: list["Content"] | None
+
+
 def _handle_function_call_results(
     *,
     response: "ChatResponse",
@@ -2048,7 +2068,7 @@ async def _process_function_requests(
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     covariant=True,
 )
 
@@ -2073,9 +2093,19 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | None = None,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse]": ...
+    ) -> "Awaitable[ChatResponse[TResponseModelT]]": ...
+
+    @overload
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: Literal[False] = ...,
+        options: TOptions_co | "ChatOptions[None]" | None = None,
+        **kwargs: Any,
+    ) -> "Awaitable[ChatResponse[Any]]": ...
 
     @overload
     def get_response(
@@ -2083,18 +2113,18 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[True],
-        options: TOptions_co | None = None,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
+    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
 
     def get_response(
         self,
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: bool = False,
-        options: TOptions_co | None = None,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]":
+    ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
         from ._types import (
             ChatMessage,
             ChatResponse,
@@ -2108,7 +2138,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
-            additional_function_arguments = cast(dict[str, Any], additional_opts)
+            additional_function_arguments = additional_opts  # type: ignore
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
@@ -2220,7 +2250,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
                 approval_result = await _process_function_requests(
                     response=None,
                     prepped_messages=prepped_messages,
-                    tool_options=options,
+                    tool_options=options,  # type: ignore[arg-type]
                     attempt_idx=attempt_idx,
                     fcc_messages=None,
                     errors_in_a_row=errors_in_a_row,
@@ -2262,7 +2292,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
                 result = await _process_function_requests(
                     response=response,
                     prepped_messages=None,
-                    tool_options=options,
+                    tool_options=options,  # type: ignore[arg-type]
                     attempt_idx=attempt_idx,
                     fcc_messages=fcc_messages,
                     errors_in_a_row=errors_in_a_row,

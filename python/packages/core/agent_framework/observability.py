@@ -33,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.trace import Tracer
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
+    from pydantic import BaseModel
 
     from ._agents import AgentProtocol
     from ._clients import ChatClientProtocol
@@ -49,6 +50,8 @@ if TYPE_CHECKING:  # pragma: no cover
         FinishReason,
         ResponseStream,
     )
+
+    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 __all__ = [
     "OBSERVABILITY_SETTINGS",
@@ -1046,7 +1049,7 @@ def _get_token_usage_histogram() -> "metrics.Histogram":
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     covariant=True,
 )
 
@@ -1067,9 +1070,19 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | None = None,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse]": ...
+    ) -> "Awaitable[ChatResponse[TResponseModelT]]": ...
+
+    @overload
+    def get_response(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        *,
+        stream: Literal[False] = ...,
+        options: TOptions_co | "ChatOptions[None]" | None = None,
+        **kwargs: Any,
+    ) -> "Awaitable[ChatResponse[Any]]": ...
 
     @overload
     def get_response(
@@ -1077,18 +1090,18 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[True],
-        options: TOptions_co | None = None,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse]": ...
+    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
 
     def get_response(
         self,
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: bool = False,
-        options: TOptions_co | None = None,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]":
+    ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
         """Trace chat responses with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
@@ -1221,12 +1234,24 @@ class AgentTelemetryMixin:
         self,
         messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
         *,
-        stream: Literal[False] = False,
+        stream: Literal[False] = ...,
         thread: "AgentThread | None" = None,
         tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "Mapping[str, Any] | None" = None,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> Awaitable["AgentResponse"]: ...
+    ) -> "Awaitable[AgentResponse[TResponseModelT]]": ...
+
+    @overload
+    def run(
+        self,
+        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: "AgentThread | None" = None,
+        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
+        options: "ChatOptions[None] | None" = None,
+        **kwargs: Any,
+    ) -> "Awaitable[AgentResponse[Any]]": ...
 
     @overload
     def run(
@@ -1236,9 +1261,9 @@ class AgentTelemetryMixin:
         stream: Literal[True],
         thread: "AgentThread | None" = None,
         tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "Mapping[str, Any] | None" = None,
+        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
-    ) -> "ResponseStream[AgentResponseUpdate, AgentResponse]": ...
+    ) -> "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]": ...
 
     def run(
         self,
@@ -1247,9 +1272,9 @@ class AgentTelemetryMixin:
         stream: bool = False,
         thread: "AgentThread | None" = None,
         tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "Mapping[str, Any] | None" = None,
+        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
-    ) -> "Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]":
+    ) -> "Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
         """Trace agent runs with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
         super_run = super().run  # type: ignore[misc]
@@ -1269,7 +1294,7 @@ class AgentTelemetryMixin:
         from ._types import ResponseStream, merge_chat_options
 
         default_options = getattr(self, "default_options", {})
-        options = merge_chat_options(default_options, options or {})
+        merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1277,7 +1302,7 @@ class AgentTelemetryMixin:
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
             thread_id=thread.service_thread_id if thread else None,
-            all_options=options,
+            all_options=merged_options,
             **kwargs,
         )
 

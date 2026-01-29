@@ -79,9 +79,12 @@ __all__ = [
 TOptions_contra = TypeVar(
     "TOptions_contra",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     contravariant=True,
 )
+
+# Used for the overloads that capture the response model type from options
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
 @runtime_checkable
@@ -138,9 +141,19 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_contra | None = None,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse]: ...
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: TOptions_contra | "ChatOptions[None]" | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
     def get_response(
@@ -148,18 +161,18 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_contra | None = None,
+        options: TOptions_contra | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_contra | None = None,
+        options: TOptions_contra | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
 
         Args:
@@ -187,12 +200,9 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     covariant=True,
 )
-
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
-TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
 class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
@@ -354,7 +364,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        stream: Literal[False] = False,
+        stream: Literal[False] = ...,
         options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
@@ -364,18 +374,8 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        stream: Literal[False] = False,
-        options: TOptions_co | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[ChatResponse]: ...
-
-    @overload
-    def get_response(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
-        *,
-        stream: Literal[False] = False,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        stream: Literal[False] = ...,
+        options: TOptions_co | "ChatOptions[None]" | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
