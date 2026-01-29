@@ -8,6 +8,7 @@ from agent_framework_anthropic import (
 from agent_framework_claude import (
     ClaudeAgent,
     ClaudeAgentOptions,
+    ClaudeAgentSettings,
 )
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "AnthropicClient",
     "ClaudeAgent",
     "ClaudeAgentOptions",
+    "ClaudeAgentSettings",
     "__version__",
 ]

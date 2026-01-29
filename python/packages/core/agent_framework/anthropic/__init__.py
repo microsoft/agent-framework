@@ -12,6 +12,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     # From agent-framework-claude
     "ClaudeAgent": ("agent_framework_claude", "agent-framework-claude"),
     "ClaudeAgentOptions": ("agent_framework_claude", "agent-framework-claude"),
+    "ClaudeAgentSettings": ("agent_framework_claude", "agent-framework-claude"),
 }
 
 
