@@ -24,7 +24,7 @@ Set the following environment variables:
 
 ```powershell
 $env:ANTHROPIC_API_KEY="your-anthropic-api-key"  # Replace with your Anthropic API key
-$env:ANTHROPIC_MODEL="your-anthropic-model"  # Replace with your Anthropic model (e.g., claude-sonnet-4-20250514)
+$env:ANTHROPIC_MODEL="your-anthropic-model"  # Replace with your Anthropic model (e.g., claude-sonnet-4-5-20250929)
 ```
 
 ## Run the sample
@@ -111,7 +111,7 @@ foreach (HostedFileContent file in hostedFiles)
         file.FileId,
         new FileDownloadParams { Betas = ["files-api-2025-04-14"] });
 
-    string fileName = $"presentation_{file.FileId[..8]}.pptx";
+    string fileName = $"presentation_{file.FileId.Substring(0, 8)}.pptx";
     await using FileStream fileStream = File.Create(fileName);
     Stream contentStream = await fileResponse.ReadAsStream();
     await contentStream.CopyToAsync(fileStream);
