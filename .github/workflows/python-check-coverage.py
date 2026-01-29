@@ -164,9 +164,9 @@ def print_coverage_table(
     print(f"Threshold:               {threshold}%")
 
     # Package table
-    print("\n" + "-" * 80)
-    print(f"{'Package':<45} {'Lines':<15} {'Line Cov':<15}")
-    print("-" * 80)
+    print("\n" + "-" * 110)
+    print(f"{'Package':<80} {'Lines':<15} {'Line Cov':<15}")
+    print("-" * 110)
 
     # Sort: enforced modules first, then alphabetically
     sorted_packages = sorted(
@@ -181,9 +181,9 @@ def print_coverage_table(
         lines_info = f"{pkg.lines_covered}/{pkg.lines_valid}"
         package_label = f"{enforced_marker}{pkg.name}"
 
-        print(f"{package_label:<45} {lines_info:<15} {line_cov:<15}")
+        print(f"{package_label:<80} {lines_info:<15} {line_cov:<15}")
 
-    print("-" * 80)
+    print("-" * 110)
 
 
 def check_coverage(xml_path: str, threshold: float) -> bool:
