@@ -25,13 +25,14 @@ from dataclasses import dataclass
 # threshold. Other modules are reported for visibility only.
 #
 # Module names should match the package names as they appear in the coverage
-# report (e.g., "agent_framework_azure_ai" for packages/azure-ai).
+# report (e.g., "packages.azure-ai.agent_framework_azure_ai" for packages/azure-ai).
 # =============================================================================
 ENFORCED_MODULES: set[str] = {
-    "agent_framework_azure_ai",
+    "packages.azure-ai.agent_framework_azure_ai",
     # Add more modules here as coverage improves:
-    # "agent_framework_core",
-    # "agent_framework_anthropic",
+    # "packages.core.agent_framework",
+    # "packages.core.agent_framework._workflows",
+    # "packages.anthropic.agent_framework_anthropic",
 }
 
 
@@ -247,7 +248,8 @@ def check_coverage(xml_path: str, threshold: float) -> bool:
 
     # Report results
     if missing_modules:
-        print(f"\n⚠️  Warning: Enforced modules not found in coverage report: {', '.join(missing_modules)}")
+        print(f"\n❌ FAILED: Enforced modules not found in coverage report: {', '.join(missing_modules)}")
+        return False
 
     if failed_modules:
         print(f"\n❌ FAILED: The following enforced modules are below {threshold}% coverage threshold:")
