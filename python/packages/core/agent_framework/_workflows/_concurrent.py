@@ -249,6 +249,7 @@ class ConcurrentBuilder:
         self._checkpoint_storage: CheckpointStorage | None = None
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
+        self._intermediate_outputs: bool = False
 
     def register_participants(
         self,
@@ -492,6 +493,19 @@ class ConcurrentBuilder:
 
         return self
 
+    def with_intermediate_outputs(self) -> "ConcurrentBuilder":
+        """Enable intermediate outputs from agent participants before aggregation.
+
+        When enabled, the workflow returns each agent participant's response or yields
+        streaming updates as they become available. The output of the aggregator will
+        always be available as the final output of the workflow.
+
+        Returns:
+            Self for fluent chaining
+        """
+        self._intermediate_outputs = True
+        return self
+
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
         if not self._participants and not self._participant_factories:
@@ -571,8 +585,9 @@ class ConcurrentBuilder:
         # Direct fan-in to aggregator
         builder.add_fan_in_edges(participants, aggregator)
 
-        # Constrain output to aggregator only
-        builder.with_output_from([aggregator])
+        if not self._intermediate_outputs:
+            # Constrain output to aggregator only
+            builder = builder.with_output_from([aggregator])
 
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)

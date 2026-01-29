@@ -4,7 +4,7 @@ import asyncio
 import tempfile
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -911,26 +911,31 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         stream_events.append(event)
 
     # Filter for agent events
-    stream_agent_run_events = [
-        e for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)
+    stream_agent_runs = [
+        cast(AgentResponse, e.data)  # type: ignore
+        for e in stream_events
+        if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)
     ]
-    stream_agent_update_events = [
-        e for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
+    stream_agent_updates = [
+        e.data for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
     ]
 
     # In streaming mode, should have AgentRunUpdateEvent, no AgentRunEvent
-    assert len(stream_agent_run_events) == 0, "Expected no AgentRunEvent in streaming mode"
-    assert len(stream_agent_update_events) > 0, "Expected AgentRunUpdateEvent events in streaming mode"
+    assert len(stream_agent_runs) == 0, "Expected no AgentRunEvent in streaming mode"
+    assert len(stream_agent_updates) > 0, "Expected AgentRunUpdateEvent events in streaming mode"
 
     # Verify we got incremental updates (one per character in "Hello World")
-    assert len(stream_agent_update_events) == len("Hello World"), "Expected one update per character"
+    assert len(stream_agent_updates) == len("Hello World"), "Expected one update per character"
 
     # Verify the updates build up to the full message
-    accumulated_text = "".join(
-        e.data.contents[0].text
-        for e in stream_agent_update_events
-        if e.data and e.data.contents and isinstance(e.data.contents[0], TextContent)
-    )
+    accumulated_text = "".join([
+        e.contents[0].text
+        for e in stream_agent_updates
+        if e.contents
+        and isinstance(e.contents[0], Content)
+        and e.contents[0].type == "text"
+        and e.contents[0].text is not None
+    ])
     assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"
 
 

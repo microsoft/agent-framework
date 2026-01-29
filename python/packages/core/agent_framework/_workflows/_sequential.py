@@ -153,6 +153,7 @@ class SequentialBuilder:
         self._checkpoint_storage: CheckpointStorage | None = None
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
+        self._intermediate_outputs: bool = False
 
     def register_participants(
         self,
@@ -242,6 +243,19 @@ class SequentialBuilder:
 
         return self
 
+    def with_intermediate_outputs(self) -> "SequentialBuilder":
+        """Enable intermediate outputs from agent participants.
+
+        When enabled, the workflow returns each agent participant's response or yields
+        streaming updates as they become available. The output of the last participant
+        will always be available as the final output of the workflow.
+
+        Returns:
+            Self for fluent chaining
+        """
+        self._intermediate_outputs = True
+        return self
+
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
         if not self._participants and not self._participant_factories:
@@ -305,8 +319,9 @@ class SequentialBuilder:
         # Terminate with the final conversation
         builder.add_edge(prior, end)
 
-        # Constrain output to final conversation only
-        builder = builder.with_output_from([end])
+        if not self._intermediate_outputs:
+            # Constrain output to end only
+            builder = builder.with_output_from([end])
 
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)

@@ -574,7 +574,13 @@ class StubAssistantsAgent(BaseAgent):
 async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[ChatMessage]:
     captured: list[ChatMessage] = []
 
-    wf = MagenticBuilder().participants([participant]).with_manager(manager=InvokeOnceManager()).build()
+    wf = (
+        MagenticBuilder()
+        .participants([participant])
+        .with_manager(manager=InvokeOnceManager())
+        .with_intermediate_outputs()
+        .build()
+    )
 
     # Run a bounded stream to allow one invoke and then completion
     events: list[WorkflowEvent] = []
@@ -595,7 +601,6 @@ async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[Cha
 async def test_agent_executor_invoke_with_thread_chat_client():
     agent = StubThreadAgent()
     captured = await _collect_agent_responses_setup(agent)
-    # Should have at least one response from agentA via MagenticAgentExecutor path
     assert any((m.author_name == agent.name and "ok" in (m.text or "")) for m in captured)
 
 
@@ -1242,7 +1247,7 @@ def test_magentic_agent_factory_with_standard_manager_options():
     custom_final_prompt = "Custom final: {task}"
 
     # Create a custom task ledger
-    from agent_framework._workflows._magentic import _MagenticTaskLedger
+    from agent_framework._workflows._magentic import _MagenticTaskLedger  # type: ignore
 
     custom_task_ledger = _MagenticTaskLedger(
         facts=ChatMessage(role=Role.ASSISTANT, text="Custom facts"),

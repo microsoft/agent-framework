@@ -36,7 +36,11 @@ class SimpleExecutor(Executor):
         self.response_text = response_text
 
     @handler
-    async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def handle_message(
+        self,
+        message: list[ChatMessage],
+        ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate],
+    ) -> None:
         input_text = message[0].contents[0].text if message and message[0].contents[0].type == "text" else "no input"
         response_text = f"{self.response_text}: {input_text}"
 
@@ -47,7 +51,7 @@ class SimpleExecutor(Executor):
         streaming_update = AgentResponseUpdate(
             contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
         )
-        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
+        await ctx.yield_output(streaming_update)
 
         # Pass message to next executor if any (for both streaming and non-streaming)
         await ctx.send_message([response_message])
@@ -63,7 +67,10 @@ class RequestingExecutor(Executor):
 
     @response_handler
     async def handle_request_response(
-        self, original_request: str, response: str, ctx: WorkflowContext[ChatMessage]
+        self,
+        original_request: str,
+        response: str,
+        ctx: WorkflowContext[ChatMessage, AgentResponseUpdate],
     ) -> None:
         # Handle the response and emit completion response
         update = AgentResponseUpdate(
@@ -71,7 +78,7 @@ class RequestingExecutor(Executor):
             role=Role.ASSISTANT,
             message_id=str(uuid.uuid4()),
         )
-        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
+        await ctx.yield_output(update)
 
 
 class ConversationHistoryCapturingExecutor(Executor):
@@ -85,7 +92,7 @@ class ConversationHistoryCapturingExecutor(Executor):
     async def handle_message(
         self,
         messages: list[ChatMessage],
-        ctx: WorkflowContext[list[ChatMessage]],
+        ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate],
     ) -> None:
         # Capture all received messages
         self.received_messages = list(messages)
@@ -99,7 +106,7 @@ class ConversationHistoryCapturingExecutor(Executor):
         streaming_update = AgentResponseUpdate(
             contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
         )
-        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
+        await ctx.yield_output(streaming_update)
         await ctx.send_message([response_message])
 
 
@@ -131,6 +138,7 @@ class TestWorkflowAgent:
             first_content = message.contents[0]
             if first_content.type == "text":
                 text = first_content.text
+                assert text is not None
                 if text.startswith("Step1:"):
                     step1_messages.append(message)
                 elif text.startswith("Step2:"):
@@ -141,8 +149,10 @@ class TestWorkflowAgent:
         assert len(step2_messages) >= 1, "Should have received message from Step2 executor"
 
         # Verify the processing worked for both
-        step1_text: str = step1_messages[0].contents[0].text  # type: ignore[attr-defined]
-        step2_text: str = step2_messages[0].contents[0].text  # type: ignore[attr-defined]
+        step1_text = step1_messages[0].contents[0].text
+        step2_text = step2_messages[0].contents[0].text
+        assert step1_text is not None
+        assert step2_text is not None
         assert "Step1: Hello World" in step1_text
         assert "Step2: Step1: Hello World" in step2_text
 
@@ -170,8 +180,10 @@ class TestWorkflowAgent:
         first_content: Content = updates[0].contents[0]  # type: ignore[assignment]
         second_content: Content = updates[1].contents[0]  # type: ignore[assignment]
         assert first_content.type == "text"
+        assert first_content.text is not None
         assert "Streaming1: Test input" in first_content.text
         assert second_content.type == "text"
+        assert second_content.text is not None
         assert "Streaming2: Streaming1: Test input" in second_content.text
 
     async def test_end_to_end_request_info_handling(self):
@@ -213,6 +225,8 @@ class TestWorkflowAgent:
         assert function_call.arguments.get("request_id") == approval_request.id
 
         # Approval request should reference the same function call
+        assert approval_request.id is not None
+        assert approval_request.function_call is not None
         assert approval_request.function_call.call_id == function_call.call_id
         assert approval_request.function_call.name == function_call.name
 
@@ -336,9 +350,7 @@ class TestWorkflowAgent:
         """Test that yield_output preserves different content types (Content, Content, etc.)."""
 
         @executor
-        async def content_yielding_executor(
-            messages: list[ChatMessage], ctx: WorkflowContext[Never, BaseContent]
-        ) -> None:
+        async def content_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext[Never, Content]) -> None:
             # Yield different content types
             await ctx.yield_output(Content.from_text(text="text content"))
             await ctx.yield_output(Content.from_data(data=b"binary data", media_type="application/octet-stream"))
@@ -397,7 +409,7 @@ class TestWorkflowAgent:
 
         @executor
         async def raw_yielding_executor(
-            messages: list[ChatMessage], ctx: WorkflowContext[Never, BaseContent | CustomData | str]
+            messages: list[ChatMessage], ctx: WorkflowContext[Never, Content | CustomData | str]
         ) -> None:
             # Yield different types of data
             await ctx.yield_output("simple string")
@@ -417,8 +429,11 @@ class TestWorkflowAgent:
 
         # Verify raw_representation is set for each update
         assert updates[0].raw_representation == "simple string"
+
+        assert isinstance(updates[1].raw_representation, Content)
         assert updates[1].raw_representation.type == "text"
         assert updates[1].raw_representation.text == "text content"
+
         assert isinstance(updates[2].raw_representation, CustomData)
         assert updates[2].raw_representation.value == 42
 
@@ -683,11 +698,11 @@ class TestWorkflowAgent:
         async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-        # Build workflow with single agent that has output_response=True
+        # Build workflow with single agent
         workflow = (
             WorkflowBuilder()
             .register_executor(lambda: start_executor, "start")
-            .register_agent(lambda: MockAgent("agent", "Unique response text"), "agent", output_response=True)
+            .register_agent(lambda: MockAgent("agent", "Unique response text"), "agent")
             .set_start_executor("start")
             .add_edge("start", "agent")
             .build()
@@ -738,7 +753,7 @@ class TestWorkflowAgentAuthorName:
             async def handle_message(
                 self,
                 message: list[ChatMessage],
-                ctx: WorkflowContext[list[ChatMessage]],
+                ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate],
             ) -> None:
                 # Emit update with explicit author_name
                 update = AgentResponseUpdate(
@@ -747,7 +762,7 @@ class TestWorkflowAgentAuthorName:
                     author_name="custom_author_name",  # Explicitly set
                     message_id=str(uuid.uuid4()),
                 )
-                await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
+                await ctx.yield_output(update)
 
         executor = AuthorNameExecutor(id="executor_id")
         workflow = WorkflowBuilder().set_start_executor(executor).build()
@@ -850,11 +865,11 @@ class TestWorkflowAgentMergeUpdates:
         # The exact order depends on dict iteration order for response_ids,
         # but within each response group, chronological order should be maintained
         # and global dangling should be last
-        assert "Global-Dangling" in message_texts[-1]  # Global dangling at end
+        assert "Global-Dangling" in message_texts[-1]  # type: ignore # Global dangling at end
 
         # Find positions of resp-a and resp-b messages
-        resp_a_positions = [i for i, text in enumerate(message_texts) if "RespA" in text]
-        resp_b_positions = [i for i, text in enumerate(message_texts) if "RespB" in text]
+        resp_a_positions = [i for i, text in enumerate(message_texts) if "RespA" in text]  # type: ignore
+        resp_b_positions = [i for i, text in enumerate(message_texts) if "RespB" in text]  # type: ignore
 
         # Within resp-a group: Msg1 (earlier) should come before Msg2 (later)
         resp_a_texts = [message_texts[i] for i in resp_a_positions]
