@@ -4,10 +4,10 @@ This sample demonstrates how to use Anthropic-managed Skills with AI agents. Ski
 
 ## What this sample demonstrates
 
-- Creating an AI agent with Anthropic Claude Skills support
-- Using the `BetaSkillParams.AsAITool()` extension method to add skills as tools
-- Configuring beta flags required for skills
+- Listing available Anthropic-managed skills
+- Creating an AI agent with Anthropic Claude Skills support using the simplified `AsAITool()` approach
 - Using the pptx skill to create PowerPoint presentations
+- Downloading and saving generated files to disk
 - Handling agent responses with generated content
 
 ## Prerequisites
@@ -18,7 +18,7 @@ Before you begin, ensure you have the following prerequisites:
 - Anthropic API key configured
 - Access to Anthropic Claude models with Skills support
 
-**Note**: This sample uses Anthropic Claude models with Skills. Skills are a beta feature and require specific beta flags. For more information, see [Anthropic documentation](https://docs.anthropic.com/).
+**Note**: This sample uses Anthropic Claude models with Skills. Skills are a beta feature. For more information, see [Anthropic documentation](https://docs.anthropic.com/).
 
 Set the following environment variables:
 
@@ -41,13 +41,16 @@ dotnet run --project .\Agent_Anthropic_Step04_UsingSkills
 Anthropic provides several managed skills that can be used with the Claude API:
 
 - `pptx` - Create PowerPoint presentations
-- Other skills may be available depending on your API access
+- `xlsx` - Create Excel spreadsheets
+- `docx` - Create Word documents
+- `pdf` - Create and analyze PDF documents
 
 You can list available skills using the Anthropic SDK:
 
 ```csharp
-var skills = await client.Beta.Skills.List(
+SkillListPageResponse skills = await anthropicClient.Beta.Skills.List(
     new SkillListParams { Source = "anthropic", Betas = [AnthropicBeta.Skills2025_10_02] });
+
 foreach (var skill in skills.Data)
 {
     Console.WriteLine($"{skill.Source}: {skill.ID} (version: {skill.LatestVersion})");
@@ -58,19 +61,21 @@ foreach (var skill in skills.Data)
 
 The sample will:
 
-1. Create an agent with Anthropic Claude Skills enabled (pptx skill)
-2. Run the agent with a request to create a presentation
-3. Display the agent's response text
-4. Display any reasoning/thinking content
-5. Display information about any generated files
+1. List all available Anthropic-managed skills
+2. Create an agent with the pptx skill enabled
+3. Run the agent with a request to create a presentation
+4. Display the agent's response text
+5. Download any generated files and save them to disk
 6. Display token usage statistics
 
 ## Code highlights
 
-The key part of this sample is defining the skill configuration and adding it as an AI tool:
+### Simplified skill configuration
+
+The Anthropic SDK handles all beta flags and container configuration automatically when using `AsAITool()`:
 
 ```csharp
-// Define the pptx skill configuration once to avoid duplication
+// Define the pptx skill
 BetaSkillParams pptxSkill = new()
 {
     Type = BetaSkillParamsType.Anthropic,
@@ -78,12 +83,37 @@ BetaSkillParams pptxSkill = new()
     Version = "latest"
 };
 
-// Add to tools array
-tools: [pptxSkill.AsAITool()]
+// Create an agent - the SDK handles beta flags automatically!
+ChatClientAgent agent = anthropicClient.Beta.AsAIAgent(
+    model: model,
+    instructions: "You are a helpful agent for creating PowerPoint presentations.",
+    tools: [pptxSkill.AsAITool()]);
 ```
 
-And configuring the container with skills in the raw representation:
+**Note**: No manual `RawRepresentationFactory`, `Betas`, or `Container` configuration is needed. The SDK automatically adds the required beta headers (`skills-2025-10-02`, `code-execution-2025-08-25`) and configures the container with the skill.
+
+### Handling generated files
+
+Generated files are returned as `HostedFileContent` within `CodeInterpreterToolResultContent`:
 
 ```csharp
-Container = new BetaContainerParams() { Skills = [pptxSkill] }
+// Collect generated files from response
+List<HostedFileContent> hostedFiles = response.Messages
+    .SelectMany(m => m.Contents.OfType<CodeInterpreterToolResultContent>())
+    .Where(c => c.Outputs is not null)
+    .SelectMany(c => c.Outputs!.OfType<HostedFileContent>())
+    .ToList();
+
+// Download and save each file
+foreach (HostedFileContent file in hostedFiles)
+{
+    using HttpResponse fileResponse = await anthropicClient.Beta.Files.Download(
+        file.FileId,
+        new FileDownloadParams { Betas = ["files-api-2025-04-14"] });
+
+    string fileName = $"presentation_{file.FileId[..8]}.pptx";
+    await using FileStream fileStream = File.Create(fileName);
+    Stream contentStream = await fileResponse.ReadAsStream();
+    await contentStream.CopyToAsync(fileStream);
+}
 ```

@@ -31,7 +31,7 @@ public sealed class AnthropicSkillsIntegrationTests
         AnthropicClient anthropicClient = new() { APIKey = s_config.ApiKey };
         string model = s_config.ChatModelId;
 
-        // Define the pptx skill configuration once to avoid duplication
+        // Define the pptx skill - the SDK handles all beta flags and container configuration automatically
         BetaSkillParams pptxSkill = new()
         {
             Type = BetaSkillParamsType.Anthropic,
@@ -39,24 +39,12 @@ public sealed class AnthropicSkillsIntegrationTests
             Version = "latest"
         };
 
-        // Create an agent with the pptx skill using AsAITool extension method
+        // Create an agent with the pptx skill using simplified AsAITool() approach
+        // No RawRepresentationFactory or manual beta configuration needed!
         ChatClientAgent agent = anthropicClient.Beta.AsAIAgent(
             model: model,
             instructions: "You are a helpful agent for creating PowerPoint presentations.",
-            tools: [pptxSkill.AsAITool()],
-            clientFactory: (chatClient) => chatClient
-                .AsBuilder()
-                .ConfigureOptions(
-                    options => options.RawRepresentationFactory = (_) => new MessageCreateParams()
-                    {
-                        Model = options.ModelId ?? model,
-                        MaxTokens = options.MaxOutputTokens ?? 20000,
-                        Messages = [],
-                        Thinking = new BetaThinkingConfigParam(new BetaThinkingConfigEnabled(budgetTokens: 10000)),
-                        Betas = [AnthropicBeta.Skills2025_10_02],
-                        Container = new BetaContainerParams() { Skills = [pptxSkill] }
-                    })
-                .Build());
+            tools: [pptxSkill.AsAITool()]);
 
         // Act
         AgentResponse response = await agent.RunAsync(
