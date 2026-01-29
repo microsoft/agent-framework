@@ -13,7 +13,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent
 from pydantic import Field
 
 
@@ -31,9 +31,9 @@ async def example_with_automatic_session_creation() -> None:
     print("=== Automatic Session Creation Example ===")
 
     # First agent - first session
-    agent1: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent1 = ClaudeAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
-        default_options={"instructions": "You are a helpful weather agent."},
     )
 
     async with agent1:
@@ -43,9 +43,9 @@ async def example_with_automatic_session_creation() -> None:
         print(f"Agent: {result1.text}")
 
     # Second agent - new session, no memory of previous conversation
-    agent2: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent2 = ClaudeAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
-        default_options={"instructions": "You are a helpful weather agent."},
     )
 
     async with agent2:
@@ -60,9 +60,9 @@ async def example_with_session_persistence() -> None:
     """Reuse session via thread object for multi-turn conversations."""
     print("=== Session Persistence Example ===")
 
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
-        default_options={"instructions": "You are a helpful weather agent."},
     )
 
     async with agent:
@@ -96,9 +96,9 @@ async def example_with_existing_session_id() -> None:
     existing_session_id = None
 
     # First agent instance - start a conversation
-    agent1: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent1 = ClaudeAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
-        default_options={"instructions": "You are a helpful weather agent."},
     )
 
     async with agent1:
@@ -117,9 +117,9 @@ async def example_with_existing_session_id() -> None:
         print("\n--- Continuing with the same session ID in a new agent instance ---")
 
         # Second agent instance - resume the conversation
-        agent2: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+        agent2 = ClaudeAgent(
+            instructions="You are a helpful weather agent.",
             tools=[get_weather],
-            default_options={"instructions": "You are a helpful weather agent."},
         )
 
         async with agent2:

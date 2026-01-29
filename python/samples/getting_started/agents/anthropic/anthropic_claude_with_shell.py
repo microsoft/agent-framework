@@ -14,7 +14,7 @@ Shell commands have full access to your system within the permissions of the run
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 
@@ -38,10 +38,10 @@ async def prompt_permission(
 async def main() -> None:
     print("=== Claude Agent with Shell Permissions ===\n")
 
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
+        instructions="You are a helpful assistant that can execute shell commands.",
         tools=["Bash"],
         default_options={
-            "instructions": "You are a helpful assistant that can execute shell commands.",
             "can_use_tool": prompt_permission,
         },
     )

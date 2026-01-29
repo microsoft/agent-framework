@@ -17,18 +17,16 @@ Available built-in tools:
 
 import asyncio
 
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent
 
 
 async def main() -> None:
     print("=== Claude Agent with Built-in Tools ===\n")
 
     # Built-in tools can be specified as strings in the tools parameter
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
+        instructions="You are a helpful assistant that can read files.",
         tools=["Read", "Glob"],
-        default_options={
-            "instructions": "You are a helpful assistant that can read files.",
-        },
     )
 
     async with agent:

@@ -70,7 +70,7 @@ TOOLS_MCP_SERVER_NAME = "_agent_framework_tools"
 class ClaudeAgentOptions(TypedDict, total=False):
     """Claude Agent-specific options."""
 
-    instructions: str
+    system_prompt: str
     """System prompt for the agent."""
 
     cli_path: str | Path
@@ -162,12 +162,10 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
 
         .. code-block:: python
 
-            from agent_framework.anthropic import ClaudeAgent
+            from agent_framework_claude import ClaudeAgent
 
             async with ClaudeAgent(
-                default_options={
-                    "instructions": "You are a helpful assistant.",
-                }
+                instructions="You are a helpful assistant.",
             ) as agent:
                 response = await agent.run("Hello!")
                 print(response.text)
@@ -209,6 +207,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
 
     def __init__(
         self,
+        instructions: str | None = None,
         *,
         client: ClaudeSDKClient | None = None,
         id: str | None = None,
@@ -228,6 +227,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
     ) -> None:
         """Initialize a ClaudeAgent instance.
 
+        Args:
+            instructions: System prompt for the agent.
+
         Keyword Args:
             client: Optional pre-configured ClaudeSDKClient instance. If not provided,
                 a new client will be created using the other parameters.
@@ -239,7 +241,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             tools: Tools for the agent. Can be:
                 - Strings for built-in tools (e.g., "Read", "Write", "Bash", "Glob")
                 - Functions or ToolProtocol instances for custom tools
-            default_options: Default ClaudeAgentOptions including instructions, model, etc.
+            default_options: Default ClaudeAgentOptions including system_prompt, model, etc.
             env_file_path: Path to .env file.
             env_file_encoding: Encoding of .env file.
         """
@@ -256,6 +258,11 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
 
         # Parse options
         opts: dict[str, Any] = dict(default_options) if default_options else {}
+
+        # Handle instructions parameter - set as system_prompt in options
+        if instructions is not None:
+            opts["system_prompt"] = instructions
+
         cli_path = opts.pop("cli_path", None)
         model = opts.pop("model", None)
         cwd = opts.pop("cwd", None)
@@ -420,10 +427,6 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         for key, value in self._default_options.items():
             if value is not None:
                 opts[key] = value
-
-        # Map instructions to system_prompt for SDK
-        if "instructions" in opts:
-            opts["system_prompt"] = opts.pop("instructions")
 
         # Add built-in tools (strings like "Read", "Write", "Bash")
         if self._builtin_tools:

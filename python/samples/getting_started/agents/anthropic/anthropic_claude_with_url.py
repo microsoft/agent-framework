@@ -16,17 +16,15 @@ URL fetching allows the agent to access any URL accessible from your network.
 
 import asyncio
 
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent
 
 
 async def main() -> None:
     print("=== Claude Agent with URL Fetching ===\n")
 
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
+        instructions="You are a helpful assistant that can fetch and summarize web content.",
         tools=["WebFetch"],
-        default_options={
-            "instructions": "You are a helpful assistant that can fetch and summarize web content.",
-        },
     )
 
     async with agent:

@@ -74,13 +74,18 @@ class TestClaudeAgentInit:
         assert agent.name == "test-agent"
         assert agent.description == "A test agent"
 
-    def test_with_instructions_in_options(self) -> None:
-        """Test agent with instructions in options."""
+    def test_with_instructions_parameter(self) -> None:
+        """Test agent with instructions parameter."""
+        agent = ClaudeAgent(instructions="You are a helpful assistant.")
+        assert agent._default_options.get("system_prompt") == "You are a helpful assistant."  # type: ignore[reportPrivateUsage]
+
+    def test_with_system_prompt_in_options(self) -> None:
+        """Test agent with system_prompt in options."""
         options: ClaudeAgentOptions = {
-            "instructions": "You are a helpful assistant.",
+            "system_prompt": "You are a helpful assistant.",
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._default_options.get("instructions") == "You are a helpful assistant."  # type: ignore[reportPrivateUsage]
+        assert agent._default_options.get("system_prompt") == "You are a helpful assistant."  # type: ignore[reportPrivateUsage]
 
     def test_with_default_options(self) -> None:
         """Test agent with default options."""
@@ -641,8 +646,8 @@ class TestPrepareClientOptions:
             assert call_kwargs.get("max_turns") == 15
 
     def test_prepare_client_options_with_instructions(self) -> None:
-        """Test building options with instructions."""
-        agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(default_options={"instructions": "Be helpful"})
+        """Test building options with instructions parameter."""
+        agent = ClaudeAgent(instructions="Be helpful")
 
         with patch("agent_framework_claude._agent.SDKOptions") as mock_opts:
             mock_opts.return_value = MagicMock()

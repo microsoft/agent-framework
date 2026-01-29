@@ -19,7 +19,7 @@ servers you trust. Use permission handlers to control what actions are allowed.
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 
@@ -55,9 +55,9 @@ async def main() -> None:
         },
     }
 
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
+        instructions="You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
         default_options={
-            "instructions": "You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
             "can_use_tool": prompt_permission,
             "mcp_servers": mcp_servers,
         },

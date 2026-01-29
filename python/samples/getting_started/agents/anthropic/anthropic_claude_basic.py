@@ -19,7 +19,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent
 
 
 @tool
@@ -32,12 +32,10 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response."""
     print("=== Non-streaming Example ===")
 
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
         name="BasicAgent",
+        instructions="You are a helpful assistant. Keep responses concise.",
         tools=[get_weather],
-        default_options={
-            "instructions": "You are a helpful assistant. Keep responses concise.",
-        },
     )
 
     async with agent:
@@ -51,12 +49,10 @@ async def streaming_example() -> None:
     """Example of streaming response."""
     print("=== Streaming Example ===")
 
-    agent: ClaudeAgent[ClaudeAgentOptions] = ClaudeAgent(
+    agent = ClaudeAgent(
         name="StreamingAgent",
+        instructions="You are a helpful assistant.",
         tools=[get_weather],
-        default_options={
-            "instructions": "You are a helpful assistant.",
-        },
     )
 
     async with agent:
