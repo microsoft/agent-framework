@@ -103,6 +103,7 @@ agent-framework-ollama = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
+agent-framework-claude = { workspace = true }
 
 [tool.ruff]
 line-length = 120
