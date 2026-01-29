@@ -2088,7 +2088,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | "ChatOptions[None]" | None = None,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse[Any]]": ...
 
@@ -2098,7 +2098,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[True],
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
 
@@ -2107,7 +2107,7 @@ class FunctionInvokingMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: bool = False,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
         from ._types import (
