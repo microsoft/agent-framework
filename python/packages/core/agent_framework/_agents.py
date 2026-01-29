@@ -78,7 +78,7 @@ TThreadType = TypeVar("TThreadType", bound="AgentThread")
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     covariant=True,
 )
 
@@ -230,10 +230,22 @@ class AgentProtocol(Protocol):
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
-        stream: Literal[False] = False,
+        stream: Literal[False] = ...,
         thread: AgentThread | None = None,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse]: ...
+    ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        options: "ChatOptions[None]" | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
     def run(
@@ -242,8 +254,9 @@ class AgentProtocol(Protocol):
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
+        options: "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
@@ -251,8 +264,9 @@ class AgentProtocol(Protocol):
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
+        options: "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
 
         This method can return either a complete response or stream partial updates
@@ -261,10 +275,11 @@ class AgentProtocol(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
-            stream: Whether to stream the response. Defaults to False.
 
         Keyword Args:
+            stream: Whether to stream the response. Defaults to False.
             thread: The conversation thread associated with the message(s).
+            options: Additional options for the chat. Defaults to None.
             kwargs: Additional keyword arguments.
 
         Returns:
@@ -778,7 +793,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
-        stream: Literal[False] = False,
+        stream: Literal[False] = ...,
         thread: AgentThread | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
@@ -794,6 +809,22 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        options: TOptions_co | "ChatOptions[None]" | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
         stream: Literal[True],
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -801,9 +832,9 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | None = None,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
@@ -816,9 +847,9 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
+        options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
 
         Note:
@@ -860,7 +891,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | None = None,
+        options: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
@@ -889,7 +920,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             input_messages=ctx["input_messages"],
             kwargs=ctx["finalize_kwargs"],
         )
-        response_format = co.get("response_format")
+        response_format = ctx.get("chat_options", {}).get("response_format")
         if not (
             response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
         ):
@@ -1004,7 +1035,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None,
-        options: TOptions_co | None,
+        options: Mapping[str, Any] | None,
         kwargs: dict[str, Any],
     ) -> _RunContext:
         opts = dict(options) if options else {}

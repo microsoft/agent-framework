@@ -376,7 +376,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
             stream_result = self._inner_get_response(messages=messages, options=options, stream=True, **kwargs)
             return await ChatResponse.from_chat_response_generator(
                 updates=stream_result,  # type: ignore[arg-type]
-                output_format_type=options.get("response_format"),
+                output_format_type=options.get("response_format"),  # type: ignore[arg-type]
             )
 
         return _get_response()
