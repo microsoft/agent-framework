@@ -600,9 +600,22 @@ class TestMem0ProviderBuildFilters:
 class TestMem0Telemetry:
     """Test telemetry configuration for Mem0."""
 
-    def test_mem0_telemetry_disabled_by_default(self) -> None:
+    def test_mem0_telemetry_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that MEM0_TELEMETRY is set to 'false' by default when importing the package."""
-        # The environment variable should be set to "false" after importing agent_framework.mem0
+        # Ensure MEM0_TELEMETRY is not set before importing the module under test
+        monkeypatch.delenv("MEM0_TELEMETRY", raising=False)
+
+        # Remove cached modules to force re-import and trigger module-level initialization
+        modules_to_remove = [key for key in sys.modules if key.startswith("agent_framework_mem0")]
+        for mod in modules_to_remove:
+            del sys.modules[mod]
+
+        # Import (and reload) the module so that it can set MEM0_TELEMETRY when unset
+        import agent_framework_mem0
+
+        importlib.reload(agent_framework_mem0)
+
+        # The environment variable should be set to "false" after importing
         assert os.environ.get("MEM0_TELEMETRY") == "false"
 
     def test_mem0_telemetry_respects_user_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
