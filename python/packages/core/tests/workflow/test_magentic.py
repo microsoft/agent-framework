@@ -169,19 +169,10 @@ class StubAgent(BaseAgent):
         response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
         return AgentResponse(messages=[response])
 
-    def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(
-                contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
-            )
-
-        return _stream()
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(
+            contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
+        )
 
 
 class DummyExec(Executor):
@@ -442,17 +433,8 @@ class StubManagerAgent(BaseAgent):
     async def _run_impl(self) -> AgentResponse:
         return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
-    def run_stream(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: Any = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        async def _gen() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
-
-        return _gen()
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
@@ -1018,7 +1000,7 @@ async def test_magentic_with_participant_factories():
     assert call_count == 1
 
     outputs: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(event)
 
@@ -1065,7 +1047,7 @@ async def test_magentic_participant_factories_with_checkpointing():
     )
 
     outputs: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream("checkpoint test"):
+    async for event in workflow.run("checkpoint test", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(event)
 
@@ -1122,7 +1104,7 @@ async def test_magentic_with_manager_factory():
     assert factory_call_count == 1
 
     outputs: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(event)
 
@@ -1151,7 +1133,7 @@ async def test_magentic_with_agent_factory():
 
     # Verify workflow can be started (may not complete successfully due to stub behavior)
     event_count = 0
-    async for _ in workflow.run_stream("test task"):
+    async for _ in workflow.run("test task", stream=True):
         event_count += 1
         if event_count > 10:
             break

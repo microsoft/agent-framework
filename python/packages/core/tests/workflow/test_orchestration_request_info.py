@@ -203,25 +203,17 @@ class _TestAgent:
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
         """Dummy run method."""
+        if stream:
+            return self._run_stream_impl()
         return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")])
 
-    def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Dummy run_stream method."""
-
-        async def generator():
-            yield AgentResponseUpdate(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response stream")])
-
-        return generator()
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(messages=[ChatMessage(role=Role.ASSISTANT, text="Test response stream")])
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         """Creates a new conversation thread for the agent."""

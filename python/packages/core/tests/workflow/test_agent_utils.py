@@ -32,21 +32,14 @@ class MockAgent:
         """Returns the description of the agent."""
         ...
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse: ...
-
-    def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
+    ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]: ...
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         """Creates a new conversation thread for the agent."""
