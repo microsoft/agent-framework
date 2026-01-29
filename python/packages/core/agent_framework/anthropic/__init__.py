@@ -9,11 +9,9 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "__version__": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "AnthropicClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "AnthropicChatOptions": ("agent_framework_anthropic", "agent-framework-anthropic"),
-    "AnthropicSettings": ("agent_framework_anthropic", "agent-framework-anthropic"),
     # From agent-framework-claude
     "ClaudeAgent": ("agent_framework_claude", "agent-framework-claude"),
     "ClaudeAgentOptions": ("agent_framework_claude", "agent-framework-claude"),
-    "ClaudeAgentSettings": ("agent_framework_claude", "agent-framework-claude"),
 }
 
 

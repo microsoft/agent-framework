@@ -22,7 +22,7 @@ from agent_framework import (
 )
 from agent_framework._middleware import Middleware
 from agent_framework._types import normalize_tools
-from agent_framework.exceptions import ServiceException
+from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
@@ -134,9 +134,6 @@ class ClaudeAgentOptions(TypedDict, total=False):
 
     output_format: dict[str, Any]
     """Structured output format (JSON schema)."""
-
-    include_partial_messages: bool
-    """Stream partial messages."""
 
     enable_file_checkpointing: bool
     """Enable file checkpointing for rewind."""
@@ -262,19 +259,30 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         self._client = client
         self._owns_client = client is None
 
-        # Load settings from environment
+        # Parse options
+        opts: dict[str, Any] = dict(default_options) if default_options else {}
+        cli_path = opts.pop("cli_path", None)
+        model = opts.pop("model", None)
+        cwd = opts.pop("cwd", None)
+        permission_mode = opts.pop("permission_mode", None)
+        max_turns = opts.pop("max_turns", None)
+        max_budget_usd = opts.pop("max_budget_usd", None)
+        self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
+
+        # Load settings from environment and options
         try:
             self._settings = ClaudeAgentSettings(
+                cli_path=cli_path,
+                model=model,
+                cwd=cwd,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                max_budget_usd=max_budget_usd,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
         except ValidationError as ex:
-            logger.warning(f"Failed to load ClaudeAgentSettings: {ex}")
-            self._settings = ClaudeAgentSettings.__new__(ClaudeAgentSettings)
-
-        # Parse options
-        opts: dict[str, Any] = dict(default_options) if default_options else {}
-        self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
+            raise ServiceInitializationError("Failed to create Claude Agent settings.", ex) from ex
 
         # Separate built-in tools (strings) from custom tools (callables/ToolProtocol)
         self._builtin_tools: list[str] = []
@@ -440,6 +448,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             existing_allowed = opts.get("allowed_tools", [])
             opts["allowed_tools"] = list(existing_allowed) + custom_tool_names
 
+        # Always enable partial messages for streaming support
+        opts["include_partial_messages"] = True
+
         return SDKOptions(**opts)
 
     def _prepare_tools(
@@ -592,45 +603,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         Returns:
             AgentResponse with the agent's response.
         """
-        input_messages = normalize_messages(messages)
         thread = thread or self.get_new_thread()
-
-        # Ensure we're connected to the right session
-        await self._ensure_session(thread.service_thread_id)
-
-        if not self._client:
-            raise ServiceException("Claude SDK client not initialized.")
-
-        prompt = self._format_prompt(input_messages)
-
-        # Apply runtime options (model, permission_mode)
-        await self._apply_runtime_options(dict(options) if options else None)
-
-        response_messages: list[ChatMessage] = []
-        session_id: str | None = None
-
-        await self._client.query(prompt)
-        async for message in self._client.receive_response():
-            if isinstance(message, AssistantMessage):
-                response_messages.append(self._convert_assistant_message(message))
-            elif isinstance(message, ResultMessage):
-                session_id = message.session_id
-
-        # Update thread with session ID
-        if session_id:
-            thread.service_thread_id = session_id
-
-        # Notify thread of messages
-        await self._notify_thread_of_new_messages(
-            thread,
-            input_messages,
-            response_messages,
-            **kwargs,
-        )
-
-        return AgentResponse(
-            messages=response_messages,
-            response_id=session_id,
+        return await AgentResponse.from_agent_response_generator(
+            self.run_stream(messages, thread=thread, options=options, **kwargs)
         )
 
     async def run_stream(
@@ -675,28 +650,30 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         await self._client.query(prompt)
         async for message in self._client.receive_response():
             if isinstance(message, StreamEvent):
-                # Handle streaming events
-                event: dict[str, Any] = message.event
+                # Handle streaming events - extract text/thinking deltas
+                event = message.event
                 if event.get("type") == "content_block_delta":
-                    delta: dict[str, Any] = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        text: str = delta.get("text", "")
-                        yield AgentResponseUpdate(
-                            role=Role.ASSISTANT,
-                            contents=[Content.from_text(text=text)],
-                            raw_representation=message,
-                        )
+                    delta = event.get("delta", {})
+                    delta_type = delta.get("type")
+                    if delta_type == "text_delta":
+                        text = delta.get("text", "")
+                        if text:
+                            yield AgentResponseUpdate(
+                                role=Role.ASSISTANT,
+                                contents=[Content.from_text(text=text, raw_representation=message)],
+                                raw_representation=message,
+                            )
+                    elif delta_type == "thinking_delta":
+                        thinking = delta.get("thinking", "")
+                        if thinking:
+                            yield AgentResponseUpdate(
+                                role=Role.ASSISTANT,
+                                contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
+                                raw_representation=message,
+                            )
             elif isinstance(message, AssistantMessage):
-                chat_msg = self._convert_assistant_message(message)
-                response_messages.append(chat_msg)
-                # Yield the full message content
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        yield AgentResponseUpdate(
-                            role=Role.ASSISTANT,
-                            contents=[Content.from_text(text=block.text, raw_representation=block)],
-                            raw_representation=message,
-                        )
+                # Store complete message for thread notification
+                response_messages.append(self._convert_assistant_message(message))
             elif isinstance(message, ResultMessage):
                 session_id = message.session_id
 

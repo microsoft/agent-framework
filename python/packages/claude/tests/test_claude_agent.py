@@ -90,9 +90,9 @@ class TestClaudeAgentInit:
             "max_turns": 10,
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._default_options.get("model") == "sonnet"  # type: ignore[reportPrivateUsage]
-        assert agent._default_options.get("permission_mode") == "default"  # type: ignore[reportPrivateUsage]
-        assert agent._default_options.get("max_turns") == 10  # type: ignore[reportPrivateUsage]
+        assert agent._settings.model == "sonnet"  # type: ignore[reportPrivateUsage]
+        assert agent._settings.permission_mode == "default"  # type: ignore[reportPrivateUsage]
+        assert agent._settings.max_turns == 10  # type: ignore[reportPrivateUsage]
 
     def test_with_function_tool(self) -> None:
         """Test agent with function tool."""
@@ -201,8 +201,17 @@ class TestClaudeAgentRun:
     async def test_run_with_string_message(self) -> None:
         """Test run with string message."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
 
         messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
             AssistantMessage(
                 content=[TextBlock(text="Hello!")],
                 model="claude-sonnet",
@@ -221,14 +230,22 @@ class TestClaudeAgentRun:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             response = await agent.run("Hello")
-            assert len(response.messages) == 1
-            assert response.messages[0].role == Role.ASSISTANT
+            assert response.text == "Hello!"
 
     async def test_run_captures_session_id(self) -> None:
         """Test that session ID is captured from ResultMessage."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
 
         messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Response"},
+                },
+                uuid="event-1",
+                session_id="test-session-id",
+            ),
             AssistantMessage(
                 content=[TextBlock(text="Response")],
                 model="claude-sonnet",
@@ -253,8 +270,17 @@ class TestClaudeAgentRun:
     async def test_run_with_thread(self) -> None:
         """Test run with existing thread."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
 
         messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Response"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
             AssistantMessage(
                 content=[TextBlock(text="Response")],
                 model="claude-sonnet",
@@ -303,8 +329,25 @@ class TestClaudeAgentRunStream:
     async def test_run_stream_yields_updates(self) -> None:
         """Test run_stream yields AgentResponseUpdate objects."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
 
         messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Streaming "},
+                },
+                uuid="event-1",
+                session_id="stream-session",
+            ),
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "response"},
+                },
+                uuid="event-2",
+                session_id="stream-session",
+            ),
             AssistantMessage(
                 content=[TextBlock(text="Streaming response")],
                 model="claude-sonnet",
@@ -325,8 +368,11 @@ class TestClaudeAgentRunStream:
             updates: list[AgentResponseUpdate] = []
             async for update in agent.run_stream("Hello"):
                 updates.append(update)
-            assert len(updates) > 0
+            # StreamEvent yields text deltas, AssistantMessage is stored but not yielded
+            assert len(updates) == 2
             assert updates[0].role == Role.ASSISTANT
+            assert updates[0].text == "Streaming "
+            assert updates[1].text == "response"
 
 
 # region Test ClaudeAgent Session Management
@@ -501,7 +547,7 @@ class TestClaudeAgentPermissions:
             "permission_mode": "bypassPermissions",
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._default_options.get("permission_mode") == "bypassPermissions"  # type: ignore[reportPrivateUsage]
+        assert agent._settings.permission_mode == "bypassPermissions"  # type: ignore[reportPrivateUsage]
 
 
 # region Test ClaudeAgent Error Handling
@@ -513,8 +559,8 @@ class TestClaudeAgentErrorHandling:
     @staticmethod
     async def _empty_gen() -> Any:
         """Empty async generator."""
-        return
-        yield  # Make it a generator
+        if False:
+            yield
 
     async def test_handles_empty_response(self) -> None:
         """Test handling of empty response."""
