@@ -7,7 +7,7 @@ import pytest
 from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, Role, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
-from agent_framework_claude._agent import CUSTOM_TOOLS_MCP_SERVER_NAME
+from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
 
 # region Test ClaudeAgentSettings
 
@@ -476,7 +476,7 @@ class TestClaudeAgentToolConversion:
 
         assert server is not None
         assert len(tool_names) == 1
-        assert tool_names[0] == f"mcp__{CUSTOM_TOOLS_MCP_SERVER_NAME}__add"
+        assert tool_names[0] == f"mcp__{TOOLS_MCP_SERVER_NAME}__add"
 
     def test_function_tool_to_sdk_mcp_tool(self) -> None:
         """Test converting FunctionTool to SDK MCP tool."""
@@ -665,7 +665,7 @@ class TestPrepareClientOptions:
             agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
             call_kwargs = mock_opts.call_args[1]
             assert "mcp_servers" in call_kwargs
-            assert CUSTOM_TOOLS_MCP_SERVER_NAME in call_kwargs["mcp_servers"]
+            assert TOOLS_MCP_SERVER_NAME in call_kwargs["mcp_servers"]
 
 
 class TestApplyRuntimeOptions:

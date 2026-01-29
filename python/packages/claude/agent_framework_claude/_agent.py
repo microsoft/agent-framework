@@ -61,11 +61,10 @@ __all__ = ["ClaudeAgent", "ClaudeAgentOptions"]
 
 logger = get_logger("agent_framework.claude")
 
-# Name of the in-process MCP server that hosts custom tools.
-# Custom tools (FunctionTool instances) are converted to SDK MCP tools
-# and served through this server, as Claude Code CLI only supports
-# custom tools via the MCP protocol.
-CUSTOM_TOOLS_MCP_SERVER_NAME = "custom_tools"
+# Name of the in-process MCP server that hosts Agent Framework tools.
+# FunctionTool instances are converted to SDK MCP tools and served
+# through this server, as Claude Code CLI only supports tools via MCP.
+TOOLS_MCP_SERVER_NAME = "_agent_framework_tools"
 
 
 class ClaudeAgentOptions(TypedDict, total=False):
@@ -385,6 +384,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                 self._started = True
                 self._current_session_id = session_id
             except Exception as ex:
+                self._client = None
                 raise ServiceException(f"Failed to start Claude SDK client: {ex}") from ex
 
     def _prepare_client_options(self, resume_session_id: str | None = None) -> SDKOptions:
@@ -437,7 +437,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         # MCP servers - merge user-provided servers with custom tools server
         mcp_servers = dict(self._mcp_servers) if self._mcp_servers else {}
         if custom_tools_server:
-            mcp_servers[CUSTOM_TOOLS_MCP_SERVER_NAME] = custom_tools_server
+            mcp_servers[TOOLS_MCP_SERVER_NAME] = custom_tools_server
         if mcp_servers:
             opts["mcp_servers"] = mcp_servers
 
@@ -470,14 +470,14 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             if isinstance(tool, FunctionTool):
                 sdk_tools.append(self._function_tool_to_sdk_mcp_tool(tool))
                 # Claude Agent SDK convention: MCP tools use format "mcp__{server}__{tool}"
-                tool_names.append(f"mcp__{CUSTOM_TOOLS_MCP_SERVER_NAME}__{tool.name}")
+                tool_names.append(f"mcp__{TOOLS_MCP_SERVER_NAME}__{tool.name}")
             elif isinstance(tool, ToolProtocol):
                 logger.debug(f"Unsupported tool type: {type(tool)}")
 
         if not sdk_tools:
             return None, []
 
-        return create_sdk_mcp_server(name=CUSTOM_TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
+        return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
 
     def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool[Any, Any]) -> SdkMcpTool[Any]:
         """Convert a FunctionTool to an SDK MCP tool.
