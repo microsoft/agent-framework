@@ -3,7 +3,7 @@
 """Tests for AGUIChatClient."""
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterable, MutableSequence
+from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any
 
 from agent_framework import (
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ResponseStream,
     Role,
     tool,
 )
@@ -43,18 +44,11 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose thread id helper."""
         return self._get_thread_id(options)
 
-    async def inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Proxy to protected streaming call."""
-        async for update in self._inner_get_streaming_response(messages=messages, options=options):
-            yield update
-
-    async def inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
-    ) -> ChatResponse:
+    def inner_get_response(
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
-        return await self._inner_get_response(messages=messages, options=options)
+        return self._inner_get_response(messages=messages, options=options, stream=stream)
 
 
 class TestAGUIChatClient:
@@ -166,7 +160,7 @@ class TestAGUIChatClient:
         assert thread_id.startswith("thread_")
         assert len(thread_id) > 7
 
-    async def test_get_streaming_response(self, monkeypatch: MonkeyPatch) -> None:
+    async def test_get_response_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test streaming response method."""
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -186,7 +180,7 @@ class TestAGUIChatClient:
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.inner_get_streaming_response(messages=messages, options=chat_options):
+        async for update in client._inner_get_response(messages=messages, stream=True, options=chat_options):
             updates.append(update)
 
         assert len(updates) == 4
@@ -228,7 +222,7 @@ class TestAGUIChatClient:
         """Test that client tool metadata is sent to server.
 
         Client tool metadata (name, description, schema) is sent to server for planning.
-        When server requests a client function, @use_function_invocation decorator
+        When server requests a client function, function invocation mixin
         intercepts and executes it locally. This matches .NET AG-UI implementation.
         """
         from agent_framework import tool
@@ -285,7 +279,7 @@ class TestAGUIChatClient:
         messages = [ChatMessage(role="user", text="Test server tool execution")]
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.get_streaming_response(messages):
+        async for update in client.get_response(messages, stream=True):
             updates.append(update)
 
         function_calls = [
@@ -326,7 +320,9 @@ class TestAGUIChatClient:
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
 
-        async for _ in client.get_streaming_response(messages, options={"tool_choice": "auto", "tools": [client_tool]}):
+        async for _ in client.get_response(
+            messages, stream=True, options={"tool_choice": "auto", "tools": [client_tool]}
+        ):
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:

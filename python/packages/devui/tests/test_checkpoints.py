@@ -338,7 +338,7 @@ class TestIntegration:
         checkpoint_storage = checkpoint_manager.get_checkpoint_storage(conversation_id)
 
         # Set build-time storage (equivalent to .with_checkpointing() at build time)
-        # Note: In production, DevUI uses runtime injection via run_stream() parameter
+        # Note: In production, DevUI uses runtime injection via run(stream=True) parameter
         if hasattr(test_workflow, "_runner") and hasattr(test_workflow._runner, "context"):
             test_workflow._runner.context._checkpoint_storage = checkpoint_storage
 
@@ -406,7 +406,7 @@ class TestIntegration:
         3. Framework automatically saves checkpoint to our storage
         4. Checkpoint is accessible via manager for UI to list/resume
 
-        Note: In production, DevUI passes checkpoint_storage to run_stream() as runtime parameter.
+        Note: In production, DevUI passes checkpoint_storage to run(stream=True) as runtime parameter.
         This test uses build-time injection to verify framework's checkpoint auto-save behavior.
         """
         entity_id = "test_entity"
@@ -427,7 +427,7 @@ class TestIntegration:
 
         # Run workflow until it reaches IDLE_WITH_PENDING_REQUESTS (after checkpoint is created)
         saw_request_event = False
-        async for event in test_workflow.run_stream(WorkflowTestData(value="test")):
+        async for event in test_workflow.run(WorkflowTestData(value="test"), stream=True):
             if isinstance(event, RequestInfoEvent):
                 saw_request_event = True
             # Wait for IDLE_WITH_PENDING_REQUESTS status (comes after checkpoint creation)

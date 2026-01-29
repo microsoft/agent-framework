@@ -80,7 +80,7 @@ def register_additional_client_tools(agent: "AgentProtocol", client_tools: list[
         return
 
     if isinstance(chat_client, BaseChatClient) and chat_client.function_invocation_configuration is not None:
-        chat_client.function_invocation_configuration.additional_tools = client_tools
+        chat_client.function_invocation_configuration["additional_tools"] = client_tools
         logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
 
 

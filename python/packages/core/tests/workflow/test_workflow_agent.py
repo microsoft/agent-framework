@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import uuid
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from typing import Any
 
 import pytest
@@ -155,7 +155,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to capture streaming events
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test input"):
+        async for update in agent.run("Test input", stream=True):
             updates.append(update)
 
         # Should have received at least one streaming update
@@ -184,7 +184,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to get request info event
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Start request"):
+        async for update in agent.run("Start request", stream=True):
             updates.append(update)
         # Should have received an approval request for the request info
         assert len(updates) > 0
@@ -320,7 +320,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("test-agent")
 
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("hello"):
+        async for update in agent.run("hello", stream=True):
             updates.append(update)
 
         # Should have received updates for both yield_output calls
@@ -401,7 +401,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("raw-test-agent")
 
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("test"):
+        async for update in agent.run("test", stream=True):
             updates.append(update)
 
         # Should have 3 updates
@@ -439,7 +439,7 @@ class TestWorkflowAgent:
 
         # Verify streaming returns the update with all 4 contents before coalescing
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("test"):
+        async for update in agent.run("test", stream=True):
             updates.append(update)
 
         assert len(updates) == 1
@@ -507,7 +507,7 @@ class TestWorkflowAgent:
         thread = AgentThread(message_store=message_store)
 
         # Stream from the agent with the thread and a new message
-        async for _ in agent.run_stream("How are you?", thread=thread):
+        async for _ in agent.run("How are you?", thread=thread, stream=True):
             pass
 
         # Verify the executor received all messages (3 from history + 1 new)
@@ -547,7 +547,7 @@ class TestWorkflowAgent:
         checkpoint_storage = InMemoryCheckpointStorage()
 
         # Run with checkpoint storage enabled
-        async for _ in agent.run_stream("Test message", checkpoint_storage=checkpoint_storage):
+        async for _ in agent.run("Test message", checkpoint_storage=checkpoint_storage, stream=True):
             pass
 
         # Drain workflow events to get checkpoint
@@ -577,15 +577,20 @@ class TestWorkflowAgent:
             def get_new_thread(self) -> AgentThread:
                 return AgentThread()
 
-            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
+            def run(
+                self, messages: Any, *, stream: bool = False, thread: AgentThread | None = None, **kwargs: Any
+            ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+                if stream:
+                    return self._run_stream_impl()
+                return self._run_impl()
+
+            async def _run_impl(self) -> AgentResponse:
                 return AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
                     text=self._response_text,
                 )
 
-            async def run_stream(
-                self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
-            ) -> AsyncIterable[AgentResponseUpdate]:
+            async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
                 for word in self._response_text.split():
                     yield AgentResponseUpdate(
                         contents=[Content.from_text(text=word + " ")],
@@ -651,15 +656,20 @@ class TestWorkflowAgent:
             def get_new_thread(self) -> AgentThread:
                 return AgentThread()
 
-            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
+            def run(
+                self, messages: Any, *, stream: bool = False, thread: AgentThread | None = None, **kwargs: Any
+            ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+                if stream:
+                    return self._run_stream_impl()
+                return self._run_impl()
+
+            async def _run_impl(self) -> AgentResponse:
                 return AgentResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
                     text=self._response_text,
                 )
 
-            async def run_stream(
-                self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
-            ) -> AsyncIterable[AgentResponseUpdate]:
+            async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=self._response_text)],
                     role=Role.ASSISTANT,
@@ -708,7 +718,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Verify at least one update was received
@@ -740,7 +750,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Verify author_name is preserved (not overwritten with executor_id)
@@ -758,7 +768,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Should have updates from both executors

@@ -89,6 +89,17 @@ def create_test_azure_ai_chat_client(
     client._azure_search_tool_calls = []  # Add the new instance variable
     client.additional_properties = {}
     client.middleware = None
+    client.chat_middleware = []
+    client.function_middleware = []
+    client.otel_provider_name = "azure.ai"
+    client.function_invocation_configuration = {
+        "enabled": True,
+        "max_iterations": 5,
+        "max_consecutive_errors_per_request": 0,
+        "terminate_on_unknown_calls": False,
+        "additional_tools": [],
+        "include_detailed_errors": False,
+    }
 
     return client
 
@@ -309,7 +320,7 @@ async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ag
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call without existing thread - should create new one
-    response = chat_client.get_streaming_response(messages)
+    response = chat_client.get_response(messages, stream=True)
     # Consume the generator to trigger the method execution
     async for _ in response:
         pass
@@ -467,20 +478,18 @@ async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_cl
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options: ChatOptions = {}
 
     async def mock_streaming_response():
         yield ChatResponseUpdate(role=Role.ASSISTANT, text="Hello back")
 
     with (
-        patch.object(chat_client, "_inner_get_streaming_response", return_value=mock_streaming_response()),
+        patch.object(chat_client, "_inner_get_response", return_value=mock_streaming_response()),
         patch("agent_framework.ChatResponse.from_chat_response_generator") as mock_from_generator,
     ):
         mock_response = ChatResponse(role=Role.ASSISTANT, text="Hello back")
         mock_from_generator.return_value = mock_response
 
-        result = await chat_client._inner_get_response(messages=messages, options=chat_options)  # type: ignore
+        result = await ChatResponse.from_chat_response_generator(mock_streaming_response())
 
         assert result is mock_response
         mock_from_generator.assert_called_once()
@@ -1409,7 +1418,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_streaming_response(messages=messages)
+        response = azure_ai_chat_client.get_response(messages=messages, stream=True)
 
         full_message: str = ""
         async for chunk in response:
@@ -1433,8 +1442,9 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_streaming_response(
+        response = azure_ai_chat_client.get_response(
             messages=messages,
+            stream=True,
             options={"tools": [get_weather], "tool_choice": "auto"},
         )
         full_message: str = ""
@@ -1474,7 +1484,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert chunk is not None
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:

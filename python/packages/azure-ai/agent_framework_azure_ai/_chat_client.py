@@ -5,8 +5,8 @@ import json
 import os
 import re
 import sys
-from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -26,17 +26,15 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Middleware,
+    ResponseStream,
     Role,
     TextSpanRegion,
     ToolProtocol,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
-    use_chat_middleware,
-    use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
-from agent_framework.observability import use_instrumentation
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
     Agent,
@@ -199,9 +197,6 @@ TAzureAIAgentOptions = TypeVar(
 # endregion
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
 class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIAgentOptions]):
     """Azure AI Agent Chat client."""
 
@@ -346,35 +341,48 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         await self._close_client_if_needed()
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> ChatResponse:
-        return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
-            output_format_type=options.get("response_format"),
-        )
-
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
+        messages: Sequence[ChatMessage],
         options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
-        agent_id = await self._get_agent_id_or_create(run_options)
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            # Streaming mode - return the async generator directly
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                # prepare
+                run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
+                agent_id = await self._get_agent_id_or_create(run_options)
 
-        # execute and process
-        async for update in self._process_stream(
-            *(await self._create_agent_stream(agent_id, run_options, required_action_results))
-        ):
-            yield update
+                # execute and process
+                async for update in self._process_stream(
+                    *(await self._create_agent_stream(agent_id, run_options, required_action_results))
+                ):
+                    yield update
+
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
+
+        # Non-streaming mode - collect updates and convert to response
+        async def _get_response() -> ChatResponse:
+            async def _get_streaming() -> AsyncIterable[ChatResponseUpdate]:
+                # prepare
+                run_options, required_action_results = await self._prepare_options(messages, options, **kwargs)
+                agent_id = await self._get_agent_id_or_create(run_options)
+
+                # execute and process
+                async for update in self._process_stream(
+                    *(await self._create_agent_stream(agent_id, run_options, required_action_results))
+                ):
+                    yield update
+
+            return await ChatResponse.from_chat_response_generator(
+                updates=_get_streaming(),
+                output_format_type=options.get("response_format"),
+            )
+
+        return _get_response()
 
     async def _get_agent_id_or_create(self, run_options: dict[str, Any] | None = None) -> str:
         """Determine which agent to use and create if needed.
@@ -877,7 +885,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
+        messages: Sequence[ChatMessage],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
@@ -1053,7 +1061,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         return mcp_resources
 
     def _prepare_messages(
-        self, messages: MutableSequence[ChatMessage]
+        self, messages: Sequence[ChatMessage]
     ) -> tuple[
         list[ThreadMessageOptions] | None,
         list[str],

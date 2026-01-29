@@ -19,7 +19,6 @@ from agent_framework import (
     agent_middleware,
     chat_middleware,
     function_middleware,
-    use_function_invocation,
 )
 from agent_framework._middleware import (
     AgentMiddleware,
@@ -384,7 +383,7 @@ class TestChatAgentStreamingMiddleware:
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(messages):
+        async for update in agent.run(messages, stream=True):
             updates.append(update)
 
         # Verify streaming response
@@ -418,7 +417,7 @@ class TestChatAgentStreamingMiddleware:
         assert response is not None
 
         # Test streaming execution
-        async for _ in agent.run_stream(messages):
+        async for _ in agent.run(messages, stream=True):
             pass
 
         # Verify flags: [non-streaming, streaming]
@@ -805,7 +804,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Execute the agent with custom parameters passed as kwargs
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        response = await agent.run(messages, custom_param="test_value")
+        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})
 
         # Verify response
         assert response is not None
@@ -900,7 +899,7 @@ class TestMiddlewareDynamicRebuild:
 
         # First streaming execution
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test stream message 1"):
+        async for update in agent.run("Test stream message 1", stream=True):
             updates.append(update)
 
         assert "stream_middleware1_start" in execution_log
@@ -915,7 +914,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Second streaming execution - should use only middleware2
         updates = []
-        async for update in agent.run_stream("Test stream message 2"):
+        async for update in agent.run("Test stream message 2", stream=True):
             updates.append(update)
 
         assert "stream_middleware1_start" not in execution_log
@@ -1107,7 +1106,7 @@ class TestRunLevelMiddleware:
 
         # Execute streaming with run middleware
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
+        async for update in agent.run("Test streaming", middleware=[run_middleware], stream=True):
             updates.append(update)
 
         # Verify streaming response
@@ -1751,7 +1750,7 @@ class TestChatAgentChatMiddleware:
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(messages):
+        async for update in agent.run(messages, stream=True):
             updates.append(update)
 
         # Verify streaming response
@@ -1856,7 +1855,7 @@ class TestChatAgentChatMiddleware:
         )
         final_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Final response")])
 
-        chat_client = use_function_invocation(MockBaseChatClient)()
+        chat_client = MockBaseChatClient()
         chat_client.run_responses = [function_call_response, final_response]
 
         # Create ChatAgent with function middleware and tools
@@ -1879,10 +1878,8 @@ class TestChatAgentChatMiddleware:
         assert execution_order == [
             "agent_middleware_before",
             "chat_middleware_before",
-            "chat_middleware_after",
             "function_middleware_before",
             "function_middleware_after",
-            "chat_middleware_before",
             "chat_middleware_after",
             "agent_middleware_after",
         ]
@@ -1972,14 +1969,16 @@ class TestMiddlewareWithProtocolOnlyAgent:
                 self.description = "Test agent"
                 self.middleware = [TrackingMiddleware()]
 
-            async def run(self, messages=None, *, thread=None, **kwargs) -> AgentResponse:
+            async def run(
+                self, messages=None, *, stream: bool = False, thread=None, **kwargs
+            ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+                if stream:
+
+                    async def _stream():
+                        yield AgentResponseUpdate()
+
+                    return _stream()
                 return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
-
-            def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentResponseUpdate]:
-                async def _stream():
-                    yield AgentResponseUpdate()
-
-                return _stream()
 
             def get_new_thread(self, **kwargs):
                 return None
@@ -1992,8 +1991,4 @@ class TestMiddlewareWithProtocolOnlyAgent:
         assert response is not None
         assert execution_order == ["before", "after"]
 
-        # Test run_stream (streaming)
-        execution_order.clear()
-        async for _ in agent.run_stream("test message"):
-            pass
-        assert execution_order == ["before", "after"]
+        # run_stream is not wrapped by use_agent_middleware

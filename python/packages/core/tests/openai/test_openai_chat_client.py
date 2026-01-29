@@ -915,12 +915,8 @@ async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(ServiceResponseException),
     ):
-
-        async def consume_stream():
-            async for _ in client._inner_get_streaming_response(messages=messages, options={}):  # type: ignore
-                pass
-
-        await consume_stream()
+        async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
+            pass
 
 
 # region Integration Tests
@@ -1002,7 +998,7 @@ async def test_integration_options(
     """
     client = OpenAIChatClient()
     # to ensure toolmode required does not endlessly loop
-    client.function_invocation_configuration.max_iterations = 1
+    client.function_invocation_configuration["max_iterations"] = 1
 
     for streaming in [False, True]:
         # Prepare test message
@@ -1026,8 +1022,9 @@ async def test_integration_options(
 
         if streaming:
             # Test streaming mode
-            response_gen = client.get_streaming_response(
+            response_gen = client.get_response(
                 messages=messages,
+                stream=True,
                 options=options,
             )
 
@@ -1080,7 +1077,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
         else:
             response = await client.get_response(**content)
 
@@ -1105,7 +1102,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None

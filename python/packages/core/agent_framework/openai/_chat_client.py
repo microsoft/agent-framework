@@ -2,7 +2,7 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
@@ -18,8 +18,7 @@ from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
-from .._middleware import use_chat_middleware
-from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -27,6 +26,7 @@ from .._types import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    ResponseStream,
     Role,
     UsageDetails,
     prepare_function_call_results,
@@ -36,7 +36,6 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -126,74 +125,78 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
+class OpenAIBaseChatClient(  # type: ignore[misc]
+    OpenAIBase,
+    BaseChatClient[TOpenAIChatOptions],
+    Generic[TOpenAIChatOptions],
+):
     """OpenAI Chat completion class."""
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
-        client = await self._ensure_client()
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
-        try:
-            # execute and process
-            return self._parse_response_from_openai(
-                await client.chat.completions.create(stream=False, **options_dict), options
-            )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
-        # prepare
-        options_dict = self._prepare_options(messages, options)
-        options_dict["stream_options"] = {"include_usage": True}
-        try:
-            # execute and process
-            async for chunk in await client.chat.completions.create(stream=True, **options_dict):
-                if len(chunk.choices) == 0 and chunk.usage is None:
-                    continue
-                yield self._parse_response_update_from_openai(chunk)
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
+        if stream:
+            # Streaming mode
+            options_dict["stream_options"] = {"include_usage": True}
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                client = await self._ensure_client()
+                try:
+                    async for chunk in await client.chat.completions.create(stream=True, **options_dict):
+                        if len(chunk.choices) == 0 and chunk.usage is None:
+                            continue
+                        yield self._parse_response_update_from_openai(chunk)
+                except BadRequestError as ex:
+                    if ex.code == "content_filter":
+                        raise OpenAIContentFilterException(
+                            f"{type(self)} service encountered a content error: {ex}",
+                            inner_exception=ex,
+                        ) from ex
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                except Exception as ex:
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            client = await self._ensure_client()
+            try:
+                return self._parse_response_from_openai(
+                    await client.chat.completions.create(stream=False, **options_dict), options
+                )
+            except BadRequestError as ex:
+                if ex.code == "content_filter":
+                    raise OpenAIContentFilterException(
+                        f"{type(self)} service encountered a content error: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+            except Exception as ex:
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
+                    inner_exception=ex,
+                ) from ex
+
+        return _get_response()
 
     # region content creation
 
@@ -227,7 +230,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
             ret_dict["web_search_options"] = web_search_options
         return ret_dict
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist
         from .._types import prepend_instructions_to_messages, validate_tool_mode
 
@@ -281,7 +284,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
 
-    def _parse_response_from_openai(self, response: ChatCompletion, options: dict[str, Any]) -> "ChatResponse":
+    def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> "ChatResponse":
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
@@ -565,10 +568,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 # region Public client
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
+class OpenAIChatClient(  # type: ignore[misc]
+    OpenAIConfigMixin,
+    OpenAIBaseChatClient[TOpenAIChatOptions],
+    Generic[TOpenAIChatOptions],
+):
     """OpenAI Chat completion class."""
 
     def __init__(

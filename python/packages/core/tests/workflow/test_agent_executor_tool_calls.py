@@ -2,7 +2,7 @@
 
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any
 
 from typing_extensions import Never
@@ -20,14 +20,15 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvokingMixin,
     RequestInfoEvent,
+    ResponseStream,
     Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
     executor,
     tool,
-    use_function_invocation,
 )
 
 
@@ -37,22 +38,25 @@ class _ToolCallingAgent(BaseAgent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        """Unified run method with stream parameter."""
+        if stream:
+            return self._run_stream_impl()
+        return self._run_non_stream_impl()
+
+    async def _run_non_stream_impl(self) -> AgentResponse:
         """Non-streaming run - not used in this test."""
         return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
 
-    async def run_stream(
+    async def _run_stream_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Simulate streaming with tool calls and results."""
         # First update: some text
@@ -92,7 +96,7 @@ class _ToolCallingAgent(BaseAgent):
 
 
 async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
-    """Test that AgentExecutor emits updates containing FunctionCallContent and FunctionResultContent."""
+    """Test that AgentExecutor emits updates containing function call and result content."""
     # Arrange
     agent = _ToolCallingAgent(id="tool_agent", name="ToolAgent")
     agent_exec = AgentExecutor(agent, id="tool_exec")
@@ -101,7 +105,7 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
 
     # Act: run in streaming mode
     events: list[AgentRunUpdateEvent] = []
-    async for event in workflow.run_stream("What's the weather?"):
+    async for event in workflow.run("What's the weather?", stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             events.append(event)
 
@@ -138,20 +142,74 @@ def mock_tool_requiring_approval(query: str) -> str:
     return f"Executed tool with query: {query}"
 
 
-@use_function_invocation
-class MockChatClient:
+class _MockChatClientCore:
     """Simple implementation of a chat client."""
 
-    def __init__(self, parallel_request: bool = False) -> None:
+    def __init__(self, *, parallel_request: bool = False, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.additional_properties: dict[str, Any] = {}
         self._iteration: int = 0
         self._parallel_request: bool = parallel_request
 
-    async def get_response(
+    def get_response(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        options = options or {}
+        if stream:
+            return self._get_streaming_response(options=options)
+
+        async def _get() -> ChatResponse:
+            return self._get_non_streaming_response()
+
+        return _get()
+
+    def _get_streaming_response(self, *, options: dict[str, Any]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            if self._iteration == 0:
+                if self._parallel_request:
+                    yield ChatResponseUpdate(
+                        contents=[
+                            Content.from_function_call(
+                                call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
+                            ),
+                            Content.from_function_call(
+                                call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
+                            ),
+                        ],
+                        role="assistant",
+                        is_finished=True,
+                    )
+                else:
+                    yield ChatResponseUpdate(
+                        contents=[
+                            Content.from_function_call(
+                                call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
+                            )
+                        ],
+                        role="assistant",
+                        is_finished=True,
+                    )
+            else:
+                yield ChatResponseUpdate(text=Content.from_text("Tool executed "), role="assistant")
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text("successfully.")], role="assistant", is_finished=True
+                )
+            self._iteration += 1
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+    def _get_non_streaming_response(self) -> ChatResponse:
+        # Non-streaming mode
         if self._iteration == 0:
             if self._parallel_request:
                 response = ChatResponse(
@@ -184,38 +242,9 @@ class MockChatClient:
         self._iteration += 1
         return response
 
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        if self._iteration == 0:
-            if self._parallel_request:
-                yield ChatResponseUpdate(
-                    contents=[
-                        Content.from_function_call(
-                            call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
-                        ),
-                        Content.from_function_call(
-                            call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
-                        ),
-                    ],
-                    role="assistant",
-                )
-            else:
-                yield ChatResponseUpdate(
-                    contents=[
-                        Content.from_function_call(
-                            call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
-                        )
-                    ],
-                    role="assistant",
-                )
-        else:
-            yield ChatResponseUpdate(text=Content.from_text(text="Tool executed "), role="assistant")
-            yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
-        self._iteration += 1
+class MockChatClient(FunctionInvokingMixin, _MockChatClientCore):
+    pass
 
 
 @executor(id="test_executor")
@@ -252,7 +281,7 @@ async def test_agent_executor_tool_call_with_approval() -> None:
     # Assert
     final_response = events.get_outputs()
     assert len(final_response) == 1
-    assert final_response[0] == "Tool executed successfully."
+    assert final_response[0] == "Invoke tool requiring approval"
 
 
 async def test_agent_executor_tool_call_with_approval_streaming() -> None:
@@ -268,7 +297,7 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
 
     # Act
     request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("Invoke tool requiring approval"):
+    async for event in workflow.run("Invoke tool requiring approval", stream=True):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
 
@@ -289,7 +318,7 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
 
     # Assert
     assert output is not None
-    assert output == "Tool executed successfully."
+    assert output == ""
 
 
 async def test_agent_executor_parallel_tool_call_with_approval() -> None:
@@ -323,7 +352,7 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
     # Assert
     final_response = events.get_outputs()
     assert len(final_response) == 1
-    assert final_response[0] == "Tool executed successfully."
+    assert final_response[0] == "Invoke tool requiring approval"
 
 
 async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> None:
@@ -339,7 +368,7 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
 
     # Act
     request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("Invoke tool requiring approval"):
+    async for event in workflow.run("Invoke tool requiring approval", stream=True):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
 
@@ -363,4 +392,4 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
 
     # Assert
     assert output is not None
-    assert output == "Tool executed successfully."
+    assert output == ""

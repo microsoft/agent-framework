@@ -36,7 +36,7 @@ from agent_framework import (
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
-from agent_framework.observability import use_agent_instrumentation
+from agent_framework.observability import AgentTelemetryMixin
 
 __all__ = ["A2AAgent"]
 
@@ -57,8 +57,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-@use_agent_instrumentation
-class A2AAgent(BaseAgent):
+class A2AAgent(AgentTelemetryMixin, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
@@ -185,7 +184,7 @@ class A2AAgent(BaseAgent):
         if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
-    async def run(
+    async def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,

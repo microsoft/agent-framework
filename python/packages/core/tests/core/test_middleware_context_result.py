@@ -14,6 +14,7 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Content,
+    ResponseStream,
     Role,
 )
 from agent_framework._middleware import (
@@ -84,18 +85,22 @@ class TestResultOverrideMiddleware:
             ) -> None:
                 # Execute the pipeline first, then override the response stream
                 await next(context)
-                context.result = override_stream()
+                context.result = ResponseStream(override_stream())
 
         middleware = StreamResponseOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
-        async def final_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
+        async def final_handler(ctx: AgentRunContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
+
+            return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        async for update in pipeline.execute_stream(mock_agent, messages, context, final_handler):
+        stream = await pipeline.execute_stream(mock_agent, messages, context, final_handler)
+        async for update in stream:
             updates.append(update)
 
         # Verify the overridden response stream is returned
@@ -118,7 +123,7 @@ class TestResultOverrideMiddleware:
                 context.result = override_result
 
         middleware = ResultOverrideMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 
@@ -187,7 +192,7 @@ class TestResultOverrideMiddleware:
                 await next(context)
                 # Then conditionally override based on content
                 if any("custom stream" in msg.text for msg in context.messages if msg.text):
-                    context.result = custom_stream()
+                    context.result = ResponseStream(custom_stream())
 
         # Create ChatAgent with override middleware
         middleware = ChatAgentStreamOverrideMiddleware()
@@ -196,7 +201,7 @@ class TestResultOverrideMiddleware:
         # Test streaming override case
         override_messages = [ChatMessage(role=Role.USER, text="Give me a custom stream")]
         override_updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(override_messages):
+        async for update in agent.run(override_messages, stream=True):
             override_updates.append(update)
 
         assert len(override_updates) == 3
@@ -207,7 +212,7 @@ class TestResultOverrideMiddleware:
         # Test normal streaming case
         normal_messages = [ChatMessage(role=Role.USER, text="Normal streaming request")]
         normal_updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream(normal_messages):
+        async for update in agent.run(normal_messages, stream=True):
             normal_updates.append(update)
 
         assert len(normal_updates) == 2
@@ -277,7 +282,7 @@ class TestResultOverrideMiddleware:
                 # Otherwise, don't call next() - no execution should happen
 
         middleware = ConditionalNoNextFunctionMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
 
         handler_called = False
 
@@ -366,7 +371,7 @@ class TestResultObservability:
                 observed_results.append(context.result)
 
         middleware = ObservabilityMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 
@@ -434,7 +439,7 @@ class TestResultObservability:
                     context.result = "modified after execution"
 
         middleware = PostExecutionOverrideMiddleware()
-        pipeline = FunctionMiddlewarePipeline([middleware])
+        pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
 

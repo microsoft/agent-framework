@@ -165,7 +165,7 @@ def convert_agui_tools_to_agent_framework(
 
     Creates declaration-only FunctionTool instances (no executable implementation).
     These are used to tell the LLM about available tools. The actual execution
-    happens on the client side via @use_function_invocation.
+    happens on the client side via function invocation mixin.
 
     CRITICAL: These tools MUST have func=None so that declaration_only returns True.
     This prevents the server from trying to execute client-side tools.
@@ -183,7 +183,7 @@ def convert_agui_tools_to_agent_framework(
     for tool_def in agui_tools:
         # Create declaration-only FunctionTool (func=None means no implementation)
         # When func=None, the declaration_only property returns True,
-        # which tells @use_function_invocation to return the function call
+        # which tells the function invocation mixin to return the function call
         # without executing it (so it can be sent back to the client)
         func: FunctionTool[Any, Any] = FunctionTool(
             name=tool_def.get("name", ""),
@@ -209,7 +209,7 @@ def convert_tools_to_agui_format(
 
     This sends only the metadata (name, description, JSON schema) to the server.
     The actual executable implementation stays on the client side.
-    The @use_function_invocation decorator handles client-side execution when
+    The function invocation mixin handles client-side execution when
     the server requests a function.
 
     Args:

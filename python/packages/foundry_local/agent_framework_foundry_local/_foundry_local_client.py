@@ -3,10 +3,9 @@
 import sys
 from typing import Any, ClassVar, Generic
 
-from agent_framework import ChatOptions, use_chat_middleware, use_function_invocation
+from agent_framework import ChatOptions
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
 from agent_framework.openai._chat_client import OpenAIBaseChatClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
@@ -126,9 +125,6 @@ class FoundryLocalSettings(AFBaseSettings):
     model_id: str
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
 class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic[TFoundryLocalChatOptions]):
     """Foundry Local Chat completion class."""
 

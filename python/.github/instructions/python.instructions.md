@@ -12,7 +12,7 @@ applyTo: '**/agent-framework/python/**'
 - Do not use `Optional`; use `Type | None` instead.
 - Before running any commands to execute or test the code, ensure that all problems, compilation errors, and warnings are resolved.
 - When formatting files, format only the files you changed or are currently working on; do not format the entire codebase.
-- Do not mark new tests with `@pytest.mark.asyncio`.
+- Do not mark new tests with `@pytest.mark.asyncio`, they are marked automatically, so you can just set the test to `async def`.
 - If you need debug information to understand an issue, use print statements as needed and remove them when testing is complete.
 - Avoid adding excessive comments.
 - When working with samples, make sure to update the associated README files with the latest information. These files are usually located in the same folder as the sample or in one of its parent folders.

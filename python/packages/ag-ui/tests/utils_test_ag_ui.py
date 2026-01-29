@@ -3,7 +3,7 @@
 """Shared test stubs for AG-UI tests."""
 
 import sys
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, MutableSequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, MutableSequence, Sequence
 from types import SimpleNamespace
 from typing import Any, Generic
 
@@ -19,13 +19,14 @@ from agent_framework import (
     Content,
 )
 from agent_framework._clients import TOptions_co
+from agent_framework._types import ResponseStream
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
-StreamFn = Callable[..., AsyncIterator[ChatResponseUpdate]]
+StreamFn = Callable[..., AsyncIterable[ChatResponseUpdate]]
 ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
@@ -36,18 +37,42 @@ class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co])
         super().__init__()
         self._stream_fn = stream_fn
         self._response_fn = response_fn
+        self.last_thread: AgentThread | None = None
 
     @override
-    async def _inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
-    ) -> AsyncIterator[ChatResponseUpdate]:
-        async for update in self._stream_fn(messages, options, **kwargs):
-            yield update
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: TOptions_co | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.last_thread = kwargs.get("thread")
+        return super().get_response(messages=messages, stream=stream, options=options, **kwargs)
 
     @override
-    async def _inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+    def _inner_get_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        stream: bool = False,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                return ChatResponse.from_chat_response_updates(updates)
+
+            return ResponseStream(self._stream_fn(messages, options, **kwargs), finalizer=_finalize)
+
+        return self._get_response_impl(messages, options, **kwargs)
+
+    async def _get_response_impl(
+        self, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
+        """Non-streaming implementation."""
         if self._response_fn is not None:
             return await self._response_fn(messages, options, **kwargs)
 
@@ -96,29 +121,31 @@ class StubAgent(AgentProtocol):
         self.messages_received: list[Any] = []
         self.tools_received: list[Any] | None = None
 
-    async def run(
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        return AgentResponse(messages=[], response_id="stub-response")
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
 
-    def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
-            self.messages_received = [] if messages is None else list(messages)  # type: ignore[arg-type]
-            self.tools_received = kwargs.get("tools")
-            for update in self.updates:
-                yield update
+            async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+                self.messages_received = [] if messages is None else list(messages)  # type: ignore[arg-type]
+                self.tools_received = kwargs.get("tools")
+                for update in self.updates:
+                    yield update
 
-        return _stream()
+            def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+                return AgentResponse.from_agent_run_response_updates(updates)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        async def _get_response() -> AgentResponse:
+            return AgentResponse(messages=[], response_id="stub-response")
+
+        return _get_response()
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         return AgentThread()

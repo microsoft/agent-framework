@@ -66,8 +66,8 @@ class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
 
     AgentExecutor adapts its behavior based on the workflow execution mode:
-    - run_stream(): Emits incremental AgentRunUpdateEvent events as the agent produces tokens
-    - run(): Emits a single AgentRunEvent containing the complete response
+    - run(stream=True): Emits incremental AgentRunUpdateEvent events as the agent produces tokens
+    - run(stream=False): Emits a single AgentRunEvent containing the complete response
 
     The executor automatically detects the mode via WorkflowContext.is_streaming().
     """
@@ -348,7 +348,7 @@ class AgentExecutor(Executor):
                 await ctx.request_info(user_input_request, Content)
             return None
 
-        return response
+        return response  # type: ignore[return-value,no-any-return]
 
     async def _run_agent_streaming(self, ctx: WorkflowContext) -> AgentResponse | None:
         """Execute the underlying agent in streaming mode and collect the full response.
@@ -363,9 +363,10 @@ class AgentExecutor(Executor):
 
         updates: list[AgentResponseUpdate] = []
         user_input_requests: list[Content] = []
-        async for update in self._agent.run_stream(
+        async for update in self._agent.run(
             self._cache,
             thread=self._agent_thread,
+            stream=True,
             **run_kwargs,
         ):
             updates.append(update)

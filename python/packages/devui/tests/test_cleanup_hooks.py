@@ -33,9 +33,17 @@ class MockAgent:
         self.cleanup_called = False
         self.async_cleanup_called = False
 
-    async def run_stream(self, messages=None, *, thread=None, **kwargs):
-        """Mock streaming run method."""
-        yield AgentResponse(
+    async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        """Mock run method with streaming support."""
+        if stream:
+
+            async def _stream():
+                yield AgentResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Test response")])],
+                )
+
+            return _stream()
+        return AgentResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Test response")])],
         )
 
@@ -277,8 +285,15 @@ class TestAgent:
     name = "Test Agent"
     description = "Test agent with cleanup"
 
-    async def run_stream(self, messages=None, *, thread=None, **kwargs):
-        yield AgentResponse(
+    async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        if stream:
+            async def _stream():
+                yield AgentResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, content=[Content.from_text(text="Test")])],
+                    inner_messages=[],
+                )
+            return _stream()
+        return AgentResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, content=[Content.from_text(text="Test")])],
             inner_messages=[],
         )

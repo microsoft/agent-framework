@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any
+from typing import Any, Literal, overload
 
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
@@ -433,21 +433,47 @@ class Workflow(DictConvertible):
                 source_span_ids=None,
             )
 
-    async def run_stream(
+    @overload
+    def run(
         self,
         message: Any | None = None,
         *,
+        stream: Literal[False] = False,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        include_status_events: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[WorkflowRunResult]: ...
+
+    @overload
+    def run(
+        self,
+        message: Any | None = None,
+        *,
+        stream: Literal[True],
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[WorkflowEvent]:
-        """Run the workflow and stream events.
+    ) -> AsyncIterable[WorkflowEvent]: ...
 
-        Unified streaming interface supporting initial runs and checkpoint restoration.
+    def run(
+        self,
+        message: Any | None = None,
+        *,
+        stream: bool = False,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        include_status_events: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[WorkflowRunResult] | AsyncIterable[WorkflowEvent]:
+        """Run the workflow to completion or stream events.
+
+        Unified interface supporting initial runs, checkpoint restoration, streaming, and non-streaming modes.
 
         Args:
             message: Initial message for the start executor. Required for new workflow runs,
                     should be None when resuming from checkpoint.
+            stream: Whether to stream events (True) or return all events at completion (False).
             checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
                           from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
                           must be provided (either at build time or runtime) to load the checkpoint.
@@ -455,12 +481,15 @@ class Workflow(DictConvertible):
                                - With checkpoint_id: Used to load and restore the specified checkpoint
                                - Without checkpoint_id: Enables checkpointing for this run, overriding
                                  build-time configuration
+            include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
+                                   Only applicable when stream=False.
             **kwargs: Additional keyword arguments to pass through to agent invocations.
                      These are stored in SharedState and accessible in @tool functions
                      via the **kwargs parameter.
 
-        Yields:
-            WorkflowEvent: Events generated during workflow execution.
+        Returns:
+            When stream=False: A WorkflowRunResult instance containing events generated during workflow execution.
+            When stream=True: An async iterable yielding WorkflowEvent instances.
 
         Raises:
             ValueError: If both message and checkpoint_id are provided, or if neither is provided.
@@ -469,47 +498,74 @@ class Workflow(DictConvertible):
             RuntimeError: If checkpoint restoration fails.
 
         Examples:
-            Initial run:
+            Initial run (non-streaming):
 
             .. code-block:: python
 
-                async for event in workflow.run_stream("start message"):
+                result = await workflow.run("start message")
+                outputs = result.get_outputs()
+
+            Initial run (streaming):
+
+            .. code-block:: python
+
+                async for event in workflow.run("start message", stream=True):
                     process(event)
 
             With custom context for tools:
 
             .. code-block:: python
 
-                async for event in workflow.run_stream(
+                result = await workflow.run(
                     "analyze data",
                     custom_data={"endpoint": "https://api.example.com"},
                     user_token={"user": "alice"},
-                ):
-                    process(event)
+                )
 
             Enable checkpointing at runtime:
 
             .. code-block:: python
 
                 storage = FileCheckpointStorage("./checkpoints")
-                async for event in workflow.run_stream("start", checkpoint_storage=storage):
-                    process(event)
+                result = await workflow.run("start", checkpoint_storage=storage)
 
             Resume from checkpoint (storage provided at build time):
 
             .. code-block:: python
 
-                async for event in workflow.run_stream(checkpoint_id="cp_123"):
-                    process(event)
+                result = await workflow.run(checkpoint_id="cp_123")
 
             Resume from checkpoint (storage provided at runtime):
 
             .. code-block:: python
 
                 storage = FileCheckpointStorage("./checkpoints")
-                async for event in workflow.run_stream(checkpoint_id="cp_123", checkpoint_storage=storage):
-                    process(event)
+                result = await workflow.run(checkpoint_id="cp_123", checkpoint_storage=storage)
         """
+        if stream:
+            return self._run_stream_impl(
+                message=message,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+                **kwargs,
+            )
+        return self._run_impl(
+            message=message,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+            include_status_events=include_status_events,
+            **kwargs,
+        )
+
+    async def _run_stream_impl(
+        self,
+        message: Any | None = None,
+        *,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[WorkflowEvent]:
+        """Internal streaming implementation."""
         # Validate mutually exclusive parameters BEFORE setting running flag
         if message is not None and checkpoint_id is not None:
             raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
@@ -565,7 +621,7 @@ class Workflow(DictConvertible):
         finally:
             self._reset_running_flag()
 
-    async def run(
+    async def _run_impl(
         self,
         message: Any | None = None,
         *,
@@ -574,72 +630,7 @@ class Workflow(DictConvertible):
         include_status_events: bool = False,
         **kwargs: Any,
     ) -> WorkflowRunResult:
-        """Run the workflow to completion and return all events.
-
-        Unified non-streaming interface supporting initial runs and checkpoint restoration.
-
-        Args:
-            message: Initial message for the start executor. Required for new workflow runs,
-                    should be None when resuming from checkpoint.
-            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
-                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
-                          must be provided (either at build time or runtime) to load the checkpoint.
-            checkpoint_storage: Runtime checkpoint storage with two behaviors:
-                               - With checkpoint_id: Used to load and restore the specified checkpoint
-                               - Without checkpoint_id: Enables checkpointing for this run, overriding
-                                 build-time configuration
-            include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
-            **kwargs: Additional keyword arguments to pass through to agent invocations.
-                     These are stored in SharedState and accessible in @tool functions
-                     via the **kwargs parameter.
-
-        Returns:
-            A WorkflowRunResult instance containing events generated during workflow execution.
-
-        Raises:
-            ValueError: If both message and checkpoint_id are provided, or if neither is provided.
-            ValueError: If checkpoint_id is provided but no checkpoint storage is available
-                       (neither at build time nor runtime).
-            RuntimeError: If checkpoint restoration fails.
-
-        Examples:
-            Initial run:
-
-            .. code-block:: python
-
-                result = await workflow.run("start message")
-                outputs = result.get_outputs()
-
-            With custom context for tools:
-
-            .. code-block:: python
-
-                result = await workflow.run(
-                    "analyze data",
-                    custom_data={"endpoint": "https://api.example.com"},
-                    user_token={"user": "alice"},
-                )
-
-            Enable checkpointing at runtime:
-
-            .. code-block:: python
-
-                storage = FileCheckpointStorage("./checkpoints")
-                result = await workflow.run("start", checkpoint_storage=storage)
-
-            Resume from checkpoint (storage provided at build time):
-
-            .. code-block:: python
-
-                result = await workflow.run(checkpoint_id="cp_123")
-
-            Resume from checkpoint (storage provided at runtime):
-
-            .. code-block:: python
-
-                storage = FileCheckpointStorage("./checkpoints")
-                result = await workflow.run(checkpoint_id="cp_123", checkpoint_storage=storage)
-        """
+        """Internal non-streaming implementation."""
         # Validate mutually exclusive parameters BEFORE setting running flag
         if message is not None and checkpoint_id is not None:
             raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
