@@ -25,6 +25,7 @@ from agent_framework import (
     ContextProvider,
     HostedCodeInterpreterTool,
     Role,
+    ToolProtocol,
     tool,
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
@@ -803,11 +804,11 @@ def test_sanitize_agent_name_replaces_invalid_chars():
 # endregion
 
 
-# region Test AgentProtocol.get_new_thread
+# region Test AgentProtocol.get_new_thread and deserialize_thread
 
 
 @pytest.mark.asyncio
-async def test_agent_get_new_thread(chat_client_base, tool_tool):
+async def test_agent_get_new_thread(chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol):
     """Test that get_new_thread returns a new AgentThread."""
     agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
 
@@ -815,6 +816,61 @@ async def test_agent_get_new_thread(chat_client_base, tool_tool):
 
     assert thread is not None
     assert isinstance(thread, AgentThread)
+
+
+@pytest.mark.asyncio
+async def test_agent_get_new_thread_with_context_provider(
+    chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol
+):
+    """Test that get_new_thread passes context_provider to the thread."""
+
+    class TestContextProvider(ContextProvider):
+        async def invoking(self, messages, **kwargs):
+            return Context()
+
+    provider = TestContextProvider()
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool], context_provider=provider)
+
+    thread = agent.get_new_thread()
+
+    assert thread is not None
+    assert thread.context_provider is provider
+
+
+@pytest.mark.asyncio
+async def test_agent_get_new_thread_with_service_thread_id(
+    chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol
+):
+    """Test that get_new_thread passes kwargs like service_thread_id to the thread."""
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
+
+    thread = agent.get_new_thread(service_thread_id="test-thread-123")
+
+    assert thread is not None
+    assert thread.service_thread_id == "test-thread-123"
+
+
+@pytest.mark.asyncio
+async def test_agent_deserialize_thread(chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol):
+    """Test deserialize_thread restores a thread from serialized state."""
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
+
+    # Create serialized thread state with messages
+    serialized_state = {
+        "service_thread_id": None,
+        "chat_message_store_state": {
+            "messages": [{"role": "user", "text": "Hello"}],
+        },
+    }
+
+    thread = await agent.deserialize_thread(serialized_state)
+
+    assert thread is not None
+    assert isinstance(thread, AgentThread)
+    assert thread.message_store is not None
+    messages = await thread.message_store.list_messages()
+    assert len(messages) == 1
+    assert messages[0].text == "Hello"
 
 
 # endregion
@@ -834,6 +890,89 @@ async def test_chat_agent_raises_with_both_conversation_id_and_store():
             chat_client=mock_client,
             default_options={"conversation_id": "test_id"},
             chat_message_store_factory=mock_store_factory,
+        )
+
+
+def test_chat_agent_calls_update_agent_name_on_client():
+    """Test that ChatAgent calls _update_agent_name_and_description on client if available."""
+    mock_client = MagicMock()
+    mock_client._update_agent_name_and_description = MagicMock()
+
+    ChatAgent(
+        chat_client=mock_client,
+        name="TestAgent",
+        description="Test description",
+    )
+
+    mock_client._update_agent_name_and_description.assert_called_once_with("TestAgent", "Test description")
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(chat_client_base: ChatClientProtocol):
+    """Test that context provider tools are used when agent has no default tools."""
+
+    @tool
+    def context_tool(text: str) -> str:
+        """A tool provided by context."""
+        return text
+
+    class ToolContextProvider(ContextProvider):
+        async def invoking(self, messages, **kwargs):
+            return Context(tools=[context_tool])
+
+    provider = ToolContextProvider()
+    agent = ChatAgent(chat_client=chat_client_base, context_provider=provider)
+
+    # Agent starts with empty tools list
+    assert agent.default_options.get("tools") == []
+
+    # Run the agent and verify context tools are added
+    _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=None, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
+    )
+
+    # The context tools should now be in the options
+    assert options.get("tools") is not None
+    assert len(options["tools"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none(chat_client_base: ChatClientProtocol):
+    """Test that context provider instructions are used when agent has no default instructions."""
+
+    class InstructionContextProvider(ContextProvider):
+        async def invoking(self, messages, **kwargs):
+            return Context(instructions="Context-provided instructions")
+
+    provider = InstructionContextProvider()
+    agent = ChatAgent(chat_client=chat_client_base, context_provider=provider)
+
+    # Verify agent has no default instructions
+    assert agent.default_options.get("instructions") is None
+
+    # Run the agent and verify context instructions are available
+    _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=None, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
+    )
+
+    # The context instructions should now be in the options
+    assert options.get("instructions") == "Context-provided instructions"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_raises_on_conversation_id_mismatch(chat_client_base: ChatClientProtocol):
+    """Test that ChatAgent raises when thread and agent have different conversation IDs."""
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        default_options={"conversation_id": "agent-conversation-id"},
+    )
+
+    # Create a thread with a different service_thread_id
+    thread = AgentThread(service_thread_id="different-thread-id")
+
+    with pytest.raises(AgentExecutionException, match="conversation_id set on the agent is different"):
+        await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+            thread=thread, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
         )
 
 
