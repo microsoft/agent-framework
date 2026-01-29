@@ -4,9 +4,10 @@ import contextlib
 import sys
 from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from agent_framework import (
+    AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -20,7 +21,6 @@ from agent_framework import (
     get_logger,
     normalize_messages,
 )
-from agent_framework._middleware import Middleware
 from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from claude_agent_sdk import (
@@ -216,7 +216,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         name: str | None = None,
         description: str | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -307,10 +307,12 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             return
 
         # Normalize to sequence
-        if isinstance(tools, (str, ToolProtocol, Callable, MutableMapping)):
+        if isinstance(tools, str):
             tools_list: Sequence[Any] = [tools]
+        elif isinstance(tools, (ToolProtocol, MutableMapping)) or callable(tools):
+            tools_list = [tools]
         else:
-            tools_list = tools
+            tools_list = list(tools)
 
         for tool in tools_list:
             if isinstance(tool, str):
@@ -466,11 +468,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
 
         for tool in tools:
             if isinstance(tool, FunctionTool):
-                func_tool = cast(FunctionTool[Any, Any], tool)  # type: ignore[redundant-cast]
-                sdk_tools.append(self._function_tool_to_sdk_mcp_tool(func_tool))
+                sdk_tools.append(self._function_tool_to_sdk_mcp_tool(tool))
                 # Claude Agent SDK convention: MCP tools use format "mcp__{server}__{tool}"
-                # to distinguish from built-in tools and route calls to the correct server.
-                tool_names.append(f"mcp__{CUSTOM_TOOLS_MCP_SERVER_NAME}__{func_tool.name}")
+                tool_names.append(f"mcp__{CUSTOM_TOOLS_MCP_SERVER_NAME}__{tool.name}")
             elif isinstance(tool, ToolProtocol):
                 logger.debug(f"Unsupported tool type: {type(tool)}")
 
