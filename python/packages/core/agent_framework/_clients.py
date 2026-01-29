@@ -151,7 +151,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_contra | "ChatOptions[None]" | None = None,
+        options: "TOptions_contra | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -161,7 +161,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_contra | "ChatOptions[Any]" | None = None,
+        options: "TOptions_contra | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -170,7 +170,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_contra | "ChatOptions[Any]" | None = None,
+        options: "TOptions_contra | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
@@ -375,7 +375,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | "ChatOptions[None]" | None = None,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -385,7 +385,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -394,7 +394,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.

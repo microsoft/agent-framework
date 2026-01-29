@@ -22,9 +22,9 @@ from ._logging import get_logger
 from ._pydantic import AFBaseSettings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
@@ -1080,7 +1080,7 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | "ChatOptions[None]" | None = None,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse[Any]]": ...
 
@@ -1090,7 +1090,7 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: Literal[True],
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
 
@@ -1099,7 +1099,7 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         messages: "str | ChatMessage | Sequence[str | ChatMessage]",
         *,
         stream: bool = False,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
         """Trace chat responses with OpenTelemetry spans and metrics."""

@@ -1114,7 +1114,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | "ChatOptions[None]" | None = None,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse[Any]]": ...
 
@@ -1124,7 +1124,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
 
@@ -1133,7 +1133,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
         """Execute the chat pipeline if middleware is configured."""
@@ -1212,7 +1212,7 @@ class AgentMiddlewareMixin:
         stream: Literal[False] = ...,
         thread: "AgentThread | None" = None,
         middleware: Sequence[Middleware] | None = None,
-        options: "ChatOptions[None]" | None = None,
+        options: "ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[AgentResponse[Any]]": ...
 
@@ -1224,7 +1224,7 @@ class AgentMiddlewareMixin:
         stream: Literal[True],
         thread: "AgentThread | None" = None,
         middleware: Sequence[Middleware] | None = None,
-        options: "ChatOptions[Any]" | None = None,
+        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]": ...
 
@@ -1235,7 +1235,7 @@ class AgentMiddlewareMixin:
         stream: bool = False,
         thread: "AgentThread | None" = None,
         middleware: Sequence[Middleware] | None = None,
-        options: "ChatOptions[Any]" | None = None,
+        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
         """Middleware-enabled unified run method."""

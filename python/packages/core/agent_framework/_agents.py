@@ -243,7 +243,7 @@ class AgentProtocol(Protocol):
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
-        options: "ChatOptions[None]" | None = None,
+        options: "ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -254,7 +254,7 @@ class AgentProtocol(Protocol):
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
-        options: "ChatOptions[Any]" | None = None,
+        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -264,7 +264,7 @@ class AgentProtocol(Protocol):
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
-        options: "ChatOptions[Any]" | None = None,
+        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
@@ -816,7 +816,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | "ChatOptions[None]" | None = None,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -832,7 +832,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -847,7 +847,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | "ChatOptions[Any]" | None = None,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
