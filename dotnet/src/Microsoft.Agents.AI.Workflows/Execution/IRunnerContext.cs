@@ -12,6 +12,6 @@ internal interface IRunnerContext : IExternalRequestSink, ISuperStepJoinContext
     ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default);
 
     ValueTask<StepContext> AdvanceAsync(CancellationToken cancellationToken = default);
-    IWorkflowContext Bind(string executorId, Dictionary<string, string>? traceContext = null);
+    IWorkflowContext BindWorkflowContext(string executorId, Dictionary<string, string>? traceContext = null);
     ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken = default);
 }

@@ -9,7 +9,7 @@ from agent_framework import (
     RequestInfoEvent,
     SequentialBuilder,
     WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -17,7 +17,7 @@ from agent_framework.openai import OpenAIChatClient
 Sample: Sequential Workflow with Tool Approval Requests
 
 This sample demonstrates how to use SequentialBuilder with tools that require human
-approval before execution. The approval flow uses the existing @ai_function decorator
+approval before execution. The approval flow uses the existing @tool decorator
 with approval_mode="always_require" to trigger human-in-the-loop interactions.
 
 This sample works as follows:
@@ -33,7 +33,7 @@ Show how tool call approvals integrate seamlessly with SequentialBuilder without
 requiring any additional builder configuration.
 
 Demonstrate:
-- Using @ai_function(approval_mode="always_require") for sensitive operations.
+- Using @tool(approval_mode="always_require") for sensitive operations.
 - Handling RequestInfoEvent with FunctionApprovalRequestContent in sequential workflows.
 - Resuming workflow execution after approval via send_responses_streaming.
 
@@ -44,7 +44,7 @@ Prerequisites:
 
 
 # 1. Define tools - one requiring approval, one that doesn't
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def execute_database_query(
     query: Annotated[str, "The SQL query to execute against the production database"],
 ) -> str:
@@ -53,7 +53,8 @@ def execute_database_query(
     return f"Query executed successfully. Results: 3 rows affected by '{query}'"
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_database_schema() -> str:
     """Get the current database schema. Does not require approval."""
     return """

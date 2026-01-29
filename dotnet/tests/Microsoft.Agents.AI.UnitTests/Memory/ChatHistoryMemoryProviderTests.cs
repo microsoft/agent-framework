@@ -106,7 +106,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app1",
             AgentId = "agent1",
-            ThreadId = "thread1",
+            SessionId = "session1",
             UserId = "user1"
         };
 
@@ -138,7 +138,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal("2000-01-01T00:00:00.0000000+00:00", stored[0]["CreatedAt"]);
         Assert.Equal("app1", stored[0]["ApplicationId"]);
         Assert.Equal("agent1", stored[0]["AgentId"]);
-        Assert.Equal("thread1", stored[0]["ThreadId"]);
+        Assert.Equal("session1", stored[0]["SessionId"]);
         Assert.Equal("user1", stored[0]["UserId"]);
 
         Assert.Null(stored[1]["MessageId"]);
@@ -147,7 +147,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(ChatRole.User.ToString(), stored[1]["Role"]);
         Assert.Equal("app1", stored[1]["ApplicationId"]);
         Assert.Equal("agent1", stored[1]["AgentId"]);
-        Assert.Equal("thread1", stored[1]["ThreadId"]);
+        Assert.Equal("session1", stored[1]["SessionId"]);
         Assert.Equal("user1", stored[1]["UserId"]);
 
         Assert.Equal("resp-1", stored[2]["MessageId"]);
@@ -156,7 +156,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(ChatRole.Assistant.ToString(), stored[2]["Role"]);
         Assert.Equal("app1", stored[2]["ApplicationId"]);
         Assert.Equal("agent1", stored[2]["AgentId"]);
-        Assert.Equal("thread1", stored[2]["ThreadId"]);
+        Assert.Equal("session1", stored[2]["SessionId"]);
         Assert.Equal("user1", stored[2]["UserId"]);
     }
 
@@ -357,7 +357,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app1",
             AgentId = "agent1",
-            ThreadId = "thread1",
+            SessionId = "session1",
             UserId = "user1"
         };
 
@@ -370,7 +370,7 @@ public class ChatHistoryMemoryProviderTests
             .Callback((string query, int maxResults, VectorSearchOptions<Dictionary<string, object?>> options, CancellationToken ct) =>
             {
                 // Verify that the filter was created correctly
-                const string ExpectedFilter = "x => ((((x.ApplicationId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).applicationId) AndAlso (x.AgentId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).agentId)) AndAlso (x.UserId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).userId)) AndAlso (x.ThreadId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).threadId))";
+                const string ExpectedFilter = "x => ((((x.ApplicationId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).applicationId) AndAlso (x.AgentId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).agentId)) AndAlso (x.UserId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).userId)) AndAlso (x.SessionId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).sessionId))";
                 Assert.Equal(ExpectedFilter, options.Filter!.ToString());
             })
             .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
@@ -486,7 +486,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app",
             AgentId = "agent",
-            ThreadId = "thread",
+            SessionId = "session",
             UserId = "user"
         };
 
@@ -494,7 +494,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app2",
             AgentId = "agent2",
-            ThreadId = "thread2",
+            SessionId = "session2",
             UserId = "user2"
         };
 
@@ -507,13 +507,13 @@ public class ChatHistoryMemoryProviderTests
         var storage = doc.RootElement.GetProperty("storageScope");
         Assert.Equal("app", storage.GetProperty("applicationId").GetString());
         Assert.Equal("agent", storage.GetProperty("agentId").GetString());
-        Assert.Equal("thread", storage.GetProperty("threadId").GetString());
+        Assert.Equal("session", storage.GetProperty("sessionId").GetString());
         Assert.Equal("user", storage.GetProperty("userId").GetString());
 
         var search = doc.RootElement.GetProperty("searchScope");
         Assert.Equal("app2", search.GetProperty("applicationId").GetString());
         Assert.Equal("agent2", search.GetProperty("agentId").GetString());
-        Assert.Equal("thread2", search.GetProperty("threadId").GetString());
+        Assert.Equal("session2", search.GetProperty("sessionId").GetString());
         Assert.Equal("user2", search.GetProperty("userId").GetString());
 
         // Act - deserialize and serialize again

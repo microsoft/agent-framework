@@ -22,6 +22,7 @@ See the README.md for each sample for the prerequisites for that sample.
 |[Creating an AIAgent with Azure OpenAI ChatCompletion](./Agent_With_AzureOpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using Azure OpenAI ChatCompletion as the underlying inference service|
 |[Creating an AIAgent with Azure OpenAI Responses](./Agent_With_AzureOpenAIResponses/)|This sample demonstrates how to create an AIAgent using Azure OpenAI Responses as the underlying inference service|
 |[Creating an AIAgent with a custom implementation](./Agent_With_CustomImplementation/)|This sample demonstrates how to create an AIAgent with a custom implementation|
+|[Creating an AIAgent with GitHub Copilot](./Agent_With_GitHubCopilot/)|This sample demonstrates how to create an AIAgent using GitHub Copilot SDK as the underlying inference service|
 |[Creating an AIAgent with Ollama](./Agent_With_Ollama/)|This sample demonstrates how to create an AIAgent using Ollama as the underlying inference service|
 |[Creating an AIAgent with ONNX](./Agent_With_ONNX/)|This sample demonstrates how to create an AIAgent using ONNX as the underlying inference service|
 |[Creating an AIAgent with OpenAI Assistants](./Agent_With_OpenAIAssistants/)|This sample demonstrates how to create an AIAgent using OpenAI Assistants as the underlying inference service.</br>WARNING: The Assistants API is deprecated and will be shut down. For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration|

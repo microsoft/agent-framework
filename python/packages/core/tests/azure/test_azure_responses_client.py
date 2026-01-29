@@ -20,7 +20,7 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.exceptions import ServiceInitializationError
@@ -41,7 +41,7 @@ class OutputStruct(BaseModel):
     weather: str
 
 
-@ai_function
+@tool(approval_mode="never_require")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather

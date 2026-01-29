@@ -11,16 +11,16 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Role,
     ToolProtocol,
     UsageDetails,
@@ -40,26 +40,32 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Ollama Chat Options TypedDict
 
 
-class OllamaChatOptions(ChatOptions, total=False):
+class OllamaChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Ollama-specific chat options dict.
 
     Extends base ChatOptions with Ollama-specific parameters.
@@ -545,13 +551,13 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
+                    case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
                     case _:
                         raise ServiceInvalidRequestError(
                             "Unsupported tool type '"
                             f"{type(tool).__name__}"
-                            "' for Ollama client. Supported tool types: AIFunction."
+                            "' for Ollama client. Supported tool types: FunctionTool."
                         )
             else:
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))

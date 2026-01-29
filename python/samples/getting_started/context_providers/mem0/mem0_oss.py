@@ -7,8 +7,10 @@ from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0Provider
 from azure.identity.aio import AzureCliCredential
 from mem0 import AsyncMemory
+from agent_framework import tool
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def retrieve_company_report(company_code: str, detailed: bool) -> str:
     if company_code != "CNTS":
         raise ValueError("Company code not found")

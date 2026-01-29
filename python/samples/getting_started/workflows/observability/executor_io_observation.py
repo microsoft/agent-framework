@@ -11,6 +11,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     handler,
+    tool,
 )
 from typing_extensions import Never
 

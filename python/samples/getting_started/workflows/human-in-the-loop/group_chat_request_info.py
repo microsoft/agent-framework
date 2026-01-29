@@ -35,6 +35,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -89,7 +90,7 @@ async def main() -> None:
     # Using agents= filter to only pause before pragmatist speaks (not every turn)
     workflow = (
         GroupChatBuilder()
-        .with_agent_orchestrator(orchestrator)
+        .with_orchestrator(agent=orchestrator)
         .participants([optimist, pragmatist, creative])
         .with_max_rounds(6)
         .with_request_info(agents=[pragmatist])  # Only pause before pragmatist speaks

@@ -37,6 +37,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     handler,
+    tool,
 )
 
 

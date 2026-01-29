@@ -22,9 +22,9 @@ from ._orchestration_request_info import AgentApprovalExecutor
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 
 logger = logging.getLogger(__name__)

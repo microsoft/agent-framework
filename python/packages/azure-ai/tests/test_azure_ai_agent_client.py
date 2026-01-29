@@ -23,6 +23,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
+    tool,
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
@@ -940,7 +941,7 @@ async def test_azure_ai_chat_client_service_url(mock_agents_client: MagicMock) -
     assert result == "https://test-endpoint.com/"
 
 
-async def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_ai_function_result(
+async def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_tool_result(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with FunctionResultContent."""
@@ -1336,6 +1337,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_empty_annotations(
     assert len(file_contents) == 0
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

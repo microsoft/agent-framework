@@ -19,7 +19,7 @@ public class DelegatingAIAgentTests
     private readonly TestDelegatingAIAgent _delegatingAgent;
     private readonly AgentResponse _testResponse;
     private readonly List<AgentResponseUpdate> _testStreamingResponses;
-    private readonly AgentThread _testThread;
+    private readonly AgentSession _testSession;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAIAgentTests"/> class.
@@ -29,19 +29,19 @@ public class DelegatingAIAgentTests
         this._innerAgentMock = new Mock<AIAgent>();
         this._testResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         this._testStreamingResponses = [new AgentResponseUpdate(ChatRole.Assistant, "Test streaming response")];
-        this._testThread = new TestAgentThread();
+        this._testSession = new TestAgentSession();
 
         // Setup inner agent mock
         this._innerAgentMock.Protected().SetupGet<string>("IdCore").Returns("test-agent-id");
         this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
         this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(this._testThread);
+        this._innerAgentMock.Setup(x => x.GetNewSessionAsync()).ReturnsAsync(this._testSession);
 
         this._innerAgentMock
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(this._testResponse);
@@ -50,7 +50,7 @@ public class DelegatingAIAgentTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(this._testStreamingResponses));
@@ -132,17 +132,17 @@ public class DelegatingAIAgentTests
     #region Method Delegation Tests
 
     /// <summary>
-    /// Verify that GetNewThreadAsync delegates to inner agent.
+    /// Verify that GetNewSessionAsync delegates to inner agent.
     /// </summary>
     [Fact]
-    public async Task GetNewThreadAsync_DelegatesToInnerAgentAsync()
+    public async Task GetNewSessionAsync_DelegatesToInnerAgentAsync()
     {
         // Act
-        var thread = await this._delegatingAgent.GetNewThreadAsync();
+        var session = await this._delegatingAgent.GetNewSessionAsync();
 
         // Assert
-        Assert.Same(this._testThread, thread);
-        this._innerAgentMock.Verify(x => x.GetNewThreadAsync(), Times.Once);
+        Assert.Same(this._testSession, session);
+        this._innerAgentMock.Verify(x => x.GetNewSessionAsync(), Times.Once);
     }
 
     /// <summary>
@@ -153,7 +153,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new TestAgentThread();
+        var expectedSession = new TestAgentSession();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         var expectedResult = new TaskCompletionSource<AgentResponse>();
@@ -164,7 +164,7 @@ public class DelegatingAIAgentTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.Is<IEnumerable<ChatMessage>>(m => m == expectedMessages),
-                ItExpr.Is<AgentThread?>(t => t == expectedThread),
+                ItExpr.Is<AgentSession?>(t => t == expectedSession),
                 ItExpr.Is<AgentRunOptions?>(o => o == expectedOptions),
                 ItExpr.Is<CancellationToken>(ct => ct == expectedCancellationToken))
             .Returns(expectedResult.Task);
@@ -172,7 +172,7 @@ public class DelegatingAIAgentTests
         var delegatingAgent = new TestDelegatingAIAgent(innerAgentMock.Object);
 
         // Act
-        var resultTask = delegatingAgent.RunAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken);
+        var resultTask = delegatingAgent.RunAsync(expectedMessages, expectedSession, expectedOptions, expectedCancellationToken);
 
         // Assert
         Assert.False(resultTask.IsCompleted);
@@ -189,7 +189,7 @@ public class DelegatingAIAgentTests
     {
         // Arrange
         var expectedMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
-        var expectedThread = new TestAgentThread();
+        var expectedSession = new TestAgentSession();
         var expectedOptions = new AgentRunOptions();
         var expectedCancellationToken = new CancellationToken();
         AgentResponseUpdate[] expectedResults =
@@ -203,7 +203,7 @@ public class DelegatingAIAgentTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.Is<IEnumerable<ChatMessage>>(m => m == expectedMessages),
-                ItExpr.Is<AgentThread?>(t => t == expectedThread),
+                ItExpr.Is<AgentSession?>(t => t == expectedSession),
                 ItExpr.Is<AgentRunOptions?>(o => o == expectedOptions),
                 ItExpr.Is<CancellationToken>(ct => ct == expectedCancellationToken))
             .Returns(ToAsyncEnumerableAsync(expectedResults));
@@ -211,7 +211,7 @@ public class DelegatingAIAgentTests
         var delegatingAgent = new TestDelegatingAIAgent(innerAgentMock.Object);
 
         // Act
-        var resultAsyncEnumerable = delegatingAgent.RunStreamingAsync(expectedMessages, expectedThread, expectedOptions, expectedCancellationToken);
+        var resultAsyncEnumerable = delegatingAgent.RunStreamingAsync(expectedMessages, expectedSession, expectedOptions, expectedCancellationToken);
 
         // Assert
         var enumerator = resultAsyncEnumerable.GetAsyncEnumerator();
@@ -314,7 +314,7 @@ public class DelegatingAIAgentTests
         public new AIAgent InnerAgent => base.InnerAgent;
     }
 
-    private sealed class TestAgentThread : AgentThread;
+    private sealed class TestAgentSession : AgentSession;
 
     #endregion
 }
