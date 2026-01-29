@@ -31,7 +31,6 @@ public sealed class AnthropicSkillsIntegrationTests
         AnthropicClient anthropicClient = new() { APIKey = s_config.ApiKey };
         string model = s_config.ChatModelId;
 
-        // Define the pptx skill - the SDK handles all beta flags and container configuration automatically
         BetaSkillParams pptxSkill = new()
         {
             Type = BetaSkillParamsType.Anthropic,
@@ -39,8 +38,6 @@ public sealed class AnthropicSkillsIntegrationTests
             Version = "latest"
         };
 
-        // Create an agent with the pptx skill using simplified AsAITool() approach
-        // No RawRepresentationFactory or manual beta configuration needed!
         ChatClientAgent agent = anthropicClient.Beta.AsAIAgent(
             model: model,
             instructions: "You are a helpful agent for creating PowerPoint presentations.",
@@ -62,25 +59,13 @@ public sealed class AnthropicSkillsIntegrationTests
         // Arrange
         AnthropicClient anthropicClient = new() { APIKey = s_config.ApiKey };
 
-        // Act - List available Anthropic-managed skills
+        // Act
         SkillListPageResponse skills = await anthropicClient.Beta.Skills.List(
             new SkillListParams { Source = "anthropic", Betas = [AnthropicBeta.Skills2025_10_02] });
 
         // Assert
         Assert.NotNull(skills);
         Assert.NotNull(skills.Data);
-
-        // Check that the pptx skill is available
-        bool hasPptxSkill = false;
-        foreach (var skill in skills.Data)
-        {
-            if (skill.ID == "pptx")
-            {
-                hasPptxSkill = true;
-                break;
-            }
-        }
-
-        Assert.True(hasPptxSkill, "Expected pptx skill to be available");
+        Assert.Contains(skills.Data, skill => skill.ID == "pptx");
     }
 }
