@@ -1944,7 +1944,7 @@ class TestMiddlewareWithProtocolOnlyAgent:
     """Test use_agent_middleware with agents implementing only AgentProtocol."""
 
     async def test_middleware_with_protocol_only_agent(self) -> None:
-        """Verify middleware works without BaseAgent inheritance for both run and run_stream."""
+        """Verify middleware works without BareAgent inheritance for both run and run_stream."""
         from collections.abc import AsyncIterable
 
         from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate, use_agent_middleware
@@ -1961,7 +1961,7 @@ class TestMiddlewareWithProtocolOnlyAgent:
 
         @use_agent_middleware
         class ProtocolOnlyAgent:
-            """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
+            """Minimal agent implementing only AgentProtocol, not inheriting from BareAgent."""
 
             def __init__(self):
                 self.id = "protocol-only-agent"

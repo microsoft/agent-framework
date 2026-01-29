@@ -27,12 +27,10 @@ from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._memory import ContextProvider
-from ._middleware import ChatMiddlewareMixin
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
 from ._tools import (
     FunctionInvocationConfiguration,
-    FunctionInvokingMixin,
     ToolProtocol,
 )
 from ._types import (
@@ -43,7 +41,6 @@ from ._types import (
     prepare_messages,
     validate_chat_options,
 )
-from .observability import ChatTelemetryMixin
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -62,14 +59,13 @@ if TYPE_CHECKING:
 TInput = TypeVar("TInput", contravariant=True)
 
 TEmbedding = TypeVar("TEmbedding")
-TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
+TBareChatClient = TypeVar("TBareChatClient", bound="BareChatClient")
 
 logger = get_logger()
 
 __all__ = [
-    "BaseChatClient",
+    "BareChatClient",
     "ChatClientProtocol",
-    "CoreChatClient",
 ]
 
 
@@ -196,7 +192,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 
 # region ChatClientBase
 
-# Covariant for the BaseChatClient
+# Covariant for the BareChatClient
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
@@ -205,29 +201,34 @@ TOptions_co = TypeVar(
 )
 
 
-class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
-    """Core base class for chat clients without middleware wrapping.
+class BareChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
+    """Bare base class for chat clients without middleware wrapping.
 
     This abstract base class provides core functionality for chat client implementations,
-    including middleware support, message preparation, and tool normalization.
+    including message preparation and tool normalization, but without middleware,
+    telemetry, or function invocation support.
 
     The generic type parameter TOptions specifies which options TypedDict this client
     accepts. This enables IDE autocomplete and type checking for provider-specific options
     when using the typed overloads of get_response.
 
     Note:
-        BaseChatClient cannot be instantiated directly as it's an abstract base class.
+        BareChatClient cannot be instantiated directly as it's an abstract base class.
         Subclasses must implement ``_inner_get_response()`` with a stream parameter to handle both
         streaming and non-streaming responses.
+
+        For full-featured clients with middleware, telemetry, and function invocation support,
+        use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
+        which compose these mixins.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseChatClient, ChatResponse, ChatMessage
+            from agent_framework import BareChatClient, ChatResponse, ChatMessage
             from collections.abc import AsyncIterable
 
 
-            class CustomChatClient(BaseChatClient):
+            class CustomChatClient(BareChatClient):
                 async def _inner_get_response(self, *, messages, stream, options, **kwargs):
                     if stream:
                         # Streaming implementation
@@ -264,7 +265,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize a BaseChatClient instance.
+        """Initialize a BareChatClient instance.
 
         Keyword Args:
             additional_properties: Additional properties for the client.
@@ -507,15 +508,3 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
-
-
-class BaseChatClient(
-    ChatMiddlewareMixin[TOptions_co],
-    ChatTelemetryMixin[TOptions_co],
-    FunctionInvokingMixin[TOptions_co],
-    CoreChatClient[TOptions_co],
-    Generic[TOptions_co],
-):
-    """Chat client base class with middleware, telemetry, and function invocation support."""
-
-    pass

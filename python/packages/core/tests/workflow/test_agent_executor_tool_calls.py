@@ -14,13 +14,13 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatAgent,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingMixin,
+    FunctionInvocationLayer,
     RequestInfoEvent,
     ResponseStream,
     Role,
@@ -32,7 +32,7 @@ from agent_framework import (
 )
 
 
-class _ToolCallingAgent(BaseAgent):
+class _ToolCallingAgent(BareAgent):
     """Mock agent that simulates tool calls and results in streaming mode."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -243,7 +243,7 @@ class _MockChatClientCore:
         return response
 
 
-class MockChatClient(FunctionInvokingMixin, _MockChatClientCore):
+class MockChatClient(FunctionInvocationLayer, _MockChatClientCore):
     pass
 
 

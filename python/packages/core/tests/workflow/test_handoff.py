@@ -12,7 +12,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingMixin,
+    FunctionInvocationLayer,
     HandoffAgentUserRequest,
     HandoffBuilder,
     RequestInfoEvent,
@@ -90,7 +90,7 @@ class _MockChatClientCore:
         return call_id
 
 
-class MockChatClient(FunctionInvokingMixin, _MockChatClientCore):
+class MockChatClient(FunctionInvocationLayer, _MockChatClientCore):
     pass
 
 

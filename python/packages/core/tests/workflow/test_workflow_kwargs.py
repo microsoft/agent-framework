@@ -9,7 +9,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     ConcurrentBuilder,
     Content,
@@ -40,7 +40,7 @@ def tool_with_kwargs(
     return f"Executed {action} with custom_data={custom_data}, user={user_token.get('user_name', 'unknown')}"
 
 
-class _KwargsCapturingAgent(BaseAgent):
+class _KwargsCapturingAgent(BareAgent):
     """Test agent that captures kwargs passed to run."""
 
     captured_kwargs: list[dict[str, Any]]

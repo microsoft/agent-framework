@@ -13,7 +13,7 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentRunUpdateEvent,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
     Executor,
@@ -148,7 +148,7 @@ class FakeManager(MagenticManagerBase):
         return ChatMessage(role=Role.ASSISTANT, text=self.FINAL_ANSWER, author_name=self.name)
 
 
-class StubAgent(BaseAgent):
+class StubAgent(BareAgent):
     def __init__(self, agent_name: str, reply_text: str, **kwargs: Any) -> None:
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
@@ -415,7 +415,7 @@ async def test_magentic_checkpoint_resume_round_trip():
     assert orchestrator._magentic_context.chat_history[-1].text == orchestrator._task_ledger.text  # type: ignore[reportPrivateUsage]
 
 
-class StubManagerAgent(BaseAgent):
+class StubManagerAgent(BareAgent):
     """Stub agent for testing StandardMagenticManager."""
 
     def run(
@@ -530,7 +530,7 @@ class InvokeOnceManager(MagenticManagerBase):
         return ChatMessage(role=Role.ASSISTANT, text="final")
 
 
-class StubThreadAgent(BaseAgent):
+class StubThreadAgent(BareAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
@@ -554,7 +554,7 @@ class StubAssistantsClient:
     pass  # class name used for branch detection
 
 
-class StubAssistantsAgent(BaseAgent):
+class StubAssistantsAgent(BareAgent):
     chat_client: object | None = None  # allow assignment via Pydantic field
 
     def __init__(self) -> None:

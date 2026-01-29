@@ -13,7 +13,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
     Role,
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WorkflowAgent(BaseAgent):
+class WorkflowAgent(BareAgent):
     """An `Agent` subclass that wraps a workflow and exposes it as an agent."""
 
     # Class variable for the request info function name
@@ -93,11 +93,11 @@ class WorkflowAgent(BaseAgent):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            **kwargs: Additional keyword arguments passed to BareAgent.
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
-        # Initialize with standard BaseAgent parameters first
+        # Initialize with standard BareAgent parameters first
         # Validate the workflow's start executor can handle agent-facing message inputs
         try:
             start_executor = workflow.get_start_executor()

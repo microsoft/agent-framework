@@ -7,19 +7,19 @@ from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
+    BareChatClient,
     ChatMessage,
-    ChatMiddlewareMixin,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    CoreChatClient,
-    FunctionInvokingMixin,
+    FunctionInvocationLayer,
     ResponseStream,
     Role,
 )
 from agent_framework._clients import TOptions_co
-from agent_framework.observability import ChatTelemetryMixin
+from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -46,10 +46,10 @@ TOptions_co = TypeVar(
 )
 
 
-class EchoingChatClient(CoreChatClient[TOptions_co], Generic[TOptions_co]):
+class EchoingChatClient(BareChatClient[TOptions_co], Generic[TOptions_co]):
     """A custom chat client that echoes messages back with modifications.
 
-    This demonstrates how to implement a custom chat client by extending CoreChatClient
+    This demonstrates how to implement a custom chat client by extending BareChatClient
     and implementing the required _inner_get_response() method.
     """
 
@@ -60,7 +60,7 @@ class EchoingChatClient(CoreChatClient[TOptions_co], Generic[TOptions_co]):
 
         Args:
             prefix: Prefix to add to echoed messages.
-            **kwargs: Additional keyword arguments passed to BaseChatClient.
+            **kwargs: Additional keyword arguments passed to BareChatClient.
         """
         super().__init__(**kwargs)
         self.prefix = prefix
@@ -120,9 +120,9 @@ class EchoingChatClient(CoreChatClient[TOptions_co], Generic[TOptions_co]):
 
 
 class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
-    ChatMiddlewareMixin[TOptions_co],
-    ChatTelemetryMixin[TOptions_co],
-    FunctionInvokingMixin[TOptions_co],
+    ChatMiddlewareLayer[TOptions_co],
+    ChatTelemetryLayer[TOptions_co],
+    FunctionInvocationLayer[TOptions_co],
     EchoingChatClient[TOptions_co],
     Generic[TOptions_co],
 ):

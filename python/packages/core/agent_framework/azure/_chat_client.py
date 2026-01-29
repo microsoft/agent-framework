@@ -3,8 +3,8 @@
 import json
 import logging
 import sys
-from collections.abc import Mapping
-from typing import Any, Generic
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Generic
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
@@ -13,8 +13,11 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel, ValidationError
 
 from agent_framework import Annotation, ChatResponse, ChatResponseUpdate, Content
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai._chat_client import OpenAIBaseChatClient, OpenAIChatOptions
+from agent_framework.observability import ChatTelemetryLayer
+from agent_framework.openai._chat_client import BareOpenAIChatClient, OpenAIChatOptions
 
 from ._shared import (
     AzureOpenAIConfigMixin,
@@ -33,6 +36,9 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from agent_framework._middleware import Middleware
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -137,10 +143,13 @@ TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAICha
 
 class AzureOpenAIChatClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    OpenAIBaseChatClient[TAzureOpenAIChatOptions],
+    ChatMiddlewareLayer[TAzureOpenAIChatOptions],
+    ChatTelemetryLayer[TAzureOpenAIChatOptions],
+    FunctionInvocationLayer[TAzureOpenAIChatOptions],
+    BareOpenAIChatClient[TAzureOpenAIChatOptions],
     Generic[TAzureOpenAIChatOptions],
 ):
-    """Azure OpenAI Chat completion class."""
+    """Azure OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -159,6 +168,8 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        middleware: Sequence["Middleware"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
@@ -260,6 +271,8 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
 
@@ -267,7 +280,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
         """Parse the choice into a Content object with type='text'.
 
-        Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.
+        Overwritten from BareOpenAIChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """

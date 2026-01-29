@@ -27,8 +27,11 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BaseChatClient
+from .._clients import BareChatClient
+from .._middleware import ChatMiddlewareLayer
 from .._tools import (
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
@@ -45,6 +48,7 @@ from .._types import (
     prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
+from ..observability import ChatTelemetryLayer
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
@@ -63,7 +67,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    pass
+    from .._middleware import Middleware
 
 __all__ = [
     "AssistantToolResources",
@@ -201,10 +205,13 @@ TOpenAIAssistantsOptions = TypeVar(
 
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    BaseChatClient[TOpenAIAssistantsOptions],
+    ChatMiddlewareLayer[TOpenAIAssistantsOptions],
+    ChatTelemetryLayer[TOpenAIAssistantsOptions],
+    FunctionInvocationLayer[TOpenAIAssistantsOptions],
+    BareChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
 ):
-    """OpenAI Assistants client."""
+    """OpenAI Assistants client with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -221,6 +228,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         async_client: AsyncOpenAI | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        middleware: Sequence["Middleware"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Assistants client.
@@ -306,6 +315,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
             default_headers=default_headers,
             client=async_client,
             base_url=openai_settings.base_url,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )
         self.assistant_id: str | None = assistant_id
         self.assistant_name: str | None = assistant_name

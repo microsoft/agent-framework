@@ -5,7 +5,7 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import BaseChatClient
+from agent_framework import BareChatClient
 
 if TYPE_CHECKING:
     from agent_framework import AgentProtocol
@@ -79,8 +79,8 @@ def register_additional_client_tools(agent: "AgentProtocol", client_tools: list[
     if chat_client is None:
         return
 
-    if isinstance(chat_client, BaseChatClient) and chat_client.function_invocation_configuration is not None:
-        chat_client.function_invocation_configuration["additional_tools"] = client_tools
+    if isinstance(chat_client, BareChatClient) and chat_client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
+        chat_client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
         logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
 
 

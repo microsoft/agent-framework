@@ -12,7 +12,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
-    FunctionInvokingMixin,
     FunctionTool,
     Role,
     chat_middleware,
@@ -356,8 +355,8 @@ class TestChatMiddleware:
             approval_mode="never_require",
         )
 
-        # Create function-invocation enabled chat client
-        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
+        # Create function-invocation enabled chat client (MockBaseChatClient already includes FunctionInvocationLayer)
+        chat_client = MockBaseChatClient()
 
         # Set function middleware directly on the chat client
         chat_client.function_middleware = [test_function_middleware]
@@ -421,8 +420,8 @@ class TestChatMiddleware:
             approval_mode="never_require",
         )
 
-        # Create function-invocation enabled chat client
-        chat_client = type("FunctionInvokingMockBaseChatClient", (FunctionInvokingMixin, MockBaseChatClient), {})()
+        # Create function-invocation enabled chat client (MockBaseChatClient already includes FunctionInvocationLayer)
+        chat_client = MockBaseChatClient()
 
         # Prepare responses that will trigger function invocation
         function_call_response = ChatResponse(

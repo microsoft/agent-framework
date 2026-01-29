@@ -10,7 +10,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
     Executor,
@@ -26,7 +26,7 @@ from agent_framework import (
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 
 
-class _EchoAgent(BaseAgent):
+class _EchoAgent(BareAgent):
     """Simple agent that appends a single assistant message with its name."""
 
     def run(  # type: ignore[override]

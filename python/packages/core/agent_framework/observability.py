@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Awaitable, Callable, Generator, Mapping, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, overload
@@ -38,7 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._agents import AgentProtocol
     from ._clients import ChatClientProtocol
     from ._threads import AgentThread
-    from ._tools import FunctionTool, ToolProtocol
+    from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
@@ -55,8 +55,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "OBSERVABILITY_SETTINGS",
-    "AgentTelemetryMixin",
-    "ChatTelemetryMixin",
+    "AgentTelemetryLayer",
+    "ChatTelemetryLayer",
     "OtelAttr",
     "configure_otel_providers",
     "create_metric_views",
@@ -1054,8 +1054,8 @@ TOptions_co = TypeVar(
 )
 
 
-class ChatTelemetryMixin(Generic[TOptions_co]):
-    """Mixin that wraps chat client get_response with OpenTelemetry tracing."""
+class ChatTelemetryLayer(Generic[TOptions_co]):
+    """Layer that wraps chat client get_response with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
         """Initialize telemetry attributes and histograms."""
@@ -1219,8 +1219,8 @@ class ChatTelemetryMixin(Generic[TOptions_co]):
         return _get_response()
 
 
-class AgentTelemetryMixin:
-    """Mixin that wraps agent run with OpenTelemetry tracing."""
+class AgentTelemetryLayer:
+    """Layer that wraps agent run with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
         """Initialize telemetry attributes and histograms."""
@@ -1236,20 +1236,6 @@ class AgentTelemetryMixin:
         *,
         stream: Literal[False] = ...,
         thread: "AgentThread | None" = None,
-        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "ChatOptions[TResponseModelT]",
-        **kwargs: Any,
-    ) -> "Awaitable[AgentResponse[TResponseModelT]]": ...
-
-    @overload
-    def run(
-        self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
-        *,
-        stream: Literal[False] = ...,
-        thread: "AgentThread | None" = None,
-        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[AgentResponse[Any]]": ...
 
@@ -1260,8 +1246,6 @@ class AgentTelemetryMixin:
         *,
         stream: Literal[True],
         thread: "AgentThread | None" = None,
-        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]": ...
 
@@ -1271,8 +1255,6 @@ class AgentTelemetryMixin:
         *,
         stream: bool = False,
         thread: "AgentThread | None" = None,
-        tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None" = None,  # noqa: E501
-        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> "Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
         """Trace agent runs with OpenTelemetry spans and metrics."""
@@ -1286,14 +1268,13 @@ class AgentTelemetryMixin:
                 messages=messages,
                 stream=stream,
                 thread=thread,
-                tools=tools,
-                options=options,
                 **kwargs,
             )
 
         from ._types import ResponseStream, merge_chat_options
 
         default_options = getattr(self, "default_options", {})
+        options = kwargs.get("options")
         merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
@@ -1311,8 +1292,6 @@ class AgentTelemetryMixin:
                 messages=messages,
                 stream=True,
                 thread=thread,
-                tools=tools,
-                options=options,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
@@ -1382,8 +1361,6 @@ class AgentTelemetryMixin:
                         messages=messages,
                         stream=False,
                         thread=thread,
-                        tools=tools,
-                        options=options,
                         **kwargs,
                     )
                 except Exception as exception:

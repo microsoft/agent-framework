@@ -1,12 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from typing import Any, ClassVar, Generic
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from agent_framework import ChatOptions
+from agent_framework._middleware import ChatMiddlewareLayer
 from agent_framework._pydantic import AFBaseSettings
+from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai._chat_client import OpenAIBaseChatClient
+from agent_framework.observability import ChatTelemetryLayer
+from agent_framework.openai._chat_client import BareOpenAIChatClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
@@ -20,6 +24,9 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from agent_framework._middleware import Middleware
 
 __all__ = [
     "FoundryLocalChatOptions",
@@ -125,8 +132,14 @@ class FoundryLocalSettings(AFBaseSettings):
     model_id: str
 
 
-class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic[TFoundryLocalChatOptions]):
-    """Foundry Local Chat completion class."""
+class FoundryLocalClient(
+    ChatMiddlewareLayer[TFoundryLocalChatOptions],
+    ChatTelemetryLayer[TFoundryLocalChatOptions],
+    FunctionInvocationLayer[TFoundryLocalChatOptions],
+    BareOpenAIChatClient[TFoundryLocalChatOptions],
+    Generic[TFoundryLocalChatOptions],
+):
+    """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -138,6 +151,8 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
         device: DeviceType | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str = "utf-8",
+        middleware: Sequence["Middleware"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a FoundryLocalClient.
@@ -159,7 +174,7 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
                 The values are in the foundry_local.models.DeviceType enum.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-            kwargs: Additional keyword arguments, are passed to the OpenAIBaseChatClient.
+            kwargs: Additional keyword arguments, are passed to the BareOpenAIChatClient.
                 This can include middleware and additional properties.
 
         Examples:
@@ -250,6 +265,8 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
         super().__init__(
             model_id=model_info.id,
             client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
         self.manager = manager

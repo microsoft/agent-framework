@@ -54,9 +54,9 @@ def test_merge_tools_filters_duplicates() -> None:
 
 def test_register_additional_client_tools_assigns_when_configured() -> None:
     """register_additional_client_tools should set additional_tools on the chat client."""
-    from agent_framework import BaseChatClient, normalize_function_invocation_configuration
+    from agent_framework import BareChatClient, normalize_function_invocation_configuration
 
-    mock_chat_client = MagicMock(spec=BaseChatClient)
+    mock_chat_client = MagicMock(spec=BareChatClient)
     mock_chat_client.function_invocation_configuration = normalize_function_invocation_configuration(None)
 
     agent = ChatAgent(chat_client=mock_chat_client)

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin
 
@@ -9,8 +9,11 @@ from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
+from .._middleware import ChatMiddlewareLayer
+from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from ..exceptions import ServiceInitializationError
-from ..openai._responses_client import OpenAIBaseResponsesClient
+from ..observability import ChatTelemetryLayer
+from ..openai._responses_client import BareOpenAIResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -30,6 +33,7 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from .._middleware import Middleware
     from ..openai._responses_client import OpenAIResponsesOptions
 
 __all__ = ["AzureOpenAIResponsesClient"]
@@ -45,10 +49,13 @@ TAzureOpenAIResponsesOptions = TypeVar(
 
 class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
+    ChatMiddlewareLayer[TAzureOpenAIResponsesOptions],
+    ChatTelemetryLayer[TAzureOpenAIResponsesOptions],
+    FunctionInvocationLayer[TAzureOpenAIResponsesOptions],
+    BareOpenAIResponsesClient[TAzureOpenAIResponsesOptions],
     Generic[TAzureOpenAIResponsesOptions],
 ):
-    """Azure Responses completion class."""
+    """Azure Responses completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -67,6 +74,8 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        middleware: Sequence["Middleware"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Responses client.
@@ -178,6 +187,8 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )
 
     @override

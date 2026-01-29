@@ -240,13 +240,13 @@ class SerializationMixin:
 
         .. code-block:: python
 
-            from agent_framework import BaseAgent
+            from agent_framework import BareAgent
 
 
-            class CustomAgent(BaseAgent):
-                \"\"\"Custom agent extending BaseAgent with additional functionality.\"\"\"
+            class CustomAgent(BareAgent):
+                \"\"\"Custom agent extending BareAgent with additional functionality.\"\"\"
 
-                # Inherits DEFAULT_EXCLUDE = {"additional_properties"} from BaseAgent
+                # Inherits DEFAULT_EXCLUDE = {"additional_properties"} from BareAgent
 
                 def __init__(self, **kwargs):
                     super().__init__(name="custom-agent", description="A custom agent", **kwargs)
@@ -478,7 +478,7 @@ class SerializationMixin:
             .. code-block:: python
 
                 from agent_framework._middleware import AgentRunContext
-                from agent_framework import BaseAgent
+                from agent_framework import BareAgent
 
                 # AgentRunContext has INJECTABLE = {"agent", "result"}
                 context_data = {
@@ -490,7 +490,7 @@ class SerializationMixin:
                 }
 
                 # Inject agent and result during middleware processing
-                my_agent = BaseAgent(name="test-agent")
+                my_agent = BareAgent(name="test-agent")
                 dependencies = {
                     "agent_run_context": {
                         "agent": my_agent,

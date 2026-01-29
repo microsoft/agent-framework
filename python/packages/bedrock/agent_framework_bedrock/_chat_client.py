@@ -10,13 +10,17 @@ from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    BaseChatClient,
+    BareChatClient,
+    ChatLevelMiddleware,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     ResponseStream,
     Role,
@@ -28,6 +32,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
@@ -212,8 +217,14 @@ class BedrockSettings(AFBaseSettings):
     session_token: SecretStr | None = None
 
 
-class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockChatOptions]):
-    """Async chat client for Amazon Bedrock's Converse API."""
+class BedrockChatClient(
+    ChatMiddlewareLayer[TBedrockChatOptions],
+    ChatTelemetryLayer[TBedrockChatOptions],
+    FunctionInvocationLayer[TBedrockChatOptions],
+    BareChatClient[TBedrockChatOptions],
+    Generic[TBedrockChatOptions],
+):
+    """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -227,6 +238,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -241,9 +254,11 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             session_token: Optional AWS session token for temporary credentials.
             client: Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
             boto3_session: Custom boto3 session used to build the runtime client if provided.
+            middleware: Optional sequence of middlewares to include.
+            function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
-            kwargs: Additional arguments forwarded to ``BaseChatClient``.
+            kwargs: Additional arguments forwarded to ``BareChatClient``.
 
         Examples:
             .. code-block:: python
@@ -286,7 +301,11 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
         self._bedrock_client = client
         self.model_id = settings.chat_model_id
         self.region = settings.region

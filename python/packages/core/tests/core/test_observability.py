@@ -14,10 +14,10 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
     AgentResponse,
+    BareChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    CoreChatClient,
     ResponseStream,
     Role,
     UsageDetails,
@@ -26,9 +26,9 @@ from agent_framework import (
 )
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
-    AgentTelemetryMixin,
+    AgentTelemetryLayer,
     ChatMessageListTimestampFilter,
-    ChatTelemetryMixin,
+    ChatTelemetryLayer,
     OtelAttr,
     get_function_span,
 )
@@ -157,7 +157,7 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
 def mock_chat_client():
     """Create a mock chat client for testing."""
 
-    class MockChatClient(ChatTelemetryMixin, CoreChatClient[Any]):
+    class MockChatClient(ChatTelemetryLayer, BareChatClient[Any]):
         def service_url(self):
             return "https://test.example.com"
 
@@ -466,7 +466,7 @@ def mock_chat_agent():
                 finalizer=AgentResponse.from_agent_run_response_updates,
             )
 
-    class MockChatClientAgent(AgentTelemetryMixin, _MockChatClientAgent):
+    class MockChatClientAgent(AgentTelemetryLayer, _MockChatClientAgent):
         pass
 
     return MockChatClientAgent

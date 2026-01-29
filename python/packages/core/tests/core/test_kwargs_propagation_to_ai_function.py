@@ -6,18 +6,20 @@ from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
 
 from agent_framework import (
-    BaseChatClient,
+    BareChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    CoreChatClient,
     ResponseStream,
     tool,
 )
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationLayer
+from agent_framework.observability import ChatTelemetryLayer
 
 
-class _MockBaseChatClient(CoreChatClient[Any]):
+class _MockBaseChatClient(BareChatClient[Any]):
     """Mock chat client for testing function invocation."""
 
     def __init__(self) -> None:
@@ -77,7 +79,12 @@ class _MockBaseChatClient(CoreChatClient[Any]):
         return ResponseStream(_stream(), finalizer=_finalize)
 
 
-class FunctionInvokingMockClient(BaseChatClient[Any], _MockBaseChatClient):
+class FunctionInvokingMockClient(
+    ChatMiddlewareLayer[Any],
+    ChatTelemetryLayer[Any],
+    FunctionInvocationLayer[Any],
+    _MockBaseChatClient,
+):
     """Mock client with function invocation support."""
 
     pass

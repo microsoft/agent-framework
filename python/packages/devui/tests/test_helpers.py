@@ -21,8 +21,8 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
-    BaseChatClient,
+    BareChatClient,
+    BareAgent,
     ChatAgent,
     ChatMessage,
     ChatResponse,
@@ -34,7 +34,10 @@ from agent_framework import (
     SequentialBuilder,
 )
 from agent_framework._clients import TOptions_co
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationLayer
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -93,10 +96,16 @@ class MockChatClient:
             yield ChatResponseUpdate(text=Content.from_text(text="test streaming response"), role="assistant")
 
 
-class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
-    """Full BaseChatClient mock with middleware support.
+class MockBaseChatClient(
+    ChatMiddlewareLayer[TOptions_co],
+    ChatTelemetryLayer[TOptions_co],
+    FunctionInvocationLayer[TOptions_co],
+    BareChatClient[TOptions_co],
+    Generic[TOptions_co],
+):
+    """Full ChatClient mock with middleware support.
 
-    Use this when testing features that require the full BaseChatClient interface.
+    Use this when testing features that require the full ChatClient interface.
     This goes through all the middleware, message normalization, etc. - only the
     actual LLM call is mocked.
     """
@@ -165,7 +174,7 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
 # =============================================================================
 
 
-class MockAgent(BaseAgent):
+class MockAgent(BareAgent):
     """Mock agent that returns configurable responses without needing a chat client."""
 
     def __init__(
@@ -202,7 +211,7 @@ class MockAgent(BaseAgent):
             yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role=Role.ASSISTANT)
 
 
-class MockToolCallingAgent(BaseAgent):
+class MockToolCallingAgent(BareAgent):
     """Mock agent that simulates tool calls and results in streaming mode."""
 
     def __init__(self, **kwargs: Any):
@@ -288,7 +297,7 @@ def create_mock_chat_client() -> MockChatClient:
 
 
 def create_mock_base_chat_client() -> MockBaseChatClient:
-    """Create a mock BaseChatClient."""
+    """Create a mock chat client with all layers (middleware, telemetry, function invocation)."""
     return MockBaseChatClient()
 
 

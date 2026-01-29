@@ -25,19 +25,17 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
-from ._clients import BaseChatClient, ChatClientProtocol
+from ._clients import BareChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import Context, ContextProvider
-from ._middleware import AgentMiddlewareMixin, Middleware
+from ._middleware import AgentMiddlewareLayer, Middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import (
-    FunctionInvocationConfiguration,
-    FunctionInvokingMixin,
+    FunctionInvocationLayer,
     FunctionTool,
     ToolProtocol,
-    normalize_function_invocation_configuration,
 )
 from ._types import (
     AgentResponse,
@@ -49,7 +47,7 @@ from ._types import (
     normalize_messages,
 )
 from .exceptions import AgentInitializationError, AgentRunException
-from .observability import AgentTelemetryMixin
+from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -163,7 +161,7 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["AgentProtocol", "BaseAgent", "ChatAgent"]
+__all__ = ["AgentProtocol", "BareAgent", "BareChatAgent", "ChatAgent"]
 
 
 # region Agent Protocol
@@ -225,46 +223,12 @@ class AgentProtocol(Protocol):
     name: str | None
     description: str | None
 
-    @overload
-    def run(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
-        options: "ChatOptions[TResponseModelT]",
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
-        options: "ChatOptions[None] | None" = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        stream: Literal[True],
-        thread: AgentThread | None = None,
-        options: "ChatOptions[Any] | None" = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
     def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
-        options: "ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
@@ -279,7 +243,6 @@ class AgentProtocol(Protocol):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             thread: The conversation thread associated with the message(s).
-            options: Additional options for the chat. Defaults to None.
             kwargs: Additional keyword arguments.
 
         Returns:
@@ -294,28 +257,31 @@ class AgentProtocol(Protocol):
         ...
 
 
-# region BaseAgent
+# region BareAgent
 
 
-class BaseAgent(SerializationMixin):
+class BareAgent(SerializationMixin):
     """Base class for all Agent Framework agents.
+
+    This is the minimal base class without middleware or telemetry layers.
+    For most use cases, prefer :class:`ChatAgent` which includes all standard layers.
 
     This class provides core functionality for agent implementations, including
     context providers, middleware support, and thread management.
 
     Note:
-        BaseAgent cannot be instantiated directly as it doesn't implement the
+        BareAgent cannot be instantiated directly as it doesn't implement the
         ``run()``, ``run_stream()``, and other methods required by AgentProtocol.
         Use a concrete implementation like ChatAgent or create a subclass.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseAgent, AgentThread, AgentResponse
+            from agent_framework import BareAgent, AgentThread, AgentResponse
 
 
             # Create a concrete subclass that implements the protocol
-            class SimpleAgent(BaseAgent):
+            class SimpleAgent(BareAgent):
                 async def run(self, messages=None, *, stream=False, thread=None, **kwargs):
                     if stream:
 
@@ -357,7 +323,7 @@ class BaseAgent(SerializationMixin):
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize a BaseAgent instance.
+        """Initialize a BareAgent instance.
 
         Keyword Args:
             id: The unique identifier of the agent. If no id is provided,
@@ -532,8 +498,11 @@ class BaseAgent(SerializationMixin):
 # region ChatAgent
 
 
-class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
-    """A Chat Client Agent.
+class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
+    """A Chat Client Agent without middleware or telemetry layers.
+
+    This is the core chat agent implementation. For most use cases,
+    prefer :class:`ChatAgent` which includes all standard layers.
 
     This is the primary agent implementation that uses a chat client to interact
     with language models. It supports tools, context providers, middleware, and
@@ -627,7 +596,6 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[Middleware] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ChatAgent instance.
@@ -645,7 +613,6 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 If not provided, the default in-memory store will be used.
             context_provider: The context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            function_invocation_configuration: Optional function invocation configuration override.
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``ChatAgent[OpenAIChatOptions]``, this enables IDE autocomplete for
                 provider-specific options including temperature, max_tokens, model_id,
@@ -669,7 +636,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 "Use conversation_id for service-managed threads or chat_message_store_factory for local storage."
             )
 
-        if not isinstance(chat_client, FunctionInvokingMixin) and isinstance(chat_client, BaseChatClient):
+        if not isinstance(chat_client, FunctionInvocationLayer) and isinstance(chat_client, BareChatClient):
             logger.warning(
                 "The provided chat client does not support function invoking, this might limit agent capabilities."
             )
@@ -682,15 +649,7 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             middleware=middleware,
             **kwargs,
         )
-        self.chat_client: ChatClientProtocol[TOptions_co] = chat_client
-        resolved_config = function_invocation_configuration or getattr(
-            chat_client, "function_invocation_configuration", None
-        )
-        if resolved_config is not None:
-            resolved_config = normalize_function_invocation_configuration(resolved_config)
-        self.function_invocation_configuration = resolved_config
-        if function_invocation_configuration is not None and hasattr(chat_client, "function_invocation_configuration"):
-            chat_client.function_invocation_configuration = resolved_config
+        self.chat_client = chat_client
         self.chat_message_store_factory = chat_message_store_factory
 
         # Get tools from options or named parameter (named param takes precedence)
@@ -1419,11 +1378,18 @@ class _ChatAgentCore(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
 
 class ChatAgent(
-    AgentTelemetryMixin,
-    AgentMiddlewareMixin,
-    _ChatAgentCore[TOptions_co],
+    AgentTelemetryLayer,
+    AgentMiddlewareLayer,
+    BareChatAgent[TOptions_co],
     Generic[TOptions_co],
 ):
-    """A Chat Client Agent with middleware support."""
+    """A Chat Client Agent with middleware, telemetry, and full layer support.
+
+    This is the recommended agent class for most use cases. It includes:
+    - Agent middleware support for request/response interception
+    - OpenTelemetry-based telemetry for observability
+
+    For a minimal implementation without these features, use :class:`BareChatAgent`.
+    """
 
     pass
