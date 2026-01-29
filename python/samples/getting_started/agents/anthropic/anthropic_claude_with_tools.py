@@ -17,7 +17,7 @@ Available built-in tools:
 
 import asyncio
 
-from agent_framework.anthropic import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
 
 
 async def main() -> None:

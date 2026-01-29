@@ -22,7 +22,7 @@ More permissions mean more potential for unintended actions.
 import asyncio
 from typing import Any
 
-from agent_framework.anthropic import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 

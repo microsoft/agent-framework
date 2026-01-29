@@ -13,7 +13,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.anthropic import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
 from pydantic import Field
 
 

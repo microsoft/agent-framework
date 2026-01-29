@@ -16,7 +16,7 @@ URL fetching allows the agent to access any URL accessible from your network.
 
 import asyncio
 
-from agent_framework.anthropic import ClaudeAgent, ClaudeAgentOptions
+from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions
 
 
 async def main() -> None:
