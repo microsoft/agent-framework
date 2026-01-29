@@ -30,7 +30,13 @@ MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
 class Mem0Provider(ContextProvider):
-    """Mem0 Context Provider."""
+    """Mem0 Context Provider.
+
+    Note:
+        Mem0's telemetry (PostHog analytics) is disabled by default when using this package.
+        To enable telemetry, set the environment variable ``MEM0_TELEMETRY=true`` before
+        importing this package.
+    """
 
     def __init__(
         self,

@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
 
+import importlib
+import os
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -592,3 +595,30 @@ class TestMem0ProviderBuildFilters:
 
         filters = provider._build_filters()
         assert filters == {}
+
+
+class TestMem0Telemetry:
+    """Test telemetry configuration for Mem0."""
+
+    def test_mem0_telemetry_disabled_by_default(self) -> None:
+        """Test that MEM0_TELEMETRY is set to 'false' by default when importing the package."""
+        # The environment variable should be set to "false" after importing agent_framework.mem0
+        assert os.environ.get("MEM0_TELEMETRY") == "false"
+
+    def test_mem0_telemetry_respects_user_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that user-set MEM0_TELEMETRY value is not overwritten."""
+        # Remove cached modules to force re-import
+        modules_to_remove = [key for key in sys.modules if key.startswith("agent_framework_mem0")]
+        for mod in modules_to_remove:
+            del sys.modules[mod]
+
+        # Set user preference before import
+        monkeypatch.setenv("MEM0_TELEMETRY", "true")
+
+        # Re-import the module
+        import agent_framework_mem0
+
+        importlib.reload(agent_framework_mem0)
+
+        # User setting should be preserved
+        assert os.environ.get("MEM0_TELEMETRY") == "true"
