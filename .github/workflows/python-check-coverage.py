@@ -79,22 +79,7 @@ def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float
     packages: dict[str, PackageCoverage] = {}
 
     for package in root.findall(".//package"):
-        name = package.get("name", "unknown")
-        # Extract the module name from package paths like:
-        # "packages.azure-ai.agent_framework_azure_ai" -> "agent_framework_azure_ai"
-        # "packages.core.agent_framework.azure" -> "agent_framework"
-        # "packages.a2a.agent_framework_a2a" -> "agent_framework_a2a"
-        parts = name.split(".")
-        # Find the first part that starts with "agent_framework"
-        module_name = None
-        for part in parts:
-            if part.startswith("agent_framework"):
-                # Take this part as the module name
-                module_name = part
-                break
-        if module_name is None:
-            # Fallback: use the last part or the full name
-            module_name = parts[-1] if parts else name
+        package_path = package.get("name", "unknown")
 
         line_rate = float(package.get("line-rate", 0))
         branch_rate = float(package.get("branch-rate", 0))
@@ -123,37 +108,16 @@ def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float
                             # Ignore malformed condition-coverage strings; treat this line as having no branch data.
                             pass
 
-        # Aggregate by module name
-        if module_name in packages:
-            existing = packages[module_name]
-            # Combine coverage data
-            total_lines = existing.lines_valid + lines_valid
-            total_covered = existing.lines_covered + lines_covered
-            total_branches = existing.branches_valid + branches_valid
-            total_branches_covered = existing.branches_covered + branches_covered
-
-            combined_line_rate = total_covered / total_lines if total_lines > 0 else 0
-            combined_branch_rate = total_branches_covered / total_branches if total_branches > 0 else 0
-
-            packages[module_name] = PackageCoverage(
-                name=module_name,
-                line_rate=combined_line_rate,
-                branch_rate=combined_branch_rate,
-                lines_valid=total_lines,
-                lines_covered=total_covered,
-                branches_valid=total_branches,
-                branches_covered=total_branches_covered,
-            )
-        else:
-            packages[module_name] = PackageCoverage(
-                name=module_name,
-                line_rate=line_rate,
-                branch_rate=branch_rate,
-                lines_valid=lines_valid,
-                lines_covered=lines_covered,
-                branches_valid=branches_valid,
-                branches_covered=branches_covered,
-            )
+        # Use full package path as the key (no aggregation)
+        packages[package_path] = PackageCoverage(
+            name=package_path,
+            line_rate=line_rate if lines_valid == 0 else lines_covered / lines_valid,
+            branch_rate=branch_rate if branches_valid == 0 else branches_covered / branches_valid,
+            lines_valid=lines_valid,
+            lines_covered=lines_covered,
+            branches_valid=branches_valid,
+            branches_covered=branches_covered,
+        )
 
     return packages, overall_line_rate, overall_branch_rate
 
