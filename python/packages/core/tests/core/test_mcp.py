@@ -2635,3 +2635,76 @@ async def test_connect_handles_set_logging_level_exception():
         mock_warning.assert_called_once()
         call_args = mock_warning.call_args
         assert "Failed to set log level" in call_args[0][0]
+
+
+async def test_mcp_tool_filters_framework_kwargs():
+    """Test that call_tool filters out framework-specific kwargs before calling MCP session.
+
+    This verifies that non-serializable kwargs like response_format (Pydantic model class),
+    chat_options, tools, tool_choice, thread, conversation_id, and options are filtered out
+    before being passed to the external MCP server.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            # Mock call_tool to capture the arguments it receives
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Success")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    # Create a mock Pydantic model class to use as response_format
+    class MockResponseFormat(BaseModel):
+        result: str
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        # Invoke the tool with framework kwargs that should be filtered out
+        await func.invoke(
+            param="test_value",
+            response_format=MockResponseFormat,  # Should be filtered
+            chat_options={"some": "option"},  # Should be filtered
+            tools=[Mock()],  # Should be filtered
+            tool_choice="auto",  # Should be filtered
+            thread=Mock(),  # Should be filtered
+            conversation_id="conv-123",  # Should be filtered
+            options={"metadata": "value"},  # Should be filtered
+        )
+
+        # Verify call_tool was called with only the valid argument
+        server.session.call_tool.assert_called_once()
+        call_args = server.session.call_tool.call_args
+
+        # Check that the arguments dict only contains 'param' and none of the framework kwargs
+        arguments = call_args.kwargs.get("arguments", call_args[1] if len(call_args) > 1 else {})
+        assert arguments == {"param": "test_value"}, f"Expected only 'param' but got: {arguments}"
+
+        # Explicitly verify that framework kwargs were NOT passed
+        assert "response_format" not in arguments
+        assert "chat_options" not in arguments
+        assert "tools" not in arguments
+        assert "tool_choice" not in arguments
+        assert "thread" not in arguments
+        assert "conversation_id" not in arguments
+        assert "options" not in arguments
