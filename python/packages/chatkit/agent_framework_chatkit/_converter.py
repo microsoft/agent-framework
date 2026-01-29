@@ -30,9 +30,9 @@ from chatkit.types import (
 )
 
 if sys.version_info >= (3, 11):
-    from typing import assert_never
+    from typing import assert_never  # type:ignore # pragma: no cover
 else:
-    from typing_extensions import assert_never
+    from typing_extensions import assert_never  # type:ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 

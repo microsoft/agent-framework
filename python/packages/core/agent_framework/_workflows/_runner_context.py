@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
+import sys
 import uuid
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TypedDict, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
@@ -14,6 +15,11 @@ from ._const import INTERNAL_SOURCE_ID
 from ._events import RequestInfoEvent, WorkflowEvent
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
