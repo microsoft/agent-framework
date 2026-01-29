@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -696,7 +697,7 @@ public sealed class ChatMessageExtensionsTests
         foreach (AIContent contentCopy in messageCopy.Contents)
         {
             AIContent sourceContent = Assert.Single(message.Contents, c => c.GetType() == contentCopy.GetType());
-            Assert.Equivalent(sourceContent, contentCopy);
+            AssertAIContentEquivalent(sourceContent, contentCopy);
         }
     }
 
@@ -732,7 +733,41 @@ public sealed class ChatMessageExtensionsTests
         foreach (AIContent contentCopy in messageCopy.Contents)
         {
             AIContent sourceContent = Assert.Single(message.Contents, c => c.GetType() == contentCopy.GetType());
-            Assert.Equivalent(sourceContent, contentCopy);
+            AssertAIContentEquivalent(sourceContent, contentCopy);
+        }
+    }
+
+    /// <summary>
+    /// Compares two AIContent instances for equivalence without using Assert.Equivalent,
+    /// which fails on .NET Framework 4.7.2 due to ReadOnlySpan.GetHashCode() not being supported.
+    /// </summary>
+    private static void AssertAIContentEquivalent(AIContent expected, AIContent actual)
+    {
+        Assert.Equal(expected.GetType(), actual.GetType());
+
+        switch (expected)
+        {
+            case TextContent expectedText:
+                TextContent actualText = Assert.IsType<TextContent>(actual);
+                Assert.Equal(expectedText.Text, actualText.Text);
+                break;
+            case UriContent expectedUri:
+                UriContent actualUri = Assert.IsType<UriContent>(actual);
+                Assert.Equal(expectedUri.Uri, actualUri.Uri);
+                Assert.Equal(expectedUri.MediaType, actualUri.MediaType);
+                break;
+            case HostedFileContent expectedFile:
+                HostedFileContent actualFile = Assert.IsType<HostedFileContent>(actual);
+                Assert.Equal(expectedFile.FileId, actualFile.FileId);
+                break;
+            case DataContent expectedData:
+                DataContent actualData = Assert.IsType<DataContent>(actual);
+                Assert.Equal(expectedData.MediaType, actualData.MediaType);
+                Assert.Equal(expectedData.Data.ToArray(), actualData.Data.ToArray());
+                break;
+            default:
+                Assert.Fail($"Unexpected AIContent type: {expected.GetType().Name}");
+                break;
         }
     }
 }
