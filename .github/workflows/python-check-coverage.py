@@ -24,8 +24,9 @@ from dataclasses import dataclass
 # the coverage threshold. Only these modules will fail the build if below
 # threshold. Other modules are reported for visibility only.
 #
-# Module names should match the package names as they appear in the coverage
+# Module paths should match the package paths as they appear in the coverage
 # report (e.g., "packages.azure-ai.agent_framework_azure_ai" for packages/azure-ai).
+# Sub-modules can be included by specifying their full path.
 # =============================================================================
 ENFORCED_MODULES: set[str] = {
     "packages.azure-ai.agent_framework_azure_ai",
@@ -86,7 +87,7 @@ def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float
         parts = name.split(".")
         # Find the first part that starts with "agent_framework"
         module_name = None
-        for i, part in enumerate(parts):
+        for part in parts:
             if part.startswith("agent_framework"):
                 # Take this part as the module name
                 module_name = part
@@ -115,10 +116,11 @@ def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float
                     if condition_coverage:
                         # Parse "X% (covered/total)" format
                         try:
-                            parts = condition_coverage.split("(")[1].rstrip(")").split("/")
-                            branches_covered += int(parts[0])
-                            branches_valid += int(parts[1])
+                            coverage_parts = condition_coverage.split("(")[1].rstrip(")").split("/")
+                            branches_covered += int(coverage_parts[0])
+                            branches_valid += int(coverage_parts[1])
                         except (IndexError, ValueError):
+                            # Ignore malformed condition-coverage strings; treat this line as having no branch data.
                             pass
 
         # Aggregate by module name
@@ -213,8 +215,9 @@ def print_coverage_table(
         enforced_marker = "[ENFORCED] " if is_enforced else ""
         line_cov = format_coverage_value(pkg.line_coverage_percent, threshold, is_enforced)
         lines_info = f"{pkg.lines_covered}/{pkg.lines_valid}"
+        package_label = f"{enforced_marker}{pkg.name}"
 
-        print(f"{enforced_marker}{pkg.name:<34} {lines_info:<15} {line_cov:<15}")
+        print(f"{package_label:<45} {lines_info:<15} {line_cov:<15}")
 
     print("-" * 80)
 
