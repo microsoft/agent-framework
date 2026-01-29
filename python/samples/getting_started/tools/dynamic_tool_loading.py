@@ -7,9 +7,15 @@ This sample demonstrates how tools can dynamically add new tools during executio
 which become immediately available for the same agent run. This is useful when:
 - A tool needs to load additional capabilities based on context
 - Tools need to be registered based on the result of a previous tool call
-- Lazy loading of tools is needed for performance
+- Lazy loading of tools is needed for performance or resource management
+- Tools are loaded from external sources or plugins
 
-The key is using **kwargs to receive the tools list from the framework.
+The key is using **kwargs to receive the tools list from the framework, allowing
+runtime modification of available tools.
+
+Run this example with the following cmd (after setting appropriate Azure OpenAI env vars):
+export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=<your-deployment> && export AZURE_OPENAI_ENDPOINT=<your-endpoint> && uv run python samples/getting_started/tools/dynamic_tool_loading.py
+
 """
 
 import asyncio
@@ -17,10 +23,11 @@ import logging
 import os
 from typing import Annotated, Any
 
+from dotenv import load_dotenv
+
 from agent_framework import ChatAgent, ai_function
 from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
+from azure.identity import DefaultAzureCredential
 
 load_dotenv()
 
@@ -30,7 +37,6 @@ logging.basicConfig(
     force=True,
 )
 logger = logging.getLogger(__name__)
-
 
 @ai_function
 def load_math_tools(
@@ -52,7 +58,7 @@ def load_math_tools(
         # Check if advanced tools are already loaded
         existing_tool_names = {getattr(tool, "__name__", None) for tool in tools_list if tool is not None}
         advanced_tool_names = {"calculate_factorial", "calculate_fibonacci"}
-
+        
         if advanced_tool_names.issubset(existing_tool_names):
             return "Advanced math tools (factorial and fibonacci) are already loaded"
 
@@ -96,7 +102,7 @@ def add(x: Annotated[int, "First number"], y: Annotated[int, "Second number"]) -
 
 async def main() -> None:
     # Create a chat client and agent with the dynamic tool loader and a basic tool
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=DefaultAzureCredential())
     agent = ChatAgent(
         chat_client=client,
         instructions=(
@@ -121,7 +127,6 @@ async def main() -> None:
 
     response = await agent.run("Calculate sum of 5 and 29 and the factorial of 5 and the 10th Fibonacci number")
     print(f"Response: {response.text}\n")
-
 
 """
 Expected Output:
