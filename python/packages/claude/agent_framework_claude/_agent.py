@@ -24,17 +24,13 @@ from agent_framework._middleware import Middleware
 from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from claude_agent_sdk import (
-    AssistantMessage,
+    ClaudeAgentOptions as SDKOptions,
+)
+from claude_agent_sdk import (
     ClaudeSDKClient,
     ResultMessage,
     SdkMcpTool,
-    TextBlock,
-    ThinkingBlock,
-    ToolUseBlock,
     create_sdk_mcp_server,
-)
-from claude_agent_sdk import (
-    ClaudeAgentOptions as SDKOptions,
 )
 from claude_agent_sdk.types import StreamEvent
 from pydantic import ValidationError
@@ -550,37 +546,6 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             return ""
         return "\n".join([msg.text or "" for msg in messages])
 
-    def _convert_assistant_message(self, message: AssistantMessage) -> ChatMessage:
-        """Convert SDK AssistantMessage to ChatMessage.
-
-        Args:
-            message: SDK AssistantMessage.
-
-        Returns:
-            ChatMessage instance.
-        """
-        contents: list[Content] = []
-        for block in message.content:
-            if isinstance(block, TextBlock):
-                contents.append(Content.from_text(text=block.text, raw_representation=block))
-            elif isinstance(block, ThinkingBlock):
-                contents.append(Content.from_text_reasoning(text=block.thinking, raw_representation=block))
-            elif isinstance(block, ToolUseBlock):
-                contents.append(
-                    Content.from_function_call(
-                        call_id=block.id,
-                        name=block.name,
-                        arguments=block.input,
-                        raw_representation=block,
-                    )
-                )
-
-        return ChatMessage(
-            role=Role.ASSISTANT,
-            contents=contents,
-            raw_representation=message,
-        )
-
     async def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
@@ -630,7 +595,6 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         Yields:
             AgentResponseUpdate objects containing chunks of the response.
         """
-        input_messages = normalize_messages(messages)
         thread = thread or self.get_new_thread()
 
         # Ensure we're connected to the right session
@@ -639,12 +603,11 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         if not self._client:
             raise ServiceException("Claude SDK client not initialized.")
 
-        prompt = self._format_prompt(input_messages)
+        prompt = self._format_prompt(normalize_messages(messages))
 
         # Apply runtime options (model, permission_mode)
         await self._apply_runtime_options(dict(options) if options else None)
 
-        response_messages: list[ChatMessage] = []
         session_id: str | None = None
 
         await self._client.query(prompt)
@@ -671,20 +634,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                                 contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
                                 raw_representation=message,
                             )
-            elif isinstance(message, AssistantMessage):
-                # Store complete message for thread notification
-                response_messages.append(self._convert_assistant_message(message))
             elif isinstance(message, ResultMessage):
                 session_id = message.session_id
 
         # Update thread with session ID
         if session_id:
             thread.service_thread_id = session_id
-
-        # Notify thread of messages
-        await self._notify_thread_of_new_messages(
-            thread,
-            input_messages,
-            response_messages,
-            **kwargs,
-        )

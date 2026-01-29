@@ -368,7 +368,7 @@ class TestClaudeAgentRunStream:
             updates: list[AgentResponseUpdate] = []
             async for update in agent.run_stream("Hello"):
                 updates.append(update)
-            # StreamEvent yields text deltas, AssistantMessage is stored but not yielded
+            # StreamEvent yields text deltas
             assert len(updates) == 2
             assert updates[0].role == Role.ASSISTANT
             assert updates[0].text == "Streaming "
