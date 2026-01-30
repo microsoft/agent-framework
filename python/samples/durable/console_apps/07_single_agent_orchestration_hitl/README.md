@@ -23,7 +23,7 @@ With the environment setup, you can run the sample using the combined approach o
 **Option 1: Combined (Recommended for Testing)**
 
 ```bash
-cd samples/getting_started/durabletask/07_single_agent_orchestration_hitl
+cd samples/durable/console_apps/07_single_agent_orchestration_hitl
 python sample.py
 ```
 
