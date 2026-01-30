@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -55,12 +55,6 @@ public sealed class FoundryMemoryProviderTests
         // Act & Assert
         var ex = Assert.Throws<ArgumentNullException>(() => new FoundryMemoryProvider(
             this._operationsMock.Object,
-<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.FoundryMemory.UnitTests(net472)', Before:
-            (FoundryMemoryProviderScope)null!,
-=======
-            null!,
->>>>>>> After
-
             null!,
             new FoundryMemoryProviderOptions { MemoryStoreName = "store" }));
         Assert.Equal("scope", ex.ParamName);
