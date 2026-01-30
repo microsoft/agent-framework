@@ -16,6 +16,8 @@ internal static class Application
         public const string FoundryModelMini = "FOUNDRY_MODEL_DEPLOYMENT_NAME";
         public const string FoundryModelFull = "FOUNDRY_MEDIA_DEPLOYMENT_NAME";
         public const string FoundryGroundingTool = "FOUNDRY_CONNECTION_GROUNDING_TOOL";
+        public const string OpenAIApiKey = "OPENAI_API_KEY";
+        public const string OpenAIModel = "OPENAI_MODEL";
     }
 
     public static string GetInput(string[] args)
