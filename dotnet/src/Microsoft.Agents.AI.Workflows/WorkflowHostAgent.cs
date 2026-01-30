@@ -105,7 +105,7 @@ internal sealed class WorkflowHostAgent : AIAgent
             merger.AddUpdate(update);
         }
 
-        return merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        return merger.ComputeMerged(workflowSession.LastResponseId!);
     }
 
     protected override async

@@ -119,11 +119,8 @@ internal sealed class MessageMerger
         return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
     }
 
-    public AgentResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
+    public AgentResponse ComputeMerged(string primaryResponseId)
     {
-        _ = primaryAgentId; // Reserved for future use
-        _ = primaryAgentName; // Reserved for future use
-
         List<ChatMessage> messages = [];
         Dictionary<string, AgentResponse> responses = [];
 
