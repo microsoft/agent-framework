@@ -262,7 +262,7 @@ async def main() -> None:
         request_info_events = events.get_request_info_events()
         for request_info_event in request_info_events:
             # We should only expect function_approval_request Content in this sample
-            if not isinstance(request_info_event.data, Content) and request_info_event.data.type == "function_approval_request":
+            if not isinstance(request_info_event.data, Content) or request_info_event.data.type != "function_approval_request":
                 raise ValueError(f"Unexpected request info content type: {type(request_info_event.data)}")
 
             # Pretty print the function call details
@@ -274,7 +274,7 @@ async def main() -> None:
 
             # For demo purposes, we automatically approve the request
             # The expected response type of the request is `function_approval_response Content`,
-            # which can be created via `create_response` method on the request content
+            # which can be created via `to_function_approval_response` method on the request content
             print("Performing automatic approval for demo purposes...")
             responses[request_info_event.request_id] = request_info_event.data.to_function_approval_response(approved=True)
 
