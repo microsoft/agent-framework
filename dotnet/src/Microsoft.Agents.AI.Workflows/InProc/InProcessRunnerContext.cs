@@ -233,6 +233,20 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.CheckEnded();
         Throw.IfNull(output);
 
+        // Special-case AgentResponse and AgentResponseUpdate to create their specific event types
+        // and bypass the output filter (for backwards compatibility - these events were previously
+        // emitted directly via AddEventAsync without filtering)
+        if (output is AgentResponseUpdate update)
+        {
+            await this.AddEventAsync(new AgentResponseUpdateEvent(sourceId, update), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        else if (output is AgentResponse response)
+        {
+            await this.AddEventAsync(new AgentResponseEvent(sourceId, response), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
         if (!sourceExecutor.CanOutput(output.GetType()))
         {

@@ -109,7 +109,7 @@ internal sealed class HandoffAgentExecutor(
                 updates.Add(update);
                 if (handoffState.TurnToken.EmitEvents is true)
                 {
-                    await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                    await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
                 }
             }
         });
