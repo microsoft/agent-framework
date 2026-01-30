@@ -8,8 +8,9 @@ from typing import Any
 
 import pytest
 from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
-from conftest import StreamingChatClientStub
 from pydantic import BaseModel
+
+from .conftest import StreamingChatClientStub
 
 
 async def test_agent_initialization_basic():

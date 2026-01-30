@@ -7,8 +7,9 @@ from collections.abc import AsyncIterator, MutableSequence
 from typing import Any
 
 from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
-from conftest import StreamingChatClientStub, stream_from_updates
 from pydantic import BaseModel
+
+from .conftest import StreamingChatClientStub, stream_from_updates
 
 
 class RecipeOutput(BaseModel):
