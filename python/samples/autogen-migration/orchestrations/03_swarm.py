@@ -75,7 +75,7 @@ async def run_autogen() -> None:
 
     # Run with human-in-the-loop pattern
     print("[AutoGen] Swarm handoff conversation:")
-    task_result = await Console(team.run_stream(task=scripted_responses[response_index]))
+    task_result = await Console(team.run(task=scripted_responses[response_index], stream=True))
     last_message = task_result.messages[-1]
     response_index += 1
 
@@ -87,7 +87,7 @@ async def run_autogen() -> None:
     ):
         user_message = scripted_responses[response_index]
         task_result = await Console(
-            team.run_stream(task=HandoffMessage(source="user", target=last_message.source, content=user_message))
+            team.run(task=HandoffMessage(source="user", target=last_message.source, content=user_message), stream=True)
         )
         last_message = task_result.messages[-1]
         response_index += 1
@@ -102,7 +102,6 @@ async def run_agent_framework() -> None:
         RequestInfoEvent,
         WorkflowRunState,
         WorkflowStatusEvent,
-        tool,
     )
     from agent_framework.openai import OpenAIChatClient
 
@@ -162,7 +161,7 @@ async def run_agent_framework() -> None:
     stream_line_open = False
     pending_requests: list[RequestInfoEvent] = []
 
-    async for event in workflow.run_stream(scripted_responses[0]):
+    async for event in workflow.run(scripted_responses[0], stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:

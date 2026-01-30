@@ -301,7 +301,7 @@ class AgentExternalInputRequest:
                     return AgentExternalInputResponse(user_input=user_input)
 
                 async with run_context(request_handler=on_request) as ctx:
-                    async for event in workflow.run_stream(ctx=ctx):
+                    async for event in workflow.run(ctx=ctx, stream=True):
                         print(event)
     """
 
@@ -659,27 +659,23 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         # Use run() method to get properly structured messages (including tool calls and results)
         # This is critical for multi-turn conversations where tool calls must be followed
         # by their results in the message history
-        if hasattr(agent, "run"):
-            result: Any = await agent.run(messages_for_agent)
-            if hasattr(result, "text") and result.text:
-                accumulated_response = str(result.text)
-                if auto_send:
-                    await ctx.yield_output(str(result.text))
-            elif isinstance(result, str):
-                accumulated_response = result
-                if auto_send:
-                    await ctx.yield_output(result)
+        result: Any = await agent.run(messages_for_agent)
+        if hasattr(result, "text") and result.text:
+            accumulated_response = str(result.text)
+            if auto_send:
+                await ctx.yield_output(str(result.text))
+        elif isinstance(result, str):
+            accumulated_response = result
+            if auto_send:
+                await ctx.yield_output(result)
 
-            if not isinstance(result, str):
-                result_messages: Any = getattr(result, "messages", None)
-                if result_messages is not None:
-                    all_messages = list(cast(list[ChatMessage], result_messages))
-                result_tool_calls: Any = getattr(result, "tool_calls", None)
-                if result_tool_calls is not None:
-                    tool_calls = list(cast(list[Content], result_tool_calls))
-
-        else:
-            raise RuntimeError(f"Agent '{agent_name}' has no run or run_stream method")
+        if not isinstance(result, str):
+            result_messages: Any = getattr(result, "messages", None)
+            if result_messages is not None:
+                all_messages = list(cast(list[ChatMessage], result_messages))
+            result_tool_calls: Any = getattr(result, "tool_calls", None)
+            if result_tool_calls is not None:
+                tool_calls = list(cast(list[Content], result_tool_calls))
 
         # Add messages to conversation history
         # We need to include ALL messages from the agent run (including tool calls and tool results)

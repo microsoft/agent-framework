@@ -33,7 +33,7 @@ async def main() -> None:
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_time):
+        async for chunk in client.get_response(message, tools=get_time, stream=True):
             if str(chunk):
                 print(str(chunk), end="")
         print("")

@@ -469,7 +469,7 @@ async def test_magentic_kwargs_stored_in_shared_state() -> None:
             break
 
     # Verify the workflow completed (kwargs were stored, even if agent wasn't invoked)
-    # The test validates the code path through MagenticWorkflow.run_stream -> _MagenticStartMessage
+    # The test validates the code path through MagenticWorkflow.run(stream=True, ) -> _MagenticStartMessage
 
 
 # endregion

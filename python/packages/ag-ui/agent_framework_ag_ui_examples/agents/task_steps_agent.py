@@ -268,7 +268,7 @@ class TaskStepsAgentWithExecution:
 
                 # Stream completion
                 accumulated_text = ""
-                async for chunk in chat_client.get_streaming_response(messages=messages):
+                async for chunk in chat_client.get_response(messages=messages, stream=True):
                     # chunk is ChatResponseUpdate
                     if hasattr(chunk, "text") and chunk.text:
                         accumulated_text += chunk.text

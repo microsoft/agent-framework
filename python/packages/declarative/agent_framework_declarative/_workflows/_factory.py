@@ -52,7 +52,7 @@ class WorkflowFactory:
             factory = WorkflowFactory()
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
 
-            async for event in workflow.run_stream({"query": "Hello"}):
+            async for event in workflow.run({"query": "Hello"}, stream=True):
                 print(event)
 
         .. code-block:: python
@@ -161,7 +161,7 @@ class WorkflowFactory:
                 workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
 
                 # Execute the workflow
-                async for event in workflow.run_stream({"input": "Hello"}):
+                async for event in workflow.run({"input": "Hello"}, stream=True):
                     print(event)
 
             .. code-block:: python

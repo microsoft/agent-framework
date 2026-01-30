@@ -43,7 +43,7 @@ async def main() -> None:
     print(f"User: {message}")
     if stream:
         response = await ChatResponse.from_chat_response_generator(
-            client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
+            client.get_response(message, tools=get_weather, options={"response_format": OutputStruct}, stream=True),
             output_format_type=OutputStruct,
         )
         if result := response.try_parse_value(OutputStruct):

@@ -329,7 +329,7 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
 
 
 async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientProtocol) -> None:
-    """Test that context providers work with run_stream method."""
+    """Test that context providers work with run method."""
     mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Stream context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 

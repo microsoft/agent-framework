@@ -436,7 +436,7 @@ async def test_bad_request_error_non_content_filter() -> None:
 
 
 async def test_streaming_content_filter_exception_handling() -> None:
-    """Test that content filter errors in get_streaming_response are properly handled."""
+    """Test that content filter errors in get_response(..., stream=True) are properly handled."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock the OpenAI client to raise a BadRequestError with content_filter code

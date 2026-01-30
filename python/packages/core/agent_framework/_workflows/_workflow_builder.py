@@ -404,8 +404,8 @@ class WorkflowBuilder:
         (like add_edge, set_start_executor, etc.) will reuse the same wrapped executor.
 
         Note: Agents adapt their behavior based on how the workflow is executed:
-        - run_stream(): Agents emit incremental AgentRunUpdateEvent events as tokens are produced
-        - run(): Agents emit a single AgentRunEvent containing the complete response
+        - run(..., stream=False): Agents emit a single AgentRunEvent containing the complete response
+        - run(..., stream=True): Agents emit a ResponseStream with AgentResponseUpdate events
 
         Args:
             agent: The agent to add to the workflow.

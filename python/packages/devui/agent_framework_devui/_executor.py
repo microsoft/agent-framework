@@ -326,37 +326,23 @@ class AgentFrameworkExecutor:
             # but is_connected stays True. Detect and reconnect before execution.
             await self._ensure_mcp_connections(agent)
 
-            # Check if agent supports streaming
-            if hasattr(agent, "run_stream") and callable(agent.run_stream):
-                # Use Agent Framework's native streaming with optional thread
+            # Agent must have run() method - use stream=True for streaming
+            if hasattr(agent, "run") and callable(agent.run):
+                # Use Agent Framework's run() with stream=True for streaming
                 if thread:
-                    async for update in agent.run_stream(user_message, thread=thread):
+                    async for update in agent.run(user_message, stream=True, thread=thread):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
                         yield update
                 else:
-                    async for update in agent.run_stream(user_message):
+                    async for update in agent.run(user_message, stream=True):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
                         yield update
-            elif hasattr(agent, "run") and callable(agent.run):
-                # Non-streaming agent - use run() and yield complete response
-                logger.info("Agent lacks run_stream(), using run() method (non-streaming)")
-                if thread:
-                    response = await agent.run(user_message, thread=thread)
-                else:
-                    response = await agent.run(user_message)
-
-                # Yield trace events before response
-                for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
-
-                # Yield the complete response (mapper will convert to streaming events)
-                yield response
             else:
-                raise ValueError("Agent must implement either run() or run_stream() method")
+                raise ValueError("Agent must implement run() method")
 
             # Emit agent lifecycle completion event
             from .models._openai_custom import AgentCompletedEvent
