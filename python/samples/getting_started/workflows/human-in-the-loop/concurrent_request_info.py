@@ -33,7 +33,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework.azure import AzureOpenAIChatClient
@@ -149,7 +148,7 @@ async def main() -> None:
         stream = (
             workflow.send_responses_streaming(pending_responses)
             if pending_responses
-            else workflow.run_stream("Analyze the impact of large language models on software development.")
+            else workflow.run("Analyze the impact of large language models on software development.", stream=True)
         )
 
         pending_responses = None

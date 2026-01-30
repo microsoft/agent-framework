@@ -328,7 +328,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
     while True:
         # Invoke the agent
         try:
-            # Agents use run() with stream parameter, not run_stream()
+            # Agents use run() with stream parameter
             if hasattr(agent, "run"):
                 # Try streaming first
                 try:

@@ -14,7 +14,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     executor,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -119,8 +118,8 @@ async def main() -> None:
         .build()
     )
 
-    events = workflow.run_stream(
-        "Create quick workspace wellness tips for a remote analyst working across two monitors."
+    events = workflow.run(
+        "Create quick workspace wellness tips for a remote analyst working across two monitors.", stream=True
     )
 
     last_executor: str | None = None

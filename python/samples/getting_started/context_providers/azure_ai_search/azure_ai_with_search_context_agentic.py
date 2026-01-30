@@ -130,7 +130,7 @@ async def main() -> None:
             print("Agent: ", end="", flush=True)
 
             # Stream response
-            async for chunk in agent.run_stream(user_input):
+            async for chunk in agent.run(user_input, stream=True):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
 

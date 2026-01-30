@@ -1109,7 +1109,7 @@ class TestRunLevelMiddleware:
         async for update in agent.run("Test streaming", middleware=[run_middleware], stream=True):
             updates.append(update)
 
-        # Verify streaming response
+        # Verify streaming responsecod
         assert len(updates) == 2
         assert updates[0].text == "Stream"
         assert updates[1].text == " response"

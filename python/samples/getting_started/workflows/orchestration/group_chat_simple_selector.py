@@ -9,7 +9,6 @@ from agent_framework import (
     GroupChatBuilder,
     GroupChatState,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -104,7 +103,7 @@ async def main() -> None:
     # Keep track of the last executor to format output nicely in streaming mode
     last_executor_id: str | None = None
     output_event: WorkflowOutputEvent | None = None
-    async for event in workflow.run_stream(task):
+    async for event in workflow.run(task, stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             eid = event.executor_id
             if eid != last_executor_id:

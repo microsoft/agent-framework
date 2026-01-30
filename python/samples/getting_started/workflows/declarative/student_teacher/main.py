@@ -43,7 +43,7 @@ When reviewing student work:
 2. Gently point out errors without giving away the answer
 3. Ask guiding questions to help them discover mistakes
 4. Provide hints that lead toward understanding
-5. When the student demonstrates clear understanding, respond with "CONGRATULATIONS" 
+5. When the student demonstrates clear understanding, respond with "CONGRATULATIONS"
    followed by a summary of what they learned
 
 Focus on building understanding, not just getting the right answer."""
@@ -81,7 +81,7 @@ async def main() -> None:
     print("Student-Teacher Math Coaching Session")
     print("=" * 50)
 
-    async for event in workflow.run_stream("How would you compute the value of PI?"):
+    async for event in workflow.run("How would you compute the value of PI?", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             print(f"{event.data}", flush=True, end="")
 

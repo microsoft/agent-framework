@@ -15,7 +15,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
@@ -219,8 +218,9 @@ async def main() -> None:
     print("-" * 50)
 
     # Run agent in streaming mode to observe incremental updates.
-    async for event in agent.run_stream(
-        "Write code for parallel reading 1 million files on disk and write to a sorted output file."
+    async for event in agent.run(
+        "Write code for parallel reading 1 million files on disk and write to a sorted output file.",
+        stream=True,
     ):
         print(f"Agent Response: {event}")
 

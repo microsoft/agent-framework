@@ -88,7 +88,7 @@ async def handle_approvals_streaming(query: str, agent: "AgentProtocol") -> None
         user_input_requests: list[Any] = []
 
         # Stream the response
-        async for chunk in agent.run_stream(current_input):
+        async for chunk in agent.run(current_input, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
 

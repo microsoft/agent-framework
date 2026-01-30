@@ -14,7 +14,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -144,7 +143,7 @@ async def main():
 
     # Step 2: Run the workflow and print the events.
     iterations = 0
-    async for event in workflow.run_stream(NumberSignal.INIT):
+    async for event in workflow.run(NumberSignal.INIT, stream=True):
         if isinstance(event, ExecutorCompletedEvent) and event.executor_id == "guess_number":
             iterations += 1
         print(f"Event: {event}")

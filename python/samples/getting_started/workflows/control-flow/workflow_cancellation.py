@@ -13,7 +13,7 @@ to demonstrate mid-execution cancellation using asyncio tasks.
 
 Purpose:
 Show how to cancel a running workflow by wrapping it in an asyncio.Task. This pattern
-works with both workflow.run() and workflow.run_stream(). Useful for implementing
+works with both workflow.run() stream=True and stream=False. Useful for implementing
 timeouts, graceful shutdown, or A2A executors that need cancellation support.
 
 Prerequisites:

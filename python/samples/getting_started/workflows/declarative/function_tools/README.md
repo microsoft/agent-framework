@@ -68,7 +68,7 @@ Session Complete
 1. Create an Azure OpenAI chat client
 2. Create an agent with instructions and function tools
 3. Register the agent with the workflow factory
-4. Load the workflow YAML and run it with `run_stream()`
+4. Load the workflow YAML and run it with `run()` and `stream=True`
 
 ```python
 # Create the agent with tools
@@ -85,6 +85,6 @@ factory.register_agent("MenuAgent", menu_agent)
 
 # Load and run the workflow
 workflow = factory.create_workflow_from_yaml_path(workflow_path)
-async for event in workflow.run_stream(inputs={"userInput": "What is the soup of the day?"}):
+async for event in workflow.run(inputs={"userInput": "What is the soup of the day?"}, stream=True):
     ...
 ```

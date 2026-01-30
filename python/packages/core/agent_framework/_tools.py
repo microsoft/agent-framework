@@ -1748,12 +1748,17 @@ async def _execute_function_calls(
     return list(results), should_terminate, had_errors
 
 
-def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
-    """Update kwargs with conversation id.
+def _update_conversation_id(
+    kwargs: dict[str, Any],
+    conversation_id: str | None,
+    options: dict[str, Any] | None = None,
+) -> None:
+    """Update kwargs and options with conversation id.
 
     Args:
         kwargs: The keyword arguments dictionary to update.
         conversation_id: The conversation ID to set, or None to skip.
+        options: Optional options dictionary to also update with conversation_id.
     """
     if conversation_id is None:
         return
@@ -1761,6 +1766,10 @@ def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None)
         kwargs["chat_options"].conversation_id = conversation_id
     else:
         kwargs["conversation_id"] = conversation_id
+
+    # Also update options since some clients (e.g., AssistantsClient) read conversation_id from options
+    if options is not None:
+        options["conversation_id"] = conversation_id
 
 
 async def _ensure_response_stream(
@@ -2131,11 +2140,13 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
             middleware_pipeline=function_middleware_pipeline,
         )
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+        # Make options mutable so we can update conversation_id during function invocation loop
+        mutable_options: dict[str, Any] = dict(options) if options else {}
 
         if not stream:
 
             async def _get_response() -> ChatResponse:
-                nonlocal options
+                nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
                 prepped_messages = prepare_messages(messages)
@@ -2150,7 +2161,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     approval_result = await _process_function_requests(
                         response=None,
                         prepped_messages=prepped_messages,
-                        tool_options=options,  # type: ignore[arg-type]
+                        tool_options=mutable_options,  # type: ignore[arg-type]
                         attempt_idx=attempt_idx,
                         fcc_messages=None,
                         errors_in_a_row=errors_in_a_row,
@@ -2165,18 +2176,18 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     response = await super_get_response(
                         messages=prepped_messages,
                         stream=False,
-                        options=options,
+                        options=mutable_options,
                         **filtered_kwargs,
                     )
 
                     if response.conversation_id is not None:
-                        _update_conversation_id(kwargs, response.conversation_id)
+                        _update_conversation_id(kwargs, response.conversation_id, mutable_options)
                         prepped_messages = []
 
                     result = await _process_function_requests(
                         response=response,
                         prepped_messages=None,
-                        tool_options=options,  # type: ignore[arg-type]
+                        tool_options=mutable_options,  # type: ignore[arg-type]
                         attempt_idx=attempt_idx,
                         fcc_messages=fcc_messages,
                         errors_in_a_row=errors_in_a_row,
@@ -2199,12 +2210,11 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 if response is not None:
                     return response
 
-                options = options or {}  # type: ignore[assignment]
-                options["tool_choice"] = "none"  # type: ignore[index, assignment]
+                mutable_options["tool_choice"] = "none"
                 response = await super_get_response(
                     messages=prepped_messages,
                     stream=False,
-                    options=options,
+                    options=mutable_options,
                     **filtered_kwargs,
                 )
                 if fcc_messages:
@@ -2214,13 +2224,13 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
 
             return _get_response()
 
-        response_format = options.get("response_format") if options else None  # type: ignore[attr-defined]
+        response_format = mutable_options.get("response_format") if mutable_options else None
         output_format_type = response_format if isinstance(response_format, type) else None
         stream_finalizers: list[Callable[[ChatResponse], Any]] = []
 
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             nonlocal filtered_kwargs
-            nonlocal options
+            nonlocal mutable_options
             nonlocal stream_finalizers
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
@@ -2235,7 +2245,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 approval_result = await _process_function_requests(
                     response=None,
                     prepped_messages=prepped_messages,
-                    tool_options=options,  # type: ignore[arg-type]
+                    tool_options=mutable_options,  # type: ignore[arg-type]
                     attempt_idx=attempt_idx,
                     fcc_messages=None,
                     errors_in_a_row=errors_in_a_row,
@@ -2251,7 +2261,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     super_get_response(
                         messages=prepped_messages,
                         stream=True,
-                        options=options,
+                        options=mutable_options,
                         **filtered_kwargs,
                     )
                 )
@@ -2271,13 +2281,13 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 # Build a response snapshot from raw updates without invoking stream finalizers.
                 response = ChatResponse.from_chat_response_updates(all_updates)
                 if response.conversation_id is not None:
-                    _update_conversation_id(kwargs, response.conversation_id)
+                    _update_conversation_id(kwargs, response.conversation_id, mutable_options)
                     prepped_messages = []
 
                 result = await _process_function_requests(
                     response=response,
                     prepped_messages=None,
-                    tool_options=options,  # type: ignore[arg-type]
+                    tool_options=mutable_options,  # type: ignore[arg-type]
                     attempt_idx=attempt_idx,
                     fcc_messages=fcc_messages,
                     errors_in_a_row=errors_in_a_row,
@@ -2303,13 +2313,12 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
             if response is not None:
                 return
 
-            options = options or {}  # type: ignore[assignment]
-            options["tool_choice"] = "none"  # type: ignore[index, assignment]
+            mutable_options["tool_choice"] = "none"
             stream = await _ensure_response_stream(
                 super_get_response(
                     messages=prepped_messages,
                     stream=True,
-                    options=options,
+                    options=mutable_options,
                     **filtered_kwargs,
                 )
             )

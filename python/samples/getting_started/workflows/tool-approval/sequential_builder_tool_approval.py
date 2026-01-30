@@ -87,8 +87,9 @@ async def main() -> None:
 
     # Phase 1: Run workflow and collect all events (stream ends at IDLE or IDLE_WITH_PENDING_REQUESTS)
     request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(
-        "Check the schema and then update all orders with status 'pending' to 'processing'"
+    async for event in workflow.run(
+        "Check the schema and then update all orders with status 'pending' to 'processing'",
+        stream=True,
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)

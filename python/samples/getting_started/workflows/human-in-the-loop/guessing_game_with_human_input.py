@@ -18,7 +18,6 @@ from agent_framework import (
     WorkflowStatusEvent,  # Event emitted on run state changes
     handler,
     response_handler,  # Decorator to expose an Executor method as a step
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -38,7 +37,7 @@ Show how to integrate a human step in the middle of an LLM workflow by using
 Demonstrate:
 - Alternating turns between an AgentExecutor and a human, driven by events.
 - Using Pydantic response_format to enforce structured JSON output from the agent instead of regex parsing.
-- Driving the loop in application code with run_stream and responses parameter.
+- Driving the loop in application code with responses parameter.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -186,10 +185,12 @@ async def main() -> None:
     # )
 
     while workflow_output is None:
-        # First iteration uses run_stream("start").
+        # First iteration uses run("start", stream=True).
         # Subsequent iterations use send_responses_streaming with pending_responses from the console.
         stream = (
-            workflow.send_responses_streaming(pending_responses) if pending_responses else workflow.run_stream("start")
+            workflow.send_responses_streaming(pending_responses)
+            if pending_responses
+            else workflow.run("start", stream=True)
         )
         # Collect events for this turn. Among these you may see WorkflowStatusEvent
         # with state IDLE_WITH_PENDING_REQUESTS when the workflow pauses for

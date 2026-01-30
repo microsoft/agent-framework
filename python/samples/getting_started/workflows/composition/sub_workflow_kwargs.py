@@ -18,10 +18,10 @@ Sample: Sub-Workflow kwargs Propagation
 
 This sample demonstrates how custom context (kwargs) flows from a parent workflow
 through to agents in sub-workflows. When you pass kwargs to the parent workflow's
-run_stream() or run(), they automatically propagate to nested sub-workflows.
+run(), they automatically propagate to nested sub-workflows.
 
 Key Concepts:
-- kwargs passed to parent workflow.run_stream() propagate to sub-workflows
+- kwargs passed to parent workflow.run() propagate to sub-workflows
 - Sub-workflow agents receive the same kwargs as the parent workflow
 - Works with nested WorkflowExecutor compositions at any depth
 - Useful for passing authentication tokens, configuration, or request context
@@ -123,8 +123,9 @@ async def main() -> None:
 
     # Run the OUTER workflow with kwargs
     # These kwargs will automatically propagate to the inner sub-workflow
-    async for event in outer_workflow.run_stream(
+    async for event in outer_workflow.run(
         "Please fetch my profile data and then call the users service.",
+        stream=True,
         user_token=user_token,
         service_config=service_config,
     ):

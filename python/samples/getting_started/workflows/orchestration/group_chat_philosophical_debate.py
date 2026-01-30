@@ -11,7 +11,6 @@ from agent_framework import (
     GroupChatBuilder,
     Role,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -240,7 +239,7 @@ Share your perspective authentically. Feel free to:
     final_conversation: list[ChatMessage] = []
     current_speaker: str | None = None
 
-    async for event in workflow.run_stream(f"Please begin the discussion on: {topic}"):
+    async for event in workflow.run(f"Please begin the discussion on: {topic}", stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             if event.executor_id != current_speaker:
                 if current_speaker is not None:

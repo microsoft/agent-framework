@@ -19,7 +19,6 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowOutputEvent,
     executor,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -278,7 +277,7 @@ async def main() -> None:
         email = "Hello team, here are the updates for this week..."
 
     # Print outputs and database events from streaming
-    async for event in workflow.run_stream(email):
+    async for event in workflow.run(email, stream=True):
         if isinstance(event, DatabaseEvent):
             print(f"{event}")
         elif isinstance(event, WorkflowOutputEvent):

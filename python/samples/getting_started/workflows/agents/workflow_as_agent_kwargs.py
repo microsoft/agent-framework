@@ -17,7 +17,7 @@ through a workflow exposed via .as_agent() to @tool functions using the **kwargs
 Key Concepts:
 - Build a workflow using SequentialBuilder (or any builder pattern)
 - Expose the workflow as a reusable agent via workflow.as_agent()
-- Pass custom context as kwargs when invoking workflow_agent.run() or run_stream()
+- Pass custom context as kwargs when invoking workflow_agent.run()
 - kwargs are stored in SharedState and propagated to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 
@@ -121,10 +121,11 @@ async def main() -> None:
     print("-" * 70)
 
     # Run workflow agent with kwargs - these will flow through to tools
-    # Note: kwargs are passed to workflow_agent.run_stream() just like workflow.run_stream()
+    # Note: kwargs are passed to workflow_agent.run() just like workflow.run()
     print("\n===== Streaming Response =====")
-    async for update in workflow_agent.run_stream(
+    async for update in workflow_agent.run(
         "Please get my user data and then call the users API endpoint.",
+        stream=True,
         custom_data=custom_data,
         user_token=user_token,
     ):

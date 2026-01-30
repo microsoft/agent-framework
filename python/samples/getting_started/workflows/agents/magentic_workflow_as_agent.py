@@ -6,7 +6,6 @@ from agent_framework import (
     ChatAgent,
     HostedCodeInterpreterTool,
     MagenticBuilder,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
@@ -81,7 +80,7 @@ async def main() -> None:
         # Wrap the workflow as an agent for composition scenarios
         print("\nWrapping workflow as an agent and running...")
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
-        async for response in workflow_agent.run_stream(task):
+        async for response in workflow_agent.run(task, stream=True):
             # Fallback for any other events with text
             print(response.text, end="", flush=True)
 

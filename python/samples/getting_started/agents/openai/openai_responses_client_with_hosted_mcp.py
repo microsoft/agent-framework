@@ -71,7 +71,7 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AgentProtoc
     while new_input_added:
         new_input_added = False
         new_input.append(ChatMessage(role="user", text=query))
-        async for update in agent.run_stream(new_input, thread=thread, store=True):
+        async for update in agent.run(new_input, thread=thread, stream=True, options={"store": True}):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
                     print(
