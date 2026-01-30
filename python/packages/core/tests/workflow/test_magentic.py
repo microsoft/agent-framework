@@ -1245,7 +1245,7 @@ def test_magentic_agent_factory_with_standard_manager_options():
     custom_final_prompt = "Custom final: {task}"
 
     # Create a custom task ledger
-    from agent_framework._workflows._magentic import _MagenticTaskLedger
+    from agent_framework._workflows._magentic import _MagenticTaskLedger  # type: ignore
 
     custom_task_ledger = _MagenticTaskLedger(
         facts=ChatMessage(role=Role.ASSISTANT, text="Custom facts"),
