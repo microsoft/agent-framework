@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Shared test stubs for AG-UI tests."""
+"""Shared test fixtures and stubs for AG-UI tests."""
 
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, MutableSequence, Sequence
