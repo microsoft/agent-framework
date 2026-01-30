@@ -536,7 +536,7 @@ class AgentFunctionApp(DFAppBase):
                 "isArray": False,
             },
             {
-                "propertyName": "threadId",
+                "propertyName": "thread_id",
                 "propertyType": "string",
                 "description": "Optional thread identifier for conversation continuity.",
                 "isRequired": False,
@@ -561,7 +561,7 @@ class AgentFunctionApp(DFAppBase):
             """Handle MCP tool invocation for the agent.
 
             Args:
-                context: MCP tool invocation context containing arguments (query, threadId)
+                context: MCP tool invocation context containing arguments (query, thread_id)
                 client: Durable orchestration client for entity communication
 
             Returns:
@@ -610,8 +610,8 @@ class AgentFunctionApp(DFAppBase):
         if not query or not isinstance(query, str):
             raise ValueError("MCP Tool invocation is missing required 'query' argument of type string.")
 
-        # Extract optional threadId
-        thread_id = arguments.get("threadId")
+        # Extract optional thread_id
+        thread_id = arguments.get("thread_id")
 
         # Create or parse session ID
         if thread_id and isinstance(thread_id, str) and thread_id.strip():
