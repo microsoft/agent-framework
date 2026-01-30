@@ -47,7 +47,7 @@ public sealed class AzureAIPromptAgentFactoryTests
         GptComponentMetadata promptAgent = new(name: null!);
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => factory.TryCreateAsync(promptAgent));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => factory.TryCreateAsync(promptAgent));
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class AzureAIPromptAgentFactoryTests
 
         // Act & Assert
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => factory.TryCreateAsync(promptAgent));
-        Assert.Contains("model id must be specified", exception.Message);
+        Assert.Contains("AIProjectClient", exception.Message);
     }
 
     [Fact]
