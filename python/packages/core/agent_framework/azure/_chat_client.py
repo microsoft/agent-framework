@@ -12,12 +12,19 @@ from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel, ValidationError
 
-from agent_framework import Annotation, ChatResponse, ChatResponseUpdate, Content
-from agent_framework._middleware import ChatMiddlewareLayer
-from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
+from agent_framework import (
+    Annotation,
+    ChatMiddlewareLayer,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+)
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai._chat_client import BareOpenAIChatClient, OpenAIChatOptions
+from agent_framework.openai import OpenAIChatOptions
+from agent_framework.openai._chat_client import RawOpenAIChatClient
 
 from ._shared import (
     AzureOpenAIConfigMixin,
@@ -146,7 +153,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
     ChatMiddlewareLayer[TAzureOpenAIChatOptions],
     ChatTelemetryLayer[TAzureOpenAIChatOptions],
     FunctionInvocationLayer[TAzureOpenAIChatOptions],
-    BareOpenAIChatClient[TAzureOpenAIChatOptions],
+    RawOpenAIChatClient[TAzureOpenAIChatOptions],
     Generic[TAzureOpenAIChatOptions],
 ):
     """Azure OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
@@ -282,7 +289,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
         """Parse the choice into a Content object with type='text'.
 
-        Overwritten from BareOpenAIChatClient to deal with Azure On Your Data function.
+        Overwritten from RawOpenAIChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """

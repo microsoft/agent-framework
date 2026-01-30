@@ -14,7 +14,7 @@ from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    BareChatClient,
+    BaseChatClient,
     ChatLevelMiddleware,
     ChatMessage,
     ChatMiddlewareLayer,
@@ -293,7 +293,7 @@ class OllamaChatClient(
     ChatMiddlewareLayer[TOllamaChatOptions],
     ChatTelemetryLayer[TOllamaChatOptions],
     FunctionInvocationLayer[TOllamaChatOptions],
-    BareChatClient[TOllamaChatOptions],
+    BaseChatClient[TOllamaChatOptions],
 ):
     """Ollama Chat completion class with middleware, telemetry, and function invocation support."""
 
@@ -322,7 +322,7 @@ class OllamaChatClient(
             function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
-            **kwargs: Additional keyword arguments passed to BareChatClient.
+            **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
         try:
             ollama_settings = OllamaSettings(

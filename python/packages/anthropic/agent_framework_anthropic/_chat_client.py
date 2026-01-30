@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
-    BareChatClient,
+    BaseChatClient,
     ChatLevelMiddleware,
     ChatMessage,
     ChatMiddlewareLayer,
@@ -233,7 +233,7 @@ class AnthropicClient(
     ChatMiddlewareLayer[TAnthropicOptions],
     ChatTelemetryLayer[TAnthropicOptions],
     FunctionInvocationLayer[TAnthropicOptions],
-    BareChatClient[TAnthropicOptions],
+    BaseChatClient[TAnthropicOptions],
     Generic[TAnthropicOptions],
 ):
     """Anthropic Chat client with middleware, telemetry, and function invocation support."""

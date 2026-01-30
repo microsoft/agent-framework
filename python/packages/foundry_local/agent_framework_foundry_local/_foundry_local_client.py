@@ -16,7 +16,7 @@ from agent_framework import (
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai._chat_client import BareOpenAIChatClient
+from agent_framework.openai._chat_client import RawOpenAIChatClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
@@ -140,7 +140,7 @@ class FoundryLocalClient(
     ChatMiddlewareLayer[TFoundryLocalChatOptions],
     ChatTelemetryLayer[TFoundryLocalChatOptions],
     FunctionInvocationLayer[TFoundryLocalChatOptions],
-    BareOpenAIChatClient[TFoundryLocalChatOptions],
+    RawOpenAIChatClient[TFoundryLocalChatOptions],
     Generic[TFoundryLocalChatOptions],
 ):
     """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
@@ -180,7 +180,7 @@ class FoundryLocalClient(
             function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-            kwargs: Additional keyword arguments, are passed to the BareOpenAIChatClient.
+            kwargs: Additional keyword arguments, are passed to the RawOpenAIChatClient.
                 This can include middleware and additional properties.
 
         Examples:

@@ -13,7 +13,7 @@ from .._middleware import ChatMiddlewareLayer
 from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
-from ..openai._responses_client import BareOpenAIResponsesClient
+from ..openai._responses_client import RawOpenAIResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -52,7 +52,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
     ChatMiddlewareLayer[TAzureOpenAIResponsesOptions],
     ChatTelemetryLayer[TAzureOpenAIResponsesOptions],
     FunctionInvocationLayer[TAzureOpenAIResponsesOptions],
-    BareOpenAIResponsesClient[TAzureOpenAIResponsesOptions],
+    RawOpenAIResponsesClient[TAzureOpenAIResponsesOptions],
     Generic[TAzureOpenAIResponsesOptions],
 ):
     """Azure Responses completion class with middleware, telemetry, and function invocation support."""

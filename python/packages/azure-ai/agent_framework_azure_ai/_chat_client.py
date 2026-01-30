@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Generic, TypedDict
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
-    BareChatClient,
+    BaseChatClient,
     ChatAgent,
     ChatLevelMiddleware,
     ChatMessage,
@@ -206,7 +206,7 @@ class AzureAIAgentClient(
     ChatMiddlewareLayer[TAzureAIAgentOptions],
     ChatTelemetryLayer[TAzureAIAgentOptions],
     FunctionInvocationLayer[TAzureAIAgentOptions],
-    BareChatClient[TAzureAIAgentOptions],
+    BaseChatClient[TAzureAIAgentOptions],
     Generic[TAzureAIAgentOptions],
 ):
     """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""

@@ -22,7 +22,7 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BareAgent,
-    BareChatClient,
+    BaseChatClient,
     ChatAgent,
     ChatMessage,
     ChatResponse,
@@ -100,7 +100,7 @@ class MockBaseChatClient(
     ChatMiddlewareLayer[TOptions_co],
     ChatTelemetryLayer[TOptions_co],
     FunctionInvocationLayer[TOptions_co],
-    BareChatClient[TOptions_co],
+    BaseChatClient[TOptions_co],
     Generic[TOptions_co],
 ):
     """Full ChatClient mock with middleware support.

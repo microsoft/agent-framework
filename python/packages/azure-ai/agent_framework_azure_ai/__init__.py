@@ -4,7 +4,7 @@ import importlib.metadata
 
 from ._agent_provider import AzureAIAgentsProvider
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
-from ._client import AzureAIClient, AzureAIProjectAgentOptions, BareAzureAIClient
+from ._client import AzureAIClient, AzureAIProjectAgentOptions, RawAzureAIClient
 from ._project_provider import AzureAIProjectAgentProvider
 from ._shared import AzureAISettings
 
@@ -21,6 +21,6 @@ __all__ = [
     "AzureAIProjectAgentOptions",
     "AzureAIProjectAgentProvider",
     "AzureAISettings",
-    "BareAzureAIClient",
+    "RawAzureAIClient",
     "__version__",
 ]

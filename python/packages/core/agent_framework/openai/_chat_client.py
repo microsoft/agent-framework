@@ -16,7 +16,7 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BareChatClient
+from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import ChatLevelMiddleware, ChatMiddlewareLayer
 from .._tools import (
@@ -133,12 +133,25 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class BareOpenAIChatClient(  # type: ignore[misc]
+class RawOpenAIChatClient(  # type: ignore[misc]
     OpenAIBase,
-    BareChatClient[TOpenAIChatOptions],
+    BaseChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
 ):
-    """Bare OpenAI Chat completion class without middleware, telemetry, or function invocation."""
+    """Raw OpenAI Chat completion class without middleware, telemetry, or function invocation.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **ChatTelemetryLayer** - Telemetry will not be correct if applied outside the function calling loop
+        3. **FunctionInvocationLayer** - Handles tool/function calling
+
+        Use ``OpenAIChatClient`` instead for a fully-featured client with all layers applied.
+    """
 
     @override
     def _inner_get_response(
@@ -581,7 +594,7 @@ class OpenAIChatClient(  # type: ignore[misc]
     ChatMiddlewareLayer[TOpenAIChatOptions],
     ChatTelemetryLayer[TOpenAIChatOptions],
     FunctionInvocationLayer[TOpenAIChatOptions],
-    BareOpenAIChatClient[TOpenAIChatOptions],  # <- Raw instead of Base
+    RawOpenAIChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
 ):
     """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""

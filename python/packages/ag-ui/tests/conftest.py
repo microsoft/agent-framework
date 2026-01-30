@@ -12,7 +12,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareChatClient,
+    BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -37,7 +37,7 @@ class StreamingChatClientStub(
     ChatMiddlewareLayer[TOptions_co],
     ChatTelemetryLayer[TOptions_co],
     FunctionInvocationLayer[TOptions_co],
-    BareChatClient[TOptions_co],
+    BaseChatClient[TOptions_co],
     Generic[TOptions_co],
 ):
     """Typed streaming stub that satisfies ChatClientProtocol."""

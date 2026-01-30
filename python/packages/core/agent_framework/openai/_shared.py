@@ -138,7 +138,7 @@ class OpenAIBase(SerializationMixin):
         if model_id:
             self.model_id = model_id.strip()
 
-        # Call super().__init__() to continue MRO chain (e.g., BareChatClient)
+        # Call super().__init__() to continue MRO chain (e.g., RawChatClient)
         # Extract known kwargs that belong to other base classes
         additional_properties = kwargs.pop("additional_properties", None)
         middleware = kwargs.pop("middleware", None)
@@ -276,8 +276,8 @@ class OpenAIConfigMixin(OpenAIBase):
         if instruction_role:
             args["instruction_role"] = instruction_role
 
-        # Ensure additional_properties and middleware are passed through kwargs to BareChatClient
-        # These are consumed by BareChatClient.__init__ via kwargs
+        # Ensure additional_properties and middleware are passed through kwargs to RawChatClient
+        # These are consumed by RawChatClient.__init__ via kwargs
         super().__init__(**args, **kwargs)
 
 

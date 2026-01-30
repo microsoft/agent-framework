@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
 from agent_framework import (
-    BareChatClient,
+    BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -57,7 +57,7 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
-TBareChatClient = TypeVar("TBareChatClient", bound=type[BareChatClient[Any]])
+TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
 
 TAGUIChatOptions = TypeVar(
     "TAGUIChatOptions",
@@ -67,7 +67,7 @@ TAGUIChatOptions = TypeVar(
 )
 
 
-def _apply_server_function_call_unwrap(chat_client: TBareChatClient) -> TBareChatClient:
+def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
     original_get_response = chat_client.get_response
@@ -112,12 +112,12 @@ class AGUIChatClient(
     ChatMiddlewareLayer[TAGUIChatOptions],
     ChatTelemetryLayer[TAGUIChatOptions],
     FunctionInvocationLayer[TAGUIChatOptions],
-    BareChatClient[TAGUIChatOptions],
+    BaseChatClient[TAGUIChatOptions],
     Generic[TAGUIChatOptions],
 ):
     """Chat client for communicating with AG-UI compliant servers.
 
-    This client implements the BareChatClient interface and automatically handles:
+    This client implements the BaseChatClient interface and automatically handles:
     - Thread ID management for conversation continuity
     - State synchronization between client and server
     - Server-Sent Events (SSE) streaming
@@ -229,7 +229,7 @@ class AGUIChatClient(
             additional_properties: Additional properties to store
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
-            **kwargs: Additional arguments passed to BareChatClient
+            **kwargs: Additional arguments passed to BaseChatClient
         """
         super().__init__(
             additional_properties=additional_properties,

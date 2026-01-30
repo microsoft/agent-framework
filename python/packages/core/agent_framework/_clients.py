@@ -59,12 +59,12 @@ if TYPE_CHECKING:
 TInput = TypeVar("TInput", contravariant=True)
 
 TEmbedding = TypeVar("TEmbedding")
-TBareChatClient = TypeVar("TBareChatClient", bound="BareChatClient")
+TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
 logger = get_logger()
 
 __all__ = [
-    "BareChatClient",
+    "BaseChatClient",
     "ChatClientProtocol",
 ]
 
@@ -192,7 +192,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 
 # region ChatClientBase
 
-# Covariant for the BareChatClient
+# Covariant for the BaseChatClient
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
@@ -201,8 +201,8 @@ TOptions_co = TypeVar(
 )
 
 
-class BareChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
-    """Bare base class for chat clients without middleware wrapping.
+class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
+    """Abstract base class for chat clients without middleware wrapping.
 
     This abstract base class provides core functionality for chat client implementations,
     including message preparation and tool normalization, but without middleware,
@@ -213,22 +213,22 @@ class BareChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     when using the typed overloads of get_response.
 
     Note:
-        BareChatClient cannot be instantiated directly as it's an abstract base class.
+        BaseChatClient cannot be instantiated directly as it's an abstract base class.
         Subclasses must implement ``_inner_get_response()`` with a stream parameter to handle both
         streaming and non-streaming responses.
 
         For full-featured clients with middleware, telemetry, and function invocation support,
         use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
-        which compose these mixins.
+        which compose these layers correctly.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import BareChatClient, ChatResponse, ChatMessage
+            from agent_framework import BaseChatClient, ChatResponse, ChatMessage
             from collections.abc import AsyncIterable
 
 
-            class CustomChatClient(BareChatClient):
+            class CustomChatClient(BaseChatClient):
                 async def _inner_get_response(self, *, messages, stream, options, **kwargs):
                     if stream:
                         # Streaming implementation
@@ -265,7 +265,7 @@ class BareChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize a BareChatClient instance.
+        """Initialize a BaseChatClient instance.
 
         Keyword Args:
             additional_properties: Additional properties for the client.

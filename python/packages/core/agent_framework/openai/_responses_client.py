@@ -33,7 +33,7 @@ from openai.types.responses.tool_param import (
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BareChatClient
+from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import ChatMiddlewareLayer
 from .._tools import (
@@ -96,7 +96,7 @@ if TYPE_CHECKING:
 logger = get_logger("agent_framework.openai")
 
 
-__all__ = ["BareOpenAIResponsesClient", "OpenAIResponsesClient", "OpenAIResponsesOptions"]
+__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
 
 
 # region OpenAI Responses Options TypedDict
@@ -203,12 +203,25 @@ TOpenAIResponsesOptions = TypeVar(
 # region ResponsesClient
 
 
-class BareOpenAIResponsesClient(  # type: ignore[misc]
+class RawOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    BareChatClient[TOpenAIResponsesOptions],
+    BaseChatClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
-    """Bare OpenAI Responses client without middleware, telemetry, or function invocation."""
+    """Raw OpenAI Responses client without middleware, telemetry, or function invocation.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **ChatTelemetryLayer** - Telemetry will not be correct if applied outside the function calling loop
+        3. **FunctionInvocationLayer** - Handles tool/function calling
+
+        Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
+    """
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
@@ -1425,7 +1438,7 @@ class OpenAIResponsesClient(  # type: ignore[misc]
     ChatMiddlewareLayer[TOpenAIResponsesOptions],
     ChatTelemetryLayer[TOpenAIResponsesOptions],
     FunctionInvocationLayer[TOpenAIResponsesOptions],
-    BareOpenAIResponsesClient[TOpenAIResponsesOptions],
+    RawOpenAIResponsesClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
