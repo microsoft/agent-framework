@@ -1454,6 +1454,23 @@ wheels = [
 ]
 
 [[package]]
+name = "claude-agent-sdk"
+version = "0.1.25"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mcp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c5/ce/d8dd6eb56e981d1b981bf6766e1849878c54fbd160b6862e7c8e11b282d3/claude_agent_sdk-0.1.25.tar.gz", hash = "sha256:e2284fa2ece778d04b225f0f34118ea2623ae1f9fe315bc3bf921792658b6645", size = 57113, upload-time = "2026-01-29T01:20:17.353Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/09/e25dad92af3305ded5490d4493f782b1cb8c530145a7107bceea26ec811e/claude_agent_sdk-0.1.25-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6adeffacbb75fe5c91529512331587a7af0e5e6dcbce4bd6b3a6ef8a51bdabeb", size = 54672313, upload-time = "2026-01-29T01:20:03.651Z" },
+    { url = "https://files.pythonhosted.org/packages/28/0f/7b39ce9dd7d8f995e2c9d2049e1ce79f9010144a6793e8dd6ea9df23f53e/claude_agent_sdk-0.1.25-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:f210a05b2b471568c7f4019875b0ab451c783397f21edc32d7bd9a7144d9aad1", size = 68848229, upload-time = "2026-01-29T01:20:07.311Z" },
+    { url = "https://files.pythonhosted.org/packages/40/6f/0b22cd9a68c39c0a8f5bd024072c15ca89bfa2dbfad3a94a35f6a1a90ecd/claude_agent_sdk-0.1.25-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:3399c3c748eb42deac308c6230cb0bb6b975c51b0495b42fe06896fa741d336f", size = 70562885, upload-time = "2026-01-29T01:20:11.033Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/b6/2aaf28eeaa994e5491ad9589a9b006d5112b167aab8ced0823a6ffd86e4f/claude_agent_sdk-0.1.25-py3-none-win_amd64.whl", hash = "sha256:c5e8fe666b88049080ae4ac2a02dbd2d5c00ab1c495683d3c2f7dfab8ff1fec9", size = 72746667, upload-time = "2026-01-29T01:20:14.271Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1470,7 +1487,7 @@ name = "clr-loader"
 version = "0.2.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "cffi", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/18/24/c12faf3f61614b3131b5c98d3bf0d376b49c7feaa73edca559aeb2aee080/clr_loader-0.2.10.tar.gz", hash = "sha256:81f114afbc5005bafc5efe5af1341d400e22137e275b042a8979f3feb9fc9446", size = 83605, upload-time = "2026-01-03T23:13:06.984Z" }
 wheels = [
@@ -1973,7 +1990,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -4728,8 +4745,8 @@ name = "powerfx"
 version = "0.0.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pythonnet", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "cffi", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
+    { name = "pythonnet", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9f/fb/6c4bf87e0c74ca1c563921ce89ca1c5785b7576bca932f7255cdf81082a7/powerfx-0.0.34.tar.gz", hash = "sha256:956992e7afd272657ed16d80f4cad24ec95d9e4a79fb9dfa4a068a09e136af32", size = 3237555, upload-time = "2025-12-22T15:50:59.682Z" }
 wheels = [
@@ -5396,7 +5413,7 @@ name = "pythonnet"
 version = "3.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "clr-loader", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "clr-loader", marker = "(python_full_version < '3.14' and sys_platform == 'darwin') or (python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9a/d6/1afd75edd932306ae9bd2c2d961d603dc2b52fcec51b04afea464f1f6646/pythonnet-3.0.5.tar.gz", hash = "sha256:48e43ca463941b3608b32b4e236db92d8d40db4c58a75ace902985f76dac21cf", size = 239212, upload-time = "2024-12-13T08:30:44.393Z" }
 wheels = [
