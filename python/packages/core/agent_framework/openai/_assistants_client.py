@@ -206,8 +206,8 @@ TOpenAIAssistantsOptions = TypeVar(
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     ChatMiddlewareLayer[TOpenAIAssistantsOptions],
-    ChatTelemetryLayer[TOpenAIAssistantsOptions],
     FunctionInvocationLayer[TOpenAIAssistantsOptions],
+    ChatTelemetryLayer[TOpenAIAssistantsOptions],
     BaseChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
 ):

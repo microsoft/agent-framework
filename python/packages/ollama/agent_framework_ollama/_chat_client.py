@@ -291,8 +291,8 @@ logger = get_logger("agent_framework.ollama")
 
 class OllamaChatClient(
     ChatMiddlewareLayer[TOllamaChatOptions],
-    ChatTelemetryLayer[TOllamaChatOptions],
     FunctionInvocationLayer[TOllamaChatOptions],
+    ChatTelemetryLayer[TOllamaChatOptions],
     BaseChatClient[TOllamaChatOptions],
 ):
     """Ollama Chat completion class with middleware, telemetry, and function invocation support."""

@@ -138,8 +138,8 @@ class FoundryLocalSettings(AFBaseSettings):
 
 class FoundryLocalClient(
     ChatMiddlewareLayer[TFoundryLocalChatOptions],
-    ChatTelemetryLayer[TFoundryLocalChatOptions],
     FunctionInvocationLayer[TFoundryLocalChatOptions],
+    ChatTelemetryLayer[TFoundryLocalChatOptions],
     RawOpenAIChatClient[TFoundryLocalChatOptions],
     Generic[TFoundryLocalChatOptions],
 ):

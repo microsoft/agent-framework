@@ -231,8 +231,8 @@ class AnthropicSettings(AFBaseSettings):
 
 class AnthropicClient(
     ChatMiddlewareLayer[TAnthropicOptions],
-    ChatTelemetryLayer[TAnthropicOptions],
     FunctionInvocationLayer[TAnthropicOptions],
+    ChatTelemetryLayer[TAnthropicOptions],
     BaseChatClient[TAnthropicOptions],
     Generic[TAnthropicOptions],
 ):

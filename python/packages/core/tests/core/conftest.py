@@ -137,8 +137,8 @@ class MockChatClient:
 
 class MockBaseChatClient(
     ChatMiddlewareLayer[TOptions_co],
-    ChatTelemetryLayer[TOptions_co],
     FunctionInvocationLayer[TOptions_co],
+    ChatTelemetryLayer[TOptions_co],
     BaseChatClient[TOptions_co],
     Generic[TOptions_co],
 ):

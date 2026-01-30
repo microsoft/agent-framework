@@ -219,8 +219,8 @@ class BedrockSettings(AFBaseSettings):
 
 class BedrockChatClient(
     ChatMiddlewareLayer[TBedrockChatOptions],
-    ChatTelemetryLayer[TBedrockChatOptions],
     FunctionInvocationLayer[TBedrockChatOptions],
+    ChatTelemetryLayer[TBedrockChatOptions],
     BaseChatClient[TBedrockChatOptions],
     Generic[TBedrockChatOptions],
 ):

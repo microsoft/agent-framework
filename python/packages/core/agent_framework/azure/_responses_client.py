@@ -50,8 +50,8 @@ TAzureOpenAIResponsesOptions = TypeVar(
 class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
     ChatMiddlewareLayer[TAzureOpenAIResponsesOptions],
-    ChatTelemetryLayer[TAzureOpenAIResponsesOptions],
     FunctionInvocationLayer[TAzureOpenAIResponsesOptions],
+    ChatTelemetryLayer[TAzureOpenAIResponsesOptions],
     RawOpenAIResponsesClient[TAzureOpenAIResponsesOptions],
     Generic[TAzureOpenAIResponsesOptions],
 ):
