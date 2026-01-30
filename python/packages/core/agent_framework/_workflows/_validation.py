@@ -229,7 +229,12 @@ class WorkflowGraphValidator:
         target_executor = self._executors[edge.target_id]
 
         # Get output types from source executor
+        # First try send_message output types, then fall back to yield_output types
+        # This supports workflow composition where terminal executors (using yield_output)
+        # may be connected to downstream executors via add_workflow()
         source_output_types = list(source_executor.output_types)
+        if not source_output_types:
+            source_output_types = list(source_executor.workflow_output_types)
 
         # Get input types from target executor
         target_input_types = target_executor.input_types

@@ -519,6 +519,22 @@ class Executor(RequestInfoMixin, DictConvertible):
         """
         ...
 
+    def _clone_with_id(self, new_id: str) -> "Executor":
+        """Create a clone of this executor with a new ID.
+
+        This is used internally for workflow composition when merging executors
+        from one builder into another with prefixed IDs.
+
+        Args:
+            new_id: The new ID for the cloned executor.
+
+        Returns:
+            A new Executor instance with the same configuration but a different ID.
+        """
+        cloned = copy.copy(self)
+        cloned.id = new_id
+        return cloned
+
 
 # endregion: Executor
 

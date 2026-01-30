@@ -413,6 +413,29 @@ class EdgeGroup(DictConvertible):
         cls._TYPE_REGISTRY[subclass.__name__] = subclass
         return subclass
 
+    def _with_prefix(self, prefix: str) -> "EdgeGroup":
+        """Create a copy of this edge group with prefixed executor IDs.
+
+        This is used internally for workflow composition when merging edge groups
+        from one builder into another.
+
+        Args:
+            prefix: The prefix to add to all executor IDs (e.g., "analysis").
+
+        Returns:
+            A new EdgeGroup instance with prefixed IDs.
+        """
+        prefixed_edges = [
+            Edge(
+                source_id=f"{prefix}/{edge.source_id}",
+                target_id=f"{prefix}/{edge.target_id}",
+                condition=edge._condition,
+                condition_name=edge.condition_name,
+            )
+            for edge in self.edges
+        ]
+        return EdgeGroup(prefixed_edges, type=self.type)
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EdgeGroup":
         """Hydrate the correct `EdgeGroup` subclass from serialised state.
@@ -492,6 +515,15 @@ class SingleEdgeGroup(EdgeGroup):
         """
         edge = Edge(source_id=source_id, target_id=target_id, condition=condition)
         super().__init__([edge], id=id, type=self.__class__.__name__)
+
+    def _with_prefix(self, prefix: str) -> "SingleEdgeGroup":
+        """Create a copy with prefixed executor IDs."""
+        edge = self.edges[0]
+        return SingleEdgeGroup(
+            source_id=f"{prefix}/{edge.source_id}",
+            target_id=f"{prefix}/{edge.target_id}",
+            condition=edge._condition,
+        )
 
 
 @EdgeGroup.register
@@ -608,6 +640,16 @@ class FanOutEdgeGroup(EdgeGroup):
         payload["selection_func_name"] = self.selection_func_name
         return payload
 
+    def _with_prefix(self, prefix: str) -> "FanOutEdgeGroup":
+        """Create a copy with prefixed executor IDs."""
+        source_id = self.edges[0].source_id
+        return FanOutEdgeGroup(
+            source_id=f"{prefix}/{source_id}",
+            target_ids=[f"{prefix}/{tid}" for tid in self._target_ids],
+            selection_func=self._selection_func,
+            selection_func_name=self.selection_func_name,
+        )
+
 
 @EdgeGroup.register
 @dataclass(init=False)
@@ -642,6 +684,15 @@ class FanInEdgeGroup(EdgeGroup):
 
         edges = [Edge(source_id=source, target_id=target_id) for source in source_ids]
         super().__init__(edges, id=id, type=self.__class__.__name__)
+
+    def _with_prefix(self, prefix: str) -> "FanInEdgeGroup":
+        """Create a copy with prefixed executor IDs."""
+        target_id = self.edges[0].target_id
+        source_ids = [edge.source_id for edge in self.edges]
+        return FanInEdgeGroup(
+            source_ids=[f"{prefix}/{sid}" for sid in source_ids],
+            target_id=f"{prefix}/{target_id}",
+        )
 
 
 @dataclass(init=False)
@@ -902,6 +953,26 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         payload["cases"] = [encode_value(case) for case in self.cases]
         return payload
 
+    def _with_prefix(self, prefix: str) -> "SwitchCaseEdgeGroup":
+        """Create a copy with prefixed executor IDs."""
+        source_id = self.edges[0].source_id
+        prefixed_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
+        for case in self.cases:
+            if isinstance(case, SwitchCaseEdgeGroupDefault):
+                prefixed_cases.append(SwitchCaseEdgeGroupDefault(target_id=f"{prefix}/{case.target_id}"))
+            else:
+                prefixed_cases.append(
+                    SwitchCaseEdgeGroupCase(
+                        condition=case._condition,
+                        target_id=f"{prefix}/{case.target_id}",
+                        condition_name=case.condition_name,
+                    )
+                )
+        return SwitchCaseEdgeGroup(
+            source_id=f"{prefix}/{source_id}",
+            cases=prefixed_cases,
+        )
+
 
 @EdgeGroup.register
 @dataclass(init=False)
@@ -939,3 +1010,8 @@ class InternalEdgeGroup(EdgeGroup):
         """
         edge = Edge(source_id=INTERNAL_SOURCE_ID(executor_id), target_id=executor_id)
         super().__init__([edge])
+
+    def _with_prefix(self, prefix: str) -> "InternalEdgeGroup":
+        """Create a copy with prefixed executor IDs."""
+        executor_id = self.edges[0].target_id
+        return InternalEdgeGroup(executor_id=f"{prefix}/{executor_id}")
