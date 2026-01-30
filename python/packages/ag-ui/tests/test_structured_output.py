@@ -3,16 +3,12 @@
 """Tests for structured output handling in _agent.py."""
 
 import json
-import sys
 from collections.abc import AsyncIterator, MutableSequence
-from pathlib import Path
 from typing import Any
 
 from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
+from conftest import StreamingChatClientStub, stream_from_updates
 from pydantic import BaseModel
-
-sys.path.insert(0, str(Path(__file__).parent))
-from utils_test_ag_ui import StreamingChatClientStub, stream_from_updates
 
 
 class RecipeOutput(BaseModel):
