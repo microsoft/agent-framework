@@ -110,8 +110,8 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 @_apply_server_function_call_unwrap
 class AGUIChatClient(
     ChatMiddlewareLayer[TAGUIChatOptions],
-    ChatTelemetryLayer[TAGUIChatOptions],
     FunctionInvocationLayer[TAGUIChatOptions],
+    ChatTelemetryLayer[TAGUIChatOptions],
     BaseChatClient[TAGUIChatOptions],
     Generic[TAGUIChatOptions],
 ):

@@ -217,8 +217,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         you should follow:
 
         1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
-        2. **ChatTelemetryLayer** - Telemetry will not be correct if applied outside the function calling loop
-        3. **FunctionInvocationLayer** - Handles tool/function calling
+        2. **FunctionInvocationLayer** - Handles tool/function calling loop
+        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
 
         Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
     """
@@ -1436,8 +1436,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     ChatMiddlewareLayer[TOpenAIResponsesOptions],
-    ChatTelemetryLayer[TOpenAIResponsesOptions],
     FunctionInvocationLayer[TOpenAIResponsesOptions],
+    ChatTelemetryLayer[TOpenAIResponsesOptions],
     RawOpenAIResponsesClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):

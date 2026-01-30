@@ -2193,15 +2193,14 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
 async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):
     """Test that with correct layer ordering, spans appear in the expected sequence.
 
-    When using the correct layer ordering (ChatMiddlewareLayer, ChatTelemetryLayer,
-    FunctionInvocationLayer, BaseChatClient), we get:
-    1. One 'chat' span - wrapping the entire get_response operation including the function loop
-    2. One 'execute_tool' span - for the function invocation within the loop
+    When using the correct layer ordering (ChatMiddlewareLayer, FunctionInvocationLayer,
+    ChatTelemetryLayer, BaseChatClient), the spans should appear in this order:
+    1. First 'chat' span (initial LLM call that returns function call)
+    2. 'execute_tool' span (function invocation)
+    3. Second 'chat' span (follow-up LLM call with function result)
 
-    The chat span encompasses all internal LLM calls because the telemetry layer
-    is outside the function invocation layer in the MRO. This is the intended behavior
-    as it represents the full client operation as a single traced unit, with tool
-    executions as child spans.
+    This validates that telemetry is correctly applied inside the function calling loop,
+    so each LLM call gets its own span.
     """
     from agent_framework import Content
     from agent_framework._middleware import ChatMiddlewareLayer
@@ -2211,10 +2210,12 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
     def get_weather(location: str) -> str:
         return f"The weather in {location} is sunny."
 
+    # Correct layer ordering: FunctionInvocationLayer BEFORE ChatTelemetryLayer
+    # This ensures each inner LLM call gets its own telemetry span
     class MockChatClientWithLayers(
         ChatMiddlewareLayer,
-        ChatTelemetryLayer,
         FunctionInvocationLayer,
+        ChatTelemetryLayer,
         BaseChatClient,
     ):
         OTEL_PROVIDER_NAME = "test_provider"
@@ -2266,21 +2267,20 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
     spans = span_exporter.get_finished_spans()
 
-    assert len(spans) == 2, f"Expected 2 spans (chat, execute_tool), got {len(spans)}: {[s.name for s in spans]}"
+    assert len(spans) == 3, f"Expected 3 spans (chat, execute_tool, chat), got {len(spans)}: {[s.name for s in spans]}"
 
     # Sort spans by start time to get the logical order
     sorted_spans = sorted(spans, key=lambda s: s.start_time or 0)
 
-    # First span should be the outer chat span (starts first, finishes last)
-    chat_span = sorted_spans[0]
-    assert chat_span.name.startswith("chat"), f"First span should be 'chat', got '{chat_span.name}'"
+    # First span: initial chat (LLM call that returns function call request)
+    assert sorted_spans[0].name.startswith("chat"), f"First span should be 'chat', got '{sorted_spans[0].name}'"
 
-    # Second span should be the tool execution (nested within the chat span)
-    tool_span = sorted_spans[1]
-    assert tool_span.name.startswith("execute_tool"), f"Second span should be 'execute_tool', got '{tool_span.name}'"
-    assert tool_span.attributes.get(OtelAttr.TOOL_NAME) == "get_weather"
-    assert tool_span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION
+    # Second span: execute_tool (function invocation)
+    assert sorted_spans[1].name.startswith("execute_tool"), (
+        f"Second span should be 'execute_tool', got '{sorted_spans[1].name}'"
+    )
+    assert sorted_spans[1].attributes.get(OtelAttr.TOOL_NAME) == "get_weather"
+    assert sorted_spans[1].attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION
 
-    # Verify parent-child relationship: tool span should be a child of the chat span
-    assert tool_span.parent is not None, "Tool span should have a parent"
-    assert tool_span.parent.span_id == chat_span.context.span_id, "Tool span should be a child of the chat span"
+    # Third span: second chat (LLM call with function result)
+    assert sorted_spans[2].name.startswith("chat"), f"Third span should be 'chat', got '{sorted_spans[2].name}'"

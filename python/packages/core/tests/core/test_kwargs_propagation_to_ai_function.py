@@ -81,8 +81,8 @@ class _MockBaseChatClient(BaseChatClient[Any]):
 
 class FunctionInvokingMockClient(
     ChatMiddlewareLayer[Any],
-    ChatTelemetryLayer[Any],
     FunctionInvocationLayer[Any],
+    ChatTelemetryLayer[Any],
     _MockBaseChatClient,
 ):
     """Mock client with function invocation support."""
