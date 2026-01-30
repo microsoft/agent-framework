@@ -70,6 +70,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.ConcurrentRunsEnabled = enableConcurrentRuns;
         this.OutgoingEvents = outgoingEvents;
     }
+    public WorkflowTelemetryContext TelemetryContext => this._workflow.TelemetryContext;
 
     public IExternalRequestSink RegisterPort(string executorId, RequestPort port)
     {
@@ -195,12 +196,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return this.OutgoingEvents.EnqueueAsync(workflowEvent);
     }
 
-    private static readonly string s_namespace = typeof(IWorkflowContext).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
-
     public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default)
     {
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        using Activity? activity = this._workflow.TelemetryContext.StartMessageSendActivity(sourceId, targetId, message);
+
         // Create a carrier for trace context propagation
         var traceContext = activity is null ? null : new Dictionary<string, string>();
         if (traceContext is not null)
