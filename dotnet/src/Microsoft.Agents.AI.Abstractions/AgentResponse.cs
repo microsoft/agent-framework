@@ -1,19 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-#if NET
-using System.Buffers;
-#endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
-#if NET
-using System.Text;
-#endif
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using Microsoft.Shared.Diagnostics;
 using Microsoft.Extensions.AI;
 
@@ -289,118 +281,5 @@ public class AgentResponse
         }
 
         return updates;
-    }
-
-    /// <summary>
-    /// Deserializes the response text into the given type.
-    /// </summary>
-    /// <typeparam name="T">The output type to deserialize into.</typeparam>
-    /// <returns>The result as the requested type.</returns>
-    /// <exception cref="InvalidOperationException">The result is not parsable into the requested type.</exception>
-    public T Deserialize<T>() =>
-        this.Deserialize<T>(AgentAbstractionsJsonUtilities.DefaultOptions);
-
-    /// <summary>
-    /// Deserializes the response text into the given type using the specified serializer options.
-    /// </summary>
-    /// <typeparam name="T">The output type to deserialize into.</typeparam>
-    /// <param name="serializerOptions">The JSON serialization options to use.</param>
-    /// <returns>The result as the requested type.</returns>
-    /// <exception cref="InvalidOperationException">The result is not parsable into the requested type.</exception>
-    public T Deserialize<T>(JsonSerializerOptions serializerOptions)
-    {
-        _ = Throw.IfNull(serializerOptions);
-
-        var structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
-        return failureReason switch
-        {
-            FailureReason.ResultDidNotContainJson => throw new InvalidOperationException("The response did not contain JSON to be deserialized."),
-            FailureReason.DeserializationProducedNull => throw new InvalidOperationException("The deserialized response is null."),
-            _ => structuredOutput!,
-        };
-    }
-
-    /// <summary>
-    /// Tries to deserialize response text into the given type.
-    /// </summary>
-    /// <typeparam name="T">The output type to deserialize into.</typeparam>
-    /// <param name="structuredOutput">The parsed structured output.</param>
-    /// <returns><see langword="true" /> if parsing was successful; otherwise, <see langword="false" />.</returns>
-    public bool TryDeserialize<T>([NotNullWhen(true)] out T? structuredOutput) =>
-        this.TryDeserialize(AgentAbstractionsJsonUtilities.DefaultOptions, out structuredOutput);
-
-    /// <summary>
-    /// Tries to deserialize response text into the given type using the specified serializer options.
-    /// </summary>
-    /// <typeparam name="T">The output type to deserialize into.</typeparam>
-    /// <param name="serializerOptions">The JSON serialization options to use.</param>
-    /// <param name="structuredOutput">The parsed structured output.</param>
-    /// <returns><see langword="true" /> if parsing was successful; otherwise, <see langword="false" />.</returns>
-    public bool TryDeserialize<T>(JsonSerializerOptions serializerOptions, [NotNullWhen(true)] out T? structuredOutput)
-    {
-        _ = Throw.IfNull(serializerOptions);
-
-        try
-        {
-            structuredOutput = this.GetResultCore<T>(serializerOptions, out var failureReason);
-            return failureReason is null;
-        }
-        catch
-        {
-            structuredOutput = default;
-            return false;
-        }
-    }
-
-    private static T? DeserializeFirstTopLevelObject<T>(string json, JsonTypeInfo<T> typeInfo)
-    {
-#if NET
-        // We need to deserialize only the first top-level object as a workaround for a common LLM backend
-        // issue. GPT 3.5 Turbo commonly returns multiple top-level objects after doing a function call.
-        // See https://community.openai.com/t/2-json-objects-returned-when-using-function-calling-and-json-mode/574348
-        var utf8ByteLength = Encoding.UTF8.GetByteCount(json);
-        var buffer = ArrayPool<byte>.Shared.Rent(utf8ByteLength);
-        try
-        {
-            var utf8SpanLength = Encoding.UTF8.GetBytes(json, 0, json.Length, buffer, 0);
-            var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(buffer, 0, utf8SpanLength), new() { AllowMultipleValues = true });
-            return JsonSerializer.Deserialize(ref reader, typeInfo);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
-#else
-        return JsonSerializer.Deserialize(json, typeInfo);
-#endif
-    }
-
-    private T? GetResultCore<T>(JsonSerializerOptions serializerOptions, out FailureReason? failureReason)
-    {
-        var json = this.Text;
-        if (string.IsNullOrEmpty(json))
-        {
-            failureReason = FailureReason.ResultDidNotContainJson;
-            return default;
-        }
-
-        // If there's an exception here, we want it to propagate, since the Result property is meant to throw directly
-
-        T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
-
-        if (deserialized is null)
-        {
-            failureReason = FailureReason.DeserializationProducedNull;
-            return default;
-        }
-
-        failureReason = default;
-        return deserialized;
-    }
-
-    private enum FailureReason
-    {
-        ResultDidNotContainJson,
-        DeserializationProducedNull
     }
 }
