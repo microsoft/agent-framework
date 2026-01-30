@@ -234,7 +234,7 @@ def get_sample_path_from_marker(request) -> tuple[Path | None, str | None]:
 
     sample_name = marker.args[0]
     repo_root = _resolve_repo_root()
-    sample_path = repo_root / "samples" / "getting_started" / "azure_functions" / sample_name
+    sample_path = repo_root / "samples" / "durable" / "azure_functions" / sample_name
 
     if not sample_path.exists():
         return None, f"Sample directory does not exist: {sample_path}"
