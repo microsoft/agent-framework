@@ -117,7 +117,14 @@ public class WeatherForecastAgent : DelegatingAIAgent
     {
         try
         {
-            structuredOutput = JsonSerializer.Deserialize<T>(json, jsonSerializerOptions)!;
+            T? result = JsonSerializer.Deserialize<T>(json, jsonSerializerOptions);
+            if (result is null)
+            {
+                structuredOutput = default!;
+                return false;
+            }
+
+            structuredOutput = result;
             return true;
         }
         catch
