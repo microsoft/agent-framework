@@ -3,34 +3,34 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
 using Azure.Core;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.PowerFx;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="AIAgent"/> using a <see cref="ChatClient"/>.
+/// Provides an <see cref="PromptAgentFactory"/> which creates instances of <see cref="AIAgent"/> using a <see cref="ChatClient"/>.
 /// </summary>
-public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
+public sealed class OpenAIPromptAgentFactory : BaseOpenAIPromptAgentFactory
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIPromptAgentFactory"/> class.
     /// </summary>
-    public OpenAIChatAgentFactory(IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration, loggerFactory)
+    public OpenAIPromptAgentFactory(IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration, loggerFactory)
     {
         this._functions = functions;
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIPromptAgentFactory"/> class.
     /// </summary>
-    public OpenAIChatAgentFactory(ChatClient chatClient, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration, loggerFactory)
+    public OpenAIPromptAgentFactory(ChatClient chatClient, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration, loggerFactory)
     {
         Throw.IfNull(chatClient);
 
@@ -39,9 +39,9 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIPromptAgentFactory"/> class.
     /// </summary>
-    public OpenAIChatAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, configuration, loggerFactory)
+    public OpenAIPromptAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, engine, configuration, loggerFactory)
     {
         this._functions = functions;
     }
@@ -62,8 +62,7 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
         {
             Name = promptAgent.Name,
             Description = promptAgent.Description,
-            Instructions = promptAgent.Instructions?.ToTemplateString(),
-            ChatOptions = promptAgent.GetChatOptions(this._functions),
+            ChatOptions = promptAgent.GetChatOptions(this.Engine, this._functions),
         };
 
         ChatClient? chatClient = this._chatClient ?? this.CreateChatClient(promptAgent);

@@ -3,9 +3,10 @@ using System;
 using System.ClientModel;
 using Azure.AI.OpenAI;
 using Azure.Core;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.PowerFx;
 using Microsoft.Shared.Diagnostics;
 using OpenAI;
 using OpenAI.Assistants;
@@ -15,22 +16,22 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an <see cref="OpenAIAgentFactory"/> abstract base class.
+/// Provides an <see cref="BaseOpenAIPromptAgentFactory"/> abstract base class.
 /// </summary>
-public abstract class OpenAIAgentFactory : AgentFactory
+public abstract class BaseOpenAIPromptAgentFactory : PromptAgentFactory
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="BaseOpenAIPromptAgentFactory"/> class.
     /// </summary>
-    protected OpenAIAgentFactory(IConfiguration? configuration, ILoggerFactory? loggerFactory) : base(configuration)
+    protected BaseOpenAIPromptAgentFactory(RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
     {
         this.LoggerFactory = loggerFactory;
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="BaseOpenAIPromptAgentFactory"/> class.
     /// </summary>
-    protected OpenAIAgentFactory(Uri endpoint, TokenCredential tokenCredential, IConfiguration? configuration, ILoggerFactory? loggerFactory) : base(configuration)
+    protected BaseOpenAIPromptAgentFactory(Uri endpoint, TokenCredential tokenCredential, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
     {
         Throw.IfNull(endpoint);
         Throw.IfNull(tokenCredential);
@@ -88,21 +89,21 @@ public abstract class OpenAIAgentFactory : AgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIResponseClient"/> class.
+    /// Creates a new instance of the <see cref="ResponsesClient"/> class.
     /// </summary>
-    protected OpenAIResponseClient? CreateResponseClient(GptComponentMetadata promptAgent)
+    protected ResponsesClient? CreateResponseClient(GptComponentMetadata promptAgent)
     {
         var model = promptAgent.Model as CurrentModels;
         var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
         if (provider == ModelProvider.OpenAI)
         {
-            return this.CreateOpenAIResponseClient(promptAgent);
+            return this.CreateResponsesClient(promptAgent);
         }
         else if (provider == ModelProvider.AzureOpenAI)
         {
             Throw.IfNull(this._endpoint, "The connection endpoint must be specified to create an Azure OpenAI client.");
             Throw.IfNull(this._tokenCredential, "A token credential must be specified to create an Azure OpenAI client");
-            return CreateAzureOpenAIResponseClient(promptAgent, this._endpoint, this._tokenCredential);
+            return CreateAzureResponsesClient(promptAgent, this._endpoint, this._tokenCredential);
         }
 
         return null;
@@ -144,20 +145,20 @@ public abstract class OpenAIAgentFactory : AgentFactory
         return new AzureOpenAIClient(endpoint, tokenCredential).GetAssistantClient();
     }
 
-    private OpenAIResponseClient CreateOpenAIResponseClient(GptComponentMetadata promptAgent)
+    private ResponsesClient CreateResponsesClient(GptComponentMetadata promptAgent)
     {
         var modelId = promptAgent.Model?.ModelNameHint;
         Throw.IfNullOrEmpty(modelId, "The model id must be specified in the agent definition to create an OpenAI agent.");
 
-        return this.CreateOpenAIClient(promptAgent).GetOpenAIResponseClient(modelId);
+        return this.CreateOpenAIClient(promptAgent).GetResponsesClient(modelId);
     }
 
-    private static OpenAIResponseClient CreateAzureOpenAIResponseClient(GptComponentMetadata promptAgent, Uri endpoint, TokenCredential tokenCredential)
+    private static ResponsesClient CreateAzureResponsesClient(GptComponentMetadata promptAgent, Uri endpoint, TokenCredential tokenCredential)
     {
         var deploymentName = promptAgent.Model?.ModelNameHint;
         Throw.IfNullOrEmpty(deploymentName, "The deployment name (using model.id) must be specified in the agent definition to create an Azure OpenAI agent.");
 
-        return new AzureOpenAIClient(endpoint, tokenCredential).GetOpenAIResponseClient(deploymentName);
+        return new AzureOpenAIClient(endpoint, tokenCredential).GetResponsesClient(deploymentName);
     }
 
     private OpenAIClient CreateOpenAIClient(GptComponentMetadata promptAgent)

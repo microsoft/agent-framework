@@ -402,7 +402,7 @@
     <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CosmosNoSql/Microsoft.Agents.AI.CosmosNoSql.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Declarative.AzureAI.Persistent/Microsoft.Agents.AI.Declarative.AzureAI.Persistent.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Declarative.AzureAI/Microsoft.Agents.AI.Declarative.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DurableTask/Microsoft.Agents.AI.DurableTask.csproj" />
