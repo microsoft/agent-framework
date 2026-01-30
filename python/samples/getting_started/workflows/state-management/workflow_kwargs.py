@@ -15,7 +15,7 @@ This sample demonstrates how to flow custom context (skill data, user tokens, et
 through any workflow pattern to @tool functions using the **kwargs pattern.
 
 Key Concepts:
-- Pass custom context as kwargs when invoking workflow.run_stream() or workflow.run()
+- Pass custom context as kwargs when invoking workflow.run()
 - kwargs are stored in SharedState and passed to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 - Works with Sequential, Concurrent, GroupChat, Handoff, and Magentic patterns
@@ -112,8 +112,9 @@ async def main() -> None:
     print("-" * 70)
 
     # Run workflow with kwargs - these will flow through to tools
-    async for event in workflow.run_stream(
+    async for event in workflow.run(
         "Please get my user data and then call the users API endpoint.",
+        stream=True,
         custom_data=custom_data,
         user_token=user_token,
     ):

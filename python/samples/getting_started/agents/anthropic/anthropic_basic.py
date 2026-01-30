@@ -4,14 +4,15 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.anthropic import AnthropicClient
 from agent_framework import tool
+from agent_framework.anthropic import AnthropicClient
 
 """
 Anthropic Chat Agent Example
 
 This sample demonstrates using Anthropic with an agent and a single custom tool.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
@@ -54,7 +55,7 @@ async def streaming_example() -> None:
     query = "What's the weather like in Portland and in Paris?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
-    async for chunk in agent.run_stream(query):
+    async for chunk in agent.run(query, stream=True):
         if chunk.text:
             print(chunk.text, end="", flush=True)
     print("\n")

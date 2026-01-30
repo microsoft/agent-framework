@@ -12,7 +12,6 @@ from agent_framework import (
     MagenticPlanReviewRequest,
     RequestInfoEvent,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -88,7 +87,7 @@ async def main() -> None:
         if pending_responses is not None:
             stream = workflow.send_responses_streaming(pending_responses)
         else:
-            stream = workflow.run_stream(task)
+            stream = workflow.run(task, stream=True)
 
         last_message_id: str | None = None
         async for event in stream:

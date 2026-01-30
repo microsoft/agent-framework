@@ -499,6 +499,6 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """Check if the workflow is running in streaming mode.
 
         Returns:
-            True if the workflow was started with run_stream(), False if started with run().
+            True if the workflow was started with stream=True, False otherwise.
         """
         return self._runner_context.is_streaming()

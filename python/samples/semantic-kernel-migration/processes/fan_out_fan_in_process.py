@@ -231,7 +231,7 @@ async def run_agent_framework_workflow_example() -> str | None:
     )
 
     final_text: str | None = None
-    async for event in workflow.run_stream(CommonEvents.START_PROCESS):
+    async for event in workflow.run(CommonEvents.START_PROCESS, stream=True):
         if isinstance(event, WorkflowOutputEvent):
             final_text = cast(str, event.data)
 

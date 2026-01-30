@@ -54,7 +54,7 @@ async def run_autogen() -> None:
 
     # Run with a question that requires expert selection
     print("[AutoGen] Selector group chat conversation:")
-    await Console(team.run_stream(task="How do I connect to a PostgreSQL database using Python?"))
+    await Console(team.run(task="How do I connect to a PostgreSQL database using Python?", stream=True))
 
 
 async def run_agent_framework() -> None:
@@ -99,7 +99,7 @@ async def run_agent_framework() -> None:
     # Run with a question that requires expert selection
     print("[Agent Framework] Group chat conversation:")
     current_executor = None
-    async for event in workflow.run_stream("How do I connect to a PostgreSQL database using Python?"):
+    async for event in workflow.run("How do I connect to a PostgreSQL database using Python?", stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:

@@ -67,7 +67,7 @@ async def main():
     await output_dir.mkdir(exist_ok=True)
 
     print(" Streaming response:")
-    async for update in agent.run_stream(query):
+    async for update in agent.run(query, stream=True):
         for content in update.contents:
             # Handle partial images
             # The final partial image IS the complete, full-quality image. Each partial

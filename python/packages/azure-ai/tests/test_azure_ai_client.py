@@ -423,7 +423,10 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     with (
-        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
         patch.object(
             client,
             "_get_agent_reference_or_create",
@@ -457,7 +460,10 @@ async def test_prepare_options_with_application_endpoint(
     messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     with (
-        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
         patch.object(
             client,
             "_get_agent_reference_or_create",
@@ -496,7 +502,10 @@ async def test_prepare_options_with_application_project_client(
     messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
 
     with (
-        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
         patch.object(
             client,
             "_get_agent_reference_or_create",
@@ -952,9 +961,8 @@ async def test_prepare_options_excludes_response_format(
     chat_options: ChatOptions = {}
 
     with (
-        patch.object(
-            client.__class__.__bases__[0],
-            "_prepare_options",
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "response_format": ResponseFormatModel,
@@ -1279,7 +1287,7 @@ async def client() -> AsyncGenerator[AzureAIClient, None]:
         )
         try:
             assert client.function_invocation_configuration
-            client.function_invocation_configuration.max_iterations = 1
+            client.function_invocation_configuration["max_iterations"] = 1
             yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)
@@ -1345,8 +1353,9 @@ async def test_integration_options(
     for streaming in [False, True]:
         if streaming:
             # Test streaming mode
-            response_gen = client.get_streaming_response(
+            response_gen = client.get_response(
                 messages=messages,
+                stream=True,
                 options=options,
             )
 
@@ -1448,8 +1457,9 @@ async def test_integration_agent_options(
 
             if streaming:
                 # Test streaming mode
-                response_gen = client.get_streaming_response(
+                response_gen = client.get_response(
                     messages=messages,
+                    stream=True,
                     options=options,
                 )
 
@@ -1498,7 +1508,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
             else:
                 response = await client.get_response(**content)
 
@@ -1523,7 +1533,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
             else:
                 response = await client.get_response(**content)
             assert response.text is not None

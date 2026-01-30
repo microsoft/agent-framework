@@ -3,8 +3,6 @@
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
 import json
-import sys
-from pathlib import Path
 
 from agent_framework import ChatAgent, ChatResponseUpdate, Content
 from fastapi import FastAPI, Header, HTTPException
@@ -14,8 +12,7 @@ from fastapi.testclient import TestClient
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 
-sys.path.insert(0, str(Path(__file__).parent))
-from utils_test_ag_ui import StreamingChatClientStub, stream_from_updates
+from .conftest import StreamingChatClientStub, stream_from_updates
 
 
 def build_chat_client(response_text: str = "Test response") -> StreamingChatClientStub:

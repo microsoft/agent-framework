@@ -680,8 +680,8 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
     assert len(response.messages) == 1
 
 
-async def test_inner_get_streaming_response(mock_anthropic_client: MagicMock) -> None:
-    """Test _inner_get_streaming_response method."""
+async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) -> None:
+    """Test _inner_get_response method with streaming."""
     chat_client = create_test_anthropic_client(mock_anthropic_client)
 
     # Create mock streaming response
@@ -696,8 +696,8 @@ async def test_inner_get_streaming_response(mock_anthropic_client: MagicMock) ->
     chat_options = ChatOptions(max_tokens=10)
 
     chunks: list[ChatResponseUpdate] = []
-    async for chunk in chat_client._inner_get_streaming_response(  # type: ignore[attr-defined]
-        messages=messages, options=chat_options
+    async for chunk in chat_client._inner_get_response(  # type: ignore[attr-defined]
+        messages=messages, options=chat_options, stream=True
     ):
         if chunk:
             chunks.append(chunk)
@@ -743,7 +743,7 @@ async def test_anthropic_client_integration_streaming_chat() -> None:
     messages = [ChatMessage(role=Role.USER, text="Count from 1 to 5.")]
 
     chunks = []
-    async for chunk in client.get_streaming_response(messages=messages, options={"max_tokens": 50}):
+    async for chunk in client.get_response(messages=messages, stream=True, options={"max_tokens": 50}):
         chunks.append(chunk)
 
     assert len(chunks) > 0

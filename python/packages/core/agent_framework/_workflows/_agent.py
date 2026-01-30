@@ -4,16 +4,16 @@ import json
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
     Role,
@@ -21,7 +21,7 @@ from agent_framework import (
 )
 
 from .._types import add_usage_details
-from ..exceptions import AgentExecutionException
+from ..exceptions import AgentRunException
 from ._agent_executor import AgentExecutor
 from ._checkpoint import CheckpointStorage
 from ._events import (
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WorkflowAgent(BaseAgent):
+class WorkflowAgent(BareAgent):
     """An `Agent` subclass that wraps a workflow and exposes it as an agent."""
 
     # Class variable for the request info function name
@@ -93,11 +93,11 @@ class WorkflowAgent(BaseAgent):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            **kwargs: Additional keyword arguments passed to BareAgent.
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
-        # Initialize with standard BaseAgent parameters first
+        # Initialize with standard BareAgent parameters first
         # Validate the workflow's start executor can handle agent-facing message inputs
         try:
             start_executor = workflow.get_start_executor()
@@ -119,22 +119,49 @@ class WorkflowAgent(BaseAgent):
     def pending_requests(self) -> dict[str, RequestInfoEvent]:
         return self._pending_requests
 
-    async def run(
+    @overload
+    def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: Literal[False] = False,
         thread: AgentThread | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        """Get a response from the workflow agent (non-streaming).
+    ) -> Awaitable[AgentResponse]: ...
 
-        This method collects all streaming updates and merges them into a single response.
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        """Get a response from the workflow agent.
+
+        This method collects all streaming updates and merges them into a single response
+        when stream=False, or yields updates as they occur when stream=True.
 
         Args:
             messages: The message(s) to send to the workflow. Required for new runs,
                 should be None when resuming from checkpoint.
+            stream: Whether to stream response updates (True) or return final response (False).
 
         Keyword Args:
             thread: The conversation thread. If None, a new thread will be created.
@@ -147,8 +174,35 @@ class WorkflowAgent(BaseAgent):
                 and tool functions.
 
         Returns:
-            The final workflow response as an AgentResponse.
+            When stream=False: The final workflow response as an AgentResponse.
+            When stream=True: An async iterable of AgentResponseUpdate objects.
         """
+        if stream:
+            return self._run_stream_internal(
+                messages=messages,
+                thread=thread,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+                **kwargs,
+            )
+        return self._run_internal(
+            messages=messages,
+            thread=thread,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+            **kwargs,
+        )
+
+    async def _run_internal(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        """Internal non-streaming implementation."""
         # Collect all streaming updates
         response_updates: list[AgentResponseUpdate] = []
         input_messages = normalize_messages_input(messages)
@@ -168,7 +222,7 @@ class WorkflowAgent(BaseAgent):
 
         return response
 
-    async def run_stream(
+    async def _run_stream_internal(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -177,25 +231,7 @@ class WorkflowAgent(BaseAgent):
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Stream response updates from the workflow agent.
-
-        Args:
-            messages: The message(s) to send to the workflow. Required for new runs,
-                should be None when resuming from checkpoint.
-
-        Keyword Args:
-            thread: The conversation thread. If None, a new thread will be created.
-            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow
-                resumes from this checkpoint instead of starting fresh.
-            checkpoint_storage: Runtime checkpoint storage. When provided with checkpoint_id,
-                used to load and restore the checkpoint. When provided without checkpoint_id,
-                enables checkpointing for this run.
-            **kwargs: Additional keyword arguments passed through to underlying workflow
-                and tool functions.
-
-        Yields:
-            AgentResponseUpdate objects representing the workflow execution progress.
-        """
+        """Internal streaming implementation."""
         input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_updates: list[AgentResponseUpdate] = []
@@ -258,8 +294,9 @@ class WorkflowAgent(BaseAgent):
         elif checkpoint_id is not None:
             # Resume from checkpoint - don't prepend thread history since workflow state
             # is being restored from the checkpoint
-            event_stream = self.workflow.run_stream(
+            event_stream = self.workflow.run(
                 message=None,
+                stream=True,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 **kwargs,
@@ -273,8 +310,9 @@ class WorkflowAgent(BaseAgent):
                 if history:
                     conversation_messages.extend(history)
             conversation_messages.extend(input_messages)
-            event_stream = self.workflow.run_stream(
+            event_stream = self.workflow.run(
                 message=conversation_messages,
+                stream=True,
                 checkpoint_storage=checkpoint_storage,
                 **kwargs,
             )
@@ -393,24 +431,24 @@ class WorkflowAgent(BaseAgent):
                         try:
                             parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
                         except ValueError as exc:
-                            raise AgentExecutionException(
+                            raise AgentRunException(
                                 "FunctionApprovalResponseContent arguments must decode to a mapping."
                             ) from exc
                     elif isinstance(arguments_payload, dict):
                         parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
                     else:
-                        raise AgentExecutionException(
+                        raise AgentRunException(
                             "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
                         )
 
-                    request_id = parsed_args.request_id or content.id  # type: ignore[attr-defined]
-                    if not content.approved:  # type: ignore[attr-defined]
-                        raise AgentExecutionException(f"Request '{request_id}' was not approved by the caller.")
+                    request_id = parsed_args.request_id or content.id
+                    if not content.approved:
+                        raise AgentRunException(f"Request '{request_id}' was not approved by the caller.")
 
                     if request_id in self.pending_requests:
                         function_responses[request_id] = parsed_args.data
                     elif bool(self.pending_requests):
-                        raise AgentExecutionException(
+                        raise AgentRunException(
                             "Only responses for pending requests are allowed when there are outstanding approvals."
                         )
                 elif content.type == "function_result":
@@ -419,12 +457,12 @@ class WorkflowAgent(BaseAgent):
                         response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
                         function_responses[request_id] = response_data
                     elif bool(self.pending_requests):
-                        raise AgentExecutionException(
+                        raise AgentRunException(
                             "Only function responses for pending requests are allowed while requests are outstanding."
                         )
                 else:
                     if bool(self.pending_requests):
-                        raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
+                        raise AgentRunException("Unexpected content type while awaiting request info responses.")
         return function_responses
 
     def _extract_contents(self, data: Any) -> list[Content]:

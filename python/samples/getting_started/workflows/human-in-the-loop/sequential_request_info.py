@@ -32,7 +32,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -84,7 +83,7 @@ async def main() -> None:
         stream = (
             workflow.send_responses_streaming(pending_responses)
             if pending_responses
-            else workflow.run_stream("Write a brief introduction to artificial intelligence.")
+            else workflow.run("Write a brief introduction to artificial intelligence.", stream=True)
         )
 
         pending_responses = None

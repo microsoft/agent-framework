@@ -53,9 +53,10 @@ async def run_agent_framework() -> None:
     print("[AF]", first.text)
 
     print("[AF][stream]", end=" ")
-    async for chunk in chat_agent.run_stream(
+    async for chunk in chat_agent.run(
         "Draft a 2 sentence blurb.",
         thread=thread,
+        stream=True,
     ):
         if chunk.text:
             print(chunk.text, end="", flush=True)

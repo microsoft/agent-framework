@@ -74,8 +74,9 @@ async def streaming_example() -> None:
     print(f"User: {query}")
 
     chunks: list[str] = []
-    async for chunk in agent.run_stream(
+    async for chunk in agent.run(
         query,
+        stream=True,
         options={
             "response_format": {
                 "type": "json_schema",

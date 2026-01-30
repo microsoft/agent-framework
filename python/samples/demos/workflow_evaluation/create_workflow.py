@@ -57,7 +57,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     executor,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
@@ -191,7 +190,7 @@ async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> d
     workflow, agent_map = await _create_workflow(chat_client.project_client, chat_client.credential)
 
     # Process workflow events
-    events = workflow.run_stream(query)
+    events = workflow.run(query, stream=True)
     workflow_output = await _process_workflow_events(events, conversation_ids, response_ids)
 
     return {

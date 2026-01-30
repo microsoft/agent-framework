@@ -50,9 +50,9 @@ Prerequisites:
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
-
 def fetch_product_brief(
     product_name: Annotated[str, Field(description="Product name to look up.")],
 ) -> str:
@@ -68,8 +68,8 @@ def fetch_product_brief(
     }
     return briefs.get(product_name.lower(), f"No stored brief for '{product_name}'.")
 
-@tool(approval_mode="never_require")
 
+@tool(approval_mode="never_require")
 def get_brand_voice_profile(
     voice_name: Annotated[str, Field(description="Brand or campaign voice to emulate.")],
 ) -> str:
@@ -278,8 +278,9 @@ async def main() -> None:
     while not completed:
         last_executor: str | None = None
         if initial_run:
-            stream = workflow.run_stream(
-                "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting."
+            stream = workflow.run(
+                "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
+                stream=True,
             )
             initial_run = False
         elif pending_responses is not None:

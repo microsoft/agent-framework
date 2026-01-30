@@ -104,7 +104,7 @@ class MyChatKitServer(ChatKitServer[dict[str, Any]]):
         agent_messages = await simple_to_agent_input(thread_items_page.data)
 
         # Run the agent and stream responses
-        response_stream = agent.run_stream(agent_messages)
+        response_stream = agent.run(agent_messages, stream=True)
 
         # Convert agent responses back to ChatKit events
         async for event in stream_agent_response(response_stream, thread.id):

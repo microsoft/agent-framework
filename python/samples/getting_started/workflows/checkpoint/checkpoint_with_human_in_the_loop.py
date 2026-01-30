@@ -26,7 +26,6 @@ from agent_framework import (
     get_checkpoint_summary,
     handler,
     response_handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -253,10 +252,10 @@ async def run_interactive_session(
         else:
             if initial_message:
                 print(f"\nStarting workflow with brief: {initial_message}\n")
-                event_stream = workflow.run_stream(message=initial_message)
+                event_stream = workflow.run(message=initial_message, stream=True)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)
+                event_stream = workflow.run(checkpoint_id=checkpoint_id, stream=True)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 

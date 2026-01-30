@@ -8,6 +8,7 @@ PACKAGE_NAME = "agent-framework-ag-ui"
 _IMPORTS = [
     "__version__",
     "AgentFrameworkAgent",
+    "AGUIThread",
     "add_agent_framework_fastapi_endpoint",
     "AGUIChatClient",
     "AGUIEventConverter",

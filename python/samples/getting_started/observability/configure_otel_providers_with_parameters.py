@@ -6,7 +6,7 @@ from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import tool, setup_logging
+from agent_framework import setup_logging, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
@@ -71,7 +71,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
         print(f"User: {message}")
         if stream:
             print("Assistant: ", end="")
-            async for chunk in client.get_streaming_response(message, tools=get_weather):
+            async for chunk in client.get_response(message, stream=True, tools=get_weather):
                 if str(chunk):
                     print(str(chunk), end="")
             print("")

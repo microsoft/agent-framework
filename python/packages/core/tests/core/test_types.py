@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -20,6 +20,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    ResponseStream,
     Role,
     TextSpanRegion,
     ToolMode,
@@ -2516,6 +2517,841 @@ def test_validate_uri_data_uri():
     uri = f"data:text/plain;base64,{data}"
     result = _validate_uri(uri, None)
     assert "uri" in result
+
+
+# endregion
+
+
+# region ResponseStream
+
+
+async def _generate_updates(count: int = 5) -> AsyncIterable[ChatResponseUpdate]:
+    """Helper to generate test updates."""
+    for i in range(count):
+        yield ChatResponseUpdate(contents=[Content.from_text(f"update_{i}")], role=Role.ASSISTANT)
+
+
+def _combine_updates(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+    """Helper finalizer that combines updates into a response."""
+    return ChatResponse.from_chat_response_updates(updates)
+
+
+class TestResponseStreamBasicIteration:
+    """Tests for basic ResponseStream iteration."""
+
+    async def test_iterate_collects_updates(self) -> None:
+        """Iterating through stream collects all updates."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1", "update_2"]
+        assert len(stream.updates) == 3
+
+    async def test_stream_consumed_after_iteration(self) -> None:
+        """Stream is marked consumed after full iteration."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert stream._consumed is True
+
+    async def test_get_final_response_after_iteration(self) -> None:
+        """Can get final response after iterating."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        final = await stream.get_final_response()
+        assert final.text == "update_0update_1update_2"
+
+    async def test_get_final_response_without_iteration(self) -> None:
+        """get_final_response auto-iterates if not consumed."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        final = await stream.get_final_response()
+
+        assert final.text == "update_0update_1update_2"
+        assert stream._consumed is True
+
+    async def test_updates_property_returns_collected(self) -> None:
+        """updates property returns collected updates."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert len(stream.updates) == 2
+        assert stream.updates[0].text == "update_0"
+        assert stream.updates[1].text == "update_1"
+
+
+class TestResponseStreamTransformHooks:
+    """Tests for transform hooks (per-update processing)."""
+
+    async def test_transform_hook_called_for_each_update(self) -> None:
+        """Transform hook is called for each update during iteration."""
+        call_count = {"value": 0}
+
+        def counting_hook(update: ChatResponseUpdate) -> None:
+            call_count["value"] += 1
+
+        stream = ResponseStream(
+            _generate_updates(3),
+            finalizer=_combine_updates,
+            transform_hooks=[counting_hook],
+        )
+
+        await stream.get_final_response()
+
+        assert call_count["value"] == 3
+
+    async def test_transform_hook_can_modify_update(self) -> None:
+        """Transform hook can modify the update."""
+
+        def uppercase_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text((update.text or "").upper())],
+                role=update.role,
+            )
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[uppercase_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["UPDATE_0", "UPDATE_1"]
+
+    async def test_multiple_transform_hooks_chained(self) -> None:
+        """Multiple transform hooks are called in order."""
+        order: list[str] = []
+
+        def hook_a(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append("a")
+            return update
+
+        def hook_b(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append("b")
+            return update
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[hook_a, hook_b],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert order == ["a", "b", "a", "b"]
+
+    async def test_transform_hook_returning_none_keeps_previous(self) -> None:
+        """Transform hook returning None keeps the previous value."""
+
+        def none_hook(update: ChatResponseUpdate) -> None:
+            return None
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[none_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+    async def test_with_transform_hook_fluent_api(self) -> None:
+        """with_transform_hook adds hook via fluent API."""
+        call_count = {"value": 0}
+
+        def counting_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            call_count["value"] += 1
+            return update
+
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates).with_transform_hook(counting_hook)
+
+        async for _ in stream:
+            pass
+
+        assert call_count["value"] == 3
+
+    async def test_async_transform_hook(self) -> None:
+        """Async transform hooks are awaited."""
+
+        async def async_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"async_{update.text}")],
+                role=update.role,
+            )
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[async_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["async_update_0", "async_update_1"]
+
+
+class TestResponseStreamCleanupHooks:
+    """Tests for cleanup hooks (after stream consumption, before finalizer)."""
+
+    async def test_cleanup_hook_called_after_iteration(self) -> None:
+        """Cleanup hook is called after iteration completes."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_cleanup_hook_called_only_once(self) -> None:
+        """Cleanup hook is called only once even if get_final_response called."""
+        call_count = {"value": 0}
+
+        def cleanup_hook() -> None:
+            call_count["value"] += 1
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        assert call_count["value"] == 1
+
+    async def test_multiple_cleanup_hooks(self) -> None:
+        """Multiple cleanup hooks are called in order."""
+        order: list[str] = []
+
+        def hook_a() -> None:
+            order.append("a")
+
+        def hook_b() -> None:
+            order.append("b")
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            cleanup_hooks=[hook_a, hook_b],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert order == ["a", "b"]
+
+    async def test_with_cleanup_hook_fluent_api(self) -> None:
+        """with_cleanup_hook adds hook via fluent API."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates).with_cleanup_hook(cleanup_hook)
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_async_cleanup_hook(self) -> None:
+        """Async cleanup hooks are awaited."""
+        cleanup_called = {"value": False}
+
+        async def async_cleanup() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[async_cleanup],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+
+class TestResponseStreamResultHooks:
+    """Tests for result hooks (after finalizer)."""
+
+    async def test_result_hook_called_after_finalizer(self) -> None:
+        """Result hook is called after finalizer produces result."""
+
+        def add_metadata(response: ChatResponse) -> ChatResponse:
+            response.additional_properties["processed"] = True
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[add_metadata],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.additional_properties["processed"] is True
+
+    async def test_result_hook_can_transform_result(self) -> None:
+        """Result hook can transform the final result."""
+
+        def wrap_text(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(text=f"[{response.text}]", role=Role.ASSISTANT)
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[wrap_text],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "[update_0update_1]"
+
+    async def test_multiple_result_hooks_chained(self) -> None:
+        """Multiple result hooks are called in order."""
+
+        def add_prefix(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(text=f"prefix_{response.text}", role=Role.ASSISTANT)
+
+        def add_suffix(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(text=f"{response.text}_suffix", role=Role.ASSISTANT)
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            result_hooks=[add_prefix, add_suffix],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "prefix_update_0_suffix"
+
+    async def test_result_hook_returning_none_keeps_previous(self) -> None:
+        """Result hook returning None keeps the previous value."""
+        hook_called = {"value": False}
+
+        def none_hook(response: ChatResponse) -> None:
+            hook_called["value"] = True
+            return
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[none_hook],
+        )
+
+        final = await stream.get_final_response()
+
+        assert hook_called["value"] is True
+        assert final.text == "update_0update_1"
+
+    async def test_with_result_hook_fluent_api(self) -> None:
+        """with_result_hook adds hook via fluent API."""
+
+        def add_metadata(response: ChatResponse) -> ChatResponse:
+            response.additional_properties["via_fluent"] = True
+            return response
+
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates).with_result_hook(add_metadata)
+
+        final = await stream.get_final_response()
+
+        assert final.additional_properties["via_fluent"] is True
+
+    async def test_async_result_hook(self) -> None:
+        """Async result hooks are awaited."""
+
+        async def async_hook(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(text=f"async_{response.text}", role=Role.ASSISTANT)
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[async_hook],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "async_update_0update_1"
+
+
+class TestResponseStreamFinalizer:
+    """Tests for the finalizer."""
+
+    async def test_finalizer_receives_all_updates(self) -> None:
+        """Finalizer receives all collected updates."""
+        received_updates: list[ChatResponseUpdate] = []
+
+        def capturing_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            received_updates.extend(updates)
+            return ChatResponse(messages="done", role=Role.ASSISTANT)
+
+        stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)
+
+        await stream.get_final_response()
+
+        assert len(received_updates) == 3
+        assert received_updates[0].text == "update_0"
+        assert received_updates[2].text == "update_2"
+
+    async def test_no_finalizer_returns_updates(self) -> None:
+        """get_final_response returns collected updates if no finalizer configured."""
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(_generate_updates(2))
+
+        final = await stream.get_final_response()
+
+        assert len(final) == 2
+        assert final[0].text == "update_0"
+        assert final[1].text == "update_1"
+
+    async def test_async_finalizer(self) -> None:
+        """Async finalizer is awaited."""
+
+        async def async_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            text = "".join(u.text or "" for u in updates)
+            return ChatResponse(text=f"async_{text}", role=Role.ASSISTANT)
+
+        stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)
+
+        final = await stream.get_final_response()
+
+        assert final.text == "async_update_0update_1"
+
+    async def test_finalized_only_once(self) -> None:
+        """Finalizer is only called once even with multiple get_final_response calls."""
+        call_count = {"value": 0}
+
+        def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            call_count["value"] += 1
+            return ChatResponse(messages="done", role=Role.ASSISTANT)
+
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+
+        await stream.get_final_response()
+        await stream.get_final_response()
+
+        assert call_count["value"] == 1
+
+
+class TestResponseStreamMapAndWithFinalizer:
+    """Tests for ResponseStream.map() and .with_finalizer() functionality."""
+
+    async def test_map_delegates_iteration(self) -> None:
+        """Mapped stream delegates iteration to inner stream."""
+        inner = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1", "update_2"]
+        assert inner._consumed is True
+
+    async def test_map_transforms_updates(self) -> None:
+        """map() transforms each update."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"mapped_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(add_prefix, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["mapped_update_0", "mapped_update_1"]
+
+    async def test_map_requires_finalizer(self) -> None:
+        """map() requires a finalizer since inner's won't work with new type."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        # map() now requires a finalizer parameter
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_1"
+
+    async def test_map_bypasses_inner_result_hooks(self) -> None:
+        """map() bypasses inner's result hooks."""
+        inner_result_hook_called = {"value": False}
+
+        def inner_result_hook(response: ChatResponse) -> ChatResponse:
+            inner_result_hook_called["value"] = True
+            return ChatResponse(text=f"hooked_{response.text}", role=Role.ASSISTANT)
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[inner_result_hook],
+        )
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        await outer.get_final_response()
+
+        # Inner's result_hooks are NOT called - they are bypassed
+        assert inner_result_hook_called["value"] is False
+
+    async def test_with_finalizer_overrides_inner(self) -> None:
+        """with_finalizer() overrides inner's finalizer."""
+        inner_finalizer_called = {"value": False}
+
+        def inner_finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            inner_finalizer_called["value"] = True
+            return ChatResponse(text="inner_result", role=Role.ASSISTANT)
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=inner_finalizer,
+        )
+        outer = inner.with_finalizer(_combine_updates)
+
+        final = await outer.get_final_response()
+
+        # Inner's finalizer is NOT called - outer's takes precedence
+        assert inner_finalizer_called["value"] is False
+        # Result is from outer's finalizer
+        assert final.text == "update_0update_1"
+
+    async def test_with_finalizer_plus_result_hooks(self) -> None:
+        """with_finalizer() works with result hooks."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def outer_hook(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(text=f"outer_{response.text}", role=Role.ASSISTANT)
+
+        outer = inner.with_finalizer(_combine_updates).with_result_hook(outer_hook)
+
+        final = await outer.get_final_response()
+
+        assert final.text == "outer_update_0update_1"
+
+    async def test_map_with_finalizer(self) -> None:
+        """map() takes a finalizer and transforms updates."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"mapped_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(add_prefix, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["mapped_update_0", "mapped_update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "mapped_update_0mapped_update_1"
+
+    async def test_outer_transform_hooks_independent(self) -> None:
+        """Outer stream has its own independent transform hooks."""
+        inner_hook_calls = {"value": 0}
+        outer_hook_calls = {"value": 0}
+
+        def inner_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            inner_hook_calls["value"] += 1
+            return update
+
+        def outer_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            outer_hook_calls["value"] += 1
+            return update
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[inner_hook],
+        )
+        outer = inner.map(lambda u: u, _combine_updates).with_transform_hook(outer_hook)
+
+        async for _ in outer:
+            pass
+
+        assert inner_hook_calls["value"] == 2
+        assert outer_hook_calls["value"] == 2
+
+    async def test_preserves_single_consumption(self) -> None:
+        """Inner stream is only consumed once."""
+        consumption_count = {"value": 0}
+
+        async def counting_generator() -> AsyncIterable[ChatResponseUpdate]:
+            consumption_count["value"] += 1
+            for i in range(2):
+                yield ChatResponseUpdate(contents=[Content.from_text(f"u{i}")], role=Role.ASSISTANT)
+
+        inner = ResponseStream(counting_generator(), finalizer=_combine_updates)
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        async for _ in outer:
+            pass
+        await outer.get_final_response()
+
+        assert consumption_count["value"] == 1
+
+    async def test_async_map_transform(self) -> None:
+        """map() supports async transform function."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async def async_map(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"async_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(async_map, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["async_update_0", "async_update_1"]
+
+    async def test_from_awaitable(self) -> None:
+        """from_awaitable() wraps an awaitable ResponseStream."""
+
+        async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        outer = ResponseStream.from_awaitable(get_stream())
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_1"
+
+
+class TestResponseStreamExecutionOrder:
+    """Tests verifying the correct execution order of hooks."""
+
+    async def test_execution_order_iteration_then_finalize(self) -> None:
+        """Verify execution order: transform -> cleanup -> finalizer -> result."""
+        order: list[str] = []
+
+        def transform_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append(f"transform_{update.text}")
+            return update
+
+        def cleanup_hook() -> None:
+            order.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            order.append("finalizer")
+            return ChatResponse(messages="done", role=Role.ASSISTANT)
+
+        def result_hook(response: ChatResponse) -> ChatResponse:
+            order.append("result")
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=finalizer,
+            transform_hooks=[transform_hook],
+            cleanup_hooks=[cleanup_hook],
+            result_hooks=[result_hook],
+        )
+
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        assert order == [
+            "transform_update_0",
+            "transform_update_1",
+            "cleanup",
+            "finalizer",
+            "result",
+        ]
+
+    async def test_cleanup_runs_before_finalizer_on_direct_finalize(self) -> None:
+        """Cleanup hooks run before finalizer even when not iterating manually."""
+        order: list[str] = []
+
+        def cleanup_hook() -> None:
+            order.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            order.append("finalizer")
+            return ChatResponse(messages="done", role=Role.ASSISTANT)
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=finalizer,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        await stream.get_final_response()
+
+        assert order == ["cleanup", "finalizer"]
+
+
+class TestResponseStreamAwaitableSource:
+    """Tests for ResponseStream with awaitable stream sources."""
+
+    async def test_awaitable_stream_source(self) -> None:
+        """ResponseStream can accept an awaitable that resolves to an async iterable."""
+
+        async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
+            return _generate_updates(2)
+
+        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+    async def test_await_stream(self) -> None:
+        """ResponseStream can be awaited to resolve stream source."""
+
+        async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
+            return _generate_updates(2)
+
+        stream = await ResponseStream(get_stream(), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+
+class TestResponseStreamEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    async def test_empty_stream(self) -> None:
+        """Empty stream produces empty result."""
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]  # Make it a generator
+
+        stream = ResponseStream(empty_gen(), finalizer=_combine_updates)
+
+        final = await stream.get_final_response()
+
+        assert final.text == ""
+        assert len(stream.updates) == 0
+
+    async def test_hooks_not_called_on_empty_stream_iteration(self) -> None:
+        """Transform hooks not called when stream is empty."""
+        hook_calls = {"value": 0}
+
+        def transform_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            hook_calls["value"] += 1
+            return update
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]
+
+        stream = ResponseStream(
+            empty_gen(),
+            finalizer=_combine_updates,
+            transform_hooks=[transform_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert hook_calls["value"] == 0
+
+    async def test_cleanup_called_even_on_empty_stream(self) -> None:
+        """Cleanup hooks are called even when stream is empty."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]
+
+        stream = ResponseStream(
+            empty_gen(),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_all_constructor_parameters(self) -> None:
+        """All constructor parameters work together."""
+        events: list[str] = []
+
+        def transform(u: ChatResponseUpdate) -> ChatResponseUpdate:
+            events.append("transform")
+            return u
+
+        def cleanup() -> None:
+            events.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            events.append("finalizer")
+            return ChatResponse(messages="done", role=Role.ASSISTANT)
+
+        def result(r: ChatResponse) -> ChatResponse:
+            events.append("result")
+            return r
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=finalizer,
+            transform_hooks=[transform],
+            cleanup_hooks=[cleanup],
+            result_hooks=[result],
+        )
+
+        await stream.get_final_response()
+
+        assert events == ["transform", "cleanup", "finalizer", "result"]
 
 
 # endregion

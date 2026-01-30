@@ -58,7 +58,7 @@ async def main() -> None:
 
         # Stream the response and collect citations
         citations: list[Annotation] = []
-        async for chunk in agent.run_stream(user_input):
+        async for chunk in agent.run(user_input, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
 

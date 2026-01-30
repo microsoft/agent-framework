@@ -15,7 +15,6 @@ from agent_framework import (
     MagenticOrchestratorEvent,
     MagenticProgressLedger,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
@@ -105,7 +104,7 @@ async def main() -> None:
     # Keep track of the last executor to format output nicely in streaming mode
     last_message_id: str | None = None
     output_event: WorkflowOutputEvent | None = None
-    async for event in workflow.run_stream(task):
+    async for event in workflow.run(task, stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             message_id = event.data.message_id
             if message_id != last_message_id:

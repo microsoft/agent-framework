@@ -139,8 +139,9 @@ async def main() -> None:
     request_info_events: list[RequestInfoEvent] = []
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
-    async for event in workflow.run_stream(
-        "We need to deploy version 2.4.0 to production. Please coordinate the deployment."
+    async for event in workflow.run(
+        "We need to deploy version 2.4.0 to production. Please coordinate the deployment.",
+        stream=True,
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)

@@ -48,7 +48,7 @@ async def run_autogen() -> None:
 
     # Run the team and display the conversation.
     print("[AutoGen] Round-robin conversation:")
-    await Console(team.run_stream(task="Create a brief summary about electric vehicles"))
+    await Console(team.run(task="Create a brief summary about electric vehicles"), stream=True)
 
 
 async def run_agent_framework() -> None:
@@ -80,7 +80,7 @@ async def run_agent_framework() -> None:
     # Run the workflow
     print("[Agent Framework] Sequential conversation:")
     current_executor = None
-    async for event in workflow.run_stream("Create a brief summary about electric vehicles"):
+    async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
         if isinstance(event, AgentRunUpdateEvent):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:
@@ -103,7 +103,6 @@ async def run_agent_framework_with_cycle() -> None:
         WorkflowContext,
         WorkflowOutputEvent,
         executor,
-        tool,
     )
     from agent_framework.openai import OpenAIChatClient
 
@@ -153,7 +152,7 @@ async def run_agent_framework_with_cycle() -> None:
     # Run the workflow
     print("[Agent Framework with Cycle] Cyclic conversation:")
     current_executor = None
-    async for event in workflow.run_stream("Create a brief summary about electric vehicles"):
+    async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             print("\n---------- Workflow Output ----------")
             print(event.data)

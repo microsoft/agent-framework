@@ -16,8 +16,8 @@ Purpose:
 Show how to wire chat agents into a WorkflowBuilder pipeline by adding agents directly as edges.
 
 Demonstrate:
-- Automatic streaming of agent deltas via AgentRunUpdateEvent when using run_stream().
-- Agents adapt to workflow mode: run_stream() emits incremental updates, run() emits complete responses.
+- Automatic streaming of agent deltas via AgentRunUpdateEvent when using run(..., stream=True).
+- Agents adapt to workflow mode: run(..., stream=True) emits incremental updates, run() emits complete responses.
 
 Prerequisites:
 - Azure AI Agent Service configured, along with the required environment variables.
@@ -49,7 +49,7 @@ def create_reviewer_agent(client: AzureAIAgentClient) -> ChatAgent:
 async def main() -> None:
     async with AzureCliCredential() as cred, AzureAIAgentClient(async_credential=cred) as client:
         # Build the workflow by adding agents directly as edges.
-        # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
+        # Agents adapt to workflow mode: run(..., stream=True) for incremental updates, run() for complete responses.
         workflow = (
             WorkflowBuilder()
             .register_agent(lambda: create_writer_agent(client), name="writer")
@@ -61,7 +61,9 @@ async def main() -> None:
 
         last_executor_id: str | None = None
 
-        events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        events = workflow.run(
+            "Create a slogan for a new electric SUV that is affordable and fun to drive.", stream=True
+        )
         async for event in events:
             if isinstance(event, AgentRunUpdateEvent):
                 eid = event.executor_id

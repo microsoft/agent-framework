@@ -14,7 +14,6 @@ from agent_framework import (
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
-    tool,
 )
 from typing_extensions import Never
 
@@ -330,7 +329,7 @@ async def main():
         raw_text = await f.read()
 
     # Step 4: Run the workflow with the raw text as input.
-    async for event in workflow.run_stream(raw_text):
+    async for event in workflow.run(raw_text, stream=True):
         print(f"Event: {event}")
         if isinstance(event, WorkflowOutputEvent):
             print(f"Final Output: {event.data}")

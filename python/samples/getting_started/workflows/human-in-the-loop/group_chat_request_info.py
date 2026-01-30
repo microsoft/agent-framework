@@ -35,7 +35,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -110,9 +109,10 @@ async def main() -> None:
         stream = (
             workflow.send_responses_streaming(pending_responses)
             if pending_responses
-            else workflow.run_stream(
+            else workflow.run(
                 "Discuss how our team should approach adopting AI tools for productivity. "
-                "Consider benefits, risks, and implementation strategies."
+                "Consider benefits, risks, and implementation strategies.",
+                stream=True,
             )
         )
 

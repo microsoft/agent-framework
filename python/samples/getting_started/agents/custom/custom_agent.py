@@ -8,26 +8,25 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Role,
     TextContent,
-    tool,
 )
 
 """
 Custom Agent Implementation Example
 
-This sample demonstrates implementing a custom agent by extending BaseAgent class,
+This sample demonstrates implementing a custom agent by extending BareAgent class,
 showing the minimal requirements for both streaming and non-streaming responses.
 """
 
 
-class EchoAgent(BaseAgent):
+class EchoAgent(BareAgent):
     """A simple custom agent that echoes user messages with a prefix.
 
-    This demonstrates how to create a fully custom agent by extending BaseAgent
-    and implementing the required run() and run_stream() methods.
+    This demonstrates how to create a fully custom agent by extending BareAgent
+    and implementing the required run() method with stream support.
     """
 
     echo_prefix: str = "Echo: "
@@ -46,7 +45,7 @@ class EchoAgent(BaseAgent):
             name: The name of the agent.
             description: The description of the agent.
             echo_prefix: The prefix to add to echoed messages.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            **kwargs: Additional keyword arguments passed to BareAgent.
         """
         super().__init__(
             name=name,
@@ -55,23 +54,38 @@ class EchoAgent(BaseAgent):
             **kwargs,
         )
 
-    async def run(
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> "AsyncIterable[AgentResponseUpdate] | asyncio.Future[AgentResponse]":
+        """Execute the agent and return a response.
+
+        Args:
+            messages: The message(s) to process.
+            stream: If True, return an async iterable of updates. If False, return an awaitable response.
+            thread: The conversation thread (optional).
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            When stream=False: An awaitable AgentResponse containing the agent's reply.
+            When stream=True: An async iterable of AgentResponseUpdate objects.
+        """
+        if stream:
+            return self._run_stream(messages=messages, thread=thread, **kwargs)
+        return self._run(messages=messages, thread=thread, **kwargs)
+
+    async def _run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        """Execute the agent and return a complete response.
-
-        Args:
-            messages: The message(s) to process.
-            thread: The conversation thread (optional).
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            An AgentResponse containing the agent's reply.
-        """
+        """Non-streaming implementation."""
         # Normalize input messages to a list
         normalized_messages = self._normalize_messages(messages)
 
@@ -96,23 +110,14 @@ class EchoAgent(BaseAgent):
 
         return AgentResponse(messages=[response_message])
 
-    async def run_stream(
+    async def _run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Execute the agent and yield streaming response updates.
-
-        Args:
-            messages: The message(s) to process.
-            thread: The conversation thread (optional).
-            **kwargs: Additional keyword arguments.
-
-        Yields:
-            AgentResponseUpdate objects containing chunks of the response.
-        """
+        """Streaming implementation."""
         # Normalize input messages to a list
         normalized_messages = self._normalize_messages(messages)
 
@@ -169,7 +174,7 @@ async def main() -> None:
     query2 = "This is a streaming test"
     print(f"\nUser: {query2}")
     print("Agent: ", end="", flush=True)
-    async for chunk in echo_agent.run_stream(query2):
+    async for chunk in echo_agent.run(query2, stream=True):
         if chunk.text:
             print(chunk.text, end="", flush=True)
     print()

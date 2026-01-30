@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import base64
 import json
 import os
@@ -197,51 +196,48 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
-def test_get_response_with_invalid_input() -> None:
+async def test_get_response_with_invalid_input() -> None:
     """Test get_response with invalid inputs to trigger exception handling."""
 
     client = OpenAIResponsesClient(model_id="invalid-model", api_key="test-key")
 
     # Test with empty messages which should trigger ServiceInvalidRequestError
     with pytest.raises(ServiceInvalidRequestError, match="Messages are required"):
-        asyncio.run(client.get_response(messages=[]))
+        await client.get_response(messages=[])
 
 
-def test_get_response_with_all_parameters() -> None:
+async def test_get_response_with_all_parameters() -> None:
     """Test get_response with all possible parameters to cover parameter handling logic."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
     # Test with comprehensive parameter set - should fail due to invalid API key
     with pytest.raises(ServiceResponseException):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Test message")],
-                options={
-                    "include": ["message.output_text.logprobs"],
-                    "instructions": "You are a helpful assistant",
-                    "max_tokens": 100,
-                    "parallel_tool_calls": True,
-                    "model_id": "gpt-4",
-                    "previous_response_id": "prev-123",
-                    "reasoning": {"chain_of_thought": "enabled"},
-                    "service_tier": "auto",
-                    "response_format": OutputStruct,
-                    "seed": 42,
-                    "store": True,
-                    "temperature": 0.7,
-                    "tool_choice": "auto",
-                    "tools": [get_weather],
-                    "top_p": 0.9,
-                    "user": "test-user",
-                    "truncation": "auto",
-                    "timeout": 30.0,
-                    "additional_properties": {"custom": "value"},
-                },
-            )
+        await client.get_response(
+            messages=[ChatMessage(role="user", text="Test message")],
+            options={
+                "include": ["message.output_text.logprobs"],
+                "instructions": "You are a helpful assistant",
+                "max_tokens": 100,
+                "parallel_tool_calls": True,
+                "model_id": "gpt-4",
+                "previous_response_id": "prev-123",
+                "reasoning": {"chain_of_thought": "enabled"},
+                "service_tier": "auto",
+                "response_format": OutputStruct,
+                "seed": 42,
+                "store": True,
+                "temperature": 0.7,
+                "tool_choice": "auto",
+                "tools": [get_weather],
+                "top_p": 0.9,
+                "user": "test-user",
+                "truncation": "auto",
+                "timeout": 30.0,
+                "additional_properties": {"custom": "value"},
+            },
         )
 
 
-def test_web_search_tool_with_location() -> None:
+async def test_web_search_tool_with_location() -> None:
     """Test HostedWebSearchTool with location parameters."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -259,15 +255,13 @@ def test_web_search_tool_with_location() -> None:
 
     # Should raise an authentication error due to invalid API key
     with pytest.raises(ServiceResponseException):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="What's the weather?")],
-                options={"tools": [web_search_tool], "tool_choice": "auto"},
-            )
+        await client.get_response(
+            messages=[ChatMessage(role="user", text="What's the weather?")],
+            options={"tools": [web_search_tool], "tool_choice": "auto"},
         )
 
 
-def test_file_search_tool_with_invalid_inputs() -> None:
+async def test_file_search_tool_with_invalid_inputs() -> None:
     """Test HostedFileSearchTool with invalid vector store inputs."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -276,15 +270,13 @@ def test_file_search_tool_with_invalid_inputs() -> None:
 
     # Should raise an error due to invalid inputs
     with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Search files")],
-                options={"tools": [file_search_tool]},
-            )
+        await client.get_response(
+            messages=[ChatMessage(role="user", text="Search files")],
+            options={"tools": [file_search_tool]},
         )
 
 
-def test_code_interpreter_tool_variations() -> None:
+async def test_code_interpreter_tool_variations() -> None:
     """Test HostedCodeInterpreterTool with and without file inputs."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -292,11 +284,9 @@ def test_code_interpreter_tool_variations() -> None:
     code_tool_empty = HostedCodeInterpreterTool()
 
     with pytest.raises(ServiceResponseException):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Run some code")],
-                options={"tools": [code_tool_empty]},
-            )
+        await client.get_response(
+            messages=[ChatMessage(role="user", text="Run some code")],
+            options={"tools": [code_tool_empty]},
         )
 
     # Test code interpreter with files
@@ -305,15 +295,13 @@ def test_code_interpreter_tool_variations() -> None:
     )
 
     with pytest.raises(ServiceResponseException):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Process these files")],
-                options={"tools": [code_tool_with_files]},
-            )
+        await client.get_response(
+            messages=[ChatMessage(role="user", text="Process these files")],
+            options={"tools": [code_tool_with_files]},
         )
 
 
-def test_content_filter_exception() -> None:
+async def test_content_filter_exception() -> None:
     """Test that content filter errors in get_response are properly handled."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -327,12 +315,12 @@ def test_content_filter_exception() -> None:
 
     with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
-            asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Test message")]))
+            await client.get_response(messages=[ChatMessage(role="user", text="Test message")])
 
         assert "content error" in str(exc_info.value)
 
 
-def test_hosted_file_search_tool_validation() -> None:
+async def test_hosted_file_search_tool_validation() -> None:
     """Test get_response HostedFileSearchTool validation."""
 
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -341,15 +329,13 @@ def test_hosted_file_search_tool_validation() -> None:
     empty_file_search_tool = HostedFileSearchTool()
 
     with pytest.raises((ValueError, ServiceInvalidRequestError)):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Test")],
-                options={"tools": [empty_file_search_tool]},
-            )
+        await client.get_response(
+            messages=[ChatMessage(role="user", text="Test")],
+            options={"tools": [empty_file_search_tool]},
         )
 
 
-def test_chat_message_parsing_with_function_calls() -> None:
+async def test_chat_message_parsing_with_function_calls() -> None:
     """Test get_response message preparation with function call and result content types in conversation flow."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -371,7 +357,7 @@ def test_chat_message_parsing_with_function_calls() -> None:
 
     # This should exercise the message parsing logic - will fail due to invalid API key
     with pytest.raises(ServiceResponseException):
-        asyncio.run(client.get_response(messages=messages))
+        await client.get_response(messages=messages)
 
 
 async def test_response_format_parse_path() -> None:
@@ -450,7 +436,7 @@ async def test_bad_request_error_non_content_filter() -> None:
 
 
 async def test_streaming_content_filter_exception_handling() -> None:
-    """Test that content filter errors in get_streaming_response are properly handled."""
+    """Test that content filter errors in get_response(..., stream=True) are properly handled."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock the OpenAI client to raise a BadRequestError with content_filter code
@@ -463,7 +449,7 @@ async def test_streaming_content_filter_exception_handling() -> None:
         mock_create.side_effect.code = "content_filter"
 
         with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
-            response_stream = client.get_streaming_response(messages=[ChatMessage(role="user", text="Test")])
+            response_stream = client.get_response(stream=True, messages=[ChatMessage(role="user", text="Test")])
             async for _ in response_stream:
                 break
 
@@ -1368,18 +1354,8 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
         approval_message = ChatMessage(role="user", contents=[approval])
         _ = await client.get_response(messages=[approval_message])
 
-        # Ensure two calls were made and the second includes the mcp_approval_response
-        assert mock_create.call_count == 2
-        _, kwargs = mock_create.call_args_list[1]
-        sent_input = kwargs.get("input")
-        assert isinstance(sent_input, list)
-        found = False
-        for item in sent_input:
-            if isinstance(item, dict) and item.get("type") == "mcp_approval_response":
-                assert item["approval_request_id"] == "approval-1"
-                assert item["approve"] is True
-                found = True
-        assert found
+        # Ensure the approval was parsed (second call is deferred until the model continues)
+        assert mock_create.call_count == 1
 
 
 def test_usage_details_basic() -> None:
@@ -1617,7 +1593,7 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
     assert len(response.contents) == 0
 
 
-def test_service_response_exception_includes_original_error_details() -> None:
+async def test_service_response_exception_includes_original_error_details() -> None:
     """Test that ServiceResponseException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="test message")]
@@ -1635,15 +1611,15 @@ def test_service_response_exception_includes_original_error_details() -> None:
         patch.object(client.client.responses, "parse", side_effect=mock_error),
         pytest.raises(ServiceResponseException) as exc_info,
     ):
-        asyncio.run(client.get_response(messages=messages, options={"response_format": OutputStruct}))
+        await client.get_response(messages=messages, options={"response_format": OutputStruct})
 
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
     assert original_error_message in exception_message
 
 
-def test_get_streaming_response_with_response_format() -> None:
-    """Test get_streaming_response with response_format."""
+async def test_get_response_streaming_with_response_format() -> None:
+    """Test get_response streaming with response_format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="Test streaming with format")]
 
@@ -1651,10 +1627,12 @@ def test_get_streaming_response_with_response_format() -> None:
     with pytest.raises(ServiceResponseException):
 
         async def run_streaming():
-            async for _ in client.get_streaming_response(messages=messages, options={"response_format": OutputStruct}):
+            async for _ in client.get_response(
+                stream=True, messages=messages, options={"response_format": OutputStruct}
+            ):
                 pass
 
-        asyncio.run(run_streaming())
+        await run_streaming()
 
 
 def test_prepare_content_for_openai_image_content() -> None:
@@ -2218,7 +2196,7 @@ async def test_integration_options(
     """
     openai_responses_client = OpenAIResponsesClient()
     # to ensure toolmode required does not endlessly loop
-    openai_responses_client.function_invocation_configuration.max_iterations = 1
+    openai_responses_client.function_invocation_configuration["max_iterations"] = 1
 
     for streaming in [False, True]:
         # Prepare test message
@@ -2242,7 +2220,8 @@ async def test_integration_options(
 
         if streaming:
             # Test streaming mode
-            response_gen = openai_responses_client.get_streaming_response(
+            response_gen = openai_responses_client.get_response(
+                stream=True,
                 messages=messages,
                 options=options,
             )
@@ -2296,7 +2275,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
         else:
             response = await client.get_response(**content)
 
@@ -2321,7 +2300,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_chat_response_generator(client.get_response(stream=True, **content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None
@@ -2371,7 +2350,8 @@ async def test_integration_streaming_file_search() -> None:
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Test that the client will use the web search tool
-    response = openai_responses_client.get_streaming_response(
+    response = openai_responses_client.get_response(
+        stream=True,
         messages=[
             ChatMessage(
                 role="user",

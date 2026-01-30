@@ -132,9 +132,10 @@ async def main() -> None:
 
     # Phase 1: Run workflow and collect request info events
     request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(
+    async for event in workflow.run(
         "Manage my portfolio. Use a max of 5000 dollars to adjust my position using "
-        "your best judgment based on market sentiment. No need to confirm trades with me."
+        "your best judgment based on market sentiment. No need to confirm trades with me.",
+        stream=True,
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)

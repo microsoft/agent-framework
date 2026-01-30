@@ -46,7 +46,7 @@ from agent_framework.ag_ui import AGUIChatClient
 async def main():
     async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
         # Stream responses
-        async for update in client.get_streaming_response("Hello!"):
+        async for update in client.get_response("Hello!", stream=True):
             for content in update.contents:
                 if isinstance(content, TextContent):
                     print(content.text, end="", flush=True)
