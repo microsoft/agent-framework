@@ -1,4 +1,4 @@
-&#65279;<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <NoWarn>$(NoWarn);IDE1006;VSTHRD200</NoWarn>
