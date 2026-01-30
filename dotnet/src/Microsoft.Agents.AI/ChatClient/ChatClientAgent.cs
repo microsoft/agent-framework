@@ -262,7 +262,6 @@ public sealed partial class ChatClientAgent : AIAgent
 
                 yield return new(update)
                 {
-                    AgentId = this.Id,
                     ContinuationToken = WrapContinuationToken(update.ContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates)
                 };
             }
@@ -465,11 +464,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // Notify the AIContextProvider of all new messages.
         await NotifyAIContextProviderOfSuccessAsync(safeSession, inputMessages, aiContextProviderMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
 
-        var agentResponse = agentResponseFactoryFunc(chatResponse);
-
-        agentResponse.AgentId = this.Id;
-
-        return agentResponse;
+        return agentResponseFactoryFunc(chatResponse);
     }
 
     /// <summary>

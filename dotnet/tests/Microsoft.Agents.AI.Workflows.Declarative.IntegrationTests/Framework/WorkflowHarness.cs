@@ -145,13 +145,13 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                 case AgentResponseEvent responseEvent:
                     if (!string.IsNullOrEmpty(responseEvent.Response.Text))
                     {
-                        Console.WriteLine($"AGENT: {responseEvent.Response.AgentId}: {responseEvent.Response.Text}");
+                        Console.WriteLine($"AGENT: {responseEvent.ExecutorId}: {responseEvent.Response.Text}");
                     }
                     else
                     {
                         foreach (FunctionCallContent toolCall in responseEvent.Response.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
                         {
-                            Console.WriteLine($"TOOL: {toolCall.Name} [{responseEvent.Response.AgentId}]");
+                            Console.WriteLine($"TOOL: {toolCall.Name} [{responseEvent.ExecutorId}]");
                         }
                     }
                     break;

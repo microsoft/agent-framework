@@ -36,7 +36,6 @@ internal sealed class RoleCheckAgent(bool allowOtherAssistantRoles, string? id =
 
         yield return new AgentResponseUpdate(ChatRole.Assistant, "Ok")
         {
-            AgentId = this.Id,
             AuthorName = this.Name,
             MessageId = Guid.NewGuid().ToString("N"),
             ResponseId = Guid.NewGuid().ToString("N")

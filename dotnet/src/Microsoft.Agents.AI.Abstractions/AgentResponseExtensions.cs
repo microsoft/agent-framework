@@ -118,15 +118,11 @@ public static class AgentResponseExtensions
     {
         _ = Throw.IfNull(updates);
 
-        AgentResponseDetails additionalDetails = new();
         ChatResponse chatResponse =
-            AsChatResponseUpdatesWithAdditionalDetails(updates, additionalDetails)
+            AsChatResponseUpdates(updates)
             .ToChatResponse();
 
-        return new AgentResponse(chatResponse)
-        {
-            AgentId = additionalDetails.AgentId,
-        };
+        return new AgentResponse(chatResponse);
     }
 
     /// <summary>
@@ -160,52 +156,31 @@ public static class AgentResponseExtensions
             IAsyncEnumerable<AgentResponseUpdate> updates,
             CancellationToken cancellationToken)
         {
-            AgentResponseDetails additionalDetails = new();
             ChatResponse chatResponse = await
-                AsChatResponseUpdatesWithAdditionalDetailsAsync(updates, additionalDetails, cancellationToken)
+                AsChatResponseUpdatesAsync(updates, cancellationToken)
                 .ToChatResponseAsync(cancellationToken)
                 .ConfigureAwait(false);
 
-            return new AgentResponse(chatResponse)
-            {
-                AgentId = additionalDetails.AgentId,
-            };
+            return new AgentResponse(chatResponse);
         }
     }
 
-    private static IEnumerable<ChatResponseUpdate> AsChatResponseUpdatesWithAdditionalDetails(
-        IEnumerable<AgentResponseUpdate> updates,
-        AgentResponseDetails additionalDetails)
+    private static IEnumerable<ChatResponseUpdate> AsChatResponseUpdates(
+        IEnumerable<AgentResponseUpdate> updates)
     {
         foreach (var update in updates)
         {
-            UpdateAdditionalDetails(update, additionalDetails);
             yield return update.AsChatResponseUpdate();
         }
     }
 
-    private static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesWithAdditionalDetailsAsync(
+    private static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesAsync(
         IAsyncEnumerable<AgentResponseUpdate> updates,
-        AgentResponseDetails additionalDetails,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            UpdateAdditionalDetails(update, additionalDetails);
             yield return update.AsChatResponseUpdate();
         }
-    }
-
-    private static void UpdateAdditionalDetails(AgentResponseUpdate update, AgentResponseDetails details)
-    {
-        if (update.AgentId is { Length: > 0 })
-        {
-            details.AgentId = update.AgentId;
-        }
-    }
-
-    private sealed class AgentResponseDetails
-    {
-        public string? AgentId { get; set; }
     }
 }

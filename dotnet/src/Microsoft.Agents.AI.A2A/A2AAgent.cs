@@ -101,7 +101,6 @@ public sealed class A2AAgent : AIAgent
 
             return new AgentResponse
             {
-                AgentId = this.Id,
                 ResponseId = message.MessageId,
                 RawRepresentation = message,
                 Messages = [message.ToChatMessage()],
@@ -115,7 +114,6 @@ public sealed class A2AAgent : AIAgent
 
             var response = new AgentResponse
             {
-                AgentId = this.Id,
                 ResponseId = agentTask.Id,
                 RawRepresentation = agentTask,
                 Messages = agentTask.ToChatMessages() ?? [],
@@ -295,7 +293,6 @@ public sealed class A2AAgent : AIAgent
     {
         return new AgentResponseUpdate
         {
-            AgentId = this.Id,
             ResponseId = message.MessageId,
             RawRepresentation = message,
             Role = ChatRole.Assistant,
@@ -309,7 +306,6 @@ public sealed class A2AAgent : AIAgent
     {
         return new AgentResponseUpdate
         {
-            AgentId = this.Id,
             ResponseId = task.Id,
             RawRepresentation = task,
             Role = ChatRole.Assistant,
@@ -322,7 +318,6 @@ public sealed class A2AAgent : AIAgent
     {
         AgentResponseUpdate responseUpdate = new()
         {
-            AgentId = this.Id,
             ResponseId = taskUpdateEvent.TaskId,
             RawRepresentation = taskUpdateEvent,
             Role = ChatRole.Assistant,

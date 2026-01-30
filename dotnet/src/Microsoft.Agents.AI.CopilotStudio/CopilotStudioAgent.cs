@@ -90,7 +90,6 @@ public class CopilotStudioAgent : AIAgent
         // so that they can tell things like response boundaries.
         return new AgentResponse(responseMessagesList)
         {
-            AgentId = this.Id,
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
         };
     }
@@ -127,7 +126,6 @@ public class CopilotStudioAgent : AIAgent
             // so that they can tell things like response boundaries.
             yield return new AgentResponseUpdate(message.Role, message.Contents)
             {
-                AgentId = this.Id,
                 AdditionalProperties = message.AdditionalProperties,
                 AuthorName = message.AuthorName,
                 RawRepresentation = message.RawRepresentation,

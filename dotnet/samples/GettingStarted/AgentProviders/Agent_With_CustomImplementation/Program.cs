@@ -60,7 +60,6 @@ namespace SampleApp
 
             return new AgentResponse
             {
-                AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N"),
                 Messages = responseMessages
             };
@@ -94,7 +93,6 @@ namespace SampleApp
             {
                 yield return new AgentResponseUpdate
                 {
-                    AgentId = this.Id,
                     AuthorName = message.AuthorName,
                     Role = ChatRole.Assistant,
                     Contents = message.Contents,

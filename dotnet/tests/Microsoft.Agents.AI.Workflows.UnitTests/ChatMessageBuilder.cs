@@ -25,27 +25,26 @@ internal static class TextMessageStreamingExtensions
         return splits.Select(text => (AIContent)new TextContent(text) { RawRepresentation = text });
     }
 
-    public static AgentResponseUpdate ToResponseUpdate(this AIContent content, string? messageId = null, DateTimeOffset? createdAt = null, string? responseId = null, string? agentId = null, string? authorName = null) =>
+    public static AgentResponseUpdate ToResponseUpdate(this AIContent content, string? messageId = null, DateTimeOffset? createdAt = null, string? responseId = null, string? authorName = null) =>
         new()
         {
             Role = ChatRole.Assistant,
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             MessageId = messageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
-            AgentId = agentId,
             AuthorName = authorName,
             Contents = [content],
         };
 
-    public static IEnumerable<AgentResponseUpdate> ToAgentRunStream(this string message, DateTimeOffset? createdAt = null, string? messageId = null, string? responseId = null, string? agentId = null, string? authorName = null)
+    public static IEnumerable<AgentResponseUpdate> ToAgentRunStream(this string message, DateTimeOffset? createdAt = null, string? messageId = null, string? responseId = null, string? authorName = null)
     {
         messageId ??= Guid.NewGuid().ToString("N");
 
         IEnumerable<AIContent> contents = message.ToContentStream();
-        return contents.Select(content => content.ToResponseUpdate(messageId, createdAt, responseId, agentId, authorName));
+        return contents.Select(content => content.ToResponseUpdate(messageId, createdAt, responseId, authorName));
     }
 
-    public static ChatMessage ToChatMessage(this IEnumerable<AIContent> contents, string? messageId = null, DateTimeOffset? createdAt = null, string? responseId = null, string? agentId = null, string? authorName = null, string? rawRepresentation = null) =>
+    public static ChatMessage ToChatMessage(this IEnumerable<AIContent> contents, string? messageId = null, DateTimeOffset? createdAt = null, string? responseId = null, string? authorName = null, string? rawRepresentation = null) =>
         new(ChatRole.Assistant, contents is List<AIContent> contentsList ? contentsList : contents.ToList())
         {
             AuthorName = authorName,
@@ -54,16 +53,16 @@ internal static class TextMessageStreamingExtensions
             RawRepresentation = rawRepresentation,
         };
 
-    public static IEnumerable<AgentResponseUpdate> StreamMessage(this ChatMessage message, string? responseId = null, string? agentId = null)
+    public static IEnumerable<AgentResponseUpdate> StreamMessage(this ChatMessage message, string? responseId = null)
     {
         responseId ??= Guid.NewGuid().ToString("N");
         string messageId = message.MessageId ?? Guid.NewGuid().ToString("N");
 
-        return message.Contents.Select(content => content.ToResponseUpdate(messageId, message.CreatedAt, responseId: responseId, agentId: agentId, authorName: message.AuthorName));
+        return message.Contents.Select(content => content.ToResponseUpdate(messageId, message.CreatedAt, responseId: responseId, authorName: message.AuthorName));
     }
 
-    public static IEnumerable<AgentResponseUpdate> StreamMessages(this List<ChatMessage> messages, string? agentId = null) =>
-        messages.SelectMany(message => message.StreamMessage(agentId));
+    public static IEnumerable<AgentResponseUpdate> StreamMessages(this List<ChatMessage> messages) =>
+        messages.SelectMany(message => message.StreamMessage());
 
     public static List<ChatMessage> ToChatMessages(this IEnumerable<string> messages, string? authorName = null)
     {

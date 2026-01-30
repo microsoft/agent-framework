@@ -70,7 +70,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
                 new(actionableMessages)
                 {
                     AdditionalProperties = agentResponse.AdditionalProperties,
-                    AgentId = agentResponse.AgentId,
                     CreatedAt = agentResponse.CreatedAt,
                     ResponseId = agentResponse.ResponseId,
                     Usage = agentResponse.Usage,

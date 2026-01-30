@@ -79,10 +79,7 @@ internal sealed class AgenticUIAgent : DelegatingAIAgent
                     Role = update.Role,
                     ContinuationToken = update.ContinuationToken,
                     AdditionalProperties = update.AdditionalProperties,
-                })
-            {
-                AgentId = update.AgentId
-            };
+                });
         }
     }
 }

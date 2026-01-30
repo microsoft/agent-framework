@@ -28,7 +28,7 @@ internal static class Step7EntryPoint
                     continue;
                 }
                 string updateText = $"{update.AuthorName
-                                       ?? update.AgentId
+                                       ?? agent.Id
                                        ?? update.Role.ToString()
                                        ?? ChatRole.Assistant.ToString()}: {update.Text}";
                 writer.WriteLine(updateText);

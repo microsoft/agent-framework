@@ -65,7 +65,6 @@ public class AIAgentHostExecutorTests
 
                 AgentResponseUpdate update = updateEvent.Update;
                 update.AuthorName.Should().Be(TestAgentName);
-                update.AgentId.Should().Be(TestAgentId);
                 update.Contents.Should().HaveCount(1);
                 update.Contents[0].Should().BeEquivalentTo(expectedUpdateContent);
             }
@@ -100,7 +99,6 @@ public class AIAgentHostExecutorTests
             responseEvent.ExecutorId.Should().Be(agent.GetDescriptiveId());
 
             AgentResponse response = responseEvent.Response;
-            response.AgentId.Should().Be(TestAgentId);
             response.Messages.Should().HaveCount(TestMessages.Count - 1);
 
             for (int i = 0; i < response.Messages.Count; i++)
