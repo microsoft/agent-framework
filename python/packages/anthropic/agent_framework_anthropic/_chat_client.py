@@ -442,7 +442,13 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             # Add the structured outputs beta flag
             run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
 
-        run_options.update(kwargs)
+        # Filter out framework kwargs that should not be passed to the Anthropic API.
+        # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
+        # and framework kwargs like 'thread' and 'middleware'.
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+        }
+        run_options.update(filtered_kwargs)
         return run_options
 
     def _prepare_betas(self, options: dict[str, Any]) -> set[str]:
