@@ -61,7 +61,8 @@ IAsyncEnumerable<AgentResponseUpdate> updates = agentWithPersonInfo.RunStreaming
 
 // Assemble all the parts of the streamed output, since we can only deserialize once we have the full json,
 // then deserialize the response into the PersonInfo class.
-PersonInfo personInfo = JsonSerializer.Deserialize<PersonInfo>((await updates.ToAgentResponseAsync()).Text, JsonSerializerOptions.Web)!;
+PersonInfo personInfo = JsonSerializer.Deserialize<PersonInfo>((await updates.ToAgentResponseAsync()).Text, JsonSerializerOptions.Web)
+    ?? throw new InvalidOperationException("Failed to deserialize the streamed response into PersonInfo.");
 
 Console.WriteLine("Assistant Output:");
 Console.WriteLine($"Name: {personInfo.Name}");
