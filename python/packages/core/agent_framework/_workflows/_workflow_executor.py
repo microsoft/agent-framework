@@ -299,6 +299,9 @@ class WorkflowExecutor(Executor):
         self._execution_contexts: dict[str, ExecutionContext] = {}  # execution_id -> ExecutionContext
         # Map request_id to execution_id for response routing
         self._request_to_execution: dict[str, str] = {}  # request_id -> execution_id
+        # Track request IDs that have been responded to, to filter out duplicates
+        # after checkpoint restore (when old requests may reappear in the event stream)
+        self._responded_request_ids: set[str] = set()
         self._propagate_request = propagate_request
 
     @property
@@ -458,6 +461,7 @@ class WorkflowExecutor(Executor):
                 for execution_id, execution_context in self._execution_contexts.items()
             },
             "request_to_execution": dict(self._request_to_execution),
+            "responded_request_ids": list(self._responded_request_ids),
         }
 
     @override
@@ -496,6 +500,14 @@ class WorkflowExecutor(Executor):
 
         self._execution_contexts = execution_contexts
         self._request_to_execution = request_to_execution
+
+        # Restore responded request IDs (defaults to empty for checkpoints created before this field existed)
+        responded_request_ids = state.get("responded_request_ids", [])
+        if not isinstance(responded_request_ids, list):
+            raise ValueError("'responded_request_ids' must be a list.")
+        if not all(isinstance(rid, str) for rid in responded_request_ids):
+            raise ValueError("All items in 'responded_request_ids' must be strings.")
+        self._responded_request_ids = set(responded_request_ids)
 
         # Add the `request_info_event`s back to the sub workflow.
         # This is only a temporary solution to rehydrate the sub workflow with the requests.
@@ -548,11 +560,30 @@ class WorkflowExecutor(Executor):
             await asyncio.gather(*[ctx.send_message(output) for output in outputs])
 
         # Process request info events
+        # Filter out requests that have already been processed to avoid re-sending
+        # after checkpoint restore. This can happen because apply_checkpoint() re-adds
+        # pending RequestInfoEvents to the event queue, which then appear in subsequent
+        # workflow results even though they were already handled.
+        new_request_count = 0
         for event in request_info_events:
+            # Skip if this request has already been responded to (e.g., after checkpoint restore)
+            if event.request_id in self._responded_request_ids:
+                logger.debug(f"WorkflowExecutor {self.id} skipping already-responded request {event.request_id}")
+                continue
+            # Skip if this request is already being tracked (already processed)
+            if event.request_id in execution_context.pending_requests:
+                logger.debug(f"WorkflowExecutor {self.id} skipping already-tracked request {event.request_id}")
+                continue
+            if event.request_id in self._request_to_execution:
+                logger.debug(f"WorkflowExecutor {self.id} skipping already-mapped request {event.request_id}")
+                continue
+
             # Track the pending request in execution context
             execution_context.pending_requests[event.request_id] = event
             # Map request to execution for response routing
             self._request_to_execution[event.request_id] = execution_context.execution_id
+            new_request_count += 1
+
             if self._propagate_request:
                 # In a workflow where the parent workflow does not handle the request, the request
                 # should be propagated via the `request_info` mechanism to an external source. And
@@ -563,8 +594,8 @@ class WorkflowExecutor(Executor):
                 # request and handle it directly, a message should be sent.
                 await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
 
-        # Update expected response count for this execution
-        execution_context.expected_response_count = len(request_info_events)
+        # Update expected response count for this execution (only count NEW requests)
+        execution_context.expected_response_count = new_request_count
 
         # Handle final state
         if workflow_run_state == WorkflowRunState.FAILED:
@@ -633,6 +664,10 @@ class WorkflowExecutor(Executor):
         # Remove the request from pending list and request mapping
         execution_context.pending_requests.pop(request_id, None)
         self._request_to_execution.pop(request_id, None)
+
+        # Track that this request has been responded to, so we can filter it out
+        # if it reappears in the event stream after checkpoint restore
+        self._responded_request_ids.add(request_id)
 
         # Accumulate the response in this execution's context
         execution_context.collected_responses[request_id] = response

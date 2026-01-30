@@ -1,18 +1,23 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import uuid4
 
 from typing_extensions import Never
 
 from agent_framework import (
     Executor,
+    InMemoryCheckpointStorage,
+    RequestInfoEvent,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
+    WorkflowRunState,
+    WorkflowStatusEvent,
     handler,
     response_handler,
 )
@@ -461,3 +466,251 @@ async def test_concurrent_sub_workflow_execution() -> None:
 
     # Verify that concurrent executions were properly isolated
     # (This is implicitly tested by the fact that we got correct results for all emails)
+
+
+# =============================================================================
+# Checkpoint restore tests
+# =============================================================================
+
+
+@dataclass
+class CheckpointTestStartMessage:
+    """Initial message to start the checkpoint test workflow."""
+
+    value: str
+
+
+@dataclass
+class CheckpointTestFirstRequest:
+    """First request_info() call in checkpoint tests."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    prompt: str = "First request"
+
+
+@dataclass
+class CheckpointTestSecondRequest:
+    """Second request_info() call in checkpoint tests."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    prompt: str = "Second request"
+
+
+@dataclass
+class CheckpointTestFinalOutput:
+    """Final output from the checkpoint test workflow."""
+
+    first_response: str
+    second_response: str
+
+
+class TwoStepExecutor(Executor):
+    """Executor that makes TWO sequential request_info() calls for checkpoint testing."""
+
+    def __init__(self) -> None:
+        super().__init__(id="two_step_executor")
+        self._first_response: str = ""
+
+    @handler
+    async def handle_start(self, msg: CheckpointTestStartMessage, ctx: WorkflowContext) -> None:
+        await ctx.request_info(
+            request_data=CheckpointTestFirstRequest(prompt=f"First request for: {msg.value}"),
+            response_type=str,
+        )
+
+    @response_handler
+    async def handle_first_response(
+        self,
+        original_request: CheckpointTestFirstRequest,
+        response: str,
+        ctx: WorkflowContext,
+    ) -> None:
+        self._first_response = response
+        await ctx.request_info(
+            request_data=CheckpointTestSecondRequest(prompt="Second request"),
+            response_type=str,
+        )
+
+    @response_handler
+    async def handle_second_response(
+        self,
+        original_request: CheckpointTestSecondRequest,
+        response: str,
+        ctx: WorkflowContext[None, CheckpointTestFinalOutput],
+    ) -> None:
+        await ctx.yield_output(
+            CheckpointTestFinalOutput(
+                first_response=self._first_response,
+                second_response=response,
+            )
+        )
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        return {"first_response": self._first_response}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        self._first_response = state.get("first_response", "")
+
+
+class CheckpointTestCoordinator(Executor):
+    """Parent workflow coordinator for checkpoint tests."""
+
+    def __init__(self) -> None:
+        super().__init__(id="checkpoint_test_coordinator")
+        self.received_requests: list[SubWorkflowRequestMessage] = []
+        self.output: CheckpointTestFinalOutput | None = None
+        self._pending_requests: dict[str, SubWorkflowRequestMessage] = {}
+
+    @handler
+    async def start(self, value: str, ctx: WorkflowContext[CheckpointTestStartMessage]) -> None:
+        await ctx.send_message(CheckpointTestStartMessage(value=value))
+
+    @handler
+    async def handle_sub_workflow_request(
+        self,
+        request: SubWorkflowRequestMessage,
+        ctx: WorkflowContext,
+    ) -> None:
+        self.received_requests.append(request)
+        data = request.source_event.data
+        if isinstance(data, (CheckpointTestFirstRequest, CheckpointTestSecondRequest)):
+            self._pending_requests[data.id] = request
+            await ctx.request_info(data, str)
+
+    @response_handler
+    async def handle_response(
+        self,
+        original_request: CheckpointTestFirstRequest | CheckpointTestSecondRequest,
+        response: str,
+        ctx: WorkflowContext[SubWorkflowResponseMessage],
+    ) -> None:
+        sub_request = self._pending_requests.pop(original_request.id, None)
+        if sub_request is None:
+            raise ValueError(f"No pending request for ID: {original_request.id}")
+        await ctx.send_message(sub_request.create_response(response))
+
+    @handler
+    async def collect_output(self, output: CheckpointTestFinalOutput, ctx: WorkflowContext) -> None:
+        self.output = output
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        return {"pending_requests": self._pending_requests}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        self._pending_requests = state.get("pending_requests", {})
+
+
+def _build_checkpoint_test_sub_workflow() -> WorkflowExecutor:
+    sub_workflow = (
+        WorkflowBuilder().register_executor(TwoStepExecutor, name="two_step").set_start_executor("two_step").build()
+    )
+    return WorkflowExecutor(sub_workflow, id="sub_workflow")
+
+
+def _build_checkpoint_test_workflow(storage: InMemoryCheckpointStorage) -> tuple[Workflow, CheckpointTestCoordinator]:
+    coordinator = CheckpointTestCoordinator()
+    workflow = (
+        WorkflowBuilder()
+        .register_executor(lambda: coordinator, name="coordinator")
+        .register_executor(_build_checkpoint_test_sub_workflow, name="sub_executor")
+        .set_start_executor("coordinator")
+        .add_edge("coordinator", "sub_executor")
+        .add_edge("sub_executor", "coordinator")
+        .with_checkpointing(storage)
+        .build()
+    )
+    return workflow, coordinator
+
+
+async def test_checkpoint_restore_does_not_duplicate_requests():
+    """
+    Regression test: WorkflowExecutor should not re-send already-answered
+    RequestInfoEvents after checkpoint restore.
+
+    This test verifies the fix for a bug where after checkpoint restore,
+    WorkflowExecutor._process_workflow_result() would process ALL RequestInfoEvents
+    from the workflow result, including ones that were already answered.
+    """
+    storage = InMemoryCheckpointStorage()
+
+    # Step 1: Run until first request
+    workflow, coordinator = _build_checkpoint_test_workflow(storage)
+
+    first_request_id: str | None = None
+    async for event in workflow.run_stream("test_value"):
+        if isinstance(event, RequestInfoEvent):
+            first_request_id = event.request_id
+        if isinstance(event, WorkflowStatusEvent) and event.state is WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+            break
+
+    assert first_request_id is not None
+    assert len(coordinator.received_requests) == 1
+    assert isinstance(coordinator.received_requests[0].source_event.data, CheckpointTestFirstRequest)
+
+    # Get checkpoint
+    checkpoints = await storage.list_checkpoints(workflow.id)
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+    checkpoint_id = checkpoints[-1].checkpoint_id
+
+    # Step 2: Resume from checkpoint
+    workflow2, coordinator2 = _build_checkpoint_test_workflow(storage)
+
+    resumed_first_request_id: str | None = None
+    async for event in workflow2.run_stream(checkpoint_id=checkpoint_id):
+        if isinstance(event, RequestInfoEvent):
+            resumed_first_request_id = event.request_id
+
+    assert resumed_first_request_id is not None
+
+    # Respond to first request - this triggers second request
+    second_request_id: str | None = None
+    async for event in workflow2.send_responses_streaming({resumed_first_request_id: "first_answer"}):
+        if isinstance(event, RequestInfoEvent):
+            second_request_id = event.request_id
+        if isinstance(event, WorkflowStatusEvent) and event.state is WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+            break
+
+    assert second_request_id is not None
+
+    # After responding to first request, coordinator2 should only receive the new SecondRequest
+    assert len(coordinator2.received_requests) == 1
+    assert isinstance(coordinator2.received_requests[0].source_event.data, CheckpointTestSecondRequest)
+
+
+async def test_checkpoint_restore_full_flow():
+    """Test that a sub-workflow with checkpointing can complete successfully."""
+    storage = InMemoryCheckpointStorage()
+
+    # Step 1: Run until first request
+    workflow, _ = _build_checkpoint_test_workflow(storage)
+
+    result = await workflow.run("test_value")
+    request_events = result.get_request_info_events()
+    assert len(request_events) == 1
+
+    # Get checkpoint
+    checkpoints = await storage.list_checkpoints(workflow.id)
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+    checkpoint_id = checkpoints[-1].checkpoint_id
+
+    # Step 2: Resume and respond to first request
+    workflow2, coordinator2 = _build_checkpoint_test_workflow(storage)
+
+    result2 = await workflow2.run(checkpoint_id=checkpoint_id)
+    request_events2 = result2.get_request_info_events()
+    assert len(request_events2) == 1
+    resumed_request_id = request_events2[0].request_id
+
+    # Respond to first request - triggers second request
+    result3 = await workflow2.send_responses({resumed_request_id: "first_answer"})
+    request_events3 = result3.get_request_info_events()
+    assert len(request_events3) == 1
+    second_request_id = request_events3[0].request_id
+
+    # Step 3: Respond to second request to complete workflow
+    await workflow2.send_responses({second_request_id: "second_answer"})
+
+    # Verify final output
+    assert coordinator2.output is not None
+    assert coordinator2.output.first_response == "first_answer"
+    assert coordinator2.output.second_response == "second_answer"
