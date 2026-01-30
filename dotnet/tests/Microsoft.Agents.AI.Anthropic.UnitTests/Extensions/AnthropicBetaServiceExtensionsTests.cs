@@ -242,7 +242,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         var client = new AnthropicClient
         {
             HttpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") },
-            APIKey = "test-key"
+            ApiKey = "test-key"
         };
 
         // Act
@@ -436,12 +436,14 @@ public sealed class AnthropicBetaServiceExtensionsTests
         }
 
         public HttpClient HttpClient { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
-        public Uri BaseUrl { get => new("http://localhost"); init => throw new NotImplementedException(); }
+        public string BaseUrl { get => "http://localhost"; init => throw new NotImplementedException(); }
         public bool ResponseValidation { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public int? MaxRetries { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public TimeSpan? Timeout { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
-        public string? APIKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+        public string? ApiKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? AuthToken { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+
+        public IAnthropicClientWithRawResponse WithRawResponse => throw new NotImplementedException();
 
         public IMessageService Messages => throw new NotImplementedException();
 
@@ -453,14 +455,13 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
         IMessageService IAnthropicClient.Messages => new Mock<IMessageService>().Object;
 
-        public Task<HttpResponse> Execute<T>(HttpRequest<T> request, CancellationToken cancellationToken = default) where T : ParamsBase
+        public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)
         {
             throw new NotImplementedException();
         }
 
-        public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)
+        public void Dispose()
         {
-            throw new NotImplementedException();
         }
 
         private sealed class TestBetaService : IBetaService
@@ -471,6 +472,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
             {
                 this._client = client;
             }
+
+            public IBetaServiceWithRawResponse WithRawResponse => throw new NotImplementedException();
 
             public global::Anthropic.Services.Beta.IModelService Models => throw new NotImplementedException();
 

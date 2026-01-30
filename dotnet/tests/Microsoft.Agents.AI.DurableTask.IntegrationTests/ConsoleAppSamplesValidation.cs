@@ -26,7 +26,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
     private static bool s_infrastructureStarted;
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "DurableAgents", "ConsoleApps"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "ConsoleApps"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
