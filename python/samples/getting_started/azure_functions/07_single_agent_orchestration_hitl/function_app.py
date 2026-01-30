@@ -12,7 +12,7 @@ import json
 import logging
 from collections.abc import Generator, Mapping
 from datetime import timedelta
-from typing import Any
+from typing import Any, Dict
 
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
@@ -62,7 +62,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 
 # 3. Activities encapsulate external work for review notifications and publishing.
 @app.activity_trigger(input_name="content")
-def notify_user_for_approval(content: dict[str, str]) -> None:
+def notify_user_for_approval(content: Dict[str, str]) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("NOTIFICATION: Please review the following content for approval:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -71,7 +71,7 @@ def notify_user_for_approval(content: dict[str, str]) -> None:
 
 
 @app.activity_trigger(input_name="content")
-def publish_content(content: dict[str, str]) -> None:
+def publish_content(content: Dict[str, str]) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("PUBLISHING: Content has been published successfully:")
     logger.info("Title: %s", model.title or "(untitled)")
