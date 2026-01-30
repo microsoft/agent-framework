@@ -1,8 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Threading.Tasks;
-using Azure.AI.Projects;
 using Azure.Core;
 using Microsoft.Agents.ObjectModel;
 using Moq;
@@ -104,7 +103,7 @@ public sealed class AzureAIPromptAgentFactoryTests
 
     private static GptComponentMetadata CreateTestPromptAgentWithoutConnection()
     {
-        string agentYaml =
+        const string agentYaml =
             """
             kind: Prompt
             name: Test Agent
@@ -119,7 +118,7 @@ public sealed class AzureAIPromptAgentFactoryTests
 
     private static GptComponentMetadata CreateTestPromptAgentWithEmptyEndpoint()
     {
-        string agentYaml =
+        const string agentYaml =
             """
             kind: Prompt
             name: Test Agent

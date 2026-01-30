@@ -3,7 +3,6 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
-using Moq;
 using OpenAI.Chat;
 
 namespace Microsoft.Agents.AI.Declarative.AzureAI.UnitTests;
