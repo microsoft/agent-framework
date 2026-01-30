@@ -481,6 +481,36 @@ async def test_prepare_options_with_top_p(mock_anthropic_client: MagicMock) -> N
     assert run_options["top_p"] == 0.9
 
 
+async def test_prepare_options_filters_internal_kwargs(mock_anthropic_client: MagicMock) -> None:
+    """Test _prepare_options filters internal framework kwargs.
+
+    Internal kwargs like _function_middleware_pipeline, thread, and middleware
+    should be filtered out before being passed to the Anthropic API.
+    """
+    chat_client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    chat_options: ChatOptions = {}
+
+    # Simulate internal kwargs that get passed through the middleware pipeline
+    internal_kwargs = {
+        "_function_middleware_pipeline": object(),
+        "_chat_middleware_pipeline": object(),
+        "_any_underscore_prefixed": object(),
+        "thread": object(),
+        "middleware": [object()],
+    }
+
+    run_options = chat_client._prepare_options(messages, chat_options, **internal_kwargs)
+
+    # Internal kwargs should be filtered out
+    assert "_function_middleware_pipeline" not in run_options
+    assert "_chat_middleware_pipeline" not in run_options
+    assert "_any_underscore_prefixed" not in run_options
+    assert "thread" not in run_options
+    assert "middleware" not in run_options
+
+
 # Response Processing Tests
 
 
