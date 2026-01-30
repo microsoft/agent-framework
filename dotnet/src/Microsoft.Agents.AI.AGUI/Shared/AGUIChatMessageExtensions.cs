@@ -51,7 +51,8 @@ internal static class AGUIChatMessageExtensions
                             new FunctionResultContent(
                                     toolMessage.ToolCallId,
                                     result)
-                        ]);
+                        ])
+                    { MessageId = message.Id };
                     break;
                 }
 
