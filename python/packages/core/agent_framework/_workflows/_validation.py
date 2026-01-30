@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+import types
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
@@ -55,8 +56,8 @@ class TypeCompatibilityError(WorkflowValidationError):
         self,
         source_executor_id: str,
         target_executor_id: str,
-        source_types: list[type[Any]],
-        target_types: list[type[Any]],
+        source_types: list[type[Any] | types.UnionType],
+        target_types: list[type[Any] | types.UnionType],
     ):
         # Use a placeholder for incompatible types - will be computed in WorkflowGraphValidator
         super().__init__(
@@ -253,7 +254,7 @@ class WorkflowGraphValidator:
 
         # Check if any source output type is compatible with any target input type
         compatible = False
-        compatible_pairs: list[tuple[type[Any], type[Any]]] = []
+        compatible_pairs: list[tuple[type[Any] | types.UnionType, type[Any] | types.UnionType]] = []
 
         for source_type in source_output_types:
             for target_type in target_input_types:

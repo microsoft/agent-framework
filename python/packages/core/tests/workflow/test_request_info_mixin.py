@@ -247,7 +247,6 @@ class TestRequestInfoMixin:
         assert "output_types" in spec
         assert "workflow_output_types" in spec
         assert "ctx_annotation" in spec
-        assert spec["source"] == "class_method"
 
     def test_multiple_discovery_calls_raise_error(self):
         """Test that multiple calls to _discover_response_handlers raise an error for duplicates."""

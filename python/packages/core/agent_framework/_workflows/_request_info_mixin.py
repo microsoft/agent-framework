@@ -6,6 +6,7 @@ import inspect
 import logging
 from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
+from types import UnionType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._typing_utils import is_instance_of, is_type_compatible
@@ -195,7 +196,7 @@ def response_handler(
 
 def _validate_response_handler_signature(
     func: Callable[..., Any],
-) -> tuple[type, type, Any, list[type[Any]], list[type[Any]]]:
+) -> tuple[type, type, Any, list[type[Any] | UnionType], list[type[Any] | UnionType]]:
     """Validate function signature for executor functions.
 
     Args:
