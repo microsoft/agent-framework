@@ -139,7 +139,14 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
     {
         try
         {
-            structuredOutput = JsonSerializer.Deserialize<T>(json, jsonSerializerOptions)!;
+            T? deserialized = JsonSerializer.Deserialize<T>(json, jsonSerializerOptions);
+            if (deserialized is null)
+            {
+                structuredOutput = default!;
+                return false;
+            }
+
+            structuredOutput = deserialized;
             return true;
         }
         catch
