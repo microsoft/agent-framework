@@ -14,22 +14,58 @@ using Microsoft.Agents.AI.FoundryMemory.Core.Models;
 namespace Microsoft.Agents.AI.FoundryMemory;
 
 /// <summary>
-/// Extension methods for <see cref="AIProjectClient"/> to provide MemoryStores operations
+/// Internal extension methods for <see cref="AIProjectClient"/> to provide MemoryStores operations
 /// using the SDK's HTTP pipeline until the SDK releases convenience methods.
 /// </summary>
 internal static class AIProjectClientExtensions
 {
     /// <summary>
+    /// Creates a memory store if it doesn't already exist.
+    /// </summary>
+    internal static async Task<bool> CreateMemoryStoreIfNotExistsAsync(
+        this AIProjectClient client,
+        string memoryStoreName,
+        string? description,
+        string chatModel,
+        string embeddingModel,
+        CancellationToken cancellationToken)
+    {
+        // First try to get the store to see if it exists
+        try
+        {
+            RequestOptions requestOptions = new() { CancellationToken = cancellationToken };
+            await client.MemoryStores.GetMemoryStoreAsync(memoryStoreName, requestOptions).ConfigureAwait(false);
+            return false; // Store already exists
+        }
+        catch (ClientResultException ex) when (ex.Status == 404)
+        {
+            // Store doesn't exist, create it
+        }
+
+        CreateMemoryStoreRequest request = new()
+        {
+            Name = memoryStoreName,
+            Description = description,
+            Definition = new MemoryStoreDefinitionRequest
+            {
+                Kind = "default",
+                ChatModel = chatModel,
+                EmbeddingModel = embeddingModel
+            }
+        };
+
+        string json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.CreateMemoryStoreRequest);
+        BinaryContent content = BinaryContent.Create(BinaryData.FromString(json));
+
+        RequestOptions createOptions = new() { CancellationToken = cancellationToken };
+        await client.MemoryStores.CreateMemoryStoreAsync(content, createOptions).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
     /// Searches for relevant memories from a memory store based on conversation context.
     /// </summary>
-    /// <param name="client">The AI Project client.</param>
-    /// <param name="memoryStoreName">The name of the memory store to search.</param>
-    /// <param name="scope">The namespace that logically groups and isolates memories, such as a user ID.</param>
-    /// <param name="messages">The conversation messages to use for the search query.</param>
-    /// <param name="maxMemories">Maximum number of memories to return.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Enumerable of memory content strings.</returns>
-    public static async Task<IEnumerable<string>> SearchMemoriesAsync(
+    internal static async Task<SearchMemoriesResponse?> SearchMemoriesAsync(
         this AIProjectClient client,
         string memoryStoreName,
         string scope,
@@ -37,37 +73,28 @@ internal static class AIProjectClientExtensions
         int maxMemories,
         CancellationToken cancellationToken)
     {
-        var request = new SearchMemoriesRequest
+        SearchMemoriesRequest request = new()
         {
             Scope = scope,
             Items = messages.ToArray(),
             Options = new SearchMemoriesOptions { MaxMemories = maxMemories }
         };
 
-        var json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.SearchMemoriesRequest);
-        var content = BinaryContent.Create(BinaryData.FromString(json));
+        string json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.SearchMemoriesRequest);
+        BinaryContent content = BinaryContent.Create(BinaryData.FromString(json));
 
-        var requestOptions = new RequestOptions { CancellationToken = cancellationToken };
+        RequestOptions requestOptions = new() { CancellationToken = cancellationToken };
         ClientResult result = await client.MemoryStores.SearchMemoriesAsync(memoryStoreName, content, requestOptions).ConfigureAwait(false);
 
-        var response = JsonSerializer.Deserialize(
+        return JsonSerializer.Deserialize(
             result.GetRawResponse().Content.ToString(),
             FoundryMemoryJsonContext.Default.SearchMemoriesResponse);
-
-        return response?.Memories?.Select(m => m.MemoryItem?.Content ?? string.Empty)
-            .Where(c => !string.IsNullOrWhiteSpace(c)) ?? [];
     }
 
     /// <summary>
     /// Updates memory store with conversation memories.
     /// </summary>
-    /// <param name="client">The AI Project client.</param>
-    /// <param name="memoryStoreName">The name of the memory store to update.</param>
-    /// <param name="scope">The namespace that logically groups and isolates memories, such as a user ID.</param>
-    /// <param name="messages">The conversation messages to extract memories from.</param>
-    /// <param name="updateDelay">Delay in seconds before processing the update.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    public static async Task UpdateMemoriesAsync(
+    internal static async Task<UpdateMemoriesResponse?> UpdateMemoriesAsync(
         this AIProjectClient client,
         string memoryStoreName,
         string scope,
@@ -75,39 +102,56 @@ internal static class AIProjectClientExtensions
         int updateDelay,
         CancellationToken cancellationToken)
     {
-        var request = new UpdateMemoriesRequest
+        UpdateMemoriesRequest request = new()
         {
             Scope = scope,
             Items = messages.ToArray(),
             UpdateDelay = updateDelay
         };
 
-        var json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.UpdateMemoriesRequest);
-        var content = BinaryContent.Create(BinaryData.FromString(json));
+        string json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.UpdateMemoriesRequest);
+        BinaryContent content = BinaryContent.Create(BinaryData.FromString(json));
 
-        var requestOptions = new RequestOptions { CancellationToken = cancellationToken };
-        await client.MemoryStores.UpdateMemoriesAsync(memoryStoreName, content, requestOptions).ConfigureAwait(false);
+        RequestOptions requestOptions = new() { CancellationToken = cancellationToken };
+        ClientResult result = await client.MemoryStores.UpdateMemoriesAsync(memoryStoreName, content, requestOptions).ConfigureAwait(false);
+
+        return JsonSerializer.Deserialize(
+            result.GetRawResponse().Content.ToString(),
+            FoundryMemoryJsonContext.Default.UpdateMemoriesResponse);
+    }
+
+    /// <summary>
+    /// Gets the status of a memory update operation.
+    /// </summary>
+    internal static async Task<UpdateMemoriesResponse?> GetUpdateStatusAsync(
+        this AIProjectClient client,
+        string memoryStoreName,
+        string updateId,
+        CancellationToken cancellationToken)
+    {
+        RequestOptions requestOptions = new() { CancellationToken = cancellationToken };
+        ClientResult result = await client.MemoryStores.GetUpdateResultAsync(memoryStoreName, updateId, requestOptions).ConfigureAwait(false);
+
+        return JsonSerializer.Deserialize(
+            result.GetRawResponse().Content.ToString(),
+            FoundryMemoryJsonContext.Default.UpdateMemoriesResponse);
     }
 
     /// <summary>
     /// Deletes all memories associated with a specific scope from a memory store.
     /// </summary>
-    /// <param name="client">The AI Project client.</param>
-    /// <param name="memoryStoreName">The name of the memory store.</param>
-    /// <param name="scope">The namespace that logically groups and isolates memories to delete, such as a user ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    public static async Task DeleteScopeAsync(
+    internal static async Task DeleteScopeAsync(
         this AIProjectClient client,
         string memoryStoreName,
         string scope,
         CancellationToken cancellationToken)
     {
-        var request = new DeleteScopeRequest { Scope = scope };
+        DeleteScopeRequest request = new() { Scope = scope };
 
-        var json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.DeleteScopeRequest);
-        var content = BinaryContent.Create(BinaryData.FromString(json));
+        string json = JsonSerializer.Serialize(request, FoundryMemoryJsonContext.Default.DeleteScopeRequest);
+        BinaryContent content = BinaryContent.Create(BinaryData.FromString(json));
 
-        var requestOptions = new RequestOptions { CancellationToken = cancellationToken };
+        RequestOptions requestOptions = new() { CancellationToken = cancellationToken };
         await client.MemoryStores.DeleteScopeAsync(memoryStoreName, content, requestOptions).ConfigureAwait(false);
     }
 }

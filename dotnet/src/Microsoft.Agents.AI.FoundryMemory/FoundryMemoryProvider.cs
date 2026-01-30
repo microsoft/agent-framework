@@ -34,7 +34,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private readonly int _updateDelay;
     private readonly bool _enableSensitiveTelemetryData;
 
-    private readonly IFoundryMemoryOperations _operations;
+    private readonly AIProjectClient _client;
     private readonly ILogger<FoundryMemoryProvider>? _logger;
 
     private readonly FoundryMemoryProviderScope _scope;
@@ -51,8 +51,31 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         FoundryMemoryProviderScope scope,
         FoundryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : this(new AIProjectClientMemoryOperations(Throw.IfNull(client)), scope, options, loggerFactory)
     {
+        Throw.IfNull(client);
+        Throw.IfNull(scope);
+
+        if (string.IsNullOrWhiteSpace(scope.Scope))
+        {
+            throw new ArgumentException("The Scope property must be provided.", nameof(scope));
+        }
+
+        FoundryMemoryProviderOptions effectiveOptions = options ?? new FoundryMemoryProviderOptions();
+
+        if (string.IsNullOrWhiteSpace(effectiveOptions.MemoryStoreName))
+        {
+            throw new ArgumentException("The MemoryStoreName option must be provided.", nameof(options));
+        }
+
+        this._logger = loggerFactory?.CreateLogger<FoundryMemoryProvider>();
+        this._client = client;
+
+        this._contextPrompt = effectiveOptions.ContextPrompt ?? DefaultContextPrompt;
+        this._memoryStoreName = effectiveOptions.MemoryStoreName;
+        this._maxMemories = effectiveOptions.MaxMemories;
+        this._updateDelay = effectiveOptions.UpdateDelay;
+        this._enableSensitiveTelemetryData = effectiveOptions.EnableSensitiveTelemetryData;
+        this._scope = new FoundryMemoryProviderScope(scope);
     }
 
     /// <summary>
@@ -69,29 +92,10 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         JsonSerializerOptions? jsonSerializerOptions = null,
         FoundryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : this(new AIProjectClientMemoryOperations(Throw.IfNull(client)), serializedState, jsonSerializerOptions, options, loggerFactory)
     {
-    }
+        Throw.IfNull(client);
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryMemoryProvider"/> class with a custom operations implementation.
-    /// </summary>
-    /// <remarks>This constructor enables testability by allowing injection of mock operations.</remarks>
-    internal FoundryMemoryProvider(
-        IFoundryMemoryOperations operations,
-        FoundryMemoryProviderScope scope,
-        FoundryMemoryProviderOptions? options = null,
-        ILoggerFactory? loggerFactory = null)
-    {
-        Throw.IfNull(operations);
-        Throw.IfNull(scope);
-
-        if (string.IsNullOrWhiteSpace(scope.Scope))
-        {
-            throw new ArgumentException("The Scope property must be provided.", nameof(scope));
-        }
-
-        var effectiveOptions = options ?? new FoundryMemoryProviderOptions();
+        FoundryMemoryProviderOptions effectiveOptions = options ?? new FoundryMemoryProviderOptions();
 
         if (string.IsNullOrWhiteSpace(effectiveOptions.MemoryStoreName))
         {
@@ -99,38 +103,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         }
 
         this._logger = loggerFactory?.CreateLogger<FoundryMemoryProvider>();
-        this._operations = operations;
-
-        this._contextPrompt = effectiveOptions.ContextPrompt ?? DefaultContextPrompt;
-        this._memoryStoreName = effectiveOptions.MemoryStoreName;
-        this._maxMemories = effectiveOptions.MaxMemories;
-        this._updateDelay = effectiveOptions.UpdateDelay;
-        this._enableSensitiveTelemetryData = effectiveOptions.EnableSensitiveTelemetryData;
-        this._scope = new FoundryMemoryProviderScope(scope);
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryMemoryProvider"/> class, with existing state from a serialized JSON element.
-    /// </summary>
-    /// <remarks>This constructor enables testability by allowing injection of mock operations.</remarks>
-    internal FoundryMemoryProvider(
-        IFoundryMemoryOperations operations,
-        JsonElement serializedState,
-        JsonSerializerOptions? jsonSerializerOptions = null,
-        FoundryMemoryProviderOptions? options = null,
-        ILoggerFactory? loggerFactory = null)
-    {
-        Throw.IfNull(operations);
-
-        var effectiveOptions = options ?? new FoundryMemoryProviderOptions();
-
-        if (string.IsNullOrWhiteSpace(effectiveOptions.MemoryStoreName))
-        {
-            throw new ArgumentException("The MemoryStoreName option must be provided.", nameof(options));
-        }
-
-        this._logger = loggerFactory?.CreateLogger<FoundryMemoryProvider>();
-        this._operations = operations;
+        this._client = client;
 
         this._contextPrompt = effectiveOptions.ContextPrompt ?? DefaultContextPrompt;
         this._memoryStoreName = effectiveOptions.MemoryStoreName;
@@ -138,8 +111,8 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         this._updateDelay = effectiveOptions.UpdateDelay;
         this._enableSensitiveTelemetryData = effectiveOptions.EnableSensitiveTelemetryData;
 
-        var jso = jsonSerializerOptions ?? FoundryMemoryJsonUtilities.DefaultOptions;
-        var state = serializedState.Deserialize(jso.GetTypeInfo(typeof(FoundryMemoryState))) as FoundryMemoryState;
+        JsonSerializerOptions jso = jsonSerializerOptions ?? FoundryMemoryJsonUtilities.DefaultOptions;
+        FoundryMemoryState? state = serializedState.Deserialize(jso.GetTypeInfo(typeof(FoundryMemoryState))) as FoundryMemoryState;
 
         if (state?.Scope == null || string.IsNullOrWhiteSpace(state.Scope.Scope))
         {
@@ -155,7 +128,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         Throw.IfNull(context);
 
 #pragma warning disable CA1308 // Lowercase required by service
-        var messageItems = context.RequestMessages
+        MemoryInputMessage[] messageItems = context.RequestMessages
             .Where(m => !string.IsNullOrWhiteSpace(m.Text))
             .Select(m => new MemoryInputMessage
             {
@@ -172,14 +145,19 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         try
         {
-            var memories = (await this._operations.SearchMemoriesAsync(
+            SearchMemoriesResponse? response = await this._client.SearchMemoriesAsync(
                 this._memoryStoreName,
                 this._scope.Scope!,
                 messageItems,
                 this._maxMemories,
-                cancellationToken).ConfigureAwait(false)).ToList();
+                cancellationToken).ConfigureAwait(false);
 
-            var outputMessageText = memories.Count == 0
+            var memories = response?.Memories?
+                .Select(m => m.MemoryItem?.Content ?? string.Empty)
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .ToList() ?? [];
+
+            string? outputMessageText = memories.Count == 0
                 ? null
                 : $"{this._contextPrompt}\n{string.Join(Environment.NewLine, memories)}";
 
@@ -220,6 +198,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                     this._memoryStoreName,
                     this.SanitizeLogData(this._scope.Scope));
             }
+
             return new AIContext();
         }
     }
@@ -235,7 +214,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         try
         {
 #pragma warning disable CA1308 // Lowercase required by service
-            var messageItems = context.RequestMessages
+            MemoryInputMessage[] messageItems = context.RequestMessages
                 .Concat(context.ResponseMessages ?? [])
                 .Where(m => IsAllowedRole(m.Role) && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => new MemoryInputMessage
@@ -251,7 +230,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 return;
             }
 
-            await this._operations.UpdateMemoriesAsync(
+            UpdateMemoriesResponse? response = await this._client.UpdateMemoriesAsync(
                 this._memoryStoreName,
                 this._scope.Scope!,
                 messageItems,
@@ -261,10 +240,11 @@ public sealed class FoundryMemoryProvider : AIContextProvider
             if (this._logger?.IsEnabled(LogLevel.Information) is true)
             {
                 this._logger.LogInformation(
-                    "FoundryMemoryProvider: Sent {Count} messages to update memories. MemoryStore: '{MemoryStoreName}', Scope: '{Scope}'.",
+                    "FoundryMemoryProvider: Sent {Count} messages to update memories. MemoryStore: '{MemoryStoreName}', Scope: '{Scope}', UpdateId: '{UpdateId}'.",
                     messageItems.Length,
                     this._memoryStoreName,
-                    this.SanitizeLogData(this._scope.Scope));
+                    this.SanitizeLogData(this._scope.Scope),
+                    response?.UpdateId);
             }
         }
         catch (Exception ex)
@@ -289,7 +269,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     {
         try
         {
-            await this._operations.DeleteScopeAsync(this._memoryStoreName, this._scope.Scope!, cancellationToken).ConfigureAwait(false);
+            await this._client.DeleteScopeAsync(this._memoryStoreName, this._scope.Scope!, cancellationToken).ConfigureAwait(false);
         }
         catch (ClientResultException ex) when (ex.Status == 404)
         {
@@ -304,12 +284,52 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         }
     }
 
+    /// <summary>
+    /// Ensures the memory store exists, creating it if necessary.
+    /// </summary>
+    /// <param name="chatModel">The deployment name of the chat model for memory processing.</param>
+    /// <param name="embeddingModel">The deployment name of the embedding model for memory search.</param>
+    /// <param name="description">Optional description for the memory store.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task EnsureMemoryStoreCreatedAsync(
+        string chatModel,
+        string embeddingModel,
+        string? description = null,
+        CancellationToken cancellationToken = default)
+    {
+        bool created = await this._client.CreateMemoryStoreIfNotExistsAsync(
+            this._memoryStoreName,
+            description,
+            chatModel,
+            embeddingModel,
+            cancellationToken).ConfigureAwait(false);
+
+        if (created)
+        {
+            if (this._logger?.IsEnabled(LogLevel.Information) is true)
+            {
+                this._logger.LogInformation(
+                    "FoundryMemoryProvider: Created memory store '{MemoryStoreName}'.",
+                    this._memoryStoreName);
+            }
+        }
+        else
+        {
+            if (this._logger?.IsEnabled(LogLevel.Debug) is true)
+            {
+                this._logger.LogDebug(
+                    "FoundryMemoryProvider: Memory store '{MemoryStoreName}' already exists.",
+                    this._memoryStoreName);
+            }
+        }
+    }
+
     /// <inheritdoc />
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        var state = new FoundryMemoryState(this._scope);
+        FoundryMemoryState state = new(this._scope);
 
-        var jso = jsonSerializerOptions ?? FoundryMemoryJsonUtilities.DefaultOptions;
+        JsonSerializerOptions jso = jsonSerializerOptions ?? FoundryMemoryJsonUtilities.DefaultOptions;
         return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(FoundryMemoryState)));
     }
 

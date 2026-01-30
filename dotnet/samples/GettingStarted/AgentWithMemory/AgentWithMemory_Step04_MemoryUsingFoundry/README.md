@@ -5,6 +5,7 @@ This sample demonstrates how to create and run an agent that uses Azure AI Found
 ## Features Demonstrated
 
 - Creating a `FoundryMemoryProvider` with Azure Identity authentication
+- Automatic memory store creation if it doesn't exist
 - Multi-turn conversations with automatic memory extraction
 - Memory retrieval to inform agent responses
 - Session serialization and deserialization
@@ -13,29 +14,20 @@ This sample demonstrates how to create and run an agent that uses Azure AI Found
 ## Prerequisites
 
 1. Azure subscription with Azure AI Foundry project
-2. Memory store created in your Foundry project (see setup below)
-3. Azure OpenAI resource with a chat model deployment (e.g., gpt-4o-mini)
-4. .NET 10.0 SDK
-5. Azure CLI logged in (`az login`)
-
-## Setup Memory Store
-
-1. Navigate to your [Azure AI Foundry project](https://ai.azure.com/)
-2. Go to **Agents** > **Memory stores**
-3. Create a new memory store with:
-   - A chat model deployment for memory extraction
-   - An embedding model deployment for semantic search
-   - Enable user profile memory and/or chat summary memory
+2. Azure OpenAI resource with a chat model deployment (e.g., gpt-4o-mini) and an embedding model deployment (e.g., text-embedding-ada-002)
+3. .NET 10.0 SDK
+4. Azure CLI logged in (`az login`)
 
 ## Environment Variables
 
 ```bash
 # Azure AI Foundry project endpoint and memory store name
-export AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
-export FOUNDRY_MEMORY_STORE_NAME="my_memory_store"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
+export FOUNDRY_PROJECT_MEMORY_STORE_NAME="my_memory_store"
 
-# Azure OpenAI deployment name (model deployed in your Foundry project)
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+# Model deployment names (models deployed in your Foundry project)
+export FOUNDRY_PROJECT_MODEL="gpt-4o-mini"
+export FOUNDRY_PROJECT_EMBEDDING_MODEL="text-embedding-ada-002"
 ```
 
 ## Run the Sample
@@ -47,11 +39,12 @@ dotnet run
 ## Expected Output
 
 The agent will:
-1. Learn your name (Taylor), travel destination (Patagonia), timing (November), companions (sister), and interests (scenic viewpoints)
-2. Wait for Foundry Memory to index the memories
-3. Recall those details when asked about the trip
-4. Demonstrate memory persistence across session serialization/deserialization
-5. Show that a brand new session can still access the same memories
+1. Create the memory store if it doesn't exist (using the specified chat and embedding models)
+2. Learn your name (Taylor), travel destination (Patagonia), timing (November), companions (sister), and interests (scenic viewpoints)
+3. Wait for Foundry Memory to index the memories
+4. Recall those details when asked about the trip
+5. Demonstrate memory persistence across session serialization/deserialization
+6. Show that a brand new session can still access the same memories
 
 ## Key Differences from Mem0
 
@@ -61,3 +54,4 @@ The agent will:
 | Scope | ApplicationId, UserId, AgentId, ThreadId | Single `Scope` string |
 | Memory Types | Single memory store | User Profile + Chat Summary |
 | Hosting | Mem0 cloud or self-hosted | Azure AI Foundry managed service |
+| Store Creation | N/A (automatic) | Explicit via `EnsureMemoryStoreCreatedAsync` |

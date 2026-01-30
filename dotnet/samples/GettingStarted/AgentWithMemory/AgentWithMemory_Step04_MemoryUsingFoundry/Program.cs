@@ -3,28 +3,39 @@
 // This sample shows how to use the FoundryMemoryProvider to persist and recall memories for an agent.
 // The sample stores conversation messages in an Azure AI Foundry memory store and retrieves relevant
 // memories for subsequent invocations, even across new sessions.
+//
+// Note: Memory extraction in Azure AI Foundry is asynchronous and takes time. This sample demonstrates
+// a simple polling approach to wait for memory updates to complete before querying.
 
+using System.ClientModel.Primitives;
 using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.FoundryMemory;
-using Microsoft.Extensions.AI;
 
-string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_MEMORY_STORE_NAME") ?? throw new InvalidOperationException("FOUNDRY_MEMORY_STORE_NAME is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string foundryEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MEMORY_STORE_NAME") ?? "sample-memory-store-name";
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MODEL") ?? "gpt-4o-mini";
+string embeddingModelName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_EMBEDDING_MODEL") ?? "text-embedding-ada-002";
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
 AzureCliCredential credential = new();
-AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
+
+// Add a debug handler to log all HTTP requests
+DebugHttpClientHandler debugHandler = new() { CheckCertificateRevocationList = true };
+HttpClient httpClient = new(debugHandler);
+AIProjectClientOptions clientOptions = new()
+{
+    Transport = new HttpClientPipelineTransport(httpClient)
+};
+AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential, clientOptions);
 
 // Get the ChatClient from the AIProjectClient's OpenAI property using the deployment name.
-AIAgent agent = projectClient.OpenAI
-    .GetChatClient(deploymentName)
-    .AsIChatClient()
-    .AsAIAgent(new ChatClientAgentOptions()
+AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
+    options: new ChatClientAgentOptions()
     {
+        Name = "TravelAssistantWithFoundryMemory",
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
             // If each session should have its own scope, you can create a new id per session here:
@@ -37,15 +48,30 @@ AIAgent agent = projectClient.OpenAI
 
 AgentSession session = await agent.GetNewSessionAsync();
 
-// Clear any existing memories for this scope to demonstrate fresh behavior.
 FoundryMemoryProvider memoryProvider = session.GetService<FoundryMemoryProvider>()!;
+
+Console.WriteLine("\n>> Setting up Foundry Memory Store\n");
+
+// Ensure the memory store exists (creates it with the specified models if needed).
+await memoryProvider.EnsureMemoryStoreCreatedAsync(deploymentName, embeddingModelName, "Sample memory store for travel assistant");
+
+// Clear any existing memories for this scope to demonstrate fresh behavior.
 await memoryProvider.EnsureStoredMemoriesDeletedAsync();
 
 Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", session));
 Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));
 
-Console.WriteLine("\nWaiting briefly for Foundry Memory to index the new memories...\n");
-await Task.Delay(TimeSpan.FromSeconds(3));
+// Memory extraction in Azure AI Foundry is asynchronous and takes time to process.
+// In production scenarios, you would:
+// 1. Track the UpdateId returned from each memory update operation
+// 2. Poll the GetUpdateResultAsync API to check completion status
+// 3. Wait for status to become "completed" before querying memories
+//
+// For simplicity, this sample uses a fixed delay. For production code, implement proper polling
+// using the Azure.AI.Projects SDK's MemoryStores.GetUpdateResultAsync method.
+Console.WriteLine("\nWaiting for Foundry Memory to process updates...");
+await Task.Delay(TimeSpan.FromSeconds(10));
+Console.WriteLine("Continuing after delay.\n");
 
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
@@ -57,3 +83,32 @@ Console.WriteLine(await agent.RunAsync("Can you recap the personal details you r
 Console.WriteLine("\n>> Start a new session that shares the same Foundry Memory scope\n");
 AgentSession newSession = await agent.GetNewSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));
+
+// Debug HTTP handler to log all requests (commented out by default)
+internal sealed class DebugHttpClientHandler : HttpClientHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        // Uncomment to debug HTTP traffic:
+        // Console.WriteLine("\n=== HTTP REQUEST ===");
+        // Console.WriteLine($"Method: {request.Method}");
+        // Console.WriteLine($"URI: {request.RequestUri}");
+        //
+        // if (request.Content != null)
+        // {
+        //     string body = await request.Content.ReadAsStringAsync(cancellationToken);
+        //     Console.WriteLine("Body: " + body);
+        // }
+        //
+        // Console.WriteLine("====================\n");
+
+        // Uncomment to debug HTTP traffic:
+        // Console.WriteLine("\n=== HTTP RESPONSE ===");
+        // Console.WriteLine($"Status: {(int)response.StatusCode} {response.StatusCode}");
+        // string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        // Console.WriteLine("Body: " + responseBody);
+        // Console.WriteLine("=====================\n");
+
+        return await base.SendAsync(request, cancellationToken);
+    }
+}
