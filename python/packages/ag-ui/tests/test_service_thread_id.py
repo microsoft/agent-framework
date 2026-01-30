@@ -7,7 +7,8 @@ from typing import Any
 from ag_ui.core import RunFinishedEvent, RunStartedEvent
 from agent_framework import Content
 from agent_framework._types import AgentResponseUpdate, ChatResponseUpdate
-from conftest import StubAgent
+
+from .conftest import StubAgent
 
 
 async def test_service_thread_id_when_there_are_updates():
