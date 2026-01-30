@@ -56,6 +56,9 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowRun);
         activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
 
+        bool hadException = false;
+        bool hadCancellation = false;
+
         try
         {
             this.RunStatus = RunStatus.Running;
@@ -77,14 +80,21 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                     }
                     catch (OperationCanceledException)
                     {
+                        hadCancellation = true;
                     }
-                    catch (Exception ex) when (activity is not null)
+                    catch (Exception ex)
                     {
-                        activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
-                             { Tags.ErrorType, ex.GetType().FullName },
-                             { Tags.BuildErrorMessage, ex.Message },
-                        }));
-                        activity.CaptureException(ex);
+                        hadException = true;
+
+                        if (activity != null)
+                        {
+                            activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                                 { Tags.ErrorType, ex.GetType().FullName },
+                                 { Tags.BuildErrorMessage, ex.Message },
+                            }));
+                            activity.CaptureException(ex);
+                        }
+
                         throw;
                     }
 
@@ -136,7 +146,19 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         }
         finally
         {
-            this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
+            if (hadException || hadCancellation || linkedSource.Token.IsCancellationRequested)
+            {
+                this.RunStatus = RunStatus.Ended;
+            }
+            else if (this._stepRunner.HasUnservicedRequests)
+            {
+                this.RunStatus = RunStatus.PendingRequests;
+            }
+            else
+            {
+                this.RunStatus = RunStatus.Idle;
+            }
+
             this._stepRunner.OutgoingEvents.EventRaised -= OnWorkflowEventAsync;
         }
 
