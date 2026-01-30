@@ -9,9 +9,8 @@ from agent_framework import (
     AgentExecutorResponse,
     ChatAgent,
     ChatMessage,
+    Content,
     Executor,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
     WorkflowBuilder,
     WorkflowContext,
     tool,
@@ -251,7 +250,7 @@ async def main() -> None:
         body="Please provide your team's status update on the project since last week.",
     )
 
-    responses: dict[str, FunctionApprovalResponseContent] = {}
+    responses: dict[str, Content] = {}
     output: list[ChatMessage] | None = None
     while True:
         if responses:
@@ -262,8 +261,8 @@ async def main() -> None:
 
         request_info_events = events.get_request_info_events()
         for request_info_event in request_info_events:
-            # We should only expect FunctionApprovalRequestContent in this sample
-            if not isinstance(request_info_event.data, FunctionApprovalRequestContent):
+            # We should only expect function_approval_request Content in this sample
+            if not isinstance(request_info_event.data, Content) or request_info_event.data.type != "function_approval_request":
                 raise ValueError(f"Unexpected request info content type: {type(request_info_event.data)}")
 
             # Pretty print the function call details
@@ -274,10 +273,10 @@ async def main() -> None:
             )
 
             # For demo purposes, we automatically approve the request
-            # The expected response type of the request is `FunctionApprovalResponseContent`,
-            # which can be created via `create_response` method on the request content
+            # The expected response type of the request is `function_approval_response Content`,
+            # which can be created via `to_function_approval_response` method on the request content
             print("Performing automatic approval for demo purposes...")
-            responses[request_info_event.request_id] = request_info_event.data.create_response(approved=True)
+            responses[request_info_event.request_id] = request_info_event.data.to_function_approval_response(approved=True)
 
         # Once we get an output event, we can conclude the workflow
         # Outputs can only be produced by the conclude_workflow_executor in this sample

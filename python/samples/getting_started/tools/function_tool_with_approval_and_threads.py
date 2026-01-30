@@ -54,7 +54,7 @@ async def approval_example() -> None:
             print(f"  Decision: {'Approved' if approved else 'Rejected'}")
 
             # Step 2: Send approval response
-            approval_response = request.create_response(approved=approved)
+            approval_response = request.to_function_approval_response(approved=approved)
             result = await agent.run(ChatMessage(role="user", contents=[approval_response]), thread=thread)
 
     print(f"Agent: {result}\n")
@@ -87,7 +87,7 @@ async def rejection_example() -> None:
             print("  Decision: Rejected")
 
             # Send rejection response
-            rejection_response = request.create_response(approved=False)
+            rejection_response = request.to_function_approval_response(approved=False)
             result = await agent.run(ChatMessage(role="user", contents=[rejection_response]), thread=thread)
 
     print(f"Agent: {result}\n")
