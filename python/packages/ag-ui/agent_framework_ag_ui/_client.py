@@ -79,7 +79,7 @@ def _apply_server_function_call_unwrap(chat_client: TBareChatClient) -> TBareCha
         if stream:
             stream_response = original_get_response(self, *args, stream=True, **kwargs)
             if isinstance(stream_response, ResponseStream):
-                return ResponseStream.wrap(stream_response, map_update=_map_update)
+                return stream_response.with_transform_hook(_map_update)
             return ResponseStream(_stream_wrapper_impl(stream_response))
         return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
 

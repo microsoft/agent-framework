@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Generic, Literal
+from typing import Any, Generic, Literal
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -18,7 +18,7 @@ from pydantic import BaseModel, ValidationError
 
 from .._clients import BareChatClient
 from .._logging import get_logger
-from .._middleware import ChatMiddlewareLayer
+from .._middleware import ChatLevelMiddleware, ChatMiddlewareLayer
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -60,10 +60,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-if TYPE_CHECKING:
-    from .._middleware import Middleware
-
-__all__ = ["BareOpenAIChatClient", "OpenAIChatClient", "OpenAIChatOptions"]
+__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
@@ -584,7 +581,7 @@ class OpenAIChatClient(  # type: ignore[misc]
     ChatMiddlewareLayer[TOpenAIChatOptions],
     ChatTelemetryLayer[TOpenAIChatOptions],
     FunctionInvocationLayer[TOpenAIChatOptions],
-    BareOpenAIChatClient[TOpenAIChatOptions],
+    BareOpenAIChatClient[TOpenAIChatOptions],  # <- Raw instead of Base
     Generic[TOpenAIChatOptions],
 ):
     """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
@@ -599,10 +596,10 @@ class OpenAIChatClient(  # type: ignore[misc]
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         base_url: str | None = None,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        middleware: Sequence["Middleware"] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -621,6 +618,8 @@ class OpenAIChatClient(  # type: ignore[misc]
             base_url: The base URL to use. If provided will override
                 the standard value for an OpenAI connector, the env vars or .env file value.
                 Can also be set via environment variable OPENAI_BASE_URL.
+            middleware: Optional sequence of ChatLevelMiddleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.

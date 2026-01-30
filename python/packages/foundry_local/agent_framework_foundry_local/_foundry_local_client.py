@@ -1,13 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic
+from typing import Any, ClassVar, Generic
 
-from agent_framework import ChatOptions
-from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework import (
+    ChatLevelMiddleware,
+    ChatMiddlewareLayer,
+    ChatOptions,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+)
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai._chat_client import BareOpenAIChatClient
@@ -25,8 +31,6 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-if TYPE_CHECKING:
-    from agent_framework._middleware import Middleware
 
 __all__ = [
     "FoundryLocalChatOptions",
@@ -149,10 +153,10 @@ class FoundryLocalClient(
         timeout: float | None = None,
         prepare_model: bool = True,
         device: DeviceType | None = None,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str = "utf-8",
-        middleware: Sequence["Middleware"] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a FoundryLocalClient.
@@ -172,6 +176,8 @@ class FoundryLocalClient(
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
                 The values are in the foundry_local.models.DeviceType enum.
+            middleware: Optional sequence of ChatLevelMiddleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
             kwargs: Additional keyword arguments, are passed to the BareOpenAIChatClient.

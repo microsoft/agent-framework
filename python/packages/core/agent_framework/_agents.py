@@ -223,6 +223,30 @@ class AgentProtocol(Protocol):
     name: str | None
     description: str | None
 
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]:
+        """Get a response from the agent (non-streaming)."""
+        ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Get a streaming response from the agent."""
+        ...
+
     def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
@@ -949,21 +973,32 @@ class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 raw_representation=update,
             )
 
-        async def _finalize(response: ChatResponse) -> AgentResponse:
+        async def _finalize_to_agent_response(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
             if ctx is None:
                 raise AgentRunException("Chat client did not return a response.")
 
-            if not response:
+            if not updates:
                 raise AgentRunException("Chat client did not return a response.")
 
-            await self._finalize_response_and_update_thread(
-                response=response,
-                agent_name=ctx["agent_name"],
-                thread=ctx["thread"],
-                input_messages=ctx["input_messages"],
-                kwargs=ctx["finalize_kwargs"],
-            )
+            # Create AgentResponse from updates
+            response = AgentResponse.from_agent_run_response_updates(updates)
 
+            # Extract conversation_id from the first update's raw_representation (ChatResponseUpdate)
+            conversation_id: str | None = None
+            if updates and updates[0].raw_representation is not None:
+                raw_update = updates[0].raw_representation
+                if isinstance(raw_update, ChatResponseUpdate):
+                    conversation_id = raw_update.conversation_id
+
+            # Update thread with conversation_id
+            await self._update_thread_with_type_and_conversation_id(ctx["thread"], conversation_id)
+
+            # Ensure author names are set for all messages
+            for message in response.messages:
+                if message.author_name is None:
+                    message.author_name = ctx["agent_name"]
+
+            # Notify thread of new messages
             await self._notify_thread_of_new_messages(
                 ctx["thread"],
                 ctx["input_messages"],
@@ -971,18 +1006,9 @@ class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 **{k: v for k, v in ctx["finalize_kwargs"].items() if k != "thread"},
             )
 
-            return AgentResponse(
-                messages=response.messages,
-                response_id=response.response_id,
-                created_at=response.created_at,
-                usage_details=response.usage_details,
-                value=response.value,
-                raw_representation=response,
-                additional_properties=response.additional_properties,
-            )
+            return response
 
-        stream = ResponseStream.wrap(_get_chat_stream(), map_update=_to_agent_update)
-        return stream.with_finalizer(_finalize)
+        return ResponseStream(_get_chat_stream()).map(_to_agent_update, _finalize_to_agent_response)
 
     async def _prepare_run_context(
         self,
