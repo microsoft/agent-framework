@@ -17,7 +17,7 @@ string? apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
-AnthropicClient client = (resource is null)
+using AnthropicClient client = (resource is null)
     ? new AnthropicClient() { ApiKey = apiKey ?? throw new InvalidOperationException("ANTHROPIC_API_KEY is required when no ANTHROPIC_RESOURCE is provided") }  // If no resource is provided, use Anthropic public API
     : (apiKey is not null)
         ? new AnthropicFoundryClient(new AnthropicFoundryApiKeyCredentials(apiKey, resource)) // If an apiKey is provided, use Foundry with ApiKey authentication
