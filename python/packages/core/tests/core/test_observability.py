@@ -1752,7 +1752,7 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
 # region Test AgentTelemetryLayer error cases
 
 
-def test_agent_telemetry_layer_missing_run():
+async def test_agent_telemetry_layer_missing_run():
     """Test AgentTelemetryLayer raises error when run method is missing."""
 
     class InvalidAgent:
@@ -1781,9 +1781,8 @@ def test_agent_telemetry_layer_missing_run():
     with pytest.raises(AttributeError):
         # This will fail because InvalidAgent doesn't have a run method
         # that AgentTelemetryLayer's run can delegate to
-        import asyncio
 
-        asyncio.get_event_loop().run_until_complete(agent.run("test"))
+        await agent.run("test")
 
 
 # region Test _capture_messages with finish_reason

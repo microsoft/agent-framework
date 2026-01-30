@@ -45,7 +45,7 @@ packages = ["agent_framework_ag_ui", "agent_framework_ag_ui_examples"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "tests"]
 
 [tool.ruff]
 line-length = 120
