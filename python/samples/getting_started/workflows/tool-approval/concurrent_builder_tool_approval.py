@@ -6,8 +6,7 @@ from typing import Annotated
 from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
+    Content,
     RequestInfoEvent,
     WorkflowOutputEvent,
     tool,
@@ -139,7 +138,7 @@ async def main() -> None:
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
-            if isinstance(event.data, FunctionApprovalRequestContent):
+            if isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 print(f"\nApproval requested for tool: {event.data.function_call.name}")
                 print(f"  Arguments: {event.data.function_call.arguments}")
         elif isinstance(event, WorkflowOutputEvent):
@@ -147,12 +146,12 @@ async def main() -> None:
 
     # 6. Handle approval requests (if any)
     if request_info_events:
-        responses: dict[str, FunctionApprovalResponseContent] = {}
+        responses: dict[str, Content] = {}
         for request_event in request_info_events:
-            if isinstance(request_event.data, FunctionApprovalRequestContent):
+            if isinstance(request_event.data, Content) and request_event.data.type == "function_approval_request":
                 print(f"\nSimulating human approval for: {request_event.data.function_call.name}")
                 # Create approval response
-                responses[request_event.request_id] = request_event.data.create_response(approved=True)
+                responses[request_event.request_id] = request_event.data.to_function_approval_response(approved=True)
 
         if responses:
             # Phase 2: Send all approvals and continue workflow
