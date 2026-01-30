@@ -328,7 +328,14 @@ class GitHubCopilotAgent(BareAgent, Generic[TOptions]):
             ServiceException: If the request fails.
         """
         if stream:
-            return self._run_stream_impl(messages=messages, thread=thread, options=options, **kwargs)
+
+            def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+                return AgentResponse.from_agent_run_response_updates(updates)
+
+            return ResponseStream(
+                self._stream_updates(messages=messages, thread=thread, options=options, **kwargs),
+                finalizer=_finalize,
+            )
         return self._run_impl(messages=messages, thread=thread, options=options, **kwargs)
 
     async def _run_impl(
@@ -378,24 +385,6 @@ class GitHubCopilotAgent(BareAgent, Generic[TOptions]):
             response_id = message_id
 
         return AgentResponse(messages=response_messages, response_id=response_id)
-
-    def _run_stream_impl(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        options: TOptions | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-        """Streaming implementation of run."""
-
-        def _finalize(updates: list[AgentResponseUpdate]) -> AgentResponse:
-            return AgentResponse.from_agent_run_response_updates(updates)
-
-        return ResponseStream(
-            self._stream_updates(messages=messages, thread=thread, options=options, **kwargs),
-            finalizer=_finalize,
-        )
 
     async def _stream_updates(
         self,

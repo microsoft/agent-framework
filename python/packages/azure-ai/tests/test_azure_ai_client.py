@@ -422,7 +422,10 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
-        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
+        patch(
+            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
         patch.object(
             client,
             "_get_agent_reference_or_create",
@@ -456,7 +459,10 @@ async def test_prepare_options_with_application_endpoint(
     messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
-        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
+        patch(
+            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
         patch.object(
             client,
             "_get_agent_reference_or_create",
@@ -495,7 +501,10 @@ async def test_prepare_options_with_application_project_client(
     messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
-        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
+        patch(
+            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
         patch.object(
             client,
             "_get_agent_reference_or_create",
@@ -972,9 +981,8 @@ async def test_prepare_options_excludes_response_format(
     chat_options: ChatOptions = {}
 
     with (
-        patch.object(
-            client.__class__.__bases__[0],
-            "_prepare_options",
+        patch(
+            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "response_format": ResponseFormatModel,
