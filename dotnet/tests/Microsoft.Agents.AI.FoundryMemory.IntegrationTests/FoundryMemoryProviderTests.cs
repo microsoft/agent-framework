@@ -52,14 +52,14 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
         var sut = new FoundryMemoryProvider(this._client!, storageScope, options);
 
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
         var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
         Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
 
         // Act
         await sut.InvokedAsync(new AIContextProvider.InvokedContext([input], aiContextProviderMessages: null));
         var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
         var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
 
         // Assert
@@ -77,14 +77,14 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
         var sut = new FoundryMemoryProvider(this._client!, storageScope, options);
 
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
         var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
         Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
 
         // Act
         await sut.InvokedAsync(new AIContextProvider.InvokedContext([assistantIntro], aiContextProviderMessages: null));
         var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
         var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
 
         // Assert
@@ -102,8 +102,8 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         var sut1 = new FoundryMemoryProvider(this._client!, new FoundryMemoryProviderScope { Scope = "it-scope-a" }, options);
         var sut2 = new FoundryMemoryProvider(this._client!, new FoundryMemoryProviderScope { Scope = "it-scope-b" }, options);
 
-        await sut1.ClearStoredMemoriesAsync();
-        await sut2.ClearStoredMemoriesAsync();
+        await sut1.EnsureStoredMemoriesDeletedAsync();
+        await sut2.EnsureStoredMemoriesDeletedAsync();
 
         var ctxBefore1 = await sut1.InvokingAsync(new AIContextProvider.InvokingContext([question]));
         var ctxBefore2 = await sut2.InvokingAsync(new AIContextProvider.InvokingContext([question]));
@@ -120,8 +120,8 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         Assert.DoesNotContain("Caoimhe", ctxAfterAdding2.Messages?[0].Text ?? string.Empty);
 
         // Cleanup
-        await sut1.ClearStoredMemoriesAsync();
-        await sut2.ClearStoredMemoriesAsync();
+        await sut1.EnsureStoredMemoriesDeletedAsync();
+        await sut2.EnsureStoredMemoriesDeletedAsync();
     }
 
     [Fact(Skip = SkipReason)]
@@ -135,14 +135,14 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
         var sut = new FoundryMemoryProvider(this._client!, storageScope, options);
 
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
 
         // Act - Add multiple memories
         await sut.InvokedAsync(new AIContextProvider.InvokedContext([input1], aiContextProviderMessages: null));
         await sut.InvokedAsync(new AIContextProvider.InvokedContext([input2], aiContextProviderMessages: null));
         var ctxBeforeClear = await GetContextWithRetryAsync(sut, question, searchTerms: ["blue", "pizza"]);
 
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
         var ctxAfterClear = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
 
         // Assert

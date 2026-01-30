@@ -1,7 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -291,18 +294,32 @@ public sealed class FoundryMemoryProviderTests
     }
 
     [Fact]
-    public async Task ClearStoredMemoriesAsync_SendsDeleteRequestAsync()
+    public async Task EnsureStoredMemoriesDeletedAsync_SendsDeleteRequestAsync()
     {
         // Arrange
         FoundryMemoryProvider sut = new(this._operationsMock.Object, new FoundryMemoryProviderScope { Scope = "user-123" }, new FoundryMemoryProviderOptions { MemoryStoreName = "my-store" });
 
         // Act
-        await sut.ClearStoredMemoriesAsync();
+        await sut.EnsureStoredMemoriesDeletedAsync();
 
         // Assert
         this._operationsMock.Verify(
             o => o.DeleteScopeAsync("my-store", "user-123", It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureStoredMemoriesDeletedAsync_Handles404GracefullyAsync()
+    {
+        // Arrange
+        this._operationsMock
+            .Setup(o => o.DeleteScopeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ClientResultException(new MockPipelineResponse(404)));
+
+        FoundryMemoryProvider sut = new(this._operationsMock.Object, new FoundryMemoryProviderScope { Scope = "user-123" }, new FoundryMemoryProviderOptions { MemoryStoreName = "my-store" });
+
+        // Act & Assert - should not throw
+        await sut.EnsureStoredMemoriesDeletedAsync();
     }
 
     [Fact]
@@ -359,5 +376,68 @@ public sealed class FoundryMemoryProviderTests
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
+    }
+
+    private sealed class MockPipelineResponse : PipelineResponse
+    {
+        private readonly int _status;
+        private readonly MockPipelineResponseHeaders _headers;
+
+        public MockPipelineResponse(int status)
+        {
+            this._status = status;
+            this.Content = BinaryData.Empty;
+            this._headers = new MockPipelineResponseHeaders();
+        }
+
+        public override int Status => this._status;
+
+        public override string ReasonPhrase => this._status == 404 ? "Not Found" : "OK";
+
+        public override Stream? ContentStream
+        {
+            get => null;
+            set { }
+        }
+
+        public override BinaryData Content { get; }
+
+        protected override PipelineResponseHeaders HeadersCore => this._headers;
+
+        public override BinaryData BufferContent(CancellationToken cancellationToken = default) => this.Content;
+
+        public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default) =>
+            new(this.Content);
+
+        public override void Dispose()
+        {
+        }
+
+        private sealed class MockPipelineResponseHeaders : PipelineResponseHeaders
+        {
+            private readonly Dictionary<string, string> _headers = new(StringComparer.OrdinalIgnoreCase);
+
+            public override bool TryGetValue(string name, out string? value)
+            {
+                return this._headers.TryGetValue(name, out value);
+            }
+
+            public override bool TryGetValues(string name, out IEnumerable<string>? values)
+            {
+                if (this._headers.TryGetValue(name, out string? value))
+                {
+                    values = [value];
+                    return true;
+                }
+
+                values = null;
+                return false;
+            }
+
+            public override IEnumerator<KeyValuePair<string, string>> GetEnumerator()
+            {
+                return this._headers.GetEnumerator();
+            }
+        }
     }
 }

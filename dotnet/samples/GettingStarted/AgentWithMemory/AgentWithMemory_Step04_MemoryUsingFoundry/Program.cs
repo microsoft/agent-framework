@@ -5,30 +5,28 @@
 // memories for subsequent invocations, even across new sessions.
 
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.FoundryMemory;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-string openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_MEMORY_STORE_NAME") ?? throw new InvalidOperationException("FOUNDRY_MEMORY_STORE_NAME is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_MEMORY_STORE_NAME") ?? throw new InvalidOperationException("FOUNDRY_MEMORY_STORE_NAME is not set.");
-
-// Create an AIProjectClient for Foundry Memory with Azure Identity authentication.
+// Create an AIProjectClient for Foundry with Azure Identity authentication.
 AzureCliCredential credential = new();
 AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
 
-AIAgent agent = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
+// Get the ChatClient from the AIProjectClient's OpenAI property using the deployment name.
+AIAgent agent = projectClient.OpenAI
     .GetChatClient(deploymentName)
+    .AsIChatClient()
     .AsAIAgent(new ChatClientAgentOptions()
     {
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
+        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
             // If each session should have its own scope, you can create a new id per session here:
             // ? new FoundryMemoryProvider(projectClient, new FoundryMemoryProviderScope() { Scope = Guid.NewGuid().ToString() }, new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName })
             // In this case we are storing memories scoped by user so that memories are retained across sessions.
@@ -41,7 +39,7 @@ AgentSession session = await agent.GetNewSessionAsync();
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
 FoundryMemoryProvider memoryProvider = session.GetService<FoundryMemoryProvider>()!;
-await memoryProvider.ClearStoredMemoriesAsync();
+await memoryProvider.EnsureStoredMemoriesDeletedAsync();
 
 Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", session));
 Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));

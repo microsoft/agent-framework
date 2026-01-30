@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -280,11 +281,28 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     }
 
     /// <summary>
-    /// Clears all stored memories for the configured scope.
+    /// Ensures all stored memories for the configured scope are deleted.
+    /// This method handles cases where the scope doesn't exist (no memories stored yet).
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public Task ClearStoredMemoriesAsync(CancellationToken cancellationToken = default) =>
-        this._operations.DeleteScopeAsync(this._memoryStoreName, this._scope.Scope!, cancellationToken);
+    public async Task EnsureStoredMemoriesDeletedAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await this._operations.DeleteScopeAsync(this._memoryStoreName, this._scope.Scope!, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ClientResultException ex) when (ex.Status == 404)
+        {
+            // Scope doesn't exist (no memories stored yet), nothing to delete
+            if (this._logger?.IsEnabled(LogLevel.Debug) is true)
+            {
+                this._logger.LogDebug(
+                    "FoundryMemoryProvider: No memories to delete for scope. MemoryStore: '{MemoryStoreName}', Scope: '{Scope}'.",
+                    this._memoryStoreName,
+                    this.SanitizeLogData(this._scope.Scope));
+            }
+        }
+    }
 
     /// <inheritdoc />
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)

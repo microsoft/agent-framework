@@ -30,13 +30,12 @@ This sample demonstrates how to create and run an agent that uses Azure AI Found
 ## Environment Variables
 
 ```bash
-# Azure OpenAI endpoint and deployment
-export AZURE_OPENAI_ENDPOINT="https://your-openai.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
-
 # Azure AI Foundry project endpoint and memory store name
-export AZURE_AI_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
+export AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
 export FOUNDRY_MEMORY_STORE_NAME="my_memory_store"
+
+# Azure OpenAI deployment name (model deployed in your Foundry project)
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
 ## Run the Sample
