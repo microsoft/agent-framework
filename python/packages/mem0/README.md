@@ -21,7 +21,7 @@ See the [Mem0 basic example](https://github.com/microsoft/agent-framework/tree/m
 
 ## Telemetry
 
-Mem0's telemetry (PostHog analytics) is **disabled by default** when using this package. If you want to enable telemetry, set the environment variable before importing:
+Mem0's telemetry is **disabled by default** when using this package. If you want to enable telemetry, set the environment variable before importing:
 
 ```python
 import os

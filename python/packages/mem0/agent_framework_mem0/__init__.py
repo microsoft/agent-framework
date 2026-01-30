@@ -3,7 +3,7 @@
 import importlib.metadata
 import os
 
-# Disable Mem0 telemetry by default to prevent usage data from being sent to PostHog.
+# Disable Mem0 telemetry by default to prevent usage data from being sent to telemetry provider.
 # Users can opt-in by setting MEM0_TELEMETRY=true before importing this package.
 if os.environ.get("MEM0_TELEMETRY") is None:
     os.environ["MEM0_TELEMETRY"] = "false"
