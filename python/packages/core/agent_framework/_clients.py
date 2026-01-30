@@ -66,6 +66,27 @@ TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
 logger = get_logger()
 
+# Internal kwargs that should never be passed to client implementations.
+_INTERNAL_KWARGS: frozenset[str] = frozenset({"thread", "middleware"})
+
+
+def _filter_internal_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Filter out internal framework kwargs before passing to client implementations.
+
+    Filters:
+    - Any kwarg starting with '_' (internal objects like _function_middleware_pipeline)
+    - 'thread': Thread object used by agent framework
+    - 'middleware': Middleware list passed through decorator chain
+
+    Args:
+        kwargs: The kwargs dictionary to filter.
+
+    Returns:
+        A new dict with internal framework kwargs removed.
+    """
+    return {k: v for k, v in kwargs.items() if not k.startswith("_") and k not in _INTERNAL_KWARGS}
+
+
 __all__ = [
     "BaseChatClient",
     "ChatClientProtocol",
@@ -376,7 +397,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         return await self._inner_get_response(
             messages=prepare_messages(messages),
             options=await validate_chat_options(dict(options) if options else {}),
-            **kwargs,
+            **_filter_internal_kwargs(kwargs),
         )
 
     async def get_streaming_response(
@@ -399,7 +420,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         async for update in self._inner_get_streaming_response(
             messages=prepare_messages(messages),
             options=await validate_chat_options(dict(options) if options else {}),
-            **kwargs,
+            **_filter_internal_kwargs(kwargs),
         ):
             yield update
 
