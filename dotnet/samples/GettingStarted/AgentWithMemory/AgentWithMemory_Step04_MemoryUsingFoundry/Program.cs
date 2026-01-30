@@ -62,16 +62,11 @@ Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm plan
 Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));
 
 // Memory extraction in Azure AI Foundry is asynchronous and takes time to process.
-// In production scenarios, you would:
-// 1. Track the UpdateId returned from each memory update operation
-// 2. Poll the GetUpdateResultAsync API to check completion status
-// 3. Wait for status to become "completed" before querying memories
-//
-// For simplicity, this sample uses a fixed delay. For production code, implement proper polling
-// using the Azure.AI.Projects SDK's MemoryStores.GetUpdateResultAsync method.
+// WhenUpdatesCompletedAsync polls all pending updates and waits for them to complete.
 Console.WriteLine("\nWaiting for Foundry Memory to process updates...");
-await Task.Delay(TimeSpan.FromSeconds(10));
-Console.WriteLine("Continuing after delay.\n");
+await memoryProvider.WhenUpdatesCompletedAsync();
+
+Console.WriteLine("Updates completed.\n");
 
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
@@ -81,6 +76,10 @@ AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSes
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 
 Console.WriteLine("\n>> Start a new session that shares the same Foundry Memory scope\n");
+
+Console.WriteLine("\nWaiting for Foundry Memory to process updates...");
+await memoryProvider.WhenUpdatesCompletedAsync();
+
 AgentSession newSession = await agent.GetNewSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));
 
@@ -89,26 +88,36 @@ internal sealed class DebugHttpClientHandler : HttpClientHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        // Uncomment to debug HTTP traffic:
-        // Console.WriteLine("\n=== HTTP REQUEST ===");
-        // Console.WriteLine($"Method: {request.Method}");
-        // Console.WriteLine($"URI: {request.RequestUri}");
-        //
-        // if (request.Content != null)
-        // {
-        //     string body = await request.Content.ReadAsStringAsync(cancellationToken);
-        //     Console.WriteLine("Body: " + body);
-        // }
-        //
-        // Console.WriteLine("====================\n");
+        if (!request.RequestUri?.PathAndQuery.Contains("sample-memory-store-name") ?? false)
+        {
+            return await base.SendAsync(request, cancellationToken);
+        }
 
-        // Uncomment to debug HTTP traffic:
-        // Console.WriteLine("\n=== HTTP RESPONSE ===");
-        // Console.WriteLine($"Status: {(int)response.StatusCode} {response.StatusCode}");
-        // string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        // Console.WriteLine("Body: " + responseBody);
-        // Console.WriteLine("=====================\n");
+        Console.WriteLine("\n=== HTTP REQUEST ===");
+        Console.WriteLine($"Method: {request.Method}");
+        Console.WriteLine($"URI: {request.RequestUri}");
+        Console.WriteLine("Headers:");
+        foreach (var header in request.Headers)
+        {
+            Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
+        }
 
-        return await base.SendAsync(request, cancellationToken);
+        if (request.Content != null)
+        {
+            string body = await request.Content.ReadAsStringAsync(cancellationToken);
+            Console.WriteLine("Body: " + body);
+        }
+
+        HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+
+        Console.WriteLine("====================\n");
+
+        Console.WriteLine("\n=== HTTP RESPONSE ===");
+        Console.WriteLine($"Status: {(int)response.StatusCode} {response.StatusCode}");
+        string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        Console.WriteLine("Body: " + responseBody);
+        Console.WriteLine("=====================\n");
+
+        return response;
     }
 }

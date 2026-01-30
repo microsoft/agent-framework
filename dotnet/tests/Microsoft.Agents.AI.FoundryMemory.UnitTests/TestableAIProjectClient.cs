@@ -5,7 +5,6 @@ using System.ClientModel.Primitives;
 using System.Net;
 using System.Net.Http;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,13 +17,6 @@ namespace Microsoft.Agents.AI.FoundryMemory.UnitTests;
 /// Creates a testable AIProjectClient with a mock HTTP handler.
 /// </summary>
 internal sealed class TestableAIProjectClient : IDisposable
-<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.FoundryMemory.UnitTests(net472)', Before:
-    private readonly MockHttpMessageHandler _handler;
-    private readonly HttpClient _httpClient;
-=======
-    private readonly HttpClient _httpClient;
->>>>>>> After
-
 {
     private readonly HttpClient _httpClient;
 
@@ -46,11 +38,6 @@ internal sealed class TestableAIProjectClient : IDisposable
             createStoreStatusCode,
             getStoreStatusCode);
 
-<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.FoundryMemory.UnitTests(net472)', Before:
-        this._httpClient = new HttpClient(this._handler);
-=======
-        this._httpClient = new HttpClient(this.Handler);
->>>>>>> After
         this._httpClient = new HttpClient(this.Handler);
 
         AIProjectClientOptions options = new()
@@ -67,12 +54,6 @@ internal sealed class TestableAIProjectClient : IDisposable
 
     public AIProjectClient Client { get; }
 
-
-<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.FoundryMemory.UnitTests(net472)', Before:
-    public MockHttpMessageHandler Handler => this._handler;
-=======
-    public MockHttpMessageHandler Handler { get; }
->>>>>>> After
     public MockHttpMessageHandler Handler { get; }
 
     public void Dispose()

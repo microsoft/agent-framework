@@ -9,6 +9,21 @@ namespace Microsoft.Agents.AI.FoundryMemory.Core.Models;
 /// </summary>
 internal sealed class UpdateMemoriesResponse
 {
+    /// <summary>Status indicating the update is waiting to be processed.</summary>
+    internal const string StatusQueued = "queued";
+
+    /// <summary>Status indicating the update is currently being processed.</summary>
+    internal const string StatusInProgress = "in_progress";
+
+    /// <summary>Status indicating the update completed successfully.</summary>
+    internal const string StatusCompleted = "completed";
+
+    /// <summary>Status indicating the update failed.</summary>
+    internal const string StatusFailed = "failed";
+
+    /// <summary>Status indicating the update was superseded by a newer update.</summary>
+    internal const string StatusSuperseded = "superseded";
+
     /// <summary>
     /// Gets or sets the unique identifier of the update operation.
     /// </summary>

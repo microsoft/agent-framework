@@ -2,6 +2,8 @@
 
 using System;
 using System.ClientModel;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -38,6 +40,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private readonly ILogger<FoundryMemoryProvider>? _logger;
 
     private readonly FoundryMemoryProviderScope _scope;
+    private readonly ConcurrentQueue<string> _pendingUpdateIds = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryMemoryProvider"/> class.
@@ -237,6 +240,11 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 this._updateDelay,
                 cancellationToken).ConfigureAwait(false);
 
+            if (response?.UpdateId is not null)
+            {
+                this._pendingUpdateIds.Enqueue(response.UpdateId);
+            }
+
             if (this._logger?.IsEnabled(LogLevel.Information) is true)
             {
                 this._logger.LogInformation(
@@ -320,6 +328,76 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 this._logger.LogDebug(
                     "FoundryMemoryProvider: Memory store '{MemoryStoreName}' already exists.",
                     this._memoryStoreName);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits for all pending memory update operations to complete.
+    /// </summary>
+    /// <remarks>
+    /// Memory extraction in Azure AI Foundry is asynchronous. This method polls all pending updates
+    /// in parallel and returns when all have completed, failed, or been superseded.
+    /// </remarks>
+    /// <param name="pollingInterval">The interval between status checks. Defaults to 5 seconds.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="AggregateException">Thrown if any update operation failed, containing all failures.</exception>
+    public async Task WhenUpdatesCompletedAsync(
+        TimeSpan? pollingInterval = null,
+        CancellationToken cancellationToken = default)
+    {
+        TimeSpan interval = pollingInterval ?? TimeSpan.FromSeconds(5);
+
+        // Collect all pending update IDs
+        List<string> updateIds = [];
+        while (this._pendingUpdateIds.TryDequeue(out string? updateId))
+        {
+            updateIds.Add(updateId);
+        }
+
+        if (updateIds.Count == 0)
+        {
+            return;
+        }
+
+        // Poll all updates in parallel
+        await Task.WhenAll(updateIds.Select(updateId => this.WaitForUpdateAsync(updateId, interval, cancellationToken))).ConfigureAwait(false);
+    }
+
+    private async Task WaitForUpdateAsync(string updateId, TimeSpan interval, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            UpdateMemoriesResponse? response = await this._client.GetUpdateStatusAsync(
+                this._memoryStoreName,
+                updateId,
+                cancellationToken).ConfigureAwait(false);
+
+            string status = response?.Status ?? "unknown";
+
+            if (this._logger?.IsEnabled(LogLevel.Debug) is true)
+            {
+                this._logger.LogDebug(
+                    "FoundryMemoryProvider: Update status for '{UpdateId}': {Status}",
+                    updateId,
+                    status);
+            }
+
+            switch (status)
+            {
+                case UpdateMemoriesResponse.StatusCompleted:
+                case UpdateMemoriesResponse.StatusSuperseded:
+                    return;
+                case UpdateMemoriesResponse.StatusFailed:
+                    throw new InvalidOperationException($"Memory update operation '{updateId}' failed: {response?.Error?.Message}");
+                case UpdateMemoriesResponse.StatusQueued:
+                case UpdateMemoriesResponse.StatusInProgress:
+                    await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unknown update status '{status}' for update '{updateId}'.");
             }
         }
     }
