@@ -9,7 +9,6 @@ from agent_framework import (
     ChatMessage,
     Role,
 )
-from agent_framework._types import prepend_instructions_to_messages
 
 
 def test_chat_client_type(chat_client: ChatClientProtocol):
@@ -57,6 +56,8 @@ async def test_chat_client_instructions_handling(chat_client_base: ChatClientPro
         assert len(messages) == 1
         assert messages[0].role == Role.USER
         assert messages[0].text == "hello"
+
+        from agent_framework._types import prepend_instructions_to_messages
 
         appended_messages = prepend_instructions_to_messages(
             [ChatMessage(role=Role.USER, text="hello")],
