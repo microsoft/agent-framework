@@ -66,12 +66,14 @@ public sealed class AnthropicClientExtensionsTests
         }
 
         public HttpClient HttpClient { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
-        public Uri BaseUrl { get => new("http://localhost"); init => throw new NotImplementedException(); }
+        public string BaseUrl { get => "http://localhost"; init => throw new NotImplementedException(); }
         public bool ResponseValidation { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public int? MaxRetries { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public TimeSpan? Timeout { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
-        public string? APIKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+        public string? ApiKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? AuthToken { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+
+        public IAnthropicClientWithRawResponse WithRawResponse => throw new NotImplementedException();
 
         public IMessageService Messages => throw new NotImplementedException();
 
@@ -79,14 +81,13 @@ public sealed class AnthropicClientExtensionsTests
 
         public IBetaService Beta => throw new NotImplementedException();
 
-        public Task<HttpResponse> Execute<T>(HttpRequest<T> request, CancellationToken cancellationToken = default) where T : ParamsBase
+        public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)
         {
             throw new NotImplementedException();
         }
 
-        public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)
+        public void Dispose()
         {
-            throw new NotImplementedException();
         }
     }
 
@@ -309,7 +310,7 @@ public sealed class AnthropicClientExtensionsTests
         var client = new AnthropicClient
         {
             HttpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") },
-            APIKey = "test-key"
+            ApiKey = "test-key"
         };
 
         // Act

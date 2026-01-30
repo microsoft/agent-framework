@@ -52,7 +52,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var anthropicClient = new AnthropicClient() { APIKey = s_config.ApiKey };
+        var anthropicClient = new AnthropicClient() { ApiKey = s_config.ApiKey };
 
         IChatClient? chatClient = this._useBeta
             ? anthropicClient
