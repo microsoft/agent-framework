@@ -10,6 +10,11 @@ Key components:
 - run_workflow_orchestrator: Main orchestration function for workflow execution
 - route_message_through_edge_groups: Routing helper using MAF edge group APIs
 - build_agent_executor_response: Helper to construct AgentExecutorResponse
+
+HITL (Human-in-the-Loop) Support:
+- Detects pending RequestInfoEvents from executor activities
+- Uses wait_for_external_event to pause for human input
+- Routes responses back to executor's @response_handler methods
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import Enum
 from typing import Any
 
@@ -76,6 +82,29 @@ class ExecutorResult:
     output_message: AgentExecutorResponse | None
     activity_result: dict[str, Any] | None
     task_type: TaskType
+
+
+@dataclass
+class PendingHITLRequest:
+    """Tracks a pending Human-in-the-Loop request in the orchestrator.
+
+    Attributes:
+        request_id: Unique identifier for correlation with external events
+        source_executor_id: The executor that called ctx.request_info()
+        request_data: The serialized request payload
+        request_type: Fully qualified type name of the request data
+        response_type: Fully qualified type name of expected response
+    """
+
+    request_id: str
+    source_executor_id: str
+    request_data: Any
+    request_type: str | None
+    response_type: str | None
+
+
+# Default timeout for HITL requests (72 hours)
+DEFAULT_HITL_TIMEOUT_HOURS = 72.0
 
 
 # ============================================================================
@@ -434,6 +463,79 @@ def _check_fan_in_ready(
 
 
 # ============================================================================
+# HITL (Human-in-the-Loop) Helpers
+# ============================================================================
+
+
+def _collect_hitl_requests(
+    result: ExecutorResult,
+    pending_hitl_requests: dict[str, PendingHITLRequest],
+) -> None:
+    """Collect pending HITL requests from an activity result.
+
+    Args:
+        result: The executor result that may contain pending request info events
+        pending_hitl_requests: Dict to accumulate pending requests (mutated)
+    """
+    if result.activity_result and result.activity_result.get("pending_request_info_events"):
+        for req_data in result.activity_result["pending_request_info_events"]:
+            request_id = req_data.get("request_id")
+            if request_id:
+                pending_hitl_requests[request_id] = PendingHITLRequest(
+                    request_id=request_id,
+                    source_executor_id=req_data.get("source_executor_id", result.executor_id),
+                    request_data=req_data.get("data"),
+                    request_type=req_data.get("request_type"),
+                    response_type=req_data.get("response_type"),
+                )
+                logger.debug(
+                    "Collected HITL request %s from executor %s",
+                    request_id,
+                    result.executor_id,
+                )
+
+
+def _route_hitl_response(
+    hitl_request: PendingHITLRequest,
+    raw_response: Any,
+    pending_messages: dict[str, list[tuple[Any, str]]],
+) -> None:
+    """Route a HITL response back to the source executor's @response_handler.
+
+    The response is packaged as a special HITL response message that the executor
+    activity can recognize and route to the appropriate @response_handler method.
+
+    Args:
+        hitl_request: The original HITL request
+        raw_response: The raw response data from the external event
+        pending_messages: Dict to add the response message to (mutated)
+    """
+    # Create a message structure that the executor can recognize
+    # This mimics what the InProcRunnerContext does for request_info responses
+    response_message = {
+        "__hitl_response__": True,
+        "request_id": hitl_request.request_id,
+        "original_request": hitl_request.request_data,
+        "response": raw_response,
+        "response_type": hitl_request.response_type,
+    }
+
+    target_id = hitl_request.source_executor_id
+    if target_id not in pending_messages:
+        pending_messages[target_id] = []
+
+    # Use a special source ID to indicate this is a HITL response
+    source_id = f"__hitl_response__{hitl_request.request_id}"
+    pending_messages[target_id].append((response_message, source_id))
+
+    logger.debug(
+        "Routed HITL response for request %s to executor %s",
+        hitl_request.request_id,
+        target_id,
+    )
+
+
+# ============================================================================
 # Main Orchestrator
 # ============================================================================
 
@@ -443,6 +545,7 @@ def run_workflow_orchestrator(
     workflow: Workflow,
     initial_message: Any,
     shared_state: dict[str, Any] | None = None,
+    hitl_timeout_hours: float = DEFAULT_HITL_TIMEOUT_HOURS,
 ):
     """Traverse and execute the workflow graph using Durable Functions.
 
@@ -455,17 +558,20 @@ def run_workflow_orchestrator(
     - FanOutEdgeGroup: Broadcast to multiple targets - **executed in parallel**
     - FanInEdgeGroup: Aggregates messages from multiple sources before delivery
     - SharedState: Local shared state accessible to all executors
+    - HITL: Human-in-the-loop via request_info / @response_handler pattern
 
     Execution model:
     - All pending executors (agents AND activities) run in parallel via single task_all()
     - Multiple messages to the SAME agent are processed sequentially for conversation coherence
     - SharedState updates are applied in order after parallel tasks complete
+    - HITL requests pause the orchestration until external events are received
 
     Args:
         context: The Durable Functions orchestration context
         workflow: The MAF Workflow instance to execute
         initial_message: The initial message to send to the start executor
         shared_state: Optional dict for cross-executor state sharing (local to orchestration)
+        hitl_timeout_hours: Timeout in hours for HITL requests (default: 72 hours)
 
     Returns:
         List of workflow outputs collected from executor activities
@@ -480,6 +586,9 @@ def run_workflow_orchestrator(
     fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {
         group.id: defaultdict(list) for group in workflow.edge_groups if isinstance(group, FanInEdgeGroup)
     }
+
+    # Track pending HITL requests
+    pending_hitl_requests: dict[str, PendingHITLRequest] = {}
 
     while pending_messages and iteration < workflow.max_iterations:
         logger.debug("Orchestrator iteration %d", iteration)
@@ -516,14 +625,91 @@ def run_workflow_orchestrator(
             result = _process_agent_response(agent_response, executor_id, message)
             all_results.append(result)
 
-        # Phase 4: Route all results to next iteration
+        # Phase 4: Collect pending HITL requests from activity results
+        for result in all_results:
+            _collect_hitl_requests(result, pending_hitl_requests)
+
+        # Phase 5: Route all results to next iteration
         for result in all_results:
             _route_result_messages(result, workflow, next_pending_messages, fan_in_pending)
 
-        # Phase 5: Check if any FanInEdgeGroups are ready to deliver
+        # Phase 6: Check if any FanInEdgeGroups are ready to deliver
         _check_fan_in_ready(workflow, fan_in_pending, next_pending_messages)
 
         pending_messages = next_pending_messages
+
+        # Phase 7: Handle HITL - if no pending work but HITL requests exist, wait for responses
+        if not pending_messages and pending_hitl_requests:
+            logger.debug("Workflow paused for HITL - %d pending requests", len(pending_hitl_requests))
+
+            # Update custom status to expose pending requests
+            context.set_custom_status({
+                "state": "waiting_for_human_input",
+                "pending_requests": {
+                    req_id: {
+                        "request_id": req.request_id,
+                        "source_executor_id": req.source_executor_id,
+                        "data": req.request_data,
+                        "request_type": req.request_type,
+                        "response_type": req.response_type,
+                    }
+                    for req_id, req in pending_hitl_requests.items()
+                },
+            })
+
+            # Wait for external events for each pending request
+            # Process responses one at a time to maintain ordering
+            for request_id, hitl_request in list(pending_hitl_requests.items()):
+                logger.debug("Waiting for HITL response for request: %s", request_id)
+
+                # Create tasks for approval and timeout
+                approval_task = context.wait_for_external_event(request_id)
+                timeout_task = context.create_timer(context.current_utc_datetime + timedelta(hours=hitl_timeout_hours))
+
+                winner = yield context.task_any([approval_task, timeout_task])
+
+                if winner == approval_task:
+                    # Cancel the timeout
+                    timeout_task.cancel()
+
+                    # Get the response
+                    raw_response = approval_task.result
+                    logger.debug(
+                        "Received HITL response for request %s. Type: %s, Value: %s",
+                        request_id,
+                        type(raw_response).__name__,
+                        raw_response,
+                    )
+
+                    # Durable Functions may return a JSON string; parse it if so
+                    if isinstance(raw_response, str):
+                        try:
+                            import json
+
+                            raw_response = json.loads(raw_response)
+                            logger.debug("Parsed JSON string response to: %s", type(raw_response).__name__)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.debug("Response is not JSON, keeping as string")
+
+                    # Remove from pending
+                    del pending_hitl_requests[request_id]
+
+                    # Route the response back to the source executor's @response_handler
+                    _route_hitl_response(
+                        hitl_request,
+                        raw_response,
+                        pending_messages,
+                    )
+                else:
+                    # Timeout occurred
+                    logger.warning("HITL request %s timed out after %s hours", request_id, hitl_timeout_hours)
+                    raise TimeoutError(
+                        f"Human-in-the-loop request '{request_id}' timed out after {hitl_timeout_hours} hours."
+                    )
+
+            # Clear custom status after HITL is resolved
+            context.set_custom_status({"state": "running"})
+
         iteration += 1
 
     # Durable Functions runtime extracts return value from StopIteration

@@ -521,4 +521,18 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
         return None
 
 
+# Default: Azure Functions mode
+# Run with `python function_app.py --maf` for pure MAF mode with DevUI
 app = launch(durable=True)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--maf" in sys.argv:
+        # Run in pure MAF mode with DevUI
+        launch(durable=False)
+    else:
+        print("Usage: python function_app.py --maf")
+        print("  --maf    Run in pure MAF mode with DevUI (http://localhost:8095)")
+        print("\nFor Azure Functions mode, use: func start")

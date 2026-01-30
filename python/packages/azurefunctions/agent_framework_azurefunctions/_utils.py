@@ -284,12 +284,127 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
         # Remove metadata before reconstruction
         clean_data = {k: v for k, v in data.items() if not k.startswith("__")}
         try:
-            if is_dataclass(target_type) or issubclass(target_type, BaseModel):
-                return target_type(**clean_data)
+            if is_dataclass(target_type):
+                # Recursively reconstruct nested fields for dataclasses
+                reconstructed_data = _reconstruct_dataclass_fields(target_type, clean_data)
+                return target_type(**reconstructed_data)
+            if issubclass(target_type, BaseModel):
+                # Pydantic handles nested model validation automatically
+                return target_type.model_validate(clean_data)
         except Exception:
             logger.debug("Could not reconstruct type %s from data", type_name)
 
     return data
+
+
+def _reconstruct_dataclass_fields(dataclass_type: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Recursively reconstruct nested dataclass and Pydantic fields.
+
+    This function processes each field of a dataclass, looking up the expected type
+    from type hints and reconstructing nested objects (dataclasses, Pydantic models, lists).
+
+    Args:
+        dataclass_type: The dataclass type being constructed
+        data: The dict of field values
+
+    Returns:
+        Dict with nested objects properly reconstructed
+    """
+    if not is_dataclass(dataclass_type):
+        return data
+
+    result = {}
+    type_hints = {}
+
+    # Get type hints for the dataclass
+    try:
+        import typing
+
+        type_hints = typing.get_type_hints(dataclass_type)
+    except Exception:
+        # Fall back to field annotations if get_type_hints fails
+        for f in fields(dataclass_type):
+            type_hints[f.name] = f.type
+
+    for key, value in data.items():
+        if key not in type_hints:
+            result[key] = value
+            continue
+
+        field_type = type_hints[key]
+
+        # Handle Optional types (Union with None)
+        origin = get_origin(field_type)
+        if origin is Union or isinstance(field_type, types.UnionType):
+            args = get_args(field_type)
+            # Filter out NoneType to get the actual type
+            non_none_types = [t for t in args if t is not type(None)]
+            if len(non_none_types) == 1:
+                field_type = non_none_types[0]
+
+        # Recursively reconstruct the value
+        result[key] = _reconstruct_typed_value(value, field_type)
+
+    return result
+
+
+def _reconstruct_typed_value(value: Any, target_type: type) -> Any:
+    """Reconstruct a single value to the target type.
+
+    Handles dataclasses, Pydantic models, and lists with typed elements.
+
+    Args:
+        value: The value to reconstruct
+        target_type: The expected type
+
+    Returns:
+        The reconstructed value
+    """
+    if value is None:
+        return None
+
+    # If already the correct type, return as-is
+    try:
+        if isinstance(value, target_type):
+            return value
+    except TypeError:
+        # target_type might not be a valid type for isinstance
+        pass
+
+    # Handle dict values that need reconstruction
+    if isinstance(value, dict):
+        # First try deserialize_value which uses embedded type metadata
+        if "__type__" in value:
+            deserialized = deserialize_value(value)
+            if deserialized is not value:
+                return deserialized
+
+        # Handle Pydantic models
+        if hasattr(target_type, "model_validate"):
+            try:
+                return target_type.model_validate(value)
+            except Exception:
+                logger.debug("Could not validate Pydantic model %s", target_type)
+
+        # Handle dataclasses
+        if is_dataclass(target_type) and isinstance(target_type, type):
+            try:
+                # Recursively reconstruct nested fields
+                reconstructed = _reconstruct_dataclass_fields(target_type, value)
+                return target_type(**reconstructed)
+            except Exception:
+                logger.debug("Could not construct dataclass %s", target_type)
+
+    # Handle list values
+    if isinstance(value, list):
+        origin = get_origin(target_type)
+        if origin is list:
+            args = get_args(target_type)
+            if args:
+                element_type = args[0]
+                return [_reconstruct_typed_value(item, element_type) for item in value]
+
+    return value
 
 
 def reconstruct_agent_executor_request(data: dict[str, Any]) -> AgentExecutorRequest:
@@ -399,8 +514,127 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
                 try:
                     # Remove metadata before constructing
                     clean_data = {k: v for k, v in data.items() if not k.startswith("__")}
-                    return msg_type(**clean_data)
+                    # Recursively reconstruct nested objects based on field types
+                    reconstructed_data = _reconstruct_dataclass_fields(msg_type, clean_data)
+                    return msg_type(**reconstructed_data)
                 except Exception:
                     logger.debug("Could not construct %s from matching fields", msg_type.__name__)
 
     return data
+
+
+# ============================================================================
+# HITL Response Handler Execution
+# ============================================================================
+
+
+async def _execute_hitl_response_handler(
+    executor: Any,
+    hitl_message: dict[str, Any],
+    shared_state: SharedState,
+    runner_context: CapturingRunnerContext,
+) -> None:
+    """Execute a HITL response handler on an executor.
+
+    This function handles the delivery of a HITL response to the executor's
+    @response_handler method. It:
+    1. Deserializes the original request and response
+    2. Finds the matching response handler based on types
+    3. Creates a WorkflowContext and invokes the handler
+
+    Args:
+        executor: The executor instance that has a @response_handler
+        hitl_message: The HITL response message containing original_request and response
+        shared_state: The shared state for the workflow context
+        runner_context: The runner context for capturing outputs
+    """
+    from agent_framework._workflows._workflow_context import WorkflowContext
+
+    # Extract the response data
+    original_request_data = hitl_message.get("original_request")
+    response_data = hitl_message.get("response")
+    response_type_str = hitl_message.get("response_type")
+
+    # Deserialize the original request
+    original_request = deserialize_value(original_request_data)
+
+    # Deserialize the response - try to match expected type
+    response = _deserialize_hitl_response(response_data, response_type_str)
+
+    # Find the matching response handler
+    handler = executor._find_response_handler(original_request, response)
+
+    if handler is None:
+        logger.warning(
+            "No response handler found for HITL response in executor %s. Request type: %s, Response type: %s",
+            executor.id,
+            type(original_request).__name__,
+            type(response).__name__,
+        )
+        return
+
+    # Create a WorkflowContext for the handler
+    # Use a special source ID to indicate this is a HITL response
+    ctx = WorkflowContext(
+        executor=executor,
+        source_executor_ids=["__hitl_response__"],
+        runner_context=runner_context,
+        shared_state=shared_state,
+    )
+
+    # Call the response handler
+    # Note: handler is already a partial with original_request bound
+    logger.debug(
+        "Invoking response handler for HITL request in executor %s",
+        executor.id,
+    )
+    await handler(response, ctx)
+
+
+def _deserialize_hitl_response(response_data: Any, response_type_str: str | None) -> Any:
+    """Deserialize a HITL response to its expected type.
+
+    Args:
+        response_data: The raw response data (typically a dict from JSON)
+        response_type_str: The fully qualified type name (module:classname)
+
+    Returns:
+        The deserialized response, or the original data if deserialization fails
+    """
+    logger.debug(
+        "Deserializing HITL response. response_type_str=%s, response_data type=%s",
+        response_type_str,
+        type(response_data).__name__,
+    )
+
+    if response_data is None:
+        return None
+
+    # If already a primitive, return as-is
+    if not isinstance(response_data, dict):
+        logger.debug("Response data is not a dict, returning as-is: %s", type(response_data).__name__)
+        return response_data
+
+    # Try to deserialize using the type hint
+    if response_type_str:
+        try:
+            module_name, class_name = response_type_str.rsplit(":", 1)
+            import importlib
+
+            module = importlib.import_module(module_name)
+            response_type = getattr(module, class_name, None)
+
+            if response_type:
+                logger.debug("Found response type %s, attempting reconstruction", response_type)
+                # Use the shared reconstruction logic which handles nested objects
+                result = _reconstruct_typed_value(response_data, response_type)
+                logger.debug("Reconstructed response type: %s", type(result).__name__)
+                return result
+            logger.warning("Could not find class %s in module %s", class_name, module_name)
+
+        except Exception as e:
+            logger.warning("Could not deserialize HITL response to %s: %s", response_type_str, e)
+
+    # Fall back to generic deserialization
+    logger.debug("Falling back to generic deserialization")
+    return deserialize_value(response_data)

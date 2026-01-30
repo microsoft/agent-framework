@@ -1,25 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-
-from dataclasses import dataclass
-from typing import Any
-from uuid import uuid4
-
-from agent_framework import (
-    AgentExecutorRequest,
-    AgentExecutorResponse,
-    ChatMessage,
-    Role,
-    WorkflowBuilder,
-    WorkflowContext,
-    executor,
-)
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import DefaultAzureCredential
-from pydantic import BaseModel
-from typing_extensions import Never
-
-from agent_framework_azurefunctions import AgentFunctionApp
-
 """
 Sample: Shared state with agents and conditional routing.
 
@@ -38,6 +17,36 @@ Prerequisites:
 - Authentication via azure-identity. Use DefaultAzureCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
+
+import logging
+import os
+from dataclasses import dataclass
+from typing import Any
+from uuid import uuid4
+
+from agent_framework import (
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+    ChatMessage,
+    Role,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
+)
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+from pydantic import BaseModel
+from typing_extensions import Never
+
+from agent_framework_azurefunctions import AgentFunctionApp
+
+logger = logging.getLogger(__name__)
+
+# Environment variable names
+AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
+AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 EMAIL_STATE_PREFIX = "email:"
 CURRENT_EMAIL_ID_KEY = "current_email_id"
@@ -154,44 +163,132 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
         raise RuntimeError("This executor should only handle spam messages.")
 
 
-# Create chat client and agents. response_format enforces structured JSON from each agent.
-chat_client = AzureOpenAIChatClient(credential=DefaultAzureCredential())
+# ============================================================================
+# Workflow Creation
+# ============================================================================
 
-spam_detection_agent = chat_client.create_agent(
-    instructions=(
-        "You are a spam detection assistant that identifies spam emails. "
-        "Always return JSON with fields is_spam (bool) and reason (string)."
-    ),
-    response_format=DetectionResultAgent,
-    name="spam_detection_agent",
-)
 
-email_assistant_agent = chat_client.create_agent(
-    instructions=(
-        "You are an email assistant that helps users draft responses to emails with professionalism. "
-        "Return JSON with a single field 'response' containing the drafted reply."
-    ),
-    response_format=EmailResponse,
-    name="email_assistant_agent",
-)
+def _build_client_kwargs() -> dict[str, Any]:
+    """Build Azure OpenAI client configuration from environment variables."""
+    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
+    if not endpoint:
+        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
 
-# Build the workflow graph with conditional edges.
-# Flow:
-#   store_email -> spam_detection_agent -> to_detection_result -> branch:
-#     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
-#     True  -> handle_spam
-workflow = (
-    WorkflowBuilder()
-    .set_start_executor(store_email)
-    .add_edge(store_email, spam_detection_agent)
-    .add_edge(spam_detection_agent, to_detection_result)
-    .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))
-    .add_edge(to_detection_result, handle_spam, condition=get_condition(True))
-    .add_edge(submit_to_email_assistant, email_assistant_agent)
-    .add_edge(email_assistant_agent, finalize_and_send)
-    .build()
-)
+    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
+    if not deployment:
+        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
 
-# Wrap workflow with AgentFunctionApp for durable execution
-# SharedState is enabled by default, which this sample requires for storing emails
-app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
+    client_kwargs: dict[str, Any] = {
+        "endpoint": endpoint,
+        "deployment_name": deployment,
+    }
+
+    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
+    if api_key:
+        client_kwargs["api_key"] = api_key
+    else:
+        client_kwargs["credential"] = AzureCliCredential()
+
+    return client_kwargs
+
+
+def _create_workflow() -> Workflow:
+    """Create the email classification workflow with conditional routing."""
+    client_kwargs = _build_client_kwargs()
+    chat_client = AzureOpenAIChatClient(**client_kwargs)
+
+    spam_detection_agent = chat_client.create_agent(
+        instructions=(
+            "You are a spam detection assistant that identifies spam emails. "
+            "Always return JSON with fields is_spam (bool) and reason (string)."
+        ),
+        response_format=DetectionResultAgent,
+        name="spam_detection_agent",
+    )
+
+    email_assistant_agent = chat_client.create_agent(
+        instructions=(
+            "You are an email assistant that helps users draft responses to emails with professionalism. "
+            "Return JSON with a single field 'response' containing the drafted reply."
+        ),
+        response_format=EmailResponse,
+        name="email_assistant_agent",
+    )
+
+    # Build the workflow graph with conditional edges.
+    # Flow:
+    #   store_email -> spam_detection_agent -> to_detection_result -> branch:
+    #     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
+    #     True  -> handle_spam
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(store_email)
+        .add_edge(store_email, spam_detection_agent)
+        .add_edge(spam_detection_agent, to_detection_result)
+        .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))
+        .add_edge(to_detection_result, handle_spam, condition=get_condition(True))
+        .add_edge(submit_to_email_assistant, email_assistant_agent)
+        .add_edge(email_assistant_agent, finalize_and_send)
+        .build()
+    )
+
+    return workflow
+
+
+# ============================================================================
+# Application Entry Point
+# ============================================================================
+
+
+def launch(durable: bool = True) -> AgentFunctionApp | None:
+    """Launch the function app or DevUI.
+
+    Args:
+        durable: If True, returns AgentFunctionApp for Azure Functions.
+                 If False, launches DevUI for local MAF development.
+    """
+    if durable:
+        # Azure Functions mode with Durable Functions
+        # SharedState is enabled by default, which this sample requires for storing emails
+        workflow = _create_workflow()
+        app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
+        return app
+    else:
+        # Pure MAF mode with DevUI for local development
+        from pathlib import Path
+
+        from agent_framework.devui import serve
+        from dotenv import load_dotenv
+
+        env_path = Path(__file__).parent / ".env"
+        load_dotenv(dotenv_path=env_path)
+
+        logger.info("Starting Workflow Shared State Sample in MAF mode")
+        logger.info("Available at: http://localhost:8096")
+        logger.info("\nThis workflow demonstrates:")
+        logger.info("- Shared state to decouple large payloads from messages")
+        logger.info("- Structured agent outputs with Pydantic models")
+        logger.info("- Conditional routing based on detection results")
+        logger.info("\nFlow: store_email -> spam_detection -> branch (spam/not spam)")
+
+        workflow = _create_workflow()
+        serve(entities=[workflow], port=8096, auto_open=True)
+
+        return None
+
+
+# Default: Azure Functions mode
+# Run with `python function_app.py --maf` for pure MAF mode with DevUI
+app = launch(durable=True)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--maf" in sys.argv:
+        # Run in pure MAF mode with DevUI
+        launch(durable=False)
+    else:
+        print("Usage: python function_app.py --maf")
+        print("  --maf    Run in pure MAF mode with DevUI (http://localhost:8096)")
+        print("\nFor Azure Functions mode, use: func start")

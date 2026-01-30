@@ -198,7 +198,11 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     if durable:
         # Initialize app
         workflow = _create_workflow()
-        app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
+        
+
+        app = AgentFunctionApp(workflow=workflow)
+
+
         return app
     else:
         # Launch the spam detection workflow in DevUI
@@ -222,5 +226,19 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
 
         return None
     
-
+    
+# Default: Azure Functions mode
+# Run with `python function_app.py --maf` for pure MAF mode with DevUI
 app = launch(durable=True)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--maf" in sys.argv:
+        # Run in pure MAF mode with DevUI
+        launch(durable=False)
+    else:
+        print("Usage: python function_app.py --maf")
+        print("  --maf    Run in pure MAF mode with DevUI (http://localhost:8096)")
+        print("\nFor Azure Functions mode, use: func start")
