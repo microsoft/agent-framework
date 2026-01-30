@@ -7,7 +7,7 @@ from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    BareChatClient,
+    BaseChatClient,
     ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
@@ -46,10 +46,10 @@ TOptions_co = TypeVar(
 )
 
 
-class EchoingChatClient(BareChatClient[TOptions_co], Generic[TOptions_co]):
+class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """A custom chat client that echoes messages back with modifications.
 
-    This demonstrates how to implement a custom chat client by extending BareChatClient
+    This demonstrates how to implement a custom chat client by extending BaseChatClient
     and implementing the required _inner_get_response() method.
     """
 
@@ -60,7 +60,7 @@ class EchoingChatClient(BareChatClient[TOptions_co], Generic[TOptions_co]):
 
         Args:
             prefix: Prefix to add to echoed messages.
-            **kwargs: Additional keyword arguments passed to BareChatClient.
+            **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
         super().__init__(**kwargs)
         self.prefix = prefix

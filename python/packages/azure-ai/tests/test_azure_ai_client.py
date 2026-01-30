@@ -423,7 +423,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
 
     with (
         patch(
-            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -460,7 +460,7 @@ async def test_prepare_options_with_application_endpoint(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -502,7 +502,7 @@ async def test_prepare_options_with_application_project_client(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -982,7 +982,7 @@ async def test_prepare_options_excludes_response_format(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.BareOpenAIResponsesClient._prepare_options",
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "response_format": ResponseFormatModel,

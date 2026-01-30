@@ -22,7 +22,7 @@ from agent_framework import (
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
-from agent_framework.openai._responses_client import BareOpenAIResponsesClient
+from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MCPTool, PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
 from azure.core.credentials_async import AsyncTokenCredential
@@ -66,11 +66,20 @@ TAzureAIClientOptions = TypeVar(
 )
 
 
-class BareAzureAIClient(BareOpenAIResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
-    """Bare Azure AI client without middleware, telemetry, or function invocation layers.
+class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
+    """Raw Azure AI client without middleware, telemetry, or function invocation layers.
 
-    This class provides the core Azure AI functionality. For most use cases,
-    prefer :class:`AzureAIClient` which includes all standard layers.
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **ChatTelemetryLayer** - Telemetry will not be correct if applied outside the function calling loop
+        3. **FunctionInvocationLayer** - Handles tool/function calling
+
+        Use ``AzureAIClient`` instead for a fully-featured client with all layers applied.
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -607,7 +616,7 @@ class AzureAIClient(
     ChatMiddlewareLayer[TAzureAIClientOptions],
     ChatTelemetryLayer[TAzureAIClientOptions],
     FunctionInvocationLayer[TAzureAIClientOptions],
-    BareAzureAIClient[TAzureAIClientOptions],
+    RawAzureAIClient[TAzureAIClientOptions],
     Generic[TAzureAIClientOptions],
 ):
     """Azure AI client with middleware, telemetry, and function invocation support.
@@ -617,7 +626,7 @@ class AzureAIClient(
     - OpenTelemetry-based telemetry for observability
     - Automatic function/tool invocation handling
 
-    For a minimal implementation without these features, use :class:`BareAzureAIClient`.
+    For a minimal implementation without these features, use :class:`RawAzureAIClient`.
     """
 
     def __init__(

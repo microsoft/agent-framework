@@ -27,7 +27,7 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BareChatClient
+from .._clients import BaseChatClient
 from .._middleware import ChatMiddlewareLayer
 from .._tools import (
     FunctionInvocationConfiguration,
@@ -208,7 +208,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
     ChatMiddlewareLayer[TOpenAIAssistantsOptions],
     ChatTelemetryLayer[TOpenAIAssistantsOptions],
     FunctionInvocationLayer[TOpenAIAssistantsOptions],
-    BareChatClient[TOpenAIAssistantsOptions],
+    BaseChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
 ):
     """OpenAI Assistants client with middleware, telemetry, and function invocation support."""

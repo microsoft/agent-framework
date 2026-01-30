@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    BareChatClient,
+    BaseChatClient,
     ChatLevelMiddleware,
     ChatMessage,
     ChatMiddlewareLayer,
@@ -221,7 +221,7 @@ class BedrockChatClient(
     ChatMiddlewareLayer[TBedrockChatOptions],
     ChatTelemetryLayer[TBedrockChatOptions],
     FunctionInvocationLayer[TBedrockChatOptions],
-    BareChatClient[TBedrockChatOptions],
+    BaseChatClient[TBedrockChatOptions],
     Generic[TBedrockChatOptions],
 ):
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
@@ -258,7 +258,7 @@ class BedrockChatClient(
             function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
-            kwargs: Additional arguments forwarded to ``BareChatClient``.
+            kwargs: Additional arguments forwarded to ``BaseChatClient``.
 
         Examples:
             .. code-block:: python

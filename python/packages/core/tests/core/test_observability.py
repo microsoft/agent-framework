@@ -14,7 +14,7 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
     AgentResponse,
-    BareChatClient,
+    BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -157,7 +157,7 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
 def mock_chat_client():
     """Create a mock chat client for testing."""
 
-    class MockChatClient(ChatTelemetryLayer, BareChatClient[Any]):
+    class MockChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
         def service_url(self):
             return "https://test.example.com"
 
@@ -2188,3 +2188,99 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
     # Verify attributes were set on the span
     assert spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
     assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+
+
+async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):
+    """Test that with correct layer ordering, spans appear in the expected sequence.
+
+    When using the correct layer ordering (ChatMiddlewareLayer, ChatTelemetryLayer,
+    FunctionInvocationLayer, BaseChatClient), we get:
+    1. One 'chat' span - wrapping the entire get_response operation including the function loop
+    2. One 'execute_tool' span - for the function invocation within the loop
+
+    The chat span encompasses all internal LLM calls because the telemetry layer
+    is outside the function invocation layer in the MRO. This is the intended behavior
+    as it represents the full client operation as a single traced unit, with tool
+    executions as child spans.
+    """
+    from agent_framework import Content
+    from agent_framework._middleware import ChatMiddlewareLayer
+    from agent_framework._tools import FunctionInvocationLayer
+
+    @tool(name="get_weather", description="Get the weather for a location")
+    def get_weather(location: str) -> str:
+        return f"The weather in {location} is sunny."
+
+    class MockChatClientWithLayers(
+        ChatMiddlewareLayer,
+        ChatTelemetryLayer,
+        FunctionInvocationLayer,
+        BaseChatClient,
+    ):
+        OTEL_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            super().__init__()
+            self.call_count = 0
+            self.model_id = "test-model"
+
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[ChatMessage], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _get() -> ChatResponse:
+                self.call_count += 1
+                if self.call_count == 1:
+                    return ChatResponse(
+                        messages=[
+                            ChatMessage(
+                                role=Role.ASSISTANT,
+                                contents=[
+                                    Content.from_function_call(
+                                        call_id="call_123",
+                                        name="get_weather",
+                                        arguments='{"location": "Seattle"}',
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                return ChatResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, text="The weather in Seattle is sunny!")],
+                )
+
+            return _get()
+
+    client = MockChatClientWithLayers()
+    span_exporter.clear()
+
+    response = await client.get_response(
+        messages=[ChatMessage(role=Role.USER, text="What's the weather in Seattle?")],
+        options={"tools": [get_weather], "tool_choice": "auto"},
+    )
+
+    assert response is not None
+    assert client.call_count == 2, f"Expected 2 inner LLM calls, got {client.call_count}"
+
+    spans = span_exporter.get_finished_spans()
+
+    assert len(spans) == 2, f"Expected 2 spans (chat, execute_tool), got {len(spans)}: {[s.name for s in spans]}"
+
+    # Sort spans by start time to get the logical order
+    sorted_spans = sorted(spans, key=lambda s: s.start_time or 0)
+
+    # First span should be the outer chat span (starts first, finishes last)
+    chat_span = sorted_spans[0]
+    assert chat_span.name.startswith("chat"), f"First span should be 'chat', got '{chat_span.name}'"
+
+    # Second span should be the tool execution (nested within the chat span)
+    tool_span = sorted_spans[1]
+    assert tool_span.name.startswith("execute_tool"), f"Second span should be 'execute_tool', got '{tool_span.name}'"
+    assert tool_span.attributes.get(OtelAttr.TOOL_NAME) == "get_weather"
+    assert tool_span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION
+
+    # Verify parent-child relationship: tool span should be a child of the chat span
+    assert tool_span.parent is not None, "Tool span should have a parent"
+    assert tool_span.parent.span_id == chat_span.context.span_id, "Tool span should be a child of the chat span"

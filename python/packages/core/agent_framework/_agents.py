@@ -25,7 +25,7 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
-from ._clients import BareChatClient, ChatClientProtocol
+from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import Context, ContextProvider
@@ -660,7 +660,7 @@ class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 "Use conversation_id for service-managed threads or chat_message_store_factory for local storage."
             )
 
-        if not isinstance(chat_client, FunctionInvocationLayer) and isinstance(chat_client, BareChatClient):
+        if not isinstance(chat_client, FunctionInvocationLayer) and isinstance(chat_client, BaseChatClient):
             logger.warning(
                 "The provided chat client does not support function invoking, this might limit agent capabilities."
             )

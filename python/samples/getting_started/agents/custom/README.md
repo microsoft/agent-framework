@@ -7,7 +7,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 | File | Description |
 |------|-------------|
 | [`custom_agent.py`](custom_agent.py) | Shows how to create custom agents by extending the `BareAgent` class. Demonstrates the `EchoAgent` implementation with both streaming and non-streaming responses, proper thread management, and message history handling. |
-| [`custom_chat_client.py`](../../chat_client/custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BareChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `ChatAgent` using the `as_agent()` method. |
+| [`custom_chat_client.py`](../../chat_client/custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `ChatAgent` using the `as_agent()` method. |
 
 ## Key Takeaways
 
@@ -19,8 +19,51 @@ This folder contains examples demonstrating how to implement custom agents and c
 
 ### Custom Chat Clients
 - Custom chat clients allow you to integrate any backend service or create new LLM providers
-- You must implement both `_inner_get_response()` and `_inner_get_streaming_response()`
+- You must implement `_inner_get_response()` with a stream parameter to handle both streaming and non-streaming responses
 - Custom chat clients can be used with `ChatAgent` to leverage all agent framework features
-- Use the `create_agent()` method to easily create agents from your custom chat clients
+- Use the `as_agent()` method to easily create agents from your custom chat clients
 
 Both approaches allow you to extend the framework for your specific use cases while maintaining compatibility with the broader Agent Framework ecosystem.
+
+## Understanding Raw Client Classes
+
+The framework provides `Raw...Client` classes (e.g., `RawOpenAIChatClient`, `RawOpenAIResponsesClient`, `RawAzureAIClient`) that are intermediate implementations without middleware, telemetry, or function invocation support.
+
+### Warning: Raw Clients Should Not Normally Be Used Directly
+
+**The `Raw...Client` classes should not normally be used directly.** They do not include the middleware, telemetry, or function invocation support that you most likely need. If you do use them, you should carefully consider which additional layers to apply.
+
+### Layer Ordering
+
+There is a defined ordering for applying layers that you should follow:
+
+1. **ChatMiddlewareLayer** - Should be applied **first** because it also prepares function middleware
+2. **ChatTelemetryLayer** - Telemetry will **not be correct** if applied outside the function calling loop
+3. **FunctionInvocationLayer** - Handles tool/function calling
+4. **Raw...Client** - The base implementation (e.g., `RawOpenAIChatClient`)
+
+Example of correct layer composition:
+
+```python
+class MyCustomClient(
+    ChatMiddlewareLayer[TOptions],
+    ChatTelemetryLayer[TOptions],
+    FunctionInvocationLayer[TOptions],
+    RawOpenAIChatClient[TOptions],  # or BaseChatClient for custom implementations
+    Generic[TOptions],
+):
+    """Custom client with all layers correctly applied."""
+    pass
+```
+
+### Use Fully-Featured Clients Instead
+
+For most use cases, use the fully-featured public client classes which already have all layers correctly composed:
+
+- `OpenAIChatClient` - OpenAI Chat completions with all layers
+- `OpenAIResponsesClient` - OpenAI Responses API with all layers
+- `AzureOpenAIChatClient` - Azure OpenAI Chat with all layers
+- `AzureOpenAIResponsesClient` - Azure OpenAI Responses with all layers
+- `AzureAIClient` - Azure AI Project with all layers
+
+These clients handle the layer composition correctly and provide the full feature set out of the box.

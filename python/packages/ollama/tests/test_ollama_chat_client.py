@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
-    BareChatClient,
+    BaseChatClient,
     ChatMessage,
     ChatResponseUpdate,
     Content,
@@ -121,7 +121,7 @@ def test_init(ollama_unit_test_env: dict[str, str]) -> None:
     assert ollama_chat_client.client is not None
     assert isinstance(ollama_chat_client.client, AsyncClient)
     assert ollama_chat_client.model_id == ollama_unit_test_env["OLLAMA_MODEL_ID"]
-    assert isinstance(ollama_chat_client, BareChatClient)
+    assert isinstance(ollama_chat_client, BaseChatClient)
 
 
 def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
@@ -134,7 +134,7 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
 
     assert ollama_chat_client.client is test_client
     assert ollama_chat_client.model_id == ollama_unit_test_env["OLLAMA_MODEL_ID"]
-    assert isinstance(ollama_chat_client, BareChatClient)
+    assert isinstance(ollama_chat_client, BaseChatClient)
 
 
 @pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL_ID"]], indirect=True)
