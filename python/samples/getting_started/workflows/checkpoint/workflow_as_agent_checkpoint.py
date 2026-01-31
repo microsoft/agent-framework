@@ -31,7 +31,6 @@ from agent_framework import (
     ChatMessageStore,
     InMemoryCheckpointStorage,
     SequentialBuilder,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 

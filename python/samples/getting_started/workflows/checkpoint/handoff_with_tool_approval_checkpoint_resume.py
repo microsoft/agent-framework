@@ -11,6 +11,7 @@ from agent_framework import (
     ChatMessage,
     FileCheckpointStorage,
     FunctionApprovalRequestContent,
+    HandoffAgentUserRequest,
     HandoffBuilder,
     HandoffUserInputRequest,
     RequestInfoEvent,
@@ -102,7 +103,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
             name="checkpoint_handoff_demo",
             participants=[triage, refund, order],
         )
-        .set_coordinator("triage_agent")
+        .with_start_agent(triage)
         .with_checkpointing(checkpoint_storage)
         .with_termination_condition(
             # Terminate after 5 user messages for this demo
@@ -114,13 +115,12 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
     return workflow, triage, refund, order
 
 
-def _print_handoff_request(request: HandoffUserInputRequest, request_id: str) -> None:
+def _print_handoff_request(request: HandoffAgentUserRequest, request_id: str) -> None:
     """Log pending handoff request details for debugging."""
     print(f"\n{'=' * 60}")
     print("WORKFLOW PAUSED - User input needed")
     print(f"Request ID: {request_id}")
-    print(f"Awaiting agent: {request.awaiting_agent_id}")
-    print(f"Prompt: {request.prompt}")
+    print(f"Awaiting agent: {request.agent_response.agent_name}")
 
     # Note: After checkpoint restore, conversation may be empty because it's not serialized
     # to prevent duplication (the conversation is preserved in the coordinator's state).

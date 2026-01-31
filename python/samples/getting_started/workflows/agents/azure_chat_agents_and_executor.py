@@ -6,21 +6,19 @@ from typing import Final
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentResponse,
-    AgentRunUpdateEvent,
+    AgentResponseUpdate,
     ChatMessage,
     Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
     executor,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
-Sample: Two agents connected by a function executor bridge
+Sample: AzureOpenAI Chat Agents and an Executor in a Workflow with Streaming
 
 Pipeline layout:
 research_agent -> enrich_with_references (@executor) -> final_editor_agent
@@ -32,7 +30,6 @@ The final agent incorporates the new note and produces the polished output.
 Demonstrates:
 - Using the @executor decorator to create a function-style Workflow node.
 - Consuming an AgentExecutorResponse and forwarding an AgentExecutorRequest for the next agent.
-- Streaming AgentRunUpdateEvent events across agent + function + agent chain.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -70,7 +67,14 @@ async def enrich_with_references(
     draft: AgentExecutorResponse,
     ctx: WorkflowContext[AgentExecutorRequest],
 ) -> None:
-    """Inject a follow-up user instruction that adds an external note for the next agent."""
+    """Inject a follow-up user instruction that adds an external note for the next agent.
+
+    Args:
+        draft: The response from the research_agent containing the initial draft. This is
+               a `AgentExecutorResponse` because agents in workflows send their full response
+               wrapped in this type to connected executors.
+        ctx: The workflow context to send the next request.
+    """
     conversation = list(draft.full_conversation or draft.agent_response.messages)
     original_prompt = next((message.text for message in conversation if message.role == Role.USER), "")
     external_note = _lookup_external_note(original_prompt) or (
@@ -84,20 +88,22 @@ async def enrich_with_references(
     )
     conversation.append(ChatMessage(role=Role.USER, text=follow_up))
 
+    # Output a new AgentExecutorRequest for the next agent in the workflow.
+    # Agents in workflows handle this type and will generate a response based on the request.
     await ctx.send_message(AgentExecutorRequest(messages=conversation))
 
 
-def create_research_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+async def main() -> None:
+    """Run the workflow and stream combined updates from both agents."""
+    # Create the agents
+    research_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="research_agent",
         instructions=(
             "Produce a short, bullet-style briefing with two actionable ideas. Label the section as 'Initial Draft'."
         ),
     )
 
-
-def create_final_editor_agent():
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    final_editor_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",
         instructions=(
             "Use all conversation context (including external notes) to produce the final answer. "
@@ -105,17 +111,11 @@ def create_final_editor_agent():
         ),
     )
 
-
-async def main() -> None:
-    """Run the workflow and stream combined updates from both agents."""
     workflow = (
         WorkflowBuilder()
-        .register_agent(create_research_agent, name="research_agent")
-        .register_agent(create_final_editor_agent, name="final_editor_agent")
-        .register_executor(lambda: enrich_with_references, name="enrich_with_references")
-        .set_start_executor("research_agent")
-        .add_edge("research_agent", "enrich_with_references")
-        .add_edge("enrich_with_references", "final_editor_agent")
+        .set_start_executor(research_agent)
+        .add_edge(research_agent, enrich_with_references)
+        .add_edge(enrich_with_references, final_editor_agent)
         .build()
     )
 
@@ -123,22 +123,22 @@ async def main() -> None:
         "Create quick workspace wellness tips for a remote analyst working across two monitors."
     )
 
-    last_executor: str | None = None
+    # Track the last author to format streaming output.
+    last_author: str | None = None
+
     async for event in events:
-        if isinstance(event, AgentRunUpdateEvent):
-            if event.executor_id != last_executor:
-                if last_executor is not None:
-                    print()
-                print(f"{event.executor_id}:", end=" ", flush=True)
-                last_executor = event.executor_id
-            print(event.data, end="", flush=True)
-        elif isinstance(event, WorkflowOutputEvent):
-            print("\n\n===== Final Output =====")
-            response = event.data
-            if isinstance(response, AgentResponse):
-                print(response.text or "(empty response)")
+        # The outputs of the workflow are whatever the agents produce. So the events are expected to
+        # contain `AgentResponseUpdate` from the agents in the workflow.
+        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+            update = event.data
+            author = update.author_name
+            if author != last_author:
+                if last_author is not None:
+                    print("\n")  # Newline between different authors
+                print(f"{author}: {update.text}", end="", flush=True)
+                last_author = author
             else:
-                print(response if response is not None else "No response generated.")
+                print(update.text, end="", flush=True)
 
 
 if __name__ == "__main__":
