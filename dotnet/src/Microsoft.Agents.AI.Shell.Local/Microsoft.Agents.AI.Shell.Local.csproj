@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <VersionSuffix>preview</VersionSuffix>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
+    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Shell Local</Title>
+    <Description>Provides local shell command execution for Microsoft Agent Framework.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Shell.Local.UnitTests" />
+  </ItemGroup>
+
+</Project>
