@@ -1,0 +1,42 @@
+name: "Microsoft Security DevOps"
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 4PM AEST (6AM UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write           # Defender for Cloud federation
+  security-events: write    # SARIF upload to Security tab
+
+jobs:
+  msdo:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Run Microsoft Security DevOps
+        uses: microsoft/security-devops-action@latest
+        id: msdo
+
+      - name: Upload SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ steps.msdo.outputs.sarifFile }}
+
+      - name: Upload SARIF as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: msdo-sarif-results
+          path: ${{ steps.msdo.outputs.sarifFile }}
+          retention-days: 30
