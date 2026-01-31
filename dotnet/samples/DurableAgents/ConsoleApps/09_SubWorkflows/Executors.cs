@@ -94,6 +94,54 @@ internal sealed class ValidatePayment() : Executor<OrderInfo, OrderInfo>("Valida
     }
 }
 
+// ============================================
+// Fraud Check Sub-Sub-Workflow Executors (Level 2 nesting)
+// ============================================
+
+/// <summary>
+/// Analyzes transaction patterns for potential fraud.
+/// </summary>
+internal sealed class AnalyzePatterns() : Executor<OrderInfo, OrderInfo>("AnalyzePatterns")
+{
+    public override async ValueTask<OrderInfo> HandleAsync(OrderInfo message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine($"    [Payment/FraudCheck/AnalyzePatterns] Analyzing patterns for order '{message.OrderId}'...");
+        Console.ResetColor();
+
+        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine("    [Payment/FraudCheck/AnalyzePatterns] ✓ Pattern analysis complete");
+        Console.ResetColor();
+
+        return message;
+    }
+}
+
+/// <summary>
+/// Calculates a risk score for the transaction.
+/// </summary>
+internal sealed class CalculateRiskScore() : Executor<OrderInfo, OrderInfo>("CalculateRiskScore")
+{
+    public override async ValueTask<OrderInfo> HandleAsync(OrderInfo message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine($"    [Payment/FraudCheck/CalculateRiskScore] Calculating risk score for order '{message.OrderId}'...");
+        Console.ResetColor();
+
+        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+
+        int riskScore = new Random().Next(1, 100);
+
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine($"    [Payment/FraudCheck/CalculateRiskScore] ✓ Risk score: {riskScore}/100 (Low risk)");
+        Console.ResetColor();
+
+        return message;
+    }
+}
+
 /// <summary>
 /// Charges the payment for an order.
 /// </summary>

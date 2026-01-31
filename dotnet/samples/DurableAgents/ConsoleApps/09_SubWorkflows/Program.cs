@@ -5,14 +5,19 @@
 //
 // The sample implements an order processing workflow with three sub-workflows:
 // 1. PaymentProcessing - Validates and processes payment
+//    - Contains a nested FraudCheck sub-workflow (Level 2 nesting)
 // 2. InventoryManagement - Checks and reserves inventory
 // 3. ShippingArrangement - Arranges shipping and generates tracking
+//
+// The FraudCheck sub-workflow demonstrates Level 2 nesting (sub-workflow within sub-workflow):
+// - AnalyzePatterns - Analyzes transaction patterns
+// - CalculateRiskScore - Calculates fraud risk score
 //
 // Each sub-workflow runs as a separate orchestration instance, visible in the DTS dashboard.
 // This provides:
 // - Modular, reusable workflow components
 // - Independent checkpointing and replay
-// - Hierarchical visualization in the dashboard
+// - Hierarchical visualization in the dashboard (including nested sub-workflows)
 // - Failure isolation between parent and child workflows
 
 using Microsoft.Agents.AI.DurableTask;
@@ -29,19 +34,33 @@ string dtsConnectionString = Environment.GetEnvironmentVariable("DURABLE_TASK_SC
     ?? "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None";
 
 // ============================================
-// Step 1: Build the Payment Processing sub-workflow
+// Step 1: Build the Fraud Check sub-sub-workflow (Level 2 nesting)
+// ============================================
+AnalyzePatterns analyzePatterns = new();
+CalculateRiskScore calculateRiskScore = new();
+
+Workflow fraudCheckWorkflow = new WorkflowBuilder(analyzePatterns)
+    .WithName("SubFraudCheck")
+    .WithDescription("Analyzes transaction patterns and calculates risk score")
+    .AddEdge(analyzePatterns, calculateRiskScore)
+    .Build();
+
+// ============================================
+// Step 2: Build the Payment Processing sub-workflow (now with nested sub-workflow)
 // ============================================
 ValidatePayment validatePayment = new();
+ExecutorBinding fraudCheckExecutor = fraudCheckWorkflow.BindAsExecutor("FraudCheck");
 ChargePayment chargePayment = new();
 
 Workflow paymentWorkflow = new WorkflowBuilder(validatePayment)
     .WithName("SubPaymentProcessing")
     .WithDescription("Validates and processes payment for an order")
-    .AddEdge(validatePayment, chargePayment)
+    .AddEdge(validatePayment, fraudCheckExecutor)
+    .AddEdge(fraudCheckExecutor, chargePayment)
     .Build();
 
 // ============================================
-// Step 2: Build the Inventory Management sub-workflow
+// Step 3: Build the Inventory Management sub-workflow
 // ============================================
 CheckInventory checkInventory = new();
 ReserveInventory reserveInventory = new();
@@ -53,7 +72,7 @@ Workflow inventoryWorkflow = new WorkflowBuilder(checkInventory)
     .Build();
 
 // ============================================
-// Step 3: Build the Shipping Arrangement sub-workflow
+// Step 4: Build the Shipping Arrangement sub-workflow
 // ============================================
 SelectCarrier selectCarrier = new();
 CreateShipment createShipment = new();
@@ -65,7 +84,7 @@ Workflow shippingWorkflow = new WorkflowBuilder(selectCarrier)
     .Build();
 
 // ============================================
-// Step 4: Build the Main Order Processing workflow using sub-workflows
+// Step 5: Build the Main Order Processing workflow using sub-workflows
 // ============================================
 // Bind sub-workflows as executors for use in the main workflow
 ExecutorBinding paymentExecutor = paymentWorkflow.BindAsExecutor("Payment");
@@ -87,7 +106,7 @@ Workflow orderProcessingWorkflow = new WorkflowBuilder(orderReceived)
     .Build();
 
 // ============================================
-// Step 5: Configure and start the host
+// Step 6: Configure and start the host
 // ============================================
 IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Warning))
@@ -112,6 +131,9 @@ Console.WriteLine("╠═══════════════════�
 Console.WriteLine("║  Main Workflow: OrderProcessing                                  ║");
 Console.WriteLine("║  ├── Payment (sub-workflow)                                      ║");
 Console.WriteLine("║  │   ├── ValidatePayment (1s)                                    ║");
+Console.WriteLine("║  │   ├── FraudCheck (sub-sub-workflow) ← Level 2 nesting!        ║");
+Console.WriteLine("║  │   │   ├── AnalyzePatterns (1s)                                ║");
+Console.WriteLine("║  │   │   └── CalculateRiskScore (1s)                             ║");
 Console.WriteLine("║  │   └── ChargePayment (2s)                                      ║");
 Console.WriteLine("║  ├── Inventory (sub-workflow)                                    ║");
 Console.WriteLine("║  │   ├── CheckInventory (1s)                                     ║");
