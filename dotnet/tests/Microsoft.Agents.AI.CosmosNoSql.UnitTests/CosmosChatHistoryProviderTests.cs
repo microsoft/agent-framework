@@ -815,5 +815,115 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message 10", messageList[9].Text);
     }
 
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessageCountAsync_WithMessages_ShouldReturnCorrectCountAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string ConversationId = "count-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+
+        // Add 5 messages
+        var messages = new List<ChatMessage>();
+        for (int i = 1; i <= 5; i++)
+        {
+            messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
+        }
+
+        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Act
+        var count = await provider.GetMessageCountAsync();
+
+        // Assert
+        Assert.Equal(5, count);
+    }
+
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessageCountAsync_WithNoMessages_ShouldReturnZeroAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string ConversationId = "empty-count-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+
+        // Act
+        var count = await provider.GetMessageCountAsync();
+
+        // Assert
+        Assert.Equal(0, count);
+    }
+
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task ClearMessagesAsync_WithMessages_ShouldDeleteAndReturnCountAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string ConversationId = "clear-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+
+        // Add 3 messages
+        var messages = new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.User, "Message 1"),
+            new ChatMessage(ChatRole.Assistant, "Message 2"),
+            new ChatMessage(ChatRole.User, "Message 3")
+        };
+
+        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Verify messages exist
+        var countBefore = await provider.GetMessageCountAsync();
+        Assert.Equal(3, countBefore);
+
+        // Act
+        var deletedCount = await provider.ClearMessagesAsync();
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Assert
+        Assert.Equal(3, deletedCount);
+
+        // Verify messages are deleted
+        var countAfter = await provider.GetMessageCountAsync();
+        Assert.Equal(0, countAfter);
+
+        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var retrievedMessages = await provider.InvokingAsync(invokingContext);
+        Assert.Empty(retrievedMessages);
+    }
+
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task ClearMessagesAsync_WithNoMessages_ShouldReturnZeroAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string ConversationId = "empty-clear-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+
+        // Act
+        var deletedCount = await provider.ClearMessagesAsync();
+
+        // Assert
+        Assert.Equal(0, deletedCount);
+    }
+
     #endregion
 }
