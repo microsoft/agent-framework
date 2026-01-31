@@ -20,7 +20,7 @@ Content-Type: application/json
 
 
 ### Replace INSTANCE_ID_GOES_HERE below with the value returned from the POST call
-@instanceId=<INSTANCE_ID_GOES_HERE>
+@instanceId=ccf3950407b5496893df93d1357a5afa
 
 ### Check the status of the orchestration
 GET http://localhost:7071/api/hitl/status/{{instanceId}}

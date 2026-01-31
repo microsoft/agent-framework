@@ -6,6 +6,7 @@ This module provides the AgentFunctionApp class that integrates Microsoft Agent 
 with Azure Durable Entities, enabling stateful and durable AI agent execution.
 """
 
+import asyncio
 import json
 import re
 import uuid
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentProtocol, get_logger
+from agent_framework import AgentExecutor, AgentProtocol, Workflow, WorkflowOutputEvent, get_logger
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -39,6 +40,14 @@ from agent_framework_durabletask import (
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
+from ._utils import (
+    CapturingRunnerContext,
+    _execute_hitl_response_handler,
+    deserialize_value,
+    reconstruct_message_for_handler,
+    serialize_message,
+)
+from ._workflow import run_workflow_orchestrator
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -151,16 +160,19 @@ class AgentFunctionApp(DFAppBase):
         enable_mcp_tool_trigger: Whether MCP tool triggers are created for agents
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
+        workflow: Optional Workflow instance for workflow orchestration
     """
 
     _agent_metadata: dict[str, AgentMetadata]
     enable_health_check: bool
     enable_http_endpoints: bool
     enable_mcp_tool_trigger: bool
+    workflow: Workflow | None
 
     def __init__(
         self,
         agents: list[AgentProtocol] | None = None,
+        workflow: Workflow | None = None,
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
@@ -172,6 +184,7 @@ class AgentFunctionApp(DFAppBase):
         """Initialize the AgentFunctionApp.
 
         :param agents: List of agent instances to register.
+        :param workflow: Optional Workflow instance to extract agents from and set up orchestration.
         :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
         :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
         :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
@@ -196,6 +209,7 @@ class AgentFunctionApp(DFAppBase):
         self.enable_http_endpoints = enable_http_endpoints
         self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
         self.default_callback = default_callback
+        self.workflow = workflow
 
         try:
             retries = int(max_poll_retries)
@@ -209,6 +223,20 @@ class AgentFunctionApp(DFAppBase):
             interval = DEFAULT_POLL_INTERVAL_SECONDS
         self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
+        # If workflow is provided, extract agents and set up orchestration
+        if workflow:
+            if agents is None:
+                agents = []
+            logger.debug("[AgentFunctionApp] Extracting agents from workflow")
+            for executor in workflow.executors.values():
+                if isinstance(executor, AgentExecutor):
+                    agents.append(executor.agent)
+                else:
+                    # Setup individual activity for each non-agent executor
+                    self._setup_executor_activity(executor.id)
+
+            self._setup_workflow_orchestration()
+
         if agents:
             # Register all provided agents
             logger.debug(f"[AgentFunctionApp] Registering {len(agents)} agent(s)")
@@ -220,6 +248,294 @@ class AgentFunctionApp(DFAppBase):
             self._setup_health_route()
 
         logger.debug("[AgentFunctionApp] Initialization complete")
+
+    def _setup_executor_activity(self, executor_id: str) -> None:
+        """Register an activity for executing a specific non-agent executor.
+
+        Args:
+            executor_id: The ID of the executor to create an activity for.
+        """
+        activity_name = f"dafx-{executor_id}"
+        logger.debug(f"[AgentFunctionApp] Registering activity '{activity_name}' for executor '{executor_id}'")
+
+        # Capture executor_id in closure
+        captured_executor_id = executor_id
+
+        @self.function_name(activity_name)
+        @self.activity_trigger(input_name="inputData")
+        def executor_activity(inputData: str) -> str:
+            """Activity to execute a specific non-agent executor.
+
+            Note: We use str type annotations instead of dict to work around
+            Azure Functions worker type validation issues with dict[str, Any].
+            """
+            import json as json_module
+
+            from agent_framework import SharedState
+
+            data = json_module.loads(inputData)
+            message_data = data["message"]
+            shared_state_snapshot = data.get("shared_state_snapshot", {})
+            source_executor_ids = data.get("source_executor_ids", ["__orchestrator__"])
+
+            if not self.workflow:
+                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
+
+            executor = self.workflow.executors.get(captured_executor_id)
+            if not executor:
+                raise ValueError(f"Unknown executor: {captured_executor_id}")
+
+            # Reconstruct message - try to match handler's expected types using public input_types
+            message = reconstruct_message_for_handler(message_data, executor.input_types)
+
+            # Check if this is a HITL response message
+            is_hitl_response = isinstance(message_data, dict) and message_data.get("__hitl_response__")
+
+            async def run() -> dict[str, Any]:
+                # Create runner context and shared state
+                runner_context = CapturingRunnerContext()
+                shared_state = SharedState()
+
+                # Deserialize shared state values to reconstruct dataclasses/Pydantic models
+                deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
+                original_snapshot = dict(deserialized_state)
+                await shared_state.import_state(deserialized_state)
+
+                if is_hitl_response:
+                    # Handle HITL response by calling the executor's @response_handler
+                    await _execute_hitl_response_handler(
+                        executor=executor,
+                        hitl_message=message_data,
+                        shared_state=shared_state,
+                        runner_context=runner_context,
+                    )
+                else:
+                    # Execute using the public execute() method
+                    await executor.execute(
+                        message=message,
+                        source_executor_ids=source_executor_ids,
+                        shared_state=shared_state,
+                        runner_context=runner_context,
+                    )
+
+                # Export current state and compute changes
+                current_state = await shared_state.export_state()
+                original_keys = set(original_snapshot.keys())
+                current_keys = set(current_state.keys())
+
+                # Deleted = was in original, not in current
+                deletes = original_keys - current_keys
+
+                # Updates = keys in current that are new or have different values
+                updates = {
+                    k: v for k, v in current_state.items() if k not in original_snapshot or original_snapshot[k] != v
+                }
+
+                # Drain messages and events from runner context
+                sent_messages = await runner_context.drain_messages()
+                events = await runner_context.drain_events()
+
+                # Extract outputs from WorkflowOutputEvent instances
+                outputs: list[Any] = []
+                for event in events:
+                    if isinstance(event, WorkflowOutputEvent):
+                        outputs.append(serialize_message(event.data))
+
+                # Get pending request info events for HITL
+                pending_request_info_events = await runner_context.get_pending_request_info_events()
+
+                # Serialize pending request info events for orchestrator
+                serialized_pending_requests = []
+                for _request_id, event in pending_request_info_events.items():
+                    serialized_pending_requests.append({
+                        "request_id": event.request_id,
+                        "source_executor_id": event.source_executor_id,
+                        "data": serialize_message(event.data),
+                        "request_type": f"{type(event.data).__module__}:{type(event.data).__name__}",
+                        "response_type": f"{event.response_type.__module__}:{event.response_type.__name__}"
+                        if event.response_type
+                        else None,
+                    })
+
+                # Serialize messages for JSON compatibility
+                serialized_sent_messages = []
+                for _source_id, msg_list in sent_messages.items():
+                    for msg in msg_list:
+                        serialized_sent_messages.append({
+                            "message": serialize_message(msg.data),
+                            "target_id": msg.target_id,
+                            "source_id": msg.source_id,
+                        })
+
+                serialized_updates = {k: serialize_message(v) for k, v in updates.items()}
+
+                return {
+                    "sent_messages": serialized_sent_messages,
+                    "outputs": outputs,
+                    "shared_state_updates": serialized_updates,
+                    "shared_state_deletes": list(deletes),
+                    "pending_request_info_events": serialized_pending_requests,
+                }
+
+            result = asyncio.run(run())
+            return json_module.dumps(result)
+
+        # Ensure the function is registered (prevents garbage collection)
+        _ = executor_activity
+
+    def _setup_workflow_orchestration(self) -> None:
+        """Register the workflow orchestration and related HTTP endpoints."""
+
+        @self.orchestration_trigger(context_name="context")
+        def workflow_orchestrator(context: df.DurableOrchestrationContext):  # type: ignore[type-arg]
+            """Generic orchestrator for running the configured workflow."""
+            input_data = context.get_input()
+
+            # Ensure input is a string for the agent
+            initial_message = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
+
+            # Create local shared state dict for cross-executor state sharing
+            shared_state: dict[str, Any] = {}
+
+            outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
+            # Durable Functions runtime extracts return value from StopIteration
+            return outputs  # noqa: B901
+
+        @self.route(route="workflow/run", methods=["POST"])
+        @self.durable_client_input(client_name="client")
+        async def start_workflow_orchestration(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """HTTP endpoint to start the workflow."""
+            try:
+                req_body = req.get_json()
+            except ValueError:
+                return func.HttpResponse(
+                    json.dumps({"error": "Invalid JSON body"}),
+                    status_code=400,
+                    mimetype="application/json",
+                )
+
+            instance_id = await client.start_new("workflow_orchestrator", client_input=req_body)
+
+            base_url = self._build_base_url(req.url)
+            status_url = f"{base_url}/api/workflow/status/{instance_id}"
+
+            return func.HttpResponse(
+                json.dumps({
+                    "instanceId": instance_id,
+                    "statusQueryGetUri": status_url,
+                    "respondUri": f"{base_url}/api/workflow/respond/{instance_id}/{{requestId}}",
+                    "message": "Workflow started",
+                }),
+                status_code=202,
+                mimetype="application/json",
+            )
+
+        @self.route(route="workflow/status/{instanceId}", methods=["GET"])
+        @self.durable_client_input(client_name="client")
+        async def get_workflow_status(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """HTTP endpoint to get workflow status."""
+            instance_id = req.route_params.get("instanceId")
+            status = await client.get_status(instance_id)
+
+            if not status:
+                return func.HttpResponse(
+                    json.dumps({"error": "Instance not found"}),
+                    status_code=404,
+                    mimetype="application/json",
+                )
+
+            response = {
+                "instanceId": status.instance_id,
+                "runtimeStatus": status.runtime_status.name if status.runtime_status else None,
+                "customStatus": status.custom_status,
+                "output": status.output,
+                "error": status.output if status.runtime_status == df.OrchestrationRuntimeStatus.Failed else None,
+                "createdTime": status.created_time.isoformat() if status.created_time else None,
+                "lastUpdatedTime": status.last_updated_time.isoformat() if status.last_updated_time else None,
+            }
+
+            # Add pending HITL requests info if available
+            custom_status = status.custom_status or {}
+            if isinstance(custom_status, dict) and custom_status.get("pending_requests"):
+                base_url = self._build_base_url(req.url)
+                pending_requests = []
+                for req_id, req_data in custom_status["pending_requests"].items():
+                    pending_requests.append({
+                        "requestId": req_id,
+                        "sourceExecutor": req_data.get("source_executor_id"),
+                        "requestData": req_data.get("data"),
+                        "requestType": req_data.get("request_type"),
+                        "responseType": req_data.get("response_type"),
+                        "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
+                    })
+                response["pendingHumanInputRequests"] = pending_requests
+
+            return func.HttpResponse(
+                json.dumps(response, default=str),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        @self.route(route="workflow/respond/{instanceId}/{requestId}", methods=["POST"])
+        @self.durable_client_input(client_name="client")
+        async def send_hitl_response(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
+            """HTTP endpoint to send a response to a pending HITL request.
+
+            The requestId in the URL corresponds to the request_id from the RequestInfoEvent.
+            The request body should contain the response data matching the expected response_type.
+            """
+            instance_id = req.route_params.get("instanceId")
+            request_id = req.route_params.get("requestId")
+
+            if not instance_id or not request_id:
+                return func.HttpResponse(
+                    json.dumps({"error": "Instance ID and Request ID are required."}),
+                    status_code=400,
+                    mimetype="application/json",
+                )
+
+            try:
+                response_data = req.get_json()
+            except ValueError:
+                return func.HttpResponse(
+                    json.dumps({"error": "Request body must be valid JSON."}),
+                    status_code=400,
+                    mimetype="application/json",
+                )
+
+            # Send the response as an external event
+            # The request_id is used as the event name for correlation
+            await client.raise_event(
+                instance_id=instance_id,
+                event_name=request_id,
+                event_data=response_data,
+            )
+
+            return func.HttpResponse(
+                json.dumps({
+                    "message": "Response delivered successfully",
+                    "instanceId": instance_id,
+                    "requestId": request_id,
+                }),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+    def _build_status_url(self, request_url: str, instance_id: str) -> str:
+        """Build the status URL for a workflow instance."""
+        base_url = self._build_base_url(request_url)
+        return f"{base_url}/api/workflow/status/{instance_id}"
+
+    def _build_base_url(self, request_url: str) -> str:
+        """Extract the base URL from a request URL."""
+        base_url, _, _ = request_url.partition("/api/")
+        if not base_url:
+            base_url = request_url.rstrip("/")
+        return base_url
 
     @property
     def agents(self) -> dict[str, AgentProtocol]:

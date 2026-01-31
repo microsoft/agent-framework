@@ -117,6 +117,11 @@ class AgentExecutor(Executor):
         return []
 
     @property
+    def agent(self) -> AgentProtocol:
+        """Get the underlying agent wrapped by this executor."""
+        return self._agent
+
+    @property
     def description(self) -> str | None:
         """Get the description of the underlying agent."""
         return self._agent.description

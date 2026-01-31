@@ -1,0 +1,32 @@
+### Start Workflow Orchestration - Spam Email
+POST http://localhost:7071/api/workflow/run
+Content-Type: application/json
+
+{
+  "email_id": "email-001",
+  "email_content": "URGENT! You've won $1,000,000! Click here immediately to claim your prize! Limited time offer - act now!"
+}
+
+###
+
+### Start Workflow Orchestration - Legitimate Email
+POST http://localhost:7071/api/workflow/run
+Content-Type: application/json
+
+{
+  "email_id": "email-002",
+  "email_content": "Hi team, just a reminder about our sprint planning meeting tomorrow at 10 AM. Please review the agenda in Jira."
+}
+
+###
+
+### Get Workflow Status
+# Replace {instanceId} with the actual instance ID from the start response
+GET http://localhost:7071/api/workflow/status/{instanceId}
+
+###
+
+### Health Check
+GET http://localhost:7071/api/health
+
+###

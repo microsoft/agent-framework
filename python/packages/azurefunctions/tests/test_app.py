@@ -1172,5 +1172,102 @@ class TestMCPToolEndpoint:
         assert body["agents"][0]["mcp_tool_enabled"] is True
 
 
+class TestAgentFunctionAppWorkflow:
+    """Test suite for AgentFunctionApp workflow support."""
+
+    def test_init_with_workflow_stores_workflow(self) -> None:
+        """Test that workflow is stored when provided."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        assert app.workflow is mock_workflow
+
+    def test_init_with_workflow_extracts_agents(self) -> None:
+        """Test that agents are extracted from workflow executors."""
+        from agent_framework import AgentExecutor
+
+        mock_agent = Mock()
+        mock_agent.name = "WorkflowAgent"
+
+        mock_executor = Mock(spec=AgentExecutor)
+        mock_executor.agent = mock_agent
+
+        mock_workflow = Mock()
+        mock_workflow.executors = {"WorkflowAgent": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        assert "WorkflowAgent" in app.agents
+
+    def test_init_with_workflow_calls_setup_methods(self) -> None:
+        """Test that workflow setup methods are called."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=mock_workflow)
+
+        setup_exec.assert_called_once()
+        setup_orch.assert_called_once()
+
+    def test_init_without_workflow_does_not_call_workflow_setup(self) -> None:
+        """Test that workflow setup is not called when no workflow provided."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(agents=[mock_agent])
+
+        setup_exec.assert_not_called()
+        setup_orch.assert_not_called()
+
+    def test_build_status_url(self) -> None:
+        """Test _build_status_url constructs correct URL."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        url = app._build_status_url("http://localhost:7071/api/workflow/run", "instance-123")
+
+        assert url == "http://localhost:7071/api/workflow/status/instance-123"
+
+    def test_build_status_url_handles_trailing_slash(self) -> None:
+        """Test _build_status_url handles URLs without /api/ correctly."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        url = app._build_status_url("http://localhost:7071/", "instance-456")
+
+        assert "instance-456" in url
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
