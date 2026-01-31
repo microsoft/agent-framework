@@ -29,7 +29,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     protected override string? IdCore => id;
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken)
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
@@ -73,7 +73,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
                     where TRequest : AIContent
                     where TResponse : AIContent
     {
-        this.LastSession = session ??= await this.GetNewSessionAsync(cancellationToken);
+        this.LastSession = session ??= await this.CreateSessionAsync(cancellationToken);
         TestRequestAgentSession<TRequest, TResponse> traSessin = ConvertSession<TRequest, TResponse>(session);
 
         if (traSessin.HasSentRequests)

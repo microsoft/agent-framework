@@ -19,7 +19,7 @@ public static class FunctionTriggers
     public static async Task<string> RunOrchestrationAsync([OrchestrationTrigger] TaskOrchestrationContext context)
     {
         DurableAIAgent writer = context.GetAgent("WriterAgent");
-        AgentSession writerSession = await writer.GetNewSessionAsync();
+        AgentSession writerSession = await writer.CreateSessionAsync();
 
         AgentResponse<TextResponse> initial = await writer.RunAsync<TextResponse>(
             message: "Write a concise inspirational sentence about learning.",

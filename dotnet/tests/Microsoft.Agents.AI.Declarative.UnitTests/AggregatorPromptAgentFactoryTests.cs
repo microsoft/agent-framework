@@ -71,7 +71,7 @@ public sealed class AggregatorPromptAgentFactoryTests
             throw new NotImplementedException();
         }
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }

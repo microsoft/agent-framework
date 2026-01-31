@@ -55,14 +55,14 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public async Task GetNewSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
+    public async Task CreateSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
 
         // Assert
         Assert.NotNull(session);
@@ -70,7 +70,7 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public async Task GetNewSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
+    public async Task CreateSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
@@ -78,7 +78,7 @@ public sealed class GitHubCopilotAgentTests
         const string TestSessionId = "test-session-id";
 
         // Act
-        var session = await agent.GetNewSessionAsync(TestSessionId);
+        var session = await agent.CreateSessionAsync(TestSessionId);
 
         // Assert
         Assert.NotNull(session);

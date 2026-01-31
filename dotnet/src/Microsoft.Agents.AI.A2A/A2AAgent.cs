@@ -54,7 +54,7 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public sealed override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         => new(new A2AAgentSession());
 
     /// <summary>
@@ -62,7 +62,7 @@ public sealed class A2AAgent : AIAgent
     /// </summary>
     /// <param name="contextId">The context id to continue.</param>
     /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
-    public ValueTask<AgentSession> GetNewSessionAsync(string contextId)
+    public ValueTask<AgentSession> CreateSessionAsync(string contextId)
         => new(new A2AAgentSession() { ContextId = contextId });
 
     /// <inheritdoc/>
@@ -230,7 +230,7 @@ public sealed class A2AAgent : AIAgent
             throw new InvalidOperationException("A session must be provided when AllowBackgroundResponses is enabled.");
         }
 
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         if (session is not A2AAgentSession typedSession)
         {

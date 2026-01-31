@@ -30,7 +30,7 @@ JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web)
 };
 StatefulAgent<AgentState> agent = new(baseAgent, jsonOptions, new AgentState());
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 List<ChatMessage> messages =
 [
     new(ChatRole.System, "You are a helpful recipe assistant.")

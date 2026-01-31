@@ -74,7 +74,7 @@ AIAgent agent = azureOpenAIClient
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions))
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about SK sessions\n");
 Console.WriteLine(await agent.RunAsync("Hi! How do I create a thread/session in Semantic Kernel?", session));

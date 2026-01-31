@@ -40,7 +40,7 @@ AIAgent agent = new AzureOpenAIClient(
             : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
 Mem0Provider mem0Provider = session.GetService<Mem0Provider>()!;
@@ -60,5 +60,5 @@ AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSes
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 
 Console.WriteLine("\n>> Start a new session that shares the same Mem0 scope\n");
-AgentSession newSession = await agent.GetNewSessionAsync();
+AgentSession newSession = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));

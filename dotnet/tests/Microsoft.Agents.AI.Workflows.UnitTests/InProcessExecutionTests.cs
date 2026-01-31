@@ -144,7 +144,7 @@ public class InProcessExecutionTests
 
         public override string Name { get; }
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
         public override ValueTask<AgentSession> DeserializeSessionAsync(System.Text.Json.JsonElement serializedSession,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());

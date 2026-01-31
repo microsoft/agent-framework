@@ -158,7 +158,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
@@ -200,7 +200,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
@@ -248,7 +248,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
 
         // Assert
@@ -282,7 +282,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act & Assert
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
         Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
     }
@@ -335,7 +335,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         });
 
         // Act
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         AdditionalPropertiesDictionary additionalProperties = new();
         additionalProperties.Add(mockOverrideChatHistoryProvider.Object);
         await agent.RunAsync([new(ChatRole.User, "test")], session, options: new AgentRunOptions { AdditionalProperties = additionalProperties });

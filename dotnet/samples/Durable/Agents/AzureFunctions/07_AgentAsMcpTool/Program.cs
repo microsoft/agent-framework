@@ -5,6 +5,8 @@
 // generate a remote MCP endpoint for the app at /runtime/webhooks/mcp with a agent-specific
 // query tool name.
 
+#pragma warning disable IDE0002 // Simplify Member Access
+
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;

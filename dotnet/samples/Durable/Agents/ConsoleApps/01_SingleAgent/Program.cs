@@ -61,7 +61,7 @@ Console.WriteLine("Enter a message for the Joker agent (or 'exit' to quit):");
 Console.WriteLine();
 
 // Create a session for the conversation
-AgentSession session = await agentProxy.GetNewSessionAsync();
+AgentSession session = await agentProxy.CreateSessionAsync();
 
 while (true)
 {

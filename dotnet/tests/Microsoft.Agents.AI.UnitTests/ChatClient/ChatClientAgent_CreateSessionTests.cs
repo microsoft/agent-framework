@@ -7,12 +7,12 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Contains unit tests for the ChatClientAgent.GetNewSessionAsync methods.
+/// Contains unit tests for the ChatClientAgent.CreateSessionAsync methods.
 /// </summary>
-public class ChatClientAgent_GetNewSessionTests
+public class ChatClientAgent_CreateSessionTests
 {
     [Fact]
-    public async Task GetNewSession_UsesAIContextProviderFactory_IfProvidedAsync()
+    public async Task CreateSession_UsesAIContextProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -29,7 +29,7 @@ public class ChatClientAgent_GetNewSessionTests
         });
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
 
         // Assert
         Assert.True(factoryCalled, "AIContextProviderFactory was not called.");
@@ -39,7 +39,7 @@ public class ChatClientAgent_GetNewSessionTests
     }
 
     [Fact]
-    public async Task GetNewSession_UsesChatHistoryProviderFactory_IfProvidedAsync()
+    public async Task CreateSession_UsesChatHistoryProviderFactory_IfProvidedAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -56,7 +56,7 @@ public class ChatClientAgent_GetNewSessionTests
         });
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
 
         // Assert
         Assert.True(factoryCalled, "ChatHistoryProviderFactory was not called.");
@@ -66,7 +66,7 @@ public class ChatClientAgent_GetNewSessionTests
     }
 
     [Fact]
-    public async Task GetNewSession_UsesChatHistoryProvider_FromTypedOverloadAsync()
+    public async Task CreateSession_UsesChatHistoryProvider_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -74,7 +74,7 @@ public class ChatClientAgent_GetNewSessionTests
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var session = await agent.GetNewSessionAsync(mockChatHistoryProvider.Object);
+        var session = await agent.CreateSessionAsync(mockChatHistoryProvider.Object);
 
         // Assert
         Assert.IsType<ChatClientAgentSession>(session);
@@ -83,7 +83,7 @@ public class ChatClientAgent_GetNewSessionTests
     }
 
     [Fact]
-    public async Task GetNewSession_UsesConversationId_FromTypedOverloadAsync()
+    public async Task CreateSession_UsesConversationId_FromTypedOverloadAsync()
     {
         // Arrange
         var mockChatClient = new Mock<IChatClient>();
@@ -91,7 +91,7 @@ public class ChatClientAgent_GetNewSessionTests
         var agent = new ChatClientAgent(mockChatClient.Object);
 
         // Act
-        var session = await agent.GetNewSessionAsync(TestConversationId);
+        var session = await agent.CreateSessionAsync(TestConversationId);
 
         // Assert
         Assert.IsType<ChatClientAgentSession>(session);

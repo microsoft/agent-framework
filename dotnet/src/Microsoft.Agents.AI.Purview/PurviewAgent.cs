@@ -36,9 +36,9 @@ internal class PurviewAgent : AIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
-        return this._innerAgent.GetNewSessionAsync(cancellationToken);
+        return this._innerAgent.CreateSessionAsync(cancellationToken);
     }
 
     /// <inheritdoc/>

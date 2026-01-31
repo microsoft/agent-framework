@@ -19,7 +19,7 @@ AIAgent agent = new AzureOpenAIClient(
     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Start a new session for the agent conversation.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Run the agent with a new session.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));

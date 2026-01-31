@@ -47,7 +47,7 @@ AIAgent writerAgent = client.GetChatClient(deploymentName).AsAIAgent(WriterInstr
 static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context)
 {
     DurableAIAgent writer = context.GetAgent("WriterAgent");
-    AgentSession writerSession = await writer.GetNewSessionAsync();
+    AgentSession writerSession = await writer.CreateSessionAsync();
 
     AgentResponse<TextResponse> initial = await writer.RunAsync<TextResponse>(
         message: "Write a concise inspirational sentence about learning.",

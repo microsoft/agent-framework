@@ -40,7 +40,7 @@ var latestAgentVersion = jokerAgentLatest.GetService<AgentVersion>()!;
 Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");
 
 // Once you have the AIAgent, you can invoke it like any other AIAgent.
-AgentSession session = await jokerAgentLatest.GetNewSessionAsync();
+AgentSession session = await jokerAgentLatest.CreateSessionAsync();
 Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate.", session));
 
 // This will use the same session to continue the conversation.

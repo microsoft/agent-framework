@@ -49,7 +49,7 @@ internal sealed class SampleService(AIAgent agent, IHostApplicationLifetime appL
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         // Create a session that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-        this._session = await agent.GetNewSessionAsync(cancellationToken);
+        this._session = await agent.CreateSessionAsync(cancellationToken);
         _ = this.RunAsync(appLifetime.ApplicationStopping);
     }
 

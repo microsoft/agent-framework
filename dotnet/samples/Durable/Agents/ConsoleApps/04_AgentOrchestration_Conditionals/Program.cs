@@ -56,7 +56,7 @@ static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context,
 {
     // Get the spam detection agent
     DurableAIAgent spamDetectionAgent = context.GetAgent(SpamDetectionAgentName);
-    AgentSession spamSession = await spamDetectionAgent.GetNewSessionAsync();
+    AgentSession spamSession = await spamDetectionAgent.CreateSessionAsync();
 
     // Step 1: Check if the email is spam
     AgentResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
@@ -78,7 +78,7 @@ static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context,
 
     // Generate and send response for legitimate email
     DurableAIAgent emailAssistantAgent = context.GetAgent(EmailAssistantAgentName);
-    AgentSession emailSession = await emailAssistantAgent.GetNewSessionAsync();
+    AgentSession emailSession = await emailAssistantAgent.CreateSessionAsync();
 
     AgentResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
         message:

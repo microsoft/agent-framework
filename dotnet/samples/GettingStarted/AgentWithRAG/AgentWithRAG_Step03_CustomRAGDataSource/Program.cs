@@ -32,7 +32,7 @@ AIAgent agent = new AzureOpenAIClient(
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions))
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
 Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));

@@ -30,7 +30,7 @@ AIAgent agent = new AzureOpenAIClient(
     .AsAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
 // Call the agent and check if there are any user input requests to handle.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 var response = await agent.RunAsync("What is the weather like in Amsterdam?", session);
 var userInputRequests = response.UserInputRequests.ToList();
 

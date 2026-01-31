@@ -305,7 +305,7 @@ if (string.IsNullOrWhiteSpace(prompt) || prompt.Equals("exit", StringComparison.
 }
 
 // Create a new agent session
-AgentSession session = await agentProxy.GetNewSessionAsync();
+AgentSession session = await agentProxy.CreateSessionAsync();
 AgentSessionId sessionId = session.GetService<AgentSessionId>();
 string conversationId = sessionId.ToString();
 

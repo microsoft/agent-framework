@@ -45,7 +45,7 @@ var middlewareEnabledAgent = originalAgent
     .Use(GuardrailMiddleware, null)
     .Build();
 
-var session = await middlewareEnabledAgent.GetNewSessionAsync();
+var session = await middlewareEnabledAgent.CreateSessionAsync();
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
 var guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");

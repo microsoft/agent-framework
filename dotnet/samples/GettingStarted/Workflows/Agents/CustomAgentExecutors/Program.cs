@@ -136,7 +136,7 @@ internal sealed class SloganWriterExecutor : Executor
 
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
 
         var result = await this._agent.RunAsync(message, this._session, cancellationToken: cancellationToken);
 
@@ -209,7 +209,7 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
 
     public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
 
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':

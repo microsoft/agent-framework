@@ -18,10 +18,10 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
 
     public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return serializedSession.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.GetNewSessionAsync(cancellationToken);
+        return serializedSession.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.CreateSessionAsync(cancellationToken);
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new EchoAgentSession());
 
     private static ChatMessage UpdateSession(ChatMessage message, InMemoryAgentSession? session = null)

@@ -33,7 +33,7 @@ AIAgent agent2 = await assistantClient.CreateAIAgentAsync(
     instructions: JokerInstructions);
 
 // You can invoke the agent like any other AIAgent.
-AgentSession session = await agent1.GetNewSessionAsync();
+AgentSession session = await agent1.CreateSessionAsync();
 Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", session));
 
 // Cleanup for sample purposes.

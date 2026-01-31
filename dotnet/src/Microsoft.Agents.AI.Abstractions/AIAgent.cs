@@ -123,7 +123,7 @@ public abstract class AIAgent
     /// may be deferred until first use to optimize performance.
     /// </para>
     /// </remarks>
-    public abstract ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deserializes an agent session from its JSON serialized representation.
