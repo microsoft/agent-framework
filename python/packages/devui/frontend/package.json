@@ -41,6 +41,10 @@
     "tw-animate-css": "^1.3.7",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
-    "vite": "^7.1.11"
+    "vite": "^7.1.5"
+  },
+  "resolutions": {
+    "tar": "^7.5.7",
+    "js-yaml": "^4.1.1"
   }
 }
