@@ -78,10 +78,10 @@ public class ChatHistoryProviderTests
 
     private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
-        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
             => new(Array.Empty<ChatMessage>());
 
-        public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
             => default;
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)

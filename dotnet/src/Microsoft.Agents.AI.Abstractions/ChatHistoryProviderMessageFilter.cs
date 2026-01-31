@@ -49,14 +49,14 @@ public sealed class ChatHistoryProviderMessageFilter : ChatHistoryProvider
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         var messages = await this._innerProvider.InvokingAsync(context, cancellationToken).ConfigureAwait(false);
         return this._invokingMessagesFilter != null ? this._invokingMessagesFilter(messages) : messages;
     }
 
     /// <inheritdoc />
-    public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         if (this._invokedMessagesFilter != null)
         {

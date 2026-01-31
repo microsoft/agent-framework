@@ -214,7 +214,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
         var message = new ChatMessage(ChatRole.User, "Hello, world!");
 
-        var context = new ChatHistoryProvider.InvokedContext([message], [])
+        var context = new ChatHistoryProvider.InvokedContext([message])
         {
             ResponseMessages = []
         };
@@ -282,20 +282,16 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         {
             new ChatMessage(ChatRole.User, "First message"),
             new ChatMessage(ChatRole.Assistant, "Second message"),
-            new ChatMessage(ChatRole.User, "Third message")
-        };
-        var aiContextProviderMessages = new[]
-        {
-            new ChatMessage(ChatRole.System, "System context message")
+            new ChatMessage(ChatRole.User, "Third message"),
+            new ChatMessage(ChatRole.System, "System context message") { AdditionalProperties = new() { { AgentRequestMessageSource.AdditionalPropertiesKey, AgentRequestMessageSource.AIContextProvider } } }
         };
         var responseMessages = new[]
         {
             new ChatMessage(ChatRole.Assistant, "Response message")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(requestMessages, [])
+        var context = new ChatHistoryProvider.InvokedContext(requestMessages)
         {
-            AIContextProviderMessages = aiContextProviderMessages,
             ResponseMessages = responseMessages
         };
 
@@ -346,8 +342,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var store1 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversation1);
         using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversation2);
 
-        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 1")], []);
-        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 2")], []);
+        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 1")]);
+        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 2")]);
 
         await store1.InvokedAsync(context1);
         await store2.InvokedAsync(context2);
@@ -391,7 +387,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         };
 
         // Act 1: Add messages
-        var invokedContext = new ChatHistoryProvider.InvokedContext(messages, []);
+        var invokedContext = new ChatHistoryProvider.InvokedContext(messages);
         await originalStore.InvokedAsync(invokedContext);
 
         // Act 2: Verify messages were added
@@ -545,7 +541,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
         var message = new ChatMessage(ChatRole.User, "Hello from hierarchical partitioning!");
 
-        var context = new ChatHistoryProvider.InvokedContext([message], []);
+        var context = new ChatHistoryProvider.InvokedContext([message]);
 
         // Act
         await provider.InvokedAsync(context);
@@ -602,7 +598,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             new ChatMessage(ChatRole.User, "Third hierarchical message")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(messages);
 
         // Act
         await provider.InvokedAsync(context);
@@ -637,8 +633,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
 
         // Add messages to both stores
-        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 1")], []);
-        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 2")], []);
+        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 1")]);
+        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 2")]);
 
         await store1.InvokedAsync(context1);
         await store2.InvokedAsync(context2);
@@ -675,7 +671,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         using var originalStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
 
-        var context = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Test serialization message")], []);
+        var context = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Test serialization message")]);
         await originalStore.InvokedAsync(context);
 
         // Act - Serialize the provider state
@@ -717,8 +713,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var hierarchicalProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
 
         // Add messages to both
-        var simpleContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Simple partitioning message")], []);
-        var hierarchicalContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")], []);
+        var simpleContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Simple partitioning message")]);
+        var hierarchicalContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")]);
 
         await simpleProvider.InvokedAsync(simpleContext);
         await hierarchicalProvider.InvokedAsync(hierarchicalContext);
@@ -760,7 +756,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             await Task.Delay(10); // Small delay to ensure different timestamps
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(messages);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
@@ -798,7 +794,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(messages);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency

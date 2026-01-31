@@ -46,17 +46,17 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 
     internal void AddMessages(params IEnumerable<ChatMessage> messages) => this._chatMessages.AddRange(messages);
 
-    public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         => new(this._chatMessages.AsReadOnly());
 
-    public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         if (context.InvokeException is not null)
         {
             return default;
         }
 
-        var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+        var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
         this._chatMessages.AddRange(allNewMessages);
 
         return default;

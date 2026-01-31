@@ -15,7 +15,7 @@ public class AIContextProviderTests
     {
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>([]);
-        var task = provider.InvokedAsync(new(messages, aiContextProviderMessages: null));
+        var task = provider.InvokedAsync(new(messages));
         Assert.Equal(default, task);
     }
 
@@ -36,7 +36,7 @@ public class AIContextProviderTests
     [Fact]
     public void InvokedContext_Constructor_ThrowsForNullMessages()
     {
-        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!, aiContextProviderMessages: null));
+        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!));
     }
 
     #region GetService Method Tests
@@ -157,7 +157,7 @@ public class AIContextProviderTests
 
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             return default;
         }
