@@ -51,6 +51,7 @@
     <Project Path="samples/DurableAgents/ConsoleApps/06_LongRunningTools/06_LongRunningTools.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/07_ReliableStreaming/07_ReliableStreaming.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/08_SingleWorkflow/08_SingleWorkflow.csproj" />
+    <Project Path="samples/DurableAgents/ConsoleApps/09_SubWorkflows/09_SubWorkflows.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/09_Workflow_Concurrency/09_Workflow_Concurrency.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/10_Workflow_HITL/10_Workflow_HITL.csproj" />
     <Project Path="samples/DurableAgents/ConsoleApps/11_WorkflowEvents/11_WorkflowEvents.csproj" />

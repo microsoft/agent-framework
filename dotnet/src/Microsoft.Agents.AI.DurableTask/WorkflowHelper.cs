@@ -11,13 +11,19 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// <param name="ExecutorId">The unique identifier of the executor.</param>
 /// <param name="IsAgenticExecutor">Indicates whether this executor is an agentic executor.</param>
 /// <param name="RequestPort">The request port if this executor is a request port executor; otherwise, null.</param>
-[DebuggerDisplay("{ExecutorId}, Agentic = {IsAgenticExecutor}, HITL = {IsRequestPortExecutor}")]
-internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor, RequestPort? RequestPort = null)
+/// <param name="SubWorkflow">The sub-workflow if this executor is a sub-workflow executor; otherwise, null.</param>
+[DebuggerDisplay("{ExecutorId}, Agentic = {IsAgenticExecutor}, HITL = {IsRequestPortExecutor}, SubWorkflow = {IsSubworkflowExecutor}")]
+internal sealed record WorkflowExecutorInfo(string ExecutorId, bool IsAgenticExecutor, RequestPort? RequestPort = null, Workflow? SubWorkflow = null)
 {
     /// <summary>
     /// Gets a value indicating whether this executor is a request port executor (human-in-the-loop).
     /// </summary>
     public bool IsRequestPortExecutor => this.RequestPort is not null;
+
+    /// <summary>
+    /// Gets a value indicating whether this executor is a sub-workflow executor.
+    /// </summary>
+    public bool IsSubworkflowExecutor => this.SubWorkflow is not null;
 }
 
 /// <summary>
@@ -176,7 +182,8 @@ internal static class WorkflowHelper
                 ExecutorBinding executorBinding = executors[executorId];
                 bool isAgentic = IsAgentExecutorType(executorBinding.ExecutorType);
                 RequestPort? requestPort = (executorBinding is RequestPortBinding rpb) ? rpb.Port : null;
-                levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic, requestPort));
+                Workflow? subWorkflow = (executorBinding is SubworkflowBinding swb) ? swb.WorkflowInstance : null;
+                levelExecutors.Add(new WorkflowExecutorInfo(executorId, isAgentic, requestPort, subWorkflow));
 
                 // Check Fan-In for this executor (excluding back-edges)
                 int nonBackEdgePredecessors = predecessors[executorId]
@@ -218,7 +225,8 @@ internal static class WorkflowHelper
                 {
                     bool isAgentic = IsAgentExecutorType(executor.Value.ExecutorType);
                     RequestPort? requestPort = (executor.Value is RequestPortBinding rpb) ? rpb.Port : null;
-                    remainingExecutors.Add(new WorkflowExecutorInfo(executor.Key, isAgentic, requestPort));
+                    Workflow? subWorkflow = (executor.Value is SubworkflowBinding swb) ? swb.WorkflowInstance : null;
+                    remainingExecutors.Add(new WorkflowExecutorInfo(executor.Key, isAgentic, requestPort, subWorkflow));
                 }
             }
 

@@ -49,13 +49,21 @@ public static class DurableWorkflowServiceCollectionExtensions
         // Register the workflow runner
         services.AddSingleton<DurableWorkflowRunner>();
 
-        // Build registration info for all workflows
+        // Build registration info for all workflows (including sub-workflows)
         List<WorkflowRegistrationInfo> registrations = [];
         HashSet<string> registeredActivities = [];
+        HashSet<string> registeredOrchestrations = [];
 
-        foreach (KeyValuePair<string, Workflow> workflowEntry in durableOptions.Workflows.Workflows)
+        // Take a snapshot of the workflows to avoid collection modified during enumeration
+        // (sub-workflows are added to the collection during recursive registration)
+        foreach (Workflow workflow in durableOptions.Workflows.Workflows.Values.ToList())
         {
-            registrations.Add(BuildWorkflowRegistration(workflowEntry.Value, registeredActivities));
+            BuildWorkflowRegistrationRecursive(
+                workflow,
+                durableOptions.Workflows,
+                registrations,
+                registeredActivities,
+                registeredOrchestrations);
         }
 
         // Get any AI agents that were auto-registered from workflows
@@ -121,6 +129,53 @@ public static class DurableWorkflowServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Recursively builds workflow registrations, including any sub-workflows.
+    /// Also adds sub-workflows to the workflow options so they can be looked up at runtime.
+    /// </summary>
+    /// <param name="workflow">The workflow to register.</param>
+    /// <param name="workflowOptions">The workflow options to add sub-workflows to.</param>
+    /// <param name="registrations">The list to add registrations to.</param>
+    /// <param name="registeredActivities">Set of already registered activity names to avoid duplicates.</param>
+    /// <param name="registeredOrchestrations">Set of already registered orchestration names to avoid duplicates.</param>
+    private static void BuildWorkflowRegistrationRecursive(
+        Workflow workflow,
+        DurableWorkflowOptions workflowOptions,
+        List<WorkflowRegistrationInfo> registrations,
+        HashSet<string> registeredActivities,
+        HashSet<string> registeredOrchestrations)
+    {
+        string orchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name!);
+
+        // Skip if this workflow is already registered (handles circular references)
+        if (!registeredOrchestrations.Add(orchestrationName))
+        {
+            return;
+        }
+
+        // Build registration for this workflow
+        registrations.Add(BuildWorkflowRegistration(workflow, registeredActivities));
+
+        // Recursively register any sub-workflows
+        foreach (KeyValuePair<string, ExecutorBinding> entry in workflow.ReflectExecutors())
+        {
+            if (entry.Value is SubworkflowBinding subworkflowBinding)
+            {
+                Workflow subWorkflow = subworkflowBinding.WorkflowInstance;
+
+                // Add sub-workflow to options so it can be looked up by the runner at runtime
+                workflowOptions.AddWorkflow(subWorkflow);
+
+                BuildWorkflowRegistrationRecursive(
+                    subWorkflow,
+                    workflowOptions,
+                    registrations,
+                    registeredActivities,
+                    registeredOrchestrations);
+            }
+        }
+    }
+
     private static WorkflowRegistrationInfo BuildWorkflowRegistration(
         Workflow workflow,
         HashSet<string> registeredActivities)
@@ -135,6 +190,12 @@ public static class DurableWorkflowServiceCollectionExtensions
         {
             // Skip agent executors - they're handled differently
             if (entry.Value is AIAgentBinding)
+            {
+                continue;
+            }
+
+            // Skip sub-workflow executors - they're handled as sub-orchestrations
+            if (entry.Value is SubworkflowBinding)
             {
                 continue;
             }
@@ -237,7 +298,18 @@ public static class DurableWorkflowServiceCollectionExtensions
         }
 
         // Try to load the type directly (for types not in supported types)
-        return Type.GetType(inputTypeName) ?? supportedTypes.FirstOrDefault() ?? typeof(string);
+        Type? loadedType = Type.GetType(inputTypeName);
+
+        // If the loaded type is string but the executor doesn't support string,
+        // fall back to the first supported type. This handles the case where
+        // serialized JSON objects are passed with type "System.String" but need
+        // to be deserialized to the actual expected type (e.g., OrderInfo).
+        if (loadedType == typeof(string) && !supportedTypes.Contains(typeof(string)))
+        {
+            return supportedTypes.FirstOrDefault() ?? typeof(string);
+        }
+
+        return loadedType ?? supportedTypes.FirstOrDefault() ?? typeof(string);
     }
 
     /// <summary>

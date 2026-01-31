@@ -565,8 +565,8 @@ internal class DurableWorkflowRunner
     /// <returns>A <see cref="WorkflowExecutorInfo"/> containing metadata about the executor.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the executor ID is not found in bindings.</exception>
     /// <remarks>
-    /// This method determines the executor type (agentic vs regular) and extracts request port
-    /// information for human-in-the-loop executors.
+    /// This method determines the executor type (agentic, sub-workflow, request port, or regular)
+    /// and extracts the appropriate metadata for each type.
     /// </remarks>
     private static WorkflowExecutorInfo CreateExecutorInfo(
         string executorId,
@@ -579,8 +579,9 @@ internal class DurableWorkflowRunner
 
         bool isAgentic = WorkflowHelper.IsAgentExecutorType(binding.ExecutorType);
         RequestPort? requestPort = (binding is RequestPortBinding rpb) ? rpb.Port : null;
+        Workflow? subWorkflow = (binding is SubworkflowBinding swb) ? swb.WorkflowInstance : null;
 
-        return new WorkflowExecutorInfo(executorId, isAgentic, requestPort);
+        return new WorkflowExecutorInfo(executorId, isAgentic, requestPort, subWorkflow);
     }
 
     /// <summary>
@@ -1092,6 +1093,12 @@ internal class DurableWorkflowRunner
     /// </item>
     /// <item>
     /// <description>
+    /// <strong>Sub-Workflow Executors:</strong> Executed as sub-orchestrations.
+    /// The child workflow runs as a separate orchestration instance with its own instance ID.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
     /// <strong>Regular Executors:</strong> Invoked as Durable Task activities. Input is wrapped
     /// with state and type information via <see cref="ActivityInputWithState"/>.
     /// </description>
@@ -1119,6 +1126,12 @@ internal class DurableWorkflowRunner
             return await ExecuteRequestPortAsync(context, executorInfo, input, logger, customStatus).ConfigureAwait(true);
         }
 
+        // Handle Sub-Workflow executors by calling as sub-orchestrations
+        if (executorInfo.IsSubworkflowExecutor)
+        {
+            return await ExecuteSubWorkflowAsync(context, executorInfo, input, logger).ConfigureAwait(true);
+        }
+
         if (!executorInfo.IsAgenticExecutor)
         {
             string executorName = WorkflowNamingHelper.GetExecutorName(executorInfo.ExecutorId);
@@ -1137,6 +1150,54 @@ internal class DurableWorkflowRunner
         }
 
         return await ExecuteAgentAsync(context, executorInfo, input, logger).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Executes a sub-workflow as a sub-orchestration.
+    /// </summary>
+    /// <param name="context">The orchestration context for calling sub-orchestrations.</param>
+    /// <param name="executorInfo">The executor info containing the sub-workflow reference.</param>
+    /// <param name="input">The input to pass to the sub-workflow.</param>
+    /// <param name="logger">The logger for tracing.</param>
+    /// <returns>The result of the sub-workflow execution.</returns>
+    /// <remarks>
+    /// <para>
+    /// Sub-workflows are executed as separate orchestration instances.
+    /// This provides:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>Separate instance ID for the child workflow (visible in dashboard)</description></item>
+    /// <item><description>Independent checkpointing and replay</description></item>
+    /// <item><description>Failure isolation (child failure doesn't corrupt parent state)</description></item>
+    /// <item><description>Hierarchical visualization in the Durable Task dashboard</description></item>
+    /// </list>
+    /// </remarks>
+    private static async Task<string> ExecuteSubWorkflowAsync(
+        TaskOrchestrationContext context,
+        WorkflowExecutorInfo executorInfo,
+        string input,
+        ILogger logger)
+    {
+        Workflow subWorkflow = executorInfo.SubWorkflow!;
+        string subOrchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(subWorkflow.Name!);
+
+        logger.LogDebug(
+            "Calling sub-orchestration '{SubOrchestrationName}' for sub-workflow '{SubWorkflowName}'",
+            subOrchestrationName,
+            subWorkflow.Name);
+
+        // Call the sub-workflow as a sub-orchestration
+        // The Durable Task Framework handles checkpointing, replay, and failure isolation
+        string result = await context.CallSubOrchestratorAsync<string>(
+            subOrchestrationName,
+            input).ConfigureAwait(true);
+
+        logger.LogDebug(
+            "Sub-orchestration '{SubOrchestrationName}' completed with result length: {ResultLength}",
+            subOrchestrationName,
+            result?.Length ?? 0);
+
+        return result ?? string.Empty;
     }
 
     /// <summary>

@@ -9,6 +9,8 @@ This directory contains samples for console app hosting of durable agents. These
 - **[05_AgentOrchestration_HITL](05_AgentOrchestration_HITL)**: A sample that demonstrates how to implement a human-in-the-loop workflow using durable orchestration, including interactive approval prompts.
 - **[06_LongRunningTools](06_LongRunningTools)**: A sample that demonstrates how agents can start and interact with durable orchestrations from tool calls to enable long-running tool scenarios.
 - **[07_ReliableStreaming](07_ReliableStreaming)**: A sample that demonstrates how to implement reliable streaming for durable agents using Redis Streams, enabling clients to disconnect and reconnect without losing messages.
+- **[08_SingleWorkflow](08_SingleWorkflow)**: A sample that demonstrates how to run a simple workflow as a durable orchestration, showcasing activity durability and automatic resume on restart.
+- **[09_SubWorkflows](09_SubWorkflows)**: A sample that demonstrates how to compose workflows hierarchically using sub-workflows, which run as separate orchestration instances visible in the DTS dashboard.
 
 ## Running the Samples
 
