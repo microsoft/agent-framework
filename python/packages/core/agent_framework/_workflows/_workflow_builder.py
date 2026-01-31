@@ -332,6 +332,54 @@ class WorkflowBuilder:
 
         return self
 
+    def register_executors(self, executor_factories: dict[str, Callable[[], Executor]]) -> Self:
+        """Register multiple executor factory functions for lazy initialization.
+
+        This method allows you to register multiple factory functions at once. Each
+        executor is instantiated only when the workflow is built, enabling deferred
+        initialization and reducing builder boilerplate.
+
+        Args:
+            executor_factories: A mapping of executor names to factory callables that
+                return Executor instances when called.
+
+        Example:
+            .. code-block:: python
+                from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+
+
+                class UpperCaseExecutor(Executor):
+                    @handler
+                    async def process(self, text: str, ctx: WorkflowContext[str]) -> None:
+                        await ctx.send_message(text.upper())
+
+
+                class ReverseExecutor(Executor):
+                    @handler
+                    async def process(self, text: str, ctx: WorkflowContext[str]) -> None:
+                        await ctx.yield_output(text[::-1])
+
+
+                workflow = (
+                    WorkflowBuilder()
+                    .register_executors({
+                        "UpperCase": lambda: UpperCaseExecutor(id="upper"),
+                        "Reverse": lambda: ReverseExecutor(id="reverse"),
+                    })
+                    .set_start_executor("UpperCase")
+                    .add_edge("UpperCase", "Reverse")
+                    .build()
+                )
+        """
+        for name in executor_factories:
+            if name in self._executor_registry:
+                raise ValueError(f"An executor factory with the name '{name}' is already registered.")
+
+        for name, factory_function in executor_factories.items():
+            self._executor_registry[name] = factory_function
+
+        return self
+
     def register_agent(
         self,
         factory_func: Callable[[], AgentProtocol],
