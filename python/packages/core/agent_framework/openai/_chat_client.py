@@ -315,21 +315,19 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
     ) -> ChatResponseUpdate:
         """Parse a streaming response update from OpenAI."""
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
-        if chunk.usage:
-            return ChatResponseUpdate(
-                role=Role.ASSISTANT,
-                contents=[
-                    Content.from_usage(
-                        usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
-                    )
-                ],
-                model_id=chunk.model,
-                additional_properties=chunk_metadata,
-                response_id=chunk.id,
-                message_id=chunk.id,
-            )
         contents: list[Content] = []
         finish_reason: FinishReason | None = None
+
+        # BUGFIX: Process usage alongside text/tool calls instead of early return
+        # Gemini (and potentially other providers) include both usage and content in the same chunk
+        if chunk.usage:
+            contents.append(
+                Content.from_usage(
+                    usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
+                )
+            )
+
+        # Process text and tool calls from choices
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
@@ -340,6 +338,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 contents.append(text_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
