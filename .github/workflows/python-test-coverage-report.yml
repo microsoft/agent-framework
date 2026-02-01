@@ -33,8 +33,14 @@ jobs:
         # Need to read the PR number from the file saved in the previous workflow
         # because the workflow_run event does not have access to the PR number
         # The PR number is needed to post the comment on the PR
+        # Security: Validate PR number is numeric to prevent injection
         run: |
           PR_NUMBER=$(cat pr_number)
+          # Validate PR number is strictly numeric (security measure)
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Invalid PR number format: '$PR_NUMBER'"
+            exit 1
+          fi
           echo "PR number: $PR_NUMBER"
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
       - name: Pytest coverage comment

@@ -6,6 +6,10 @@ on:
     paths:
       - "python/packages/**"
       - "python/tests/unit/**"
+
+permissions:
+  contents: read
+
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache

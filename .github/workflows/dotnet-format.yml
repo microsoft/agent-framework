@@ -16,6 +16,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   check-format:
     strategy:
@@ -54,14 +57,26 @@ jobs:
       - name: Find csproj files
         id: find-csproj
         if: github.event_name != 'pull_request' || steps.changed-files.outputs.added_modified != '' || steps.changed-files.outcome == 'failure'
+        env:
+          # Security: Pass file list via environment variable to prevent shell injection
+          CHANGED_FILES: ${{ steps.changed-files.outputs.added_modified }}
+          CHANGED_FILES_OUTCOME: ${{ steps.changed-files.outcome }}
         run: |
           csproj_files=()
           exclude_files=("Experimental.Orchestration.Flow.csproj" "Experimental.Orchestration.Flow.UnitTests.csproj" "Experimental.Orchestration.Flow.IntegrationTests.csproj")
-          if [[ ${{ steps.changed-files.outcome }} == 'success' ]]; then
-            for file in ${{ steps.changed-files.outputs.added_modified }}; do
+          if [[ "$CHANGED_FILES_OUTCOME" == 'success' ]]; then
+            # Security: Read files from env var, validate path format, iterate safely
+            while IFS= read -r file; do
+              # Skip empty lines
+              [[ -z "$file" ]] && continue
+              # Security: Validate file path format (no special characters that could cause injection)
+              if ! [[ "$file" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+                echo "WARNING: Skipping file with invalid characters: $file"
+                continue
+              fi
               echo "$file was changed"
               dir="./$file"
-              while [[ $dir != "." && $dir != "/" && $dir != $GITHUB_WORKSPACE ]]; do
+              while [[ $dir != "." && $dir != "/" && $dir != "$GITHUB_WORKSPACE" ]]; do
                 if find "$dir" -maxdepth 1 -name "*.csproj" -print -quit | grep -q .; then
                   csproj_path="$(find "$dir" -maxdepth 1 -name "*.csproj" -print -quit)"
                   if [[ ! "${exclude_files[@]}" =~ "${csproj_path##*/}" ]]; then
@@ -72,7 +87,7 @@ jobs:
 
                 dir=$(echo ${dir%/*})
               done
-            done
+            done <<< "$CHANGED_FILES"
           else
             # if the changed-files step failed, run dotnet on the whole slnx instead of specific projects
             csproj_files=$(find ./ -type f -name "*.slnx" | tr '\n' ' ');
@@ -88,8 +103,18 @@ jobs:
       # This step will run dotnet format on each of the unique csproj files and fail if any changes are made
       - name: Run dotnet format
         if: steps.find-csproj.outputs.csproj_files != ''
+        env:
+          # Security: Pass csproj files via environment variable to prevent shell injection
+          CSPROJ_FILES: ${{ steps.find-csproj.outputs.csproj_files }}
+          DOTNET_VERSION: ${{ matrix.dotnet }}
         run: |
-          for csproj in ${{ steps.find-csproj.outputs.csproj_files }}; do
+          # Security: Iterate over files safely from environment variable
+          for csproj in $CSPROJ_FILES; do
+            # Security: Validate csproj path format
+            if ! [[ "$csproj" =~ ^[a-zA-Z0-9_./-]+\.csproj$ ]] && ! [[ "$csproj" =~ ^[a-zA-Z0-9_./-]+\.slnx$ ]]; then
+              echo "WARNING: Skipping invalid csproj path: $csproj"
+              continue
+            fi
             echo "Running dotnet format on $csproj"
-            docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:${{ matrix.dotnet }} /bin/sh -c "dotnet format $csproj --verify-no-changes --verbosity diagnostic"
+            docker run --rm -v "$(pwd)":/app -w /app "mcr.microsoft.com/dotnet/sdk:$DOTNET_VERSION" /bin/sh -c "dotnet format $csproj --verify-no-changes --verbosity diagnostic"
           done
