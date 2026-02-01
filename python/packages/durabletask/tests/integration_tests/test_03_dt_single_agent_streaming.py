@@ -29,7 +29,7 @@ import redis.asyncio as aioredis
 from dt_testutils import OrchestrationHelper, create_agent_client
 
 # Add sample directory to path to import RedisStreamResponseHandler
-SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / "03_single_agent_streaming"
+SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "durable" / "console_apps" / "03_single_agent_streaming"
 sys.path.insert(0, str(SAMPLE_DIR))
 
 from redis_stream_response_handler import RedisStreamResponseHandler  # type: ignore[reportMissingImports] # noqa: E402
