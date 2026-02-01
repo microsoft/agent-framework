@@ -42,7 +42,7 @@ public class AgentResponseUpdateExtensionsTests
     {
         AgentResponseUpdate[] updates =
         [
-            new(ChatRole.Assistant, "Hello") { ResponseId = "someResponse", MessageId = "12345", CreatedAt = new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero), AgentId = "agentId" },
+            new(ChatRole.Assistant, "Hello") { ResponseId = "someResponse", MessageId = "12345", CreatedAt = new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero) },
             new(new("human"), ", ") { AuthorName = "Someone", AdditionalProperties = new() { ["a"] = "b" } },
             new(null, "world!") { CreatedAt = new DateTimeOffset(2025, 2, 3, 4, 5, 6, TimeSpan.Zero), AdditionalProperties = new() { ["c"] = "d" } },
 
@@ -54,8 +54,6 @@ public class AgentResponseUpdateExtensionsTests
             updates.ToAgentResponse() :
             await YieldAsync(updates).ToAgentResponseAsync();
         Assert.NotNull(response);
-
-        Assert.Equal("agentId", response.AgentId);
 
         Assert.NotNull(response.Usage);
         Assert.Equal(5, response.Usage.InputTokenCount);

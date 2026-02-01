@@ -63,7 +63,6 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         AgentResponse result =
             new(this.EchoMessages(messages, session, options).ToList())
             {
-                AgentId = this.Id,
                 CreatedAt = DateTimeOffset.Now,
                 ResponseId = Guid.NewGuid().ToString("N"),
             };
@@ -80,7 +79,6 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
             yield return
                 new(message.Role, message.Contents)
                 {
-                    AgentId = this.Id,
                     AuthorName = message.AuthorName,
                     ResponseId = responseId,
                     MessageId = message.MessageId,

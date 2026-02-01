@@ -185,7 +185,7 @@ internal sealed class WorkflowRunner
 
                         if (messageId is not null)
                         {
-                            string? agentName = streamEvent.Update.AuthorName ?? streamEvent.Update.AgentId ?? nameof(ChatRole.Assistant);
+                            string? agentName = streamEvent.Update.AuthorName ?? streamEvent.ExecutorId ?? nameof(ChatRole.Assistant);
                             Console.ForegroundColor = ConsoleColor.Cyan;
                             Console.Write($"\n{agentName.ToUpperInvariant()}:");
                             Console.ForegroundColor = ConsoleColor.DarkGray;

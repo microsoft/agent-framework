@@ -119,11 +119,10 @@ internal sealed class MessageMerger
         return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
     }
 
-    public AgentResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
+    public AgentResponse ComputeMerged(string primaryResponseId)
     {
         List<ChatMessage> messages = [];
         Dictionary<string, AgentResponse> responses = [];
-        HashSet<string> agentIds = [];
 
         foreach (string responseId in this._mergeStates.Keys)
         {
@@ -146,11 +145,6 @@ internal sealed class MessageMerger
 
         foreach (AgentResponse response in responses.Values)
         {
-            if (response.AgentId is not null)
-            {
-                agentIds.Add(response.AgentId);
-            }
-
             if (response.CreatedAt.HasValue)
             {
                 createdTimes.Add(response.CreatedAt.Value);
@@ -179,9 +173,6 @@ internal sealed class MessageMerger
         return new AgentResponse(messages)
         {
             ResponseId = primaryResponseId,
-            AgentId = primaryAgentId
-                   ?? primaryAgentName
-                   ?? (agentIds.Count == 1 ? agentIds.First() : null),
             CreatedAt = DateTimeOffset.UtcNow,
             Usage = usage,
             AdditionalProperties = additionalProperties
@@ -204,7 +195,6 @@ internal sealed class MessageMerger
 
             return new()
             {
-                AgentId = incoming.AgentId ?? current.AgentId,
                 AdditionalProperties = MergeProperties(current.AdditionalProperties, incoming.AdditionalProperties),
                 CreatedAt = incoming.CreatedAt ?? current.CreatedAt,
                 Messages = current.Messages.Concat(incoming.Messages).ToList(),

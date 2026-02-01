@@ -84,7 +84,6 @@ internal sealed class HandoffAgentExecutor(
                         await AddUpdateAsync(
                                 new AgentResponseUpdate
                                 {
-                                    AgentId = this._agent.Id,
                                     AuthorName = this._agent.Name ?? this._agent.Id,
                                     Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
                                     CreatedAt = DateTimeOffset.UtcNow,

@@ -219,7 +219,6 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
                 AdditionalProperties = chatUpdate.AdditionalProperties
             })
             {
-                AgentId = update.AgentId,
                 ContinuationToken = update.ContinuationToken
             };
         }

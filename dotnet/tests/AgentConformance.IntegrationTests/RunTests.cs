@@ -49,7 +49,6 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         Assert.NotNull(response);
         Assert.Single(response.Messages);
         Assert.Contains("Paris", response.Text);
-        Assert.Equal(agent.Id, response.AgentId);
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]

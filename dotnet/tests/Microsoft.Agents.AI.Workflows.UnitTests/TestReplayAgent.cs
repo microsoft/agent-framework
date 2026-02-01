@@ -68,7 +68,6 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
             {
                 yield return new AgentResponseUpdate()
                 {
-                    AgentId = this.Id,
                     AuthorName = this.Name,
                     MessageId = message.MessageId,
                     ResponseId = responseId,

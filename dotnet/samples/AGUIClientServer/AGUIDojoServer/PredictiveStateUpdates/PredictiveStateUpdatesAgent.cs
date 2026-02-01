@@ -88,10 +88,7 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
                             AdditionalProperties = update.AdditionalProperties,
                             AuthorName = update.AuthorName,
                             ContinuationToken = update.ContinuationToken,
-                        })
-                    {
-                        AgentId = update.AgentId
-                    };
+                        });
 
                     // Small delay to simulate streaming
                     await Task.Delay(50, cancellationToken).ConfigureAwait(false);

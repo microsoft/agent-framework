@@ -72,7 +72,7 @@ internal sealed class Program
         {
             if (responseUpdate.MessageId != lastMessageId)
             {
-                Console.WriteLine($"\n\n{responseUpdate.AuthorName ?? responseUpdate.AgentId}");
+                Console.WriteLine($"\n\n{responseUpdate.AuthorName ?? agent.Id}");
             }
 
             lastMessageId = responseUpdate.MessageId;

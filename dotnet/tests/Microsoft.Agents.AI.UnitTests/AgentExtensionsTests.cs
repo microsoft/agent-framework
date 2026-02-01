@@ -259,7 +259,6 @@ public class AgentExtensionsTests
         // Arrange
         var expectedResponse = new AgentResponse
         {
-            AgentId = "agent-123",
             ResponseId = "response-456",
             CreatedAt = DateTimeOffset.UtcNow,
             Messages = { new ChatMessage(ChatRole.Assistant, "Complex response") }
@@ -283,7 +282,6 @@ public class AgentExtensionsTests
         // Arrange
         var expectedResponse = new AgentResponse
         {
-            AgentId = "agent-123",
             ResponseId = "response-456",
             CreatedAt = DateTimeOffset.UtcNow,
             Messages = { new ChatMessage(ChatRole.Assistant, "Complex response") }

@@ -80,7 +80,6 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     {
         yield return new(ChatRole.Assistant, "Hello World!")
         {
-            AgentId = this.Id,
             AuthorName = this.Name,
             MessageId = Guid.NewGuid().ToString("N"),
         };

@@ -141,18 +141,6 @@ public class AgentResponse
     public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>
-    /// Gets or sets the identifier of the agent that generated this response.
-    /// </summary>
-    /// <value>
-    /// A unique string identifier for the agent, or <see langword="null"/> if not specified.
-    /// </value>
-    /// <remarks>
-    /// This identifier helps track which agent generated the response in multi-agent scenarios
-    /// or for debugging and telemetry purposes.
-    /// </remarks>
-    public string? AgentId { get; set; }
-
-    /// <summary>
     /// Gets or sets the unique identifier for this specific response.
     /// </summary>
     /// <value>
@@ -276,7 +264,6 @@ public class AgentResponse
                 RawRepresentation = message.RawRepresentation,
                 Role = message.Role,
 
-                AgentId = this.AgentId,
                 ResponseId = this.ResponseId,
                 MessageId = message.MessageId,
                 CreatedAt = this.CreatedAt,

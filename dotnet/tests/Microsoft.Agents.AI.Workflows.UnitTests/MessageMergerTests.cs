@@ -23,7 +23,7 @@ public class MessageMergerTests
 
         MessageMerger merger = new();
 
-        foreach (AgentResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
+        foreach (AgentResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, messageId: messageId, createdAt: creationTime, responseId: responseId))
         {
             merger.AddUpdate(update);
         }
@@ -33,7 +33,6 @@ public class MessageMergerTests
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].AuthorName.Should().Be(TestAuthorName1);
-        response.AgentId.Should().Be(TestAgentId1);
         response.CreatedAt.Should().NotBe(creationTime);
         response.Messages[0].CreatedAt.Should().Be(creationTime);
         response.Messages[0].Contents.Should().HaveCount(1);
