@@ -101,6 +101,24 @@ def session_error_event() -> SessionEvent:
     )
 
 
+@pytest.fixture
+def assistant_reasoning_delta_event() -> SessionEvent:
+    """Create a mock assistant reasoning delta event."""
+    return create_session_event(
+        SessionEventType.ASSISTANT_REASONING_DELTA,
+        delta_content="Thinking step ",
+    )
+
+
+@pytest.fixture
+def assistant_reasoning_event() -> SessionEvent:
+    """Create a mock assistant reasoning event."""
+    return create_session_event(
+        SessionEventType.ASSISTANT_REASONING,
+        content="Complete reasoning content",
+    )
+
+
 class TestGitHubCopilotAgentInit:
     """Test cases for GitHubCopilotAgent initialization."""
 
@@ -417,6 +435,64 @@ class TestGitHubCopilotAgentRunStream:
 
         assert agent._started is True  # type: ignore
         mock_client.start.assert_called_once()
+
+    async def test_run_stream_with_reasoning_delta(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_reasoning_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming with reasoning delta events."""
+        events = [assistant_reasoning_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run_stream("Hello"):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert isinstance(responses[0], AgentResponseUpdate)
+        assert responses[0].role == Role.ASSISTANT
+        # Check that the content is TextReasoningContent by checking its type
+        assert responses[0].contents[0].type == "text_reasoning"
+        assert responses[0].contents[0].text == "Thinking step "
+
+    async def test_run_stream_with_reasoning_complete(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_reasoning_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming with complete reasoning events."""
+        events = [assistant_reasoning_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run_stream("Hello"):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert isinstance(responses[0], AgentResponseUpdate)
+        assert responses[0].role == Role.ASSISTANT
+        # Check that the content is TextReasoningContent by checking its type
+        assert responses[0].contents[0].type == "text_reasoning"
+        assert responses[0].contents[0].text == "Complete reasoning content"
 
 
 class TestGitHubCopilotAgentSessionManagement:
