@@ -259,6 +259,24 @@ def test_register_multiple_executors():
     assert workflow.start_executor_id == "ExecutorA"
 
 
+def test_register_executors_bulk():
+    """Test bulk executor registration with a mapping of factories."""
+    builder = WorkflowBuilder()
+
+    result = builder.register_executors({
+        "ExecutorA": lambda: MockExecutor(id="ExecutorA"),
+        "ExecutorB": lambda: MockExecutor(id="ExecutorB"),
+    })
+
+    assert result is builder
+
+    workflow = builder.set_start_executor("ExecutorA").add_edge("ExecutorA", "ExecutorB").build()
+
+    assert "ExecutorA" in workflow.executors
+    assert "ExecutorB" in workflow.executors
+    assert workflow.start_executor_id == "ExecutorA"
+
+
 def test_register_with_multiple_names():
     """Test registering the same factory function under multiple names."""
     builder = WorkflowBuilder()
