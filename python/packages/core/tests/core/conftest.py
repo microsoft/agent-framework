@@ -145,7 +145,7 @@ class MockBaseChatClient(
     """Mock implementation of a full-featured ChatClient."""
 
     def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
+        super().__init__(function_middleware=[], **kwargs)
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0

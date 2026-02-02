@@ -623,7 +623,6 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ChatAgent instance.
@@ -674,7 +673,6 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             name=name,
             description=description,
             context_provider=context_provider,
-            middleware=middleware,
             **kwargs,
         )
         self.chat_client = chat_client
@@ -1422,4 +1420,52 @@ class ChatAgent(
     For a minimal implementation without these features, use :class:`RawChatAgent`.
     """
 
-    pass
+    def __init__(
+        self,
+        chat_client: ChatClientProtocol[TOptions_co],
+        instructions: str | None = None,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        default_options: TOptions_co | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a ChatAgent instance."""
+        kwargs.pop("middleware", None)
+        AgentTelemetryLayer.__init__(
+            self,
+            chat_client,
+            instructions,
+            id=id,
+            name=name,
+            description=description,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )
+        RawChatAgent.__init__(
+            self,
+            chat_client,
+            instructions,
+            id=id,
+            name=name,
+            description=description,
+            tools=tools,
+            default_options=default_options,
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            **kwargs,
+        )

@@ -102,7 +102,7 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """
 
     def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
+        super().__init__(function_middleware=[], **kwargs)
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0

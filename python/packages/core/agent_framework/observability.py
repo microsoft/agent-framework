@@ -1157,8 +1157,12 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 span_state["closed"] = True
                 span_cm.__exit__(None, None, None)
 
-            def _finalize(response: "ChatResponse") -> "ChatResponse":
+            def _record_duration() -> None:
+                duration_state["duration"] = perf_counter() - start_time
+
+            async def _finalize_stream() -> None:
                 try:
+                    response = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response, duration=duration)
                     _capture_response(
@@ -1167,7 +1171,11 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                         token_usage_histogram=self.token_usage_histogram,
                         operation_duration_histogram=self.duration_histogram,
                     )
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                    if (
+                        OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
+                        and isinstance(response, ChatResponse)
+                        and response.messages
+                    ):
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
@@ -1175,14 +1183,12 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                             finish_reason=response.finish_reason,
                             output=True,
                         )
-                    return response
+                except Exception as exception:
+                    capture_exception(span=span, exception=exception, timestamp=time_ns())
                 finally:
                     _close_span()
 
-            def _record_duration() -> None:
-                duration_state["duration"] = perf_counter() - start_time
-
-            return result_stream.with_result_hook(_finalize).with_cleanup_hook(_record_duration)
+            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
 
         async def _get_response() -> "ChatResponse":
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
@@ -1223,12 +1229,20 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
 class AgentTelemetryLayer:
     """Layer that wraps agent run with OpenTelemetry tracing."""
 
-    def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        otel_agent_provider_name: str | None = None,
+        otel_provider_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize telemetry attributes and histograms."""
         super().__init__(*args, **kwargs)
         self.token_usage_histogram = _get_token_usage_histogram()
         self.duration_histogram = _get_duration_histogram()
-        self.otel_provider_name = otel_provider_name or getattr(self, "AGENT_PROVIDER_NAME", "unknown")
+        self.otel_provider_name = (
+            otel_agent_provider_name or otel_provider_name or getattr(self, "AGENT_PROVIDER_NAME", "unknown")
+        )
 
     @overload
     def run(
@@ -1322,8 +1336,12 @@ class AgentTelemetryLayer:
                 span_state["closed"] = True
                 span_cm.__exit__(None, None, None)
 
-            def _finalize(response: "AgentResponse") -> "AgentResponse":
+            def _record_duration() -> None:
+                duration_state["duration"] = perf_counter() - start_time
+
+            async def _finalize_stream() -> None:
                 try:
+                    response = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(
                         attributes,
@@ -1332,21 +1350,23 @@ class AgentTelemetryLayer:
                         capture_usage=capture_usage,
                     )
                     _capture_response(span=span, attributes=response_attributes)
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                    if (
+                        OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
+                        and isinstance(response, AgentResponse)
+                        and response.messages
+                    ):
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
                             messages=response.messages,
                             output=True,
                         )
-                    return response
+                except Exception as exception:
+                    capture_exception(span=span, exception=exception, timestamp=time_ns())
                 finally:
                     _close_span()
 
-            def _record_duration() -> None:
-                duration_state["duration"] = perf_counter() - start_time
-
-            return result_stream.with_result_hook(_finalize).with_cleanup_hook(_record_duration)
+            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
 
         async def _run() -> "AgentResponse":
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1636,6 +1656,10 @@ def _get_response_attributes(
     capture_usage: bool = True,
 ) -> dict[str, Any]:
     """Get the response attributes from a response."""
+    from ._types import AgentResponse, ChatResponse
+
+    if not isinstance(response, (ChatResponse, AgentResponse)):
+        return attributes
     if response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
     finish_reason = getattr(response, "finish_reason", None)

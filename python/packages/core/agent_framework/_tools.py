@@ -64,6 +64,7 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import ChatClientProtocol
+    from ._middleware import FunctionMiddleware, FunctionMiddlewareCallable
     from ._types import (
         ChatMessage,
         ChatOptions,
@@ -2088,9 +2089,11 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
     def __init__(
         self,
         *,
+        function_middleware: Sequence["FunctionMiddleware | FunctionMiddlewareCallable"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
+        self.function_middleware = list(function_middleware) if function_middleware else []
         self.function_invocation_configuration = normalize_function_invocation_configuration(
             function_invocation_configuration
         )
@@ -2144,6 +2147,10 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
 
         super_get_response = super().get_response  # type: ignore[misc]
         function_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+        if function_middleware_pipeline is None and self.function_middleware:
+            from ._middleware import FunctionMiddlewarePipeline
+
+            function_middleware_pipeline = FunctionMiddlewarePipeline(*self.function_middleware)
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]

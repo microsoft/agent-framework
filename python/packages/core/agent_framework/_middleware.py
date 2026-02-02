@@ -7,8 +7,9 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from enum import Enum
 from functools import update_wrapper
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
 
+from ._clients import ChatClientProtocol
 from ._serialization import SerializationMixin
 from ._types import (
     AgentResponse,
@@ -1098,8 +1099,13 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
     ) -> None:
         middleware_list = categorize_middleware(middleware)
         self.chat_middleware = middleware_list["chat"]
-        self.function_middleware = middleware_list["function"]
+        self._pending_function_middleware = list(middleware_list["function"])
         super().__init__(**kwargs)
+        if not hasattr(self, "function_middleware"):
+            self.function_middleware = list(self._pending_function_middleware)
+        if hasattr(self, "function_middleware") and self._pending_function_middleware:
+            self.function_middleware = list(self.function_middleware) + self._pending_function_middleware
+        del self._pending_function_middleware
 
     @overload
     def get_response(
@@ -1144,13 +1150,30 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         middleware = categorize_middleware(call_middleware)
         chat_middleware_list = middleware["chat"]  # type: ignore[assignment]
         function_middleware_list = middleware["function"]
+        agent_chat_count = int(getattr(self, "_agent_chat_middleware_count", 0) or 0)
+        agent_function_count = int(getattr(self, "_agent_function_middleware_count", 0) or 0)
+        agent_chat_count = min(agent_chat_count, len(self.chat_middleware))
+        agent_function_count = min(agent_function_count, len(self.function_middleware))
+        agent_chat_middleware = list(self.chat_middleware[:agent_chat_count])
+        agent_function_middleware = list(self.function_middleware[:agent_function_count])
+        client_chat_middleware = list(self.chat_middleware[agent_chat_count:])
+        client_function_middleware = list(self.function_middleware[agent_function_count:])
 
-        if function_middleware_list or self.function_middleware:
-            kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(
-                *function_middleware_list, *self.function_middleware
-            )
+        combined_function_middleware = [
+            *agent_function_middleware,
+            *function_middleware_list,
+            *client_function_middleware,
+        ]
+        combined_chat_middleware = [
+            *agent_chat_middleware,
+            *chat_middleware_list,
+            *client_chat_middleware,
+        ]
 
-        if not chat_middleware_list and not self.chat_middleware:
+        if combined_function_middleware:
+            kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(*combined_function_middleware)
+
+        if not combined_chat_middleware:
             return super().get_response(  # type: ignore[misc,no-any-return]
                 messages=messages,
                 stream=stream,
@@ -1158,13 +1181,49 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
                 **kwargs,
             )
 
-        pipeline = ChatMiddlewarePipeline(*chat_middleware_list, *self.chat_middleware)  # type: ignore[arg-type]
+        pipeline = ChatMiddlewarePipeline(*combined_chat_middleware)  # type: ignore[arg-type]
         prepared_messages = prepare_messages(messages)
+
+        if stream:
+
+            async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+                context = ChatContext(
+                    chat_client=self,  # type: ignore[arg-type]
+                    messages=prepared_messages,
+                    options=options,
+                    is_streaming=True,
+                    kwargs=kwargs,
+                )
+
+                def final_handler(
+                    ctx: ChatContext,
+                ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+                    return super(ChatMiddlewareLayer, self).get_response(  # type: ignore[misc,no-any-return]
+                        messages=list(ctx.messages),
+                        stream=True,
+                        options=ctx.options or {},
+                        **ctx.kwargs,
+                    )
+
+                result = await pipeline.execute(
+                    chat_client=self,  # type: ignore[arg-type]
+                    messages=context.messages,
+                    options=options,
+                    context=context,
+                    final_handler=final_handler,
+                    **kwargs,
+                )
+                if isinstance(result, ResponseStream):
+                    return result
+                raise RuntimeError("Streaming chat middleware must return a ResponseStream.")
+
+            return ResponseStream(_get_stream())  # type: ignore[arg-type,return-value]
+
         context = ChatContext(
             chat_client=self,  # type: ignore[arg-type]
             messages=prepared_messages,
             options=options,
-            is_streaming=stream,
+            is_streaming=False,
             kwargs=kwargs,
         )
 
@@ -1173,27 +1232,60 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             return super(ChatMiddlewareLayer, self).get_response(  # type: ignore[misc,no-any-return]
                 messages=list(ctx.messages),
-                stream=ctx.is_streaming,
+                stream=False,
                 options=ctx.options or {},
                 **ctx.kwargs,
             )
 
-        result = pipeline.execute(
+        return pipeline.execute(
             chat_client=self,  # type: ignore[arg-type]
             messages=context.messages,
             options=options,
             context=context,
             final_handler=final_handler,
             **kwargs,
-        )
-
-        if stream:
-            return ResponseStream.from_awaitable(result)  # type: ignore[arg-type,return-value]
-        return result  # type: ignore[return-value]
+        )  # type: ignore[return-value]
 
 
 class AgentMiddlewareLayer:
     """Layer for agents to apply agent middleware around run execution."""
+
+    def __init__(
+        self,
+        *args: Any,
+        middleware: Sequence[Middleware] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        middleware_list = categorize_middleware(middleware)
+        agent_middleware = middleware_list["agent"]
+        chat_middleware = middleware_list["chat"]
+        function_middleware = middleware_list["function"]
+
+        if chat_middleware or function_middleware:
+            chat_client = _resolve_chat_client(args, kwargs)
+            _ensure_chat_client_supports_middleware(
+                chat_client,
+                requires_chat=bool(chat_middleware),
+                requires_function=bool(function_middleware),
+            )
+            if chat_client is None:
+                raise ValueError("Chat and function middleware require an agent with a chat client.")
+            _insert_agent_middleware(
+                chat_client,
+                "chat_middleware",
+                "_agent_chat_middleware_count",
+                chat_middleware,
+            )
+            _insert_agent_middleware(
+                chat_client,
+                "function_middleware",
+                "_agent_function_middleware_count",
+                function_middleware,
+            )
+
+        kwargs.pop("middleware", None)
+        super().__init__(*args, **kwargs)
+        self.middleware = cast(list[Middleware] | None, list(agent_middleware) if agent_middleware else None)
 
     @overload
     def run(
@@ -1252,6 +1344,49 @@ class AgentMiddlewareLayer:
             options=options,
             **kwargs,
         )
+
+
+def _resolve_chat_client(args: tuple[Any, ...], kwargs: dict[str, Any]) -> ChatClientProtocol[Any] | None:
+    chat_client = kwargs.get("chat_client")
+    if chat_client is not None:
+        return cast(ChatClientProtocol[Any], chat_client)
+    if args:
+        first_arg = args[0]
+        if hasattr(first_arg, "get_response"):
+            return cast(ChatClientProtocol[Any], first_arg)
+    return None
+
+
+def _ensure_chat_client_supports_middleware(
+    chat_client: ChatClientProtocol[Any] | None,
+    *,
+    requires_chat: bool,
+    requires_function: bool,
+) -> None:
+    if not (requires_chat or requires_function):
+        return
+    if chat_client is None:
+        raise ValueError("Chat and function middleware require an agent with a chat client.")
+    if requires_chat and not hasattr(chat_client, "chat_middleware"):
+        raise ValueError("Chat middleware requires a chat client that supports chat middleware.")
+    if requires_function and not hasattr(chat_client, "function_middleware"):
+        raise ValueError("Function middleware requires a chat client that supports function middleware.")
+
+
+def _insert_agent_middleware(
+    chat_client: ChatClientProtocol[Any],
+    attribute: str,
+    count_attribute: str,
+    middleware: Sequence[Any],
+) -> None:
+    if not middleware:
+        return
+    existing = list(getattr(chat_client, attribute, []))
+    current_count = int(getattr(chat_client, count_attribute, 0) or 0)
+    current_count = min(current_count, len(existing))
+    updated = [*existing[:current_count], *middleware, *existing[current_count:]]
+    setattr(chat_client, attribute, updated)
+    setattr(chat_client, count_attribute, current_count + len(middleware))
 
 
 def _determine_middleware_type(middleware: Any) -> MiddlewareType:
@@ -1416,11 +1551,8 @@ def _middleware_enabled_run_impl(
         agent_middleware, middleware
     )
 
-    # Add function middleware pipeline to kwargs if available
-    if function_pipeline.has_middlewares:
-        kwargs["_function_middleware_pipeline"] = function_pipeline
+    kwargs["_function_middleware_pipeline"] = function_pipeline
 
-    # Pass chat middleware through kwargs for run-level application
     if chat_middlewares:
         kwargs["middleware"] = chat_middlewares
 

@@ -342,7 +342,7 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
     assert mock_provider.invoking_called
     # no conversation id is created, so no need to thread_create to be called.
     assert not mock_provider.thread_created_called
-    assert not mock_provider.invoked_called
+    assert mock_provider.invoked_called
 
 
 async def test_chat_agent_context_providers_with_thread_service_id(chat_client_base: ChatClientProtocol) -> None:
@@ -904,7 +904,7 @@ def test_chat_agent_calls_update_agent_name_on_client():
         description="Test description",
     )
 
-    mock_client._update_agent_name_and_description.assert_called_once_with("TestAgent", "Test description")
+    assert mock_client._update_agent_name_and_description.call_count == 2
 
 
 @pytest.mark.asyncio

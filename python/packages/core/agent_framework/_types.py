@@ -2615,6 +2615,9 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
             self._consumed = True
             await self._run_cleanup_hooks()
             raise
+        except Exception:
+            await self._run_cleanup_hooks()
+            raise
         if self._map_update is not None:
             mapped = self._map_update(update)
             if isinstance(mapped, Awaitable):

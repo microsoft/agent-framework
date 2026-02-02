@@ -43,7 +43,7 @@ class StreamingChatClientStub(
     """Typed streaming stub that satisfies ChatClientProtocol."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:
-        super().__init__()
+        super().__init__(function_middleware=[])
         self._stream_fn = stream_fn
         self._response_fn = response_fn
         self.last_thread: AgentThread | None = None

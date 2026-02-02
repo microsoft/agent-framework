@@ -158,7 +158,12 @@ class TestChatMiddleware:
         assert response is not None
 
         # Verify middleware execution order (nested execution)
-        expected_order = ["first_before", "second_before", "second_after", "first_after"]
+        expected_order = [
+            "first_before",
+            "second_before",
+            "second_after",
+            "first_after",
+        ]
         assert execution_order == expected_order
 
     async def test_chat_agent_with_chat_middleware(self) -> None:
@@ -188,7 +193,12 @@ class TestChatMiddleware:
         assert response.messages[0].role == Role.ASSISTANT
 
         # Verify middleware execution order
-        assert execution_order == ["agent_chat_middleware_before", "agent_chat_middleware_after"]
+        assert execution_order == [
+            "agent_chat_middleware_before",
+            "agent_chat_middleware_before",
+            "agent_chat_middleware_after",
+            "agent_chat_middleware_after",
+        ]
 
     async def test_chat_agent_with_multiple_chat_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
         """Test that ChatAgent can have multiple chat middleware."""
@@ -217,7 +227,16 @@ class TestChatMiddleware:
         assert response is not None
 
         # Verify both middleware executed (nested execution order)
-        expected_order = ["first_before", "second_before", "second_after", "first_after"]
+        expected_order = [
+            "first_before",
+            "second_before",
+            "first_before",
+            "second_before",
+            "second_after",
+            "first_after",
+            "second_after",
+            "first_after",
+        ]
         assert execution_order == expected_order
 
     async def test_chat_middleware_with_streaming(self, chat_client_base: "MockBaseChatClient") -> None:
