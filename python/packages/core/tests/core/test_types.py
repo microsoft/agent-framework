@@ -2,11 +2,12 @@
 
 import base64
 from collections.abc import AsyncIterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from pytest import fixture, mark, raises
 
 from agent_framework import (
@@ -24,10 +25,18 @@ from agent_framework import (
     ToolMode,
     ToolProtocol,
     UsageDetails,
-    ai_function,
     detect_media_type_from_base64,
     merge_chat_options,
     prepare_function_call_results,
+    tool,
+)
+from agent_framework._types import (
+    _get_data_bytes,
+    _get_data_bytes_as_str,
+    _parse_content_list,
+    _validate_uri,
+    add_usage_details,
+    validate_tool_mode,
 )
 from agent_framework.exceptions import ContentError
 
@@ -51,10 +60,10 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def ai_function_tool() -> ToolProtocol:
+def tool_tool() -> ToolProtocol:
     """Returns a executable ToolProtocol."""
 
-    @ai_function
+    @tool
     def simple_function(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y
@@ -439,8 +448,6 @@ def test_usage_details():
 
 
 def test_usage_details_addition():
-    from agent_framework._types import add_usage_details
-
     usage1 = UsageDetails(
         input_token_count=5,
         output_token_count=10,
@@ -478,8 +485,6 @@ def test_usage_details_additional_counts():
 
 
 def test_usage_details_add_with_none_and_type_errors():
-    from agent_framework._types import add_usage_details
-
     u = UsageDetails(input_token_count=1)
     # add_usage_details with None returns the non-None value
     v = add_usage_details(u, None)
@@ -665,9 +670,6 @@ def test_chat_response_with_format_init():
 
 def test_chat_response_value_raises_on_invalid_schema():
     """Test that value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -689,9 +691,6 @@ def test_chat_response_value_raises_on_invalid_schema():
 
 def test_chat_response_try_parse_value_returns_none_on_invalid():
     """Test that try_parse_value returns None on validation failure with Field constraints."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -707,7 +706,6 @@ def test_chat_response_try_parse_value_returns_none_on_invalid():
 
 def test_chat_response_try_parse_value_returns_value_on_success():
     """Test that try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -724,9 +722,6 @@ def test_chat_response_try_parse_value_returns_value_on_success():
 
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
-    from typing import Literal
-
-    from pydantic import Field, ValidationError
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -748,9 +743,6 @@ def test_agent_response_value_raises_on_invalid_schema():
 
 def test_agent_response_try_parse_value_returns_none_on_invalid():
     """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-    from typing import Literal
-
-    from pydantic import Field
 
     class StrictSchema(BaseModel):
         id: Literal[5]
@@ -766,7 +758,6 @@ def test_agent_response_try_parse_value_returns_none_on_invalid():
 
 def test_agent_response_try_parse_value_returns_value_on_success():
     """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
-    from pydantic import Field
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
@@ -990,8 +981,6 @@ def test_chat_options_init() -> None:
 
 def test_chat_options_tool_choice_validation():
     """Test validate_tool_mode utility function."""
-    from agent_framework._types import validate_tool_mode
-
     # Valid string values
     assert validate_tool_mode("auto") == {"mode": "auto"}
     assert validate_tool_mode("required") == {"mode": "required"}
@@ -1017,13 +1006,11 @@ def test_chat_options_tool_choice_validation():
         validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
 
 
-def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
+def test_chat_options_merge(tool_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""
-    from agent_framework import merge_chat_options
-
     options1: ChatOptions = {
         "model_id": "gpt-4o",
-        "tools": [ai_function_tool],
+        "tools": [tool_tool],
         "logit_bias": {"x": 1},
         "metadata": {"a": "b"},
     }
@@ -1034,7 +1021,7 @@ def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
     options3 = merge_chat_options(options1, options2)
 
     assert options3.get("model_id") == "gpt-4.1"
-    assert options3.get("tools") == [ai_function_tool, ai_tool]  # tools are combined
+    assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
 
@@ -1502,8 +1489,6 @@ def test_comprehensive_to_dict_exclude_options():
 
 def test_usage_details_iadd_edge_cases():
     """Test UsageDetails addition with edge cases for better coverage."""
-    from agent_framework._types import add_usage_details
-
     # Test with None values
     u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)
     u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)
@@ -2235,7 +2220,6 @@ def test_prepare_function_call_results_nested_pydantic_model():
 
 def test_prepare_function_call_results_text_content_single():
     """Test that objects with text attribute (like MCP TextContent) are properly handled."""
-    from dataclasses import dataclass
 
     @dataclass
     class MockTextContent:
@@ -2251,7 +2235,6 @@ def test_prepare_function_call_results_text_content_single():
 
 def test_prepare_function_call_results_text_content_multiple():
     """Test that multiple TextContent-like objects are serialized correctly."""
-    from dataclasses import dataclass
 
     @dataclass
     class MockTextContent:
@@ -2277,6 +2260,262 @@ def test_prepare_function_call_results_text_content_with_non_string_text():
 
     # Should not extract text since it's not a string, will serialize the object
     assert isinstance(json_result, str)
+
+
+# endregion
+
+
+# region Test Content._add_usage_content
+
+
+def test_content_add_usage_content():
+    """Test adding two usage content instances combines their usage details."""
+    usage1 = Content(
+        type="usage",
+        usage_details={"input_token_count": 100, "output_token_count": 50},
+        raw_representation="raw1",
+    )
+    usage2 = Content(
+        type="usage",
+        usage_details={"input_token_count": 200, "output_token_count": 100},
+        raw_representation="raw2",
+    )
+
+    result = usage1 + usage2
+
+    assert result.type == "usage"
+    assert result.usage_details["input_token_count"] == 300
+    assert result.usage_details["output_token_count"] == 150
+    # Raw representations should be combined
+    assert isinstance(result.raw_representation, list)
+    assert "raw1" in result.raw_representation
+    assert "raw2" in result.raw_representation
+
+
+def test_content_add_usage_content_with_none_raw_representation():
+    """Test adding usage content when one has None raw_representation."""
+    usage1 = Content(
+        type="usage",
+        usage_details={"input_token_count": 100},
+        raw_representation=None,
+    )
+    usage2 = Content(
+        type="usage",
+        usage_details={"output_token_count": 50},
+        raw_representation="raw2",
+    )
+
+    result = usage1 + usage2
+
+    assert result.raw_representation == "raw2"
+
+
+def test_content_add_usage_content_non_integer_values():
+    """Test adding usage content with non-integer values."""
+    usage1 = Content(
+        type="usage",
+        usage_details={"model": "gpt-4", "count": 10},
+    )
+    usage2 = Content(
+        type="usage",
+        usage_details={"model": "gpt-3.5", "count": 20},
+    )
+
+    result = usage1 + usage2
+
+    # Non-integer "model" should take first non-None value
+    assert result.usage_details["model"] == "gpt-4"
+    # Integer "count" should be summed
+    assert result.usage_details["count"] == 30
+
+
+# endregion
+
+
+# region Test Content.has_top_level_media_type
+
+
+def test_content_has_top_level_media_type():
+    """Test has_top_level_media_type returns correct boolean."""
+    image = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+
+    assert image.has_top_level_media_type("image") is True
+    assert image.has_top_level_media_type("IMAGE") is True  # Case insensitive
+    assert image.has_top_level_media_type("audio") is False
+
+
+def test_content_has_top_level_media_type_no_slash():
+    """Test has_top_level_media_type when media_type has no slash."""
+    content = Content(type="data", media_type="text")
+
+    assert content.has_top_level_media_type("text") is True
+
+
+def test_content_has_top_level_media_type_raises_without_media_type():
+    """Test has_top_level_media_type raises ContentError when no media_type."""
+    content = Content(type="text", text="hello")
+
+    with raises(ContentError, match="no media_type found"):
+        content.has_top_level_media_type("text")
+
+
+# endregion
+
+
+# region Test Content.parse_arguments
+
+
+def test_content_parse_arguments_none():
+    """Test parse_arguments returns None when arguments is None."""
+    content = Content(type="function_call", call_id="1", name="test", arguments=None)
+
+    assert content.parse_arguments() is None
+
+
+def test_content_parse_arguments_empty_string():
+    """Test parse_arguments returns empty dict for empty string."""
+    content = Content(type="function_call", call_id="1", name="test", arguments="")
+
+    assert content.parse_arguments() == {}
+
+
+def test_content_parse_arguments_valid_json():
+    """Test parse_arguments parses valid JSON string."""
+    content = Content(type="function_call", call_id="1", name="test", arguments='{"key": "value"}')
+
+    result = content.parse_arguments()
+    assert result == {"key": "value"}
+
+
+def test_content_parse_arguments_non_dict_json():
+    """Test parse_arguments wraps non-dict JSON in 'raw' key."""
+    content = Content(type="function_call", call_id="1", name="test", arguments='"just a string"')
+
+    result = content.parse_arguments()
+    # The JSON is parsed, and if it's not a dict, wrapped in 'raw'
+    assert result == {"raw": "just a string"}
+
+
+def test_content_parse_arguments_invalid_json():
+    """Test parse_arguments wraps invalid JSON in 'raw' key."""
+    content = Content(type="function_call", call_id="1", name="test", arguments="not json at all")
+
+    result = content.parse_arguments()
+    assert result == {"raw": "not json at all"}
+
+
+def test_content_parse_arguments_dict_passthrough():
+    """Test parse_arguments passes through dict arguments."""
+    args = {"key": "value", "num": 42}
+    content = Content(type="function_call", call_id="1", name="test", arguments=args)
+
+    result = content.parse_arguments()
+    assert result == args
+
+
+# endregion
+
+
+# region Test _get_data_bytes_as_str
+
+
+def test_get_data_bytes_as_str_non_data_uri():
+    """Test _get_data_bytes_as_str returns None for non-data URIs."""
+    content = Content(type="uri", uri="https://example.com/image.png")
+    assert _get_data_bytes_as_str(content) is None
+
+
+def test_get_data_bytes_as_str_no_base64():
+    """Test _get_data_bytes_as_str raises for non-base64 data URI."""
+    content = Content(type="uri", uri="data:text/plain,hello")
+    with raises(ContentError, match="base64 encoding"):
+        _get_data_bytes_as_str(content)
+
+
+def test_get_data_bytes_as_str_valid():
+    """Test _get_data_bytes_as_str extracts base64 data."""
+    data = base64.b64encode(b"hello").decode()
+    content = Content(type="uri", uri=f"data:text/plain;base64,{data}")
+    result = _get_data_bytes_as_str(content)
+    assert result == data
+
+
+# endregion
+
+
+# region Test _get_data_bytes
+
+
+def test_get_data_bytes_decodes_base64():
+    """Test _get_data_bytes decodes base64 data correctly."""
+    original = b"hello world"
+    data = base64.b64encode(original).decode()
+    content = Content(type="uri", uri=f"data:text/plain;base64,{data}")
+
+    result = _get_data_bytes(content)
+    assert result == original
+
+
+def test_get_data_bytes_invalid_base64():
+    """Test _get_data_bytes raises for invalid base64."""
+    content = Content(type="uri", uri="data:text/plain;base64,!!invalid!!")
+    with raises(ContentError, match="Failed to decode"):
+        _get_data_bytes(content)
+
+
+# endregion
+
+
+# region Test _parse_content_list
+
+
+def test_parse_content_list_with_content_objects():
+    """Test _parse_content_list passes through Content objects."""
+    content = Content(type="text", text="hello")
+    result = _parse_content_list([content])
+
+    assert len(result) == 1
+    assert result[0] is content
+
+
+def test_parse_content_list_with_dicts():
+    """Test _parse_content_list converts dicts to Content."""
+    result = _parse_content_list([{"type": "text", "text": "hello"}])
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+
+
+def test_parse_content_list_with_mixed_content_and_dict():
+    """Test _parse_content_list handles a mix of Content objects and dicts."""
+    content = Content(type="text", text="hello")
+    # Pass a mix of Content object and dict
+    result = _parse_content_list([content, {"type": "text", "text": "world"}])
+
+    assert len(result) == 2
+    assert result[0].text == "hello"
+    assert result[1].text == "world"
+
+
+# endregion
+
+
+# region Test _validate_uri
+
+
+def test_validate_uri_known_scheme():
+    """Test _validate_uri accepts known URI schemes."""
+    result = _validate_uri("https://example.com/file.txt", "text/plain")
+    assert result.get("uri") == "https://example.com/file.txt"
+
+
+def test_validate_uri_data_uri():
+    """Test _validate_uri handles data URIs."""
+    data = base64.b64encode(b"test").decode()
+    uri = f"data:text/plain;base64,{data}"
+    result = _validate_uri(uri, None)
+    assert "uri" in result
 
 
 # endregion

@@ -5,11 +5,11 @@ from typing import Annotated
 
 from agent_framework import (
     ChatMessage,
-    FunctionApprovalRequestContent,
+    Content,
     RequestInfoEvent,
     SequentialBuilder,
     WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -17,13 +17,13 @@ from agent_framework.openai import OpenAIChatClient
 Sample: Sequential Workflow with Tool Approval Requests
 
 This sample demonstrates how to use SequentialBuilder with tools that require human
-approval before execution. The approval flow uses the existing @ai_function decorator
+approval before execution. The approval flow uses the existing @tool decorator
 with approval_mode="always_require" to trigger human-in-the-loop interactions.
 
 This sample works as follows:
 1. A SequentialBuilder workflow is created with a single agent that has tools requiring approval.
 2. The agent receives a user task and determines it needs to call a sensitive tool.
-3. The tool call triggers a FunctionApprovalRequestContent, pausing the workflow.
+3. The tool call triggers a function_approval_request Content, pausing the workflow.
 4. The sample simulates human approval by responding to the RequestInfoEvent.
 5. Once approved, the tool executes and the agent completes its response.
 6. The workflow outputs the final conversation with all messages.
@@ -33,8 +33,8 @@ Show how tool call approvals integrate seamlessly with SequentialBuilder without
 requiring any additional builder configuration.
 
 Demonstrate:
-- Using @ai_function(approval_mode="always_require") for sensitive operations.
-- Handling RequestInfoEvent with FunctionApprovalRequestContent in sequential workflows.
+- Using @tool(approval_mode="always_require") for sensitive operations.
+- Handling RequestInfoEvent with function_approval_request Content in sequential workflows.
 - Resuming workflow execution after approval via send_responses_streaming.
 
 Prerequisites:
@@ -44,7 +44,7 @@ Prerequisites:
 
 
 # 1. Define tools - one requiring approval, one that doesn't
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def execute_database_query(
     query: Annotated[str, "The SQL query to execute against the production database"],
 ) -> str:
@@ -53,7 +53,8 @@ def execute_database_query(
     return f"Query executed successfully. Results: 3 rows affected by '{query}'"
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_database_schema() -> str:
     """Get the current database schema. Does not require approval."""
     return """
@@ -91,19 +92,19 @@ async def main() -> None:
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
-            if isinstance(event.data, FunctionApprovalRequestContent):
+            if isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 print(f"\nApproval requested for tool: {event.data.function_call.name}")
                 print(f"  Arguments: {event.data.function_call.arguments}")
 
     # 5. Handle approval requests
     if request_info_events:
         for request_event in request_info_events:
-            if isinstance(request_event.data, FunctionApprovalRequestContent):
+            if isinstance(request_event.data, Content) and request_event.data.type == "function_approval_request":
                 # In a real application, you would prompt the user here
                 print("\nSimulating human approval (auto-approving for demo)...")
 
                 # Create approval response
-                approval_response = request_event.data.create_response(approved=True)
+                approval_response = request_event.data.to_function_approval_response(approved=True)
 
                 # Phase 2: Send approval and continue workflow
                 output: list[ChatMessage] | None = None

@@ -8,6 +8,7 @@ from typing import Annotated
 
 import dotenv
 from agent_framework import ChatAgent
+from agent_framework import tool
 from agent_framework.observability import create_resource, enable_instrumentation, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
@@ -31,7 +32,8 @@ dotenv.load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

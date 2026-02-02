@@ -84,9 +84,26 @@ def register_additional_client_tools(agent: "AgentProtocol", client_tools: list[
         logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
 
 
+def _has_approval_tools(tools: list[Any]) -> bool:
+    """Check if any tools require approval."""
+    return any(getattr(tool, "approval_mode", None) == "always_require" for tool in tools)
+
+
 def merge_tools(server_tools: list[Any], client_tools: list[Any] | None) -> list[Any] | None:
-    """Combine server and client tools without overriding server metadata."""
+    """Combine server and client tools without overriding server metadata.
+
+    IMPORTANT: When server tools have approval_mode="always_require", we MUST return
+    them so they get passed to the streaming response handler. Otherwise, the approval
+    check in _try_execute_function_calls won't find the tool and won't trigger approval.
+    """
     if not client_tools:
+        # Even without client tools, we must pass server tools if any require approval
+        if server_tools and _has_approval_tools(server_tools):
+            logger.info(
+                f"[TOOLS] No client tools but server has approval tools - "
+                f"passing {len(server_tools)} server tools for approval mode"
+            )
+            return server_tools
         logger.info("[TOOLS] No client tools - not passing tools= parameter (using agent's configured tools)")
         return None
 
@@ -94,6 +111,13 @@ def merge_tools(server_tools: list[Any], client_tools: list[Any] | None) -> list
     unique_client_tools = [tool for tool in client_tools if getattr(tool, "name", None) not in server_tool_names]
 
     if not unique_client_tools:
+        # Same check: must pass server tools if any require approval
+        if server_tools and _has_approval_tools(server_tools):
+            logger.info(
+                f"[TOOLS] Client tools duplicate server but server has approval tools - "
+                f"passing {len(server_tools)} server tools for approval mode"
+            )
+            return server_tools
         logger.info("[TOOLS] All client tools duplicate server tools - not passing tools= parameter")
         return None
 

@@ -12,11 +12,6 @@ _IMPORTS = [
     "AGUIChatClient",
     "AGUIEventConverter",
     "AGUIHttpService",
-    "ConfirmationStrategy",
-    "DefaultConfirmationStrategy",
-    "TaskPlannerConfirmationStrategy",
-    "RecipeConfirmationStrategy",
-    "DocumentWriterConfirmationStrategy",
 ]
 
 

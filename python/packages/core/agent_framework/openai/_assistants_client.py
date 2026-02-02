@@ -9,12 +9,8 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     MutableSequence,
-    Sequence,
 )
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
-
-if TYPE_CHECKING:
-    from .._agents import ChatAgent
+from typing import Any, Generic, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -29,17 +25,14 @@ from openai.types.beta.threads import (
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
-from .._memory import ContextProvider
-from .._middleware import Middleware, use_chat_middleware
-from .._threads import ChatMessageStoreProtocol
+from .._middleware import use_chat_middleware
 from .._tools import (
-    AIFunction,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    ToolProtocol,
     use_function_invocation,
 )
 from .._types import (
@@ -57,19 +50,19 @@ from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 __all__ = [
@@ -80,6 +73,8 @@ __all__ = [
 
 
 # region OpenAI Assistants Options TypedDict
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 class VectorStoreToolResource(TypedDict, total=False):
@@ -109,7 +104,7 @@ class AssistantToolResources(TypedDict, total=False):
     """Resources for file search tool, including vector store IDs."""
 
 
-class OpenAIAssistantsOptions(ChatOptions, total=False):
+class OpenAIAssistantsOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """OpenAI Assistants API-specific options dict.
 
     Extends base ChatOptions with Assistants API-specific parameters
@@ -626,7 +621,7 @@ class OpenAIAssistantsClient(
         tool_definitions: list[MutableMapping[str, Any]] = []
         if tool_mode["mode"] != "none" and tools is not None:
             for tool in tools:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
                 elif isinstance(tool, HostedCodeInterpreterTool):
                     tool_definitions.append({"type": "code_interpreter"})
@@ -765,59 +760,3 @@ class OpenAIAssistantsClient(
             self.assistant_name = agent_name
         if description and not self.assistant_description:
             self.assistant_description = description
-
-    @override
-    def as_agent(
-        self,
-        *,
-        id: str | None = None,
-        name: str | None = None,
-        description: str | None = None,
-        instructions: str | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        default_options: TOpenAIAssistantsOptions | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        **kwargs: Any,
-    ) -> "ChatAgent[TOpenAIAssistantsOptions]":
-        """Convert this chat client to a ChatAgent.
-
-        This method creates a ChatAgent instance with this client pre-configured.
-        It does NOT create an assistant on the OpenAI service - the actual assistant
-        will be created on the server during the first invocation (run).
-
-        For creating and managing persistent assistants on the server, use
-        :class:`~agent_framework.openai.OpenAIAssistantProvider` instead.
-
-        Keyword Args:
-            id: The unique identifier for the agent. Will be created automatically if not provided.
-            name: The name of the agent.
-            description: A brief description of the agent's purpose.
-            instructions: Optional instructions for the agent.
-            tools: The tools to use for the request.
-            default_options: A TypedDict containing chat options.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-            context_provider: Context providers to include during agent invocation.
-            middleware: List of middleware to intercept agent and function invocations.
-            kwargs: Any additional keyword arguments.
-
-        Returns:
-            A ChatAgent instance configured with this chat client.
-        """
-        return super().as_agent(
-            id=id,
-            name=name,
-            description=description,
-            instructions=instructions,
-            tools=tools,
-            default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
-            middleware=middleware,
-            **kwargs,
-        )

@@ -1,22 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Helper functions for orchestration logic."""
+"""Helper functions for orchestration logic.
+
+Most orchestration helpers have been moved inline to _run.py.
+This module retains utilities that may be useful for testing or extensions.
+"""
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ag_ui.core import StateSnapshotEvent
 from agent_framework import (
     ChatMessage,
     Content,
 )
 
-from .._utils import get_role_value, make_json_safe, safe_json_parse
-
-if TYPE_CHECKING:
-    from .._events import AgentFrameworkEventBridge
-    from ._state_manager import StateManager
+from .._utils import get_role_value
 
 logger = logging.getLogger(__name__)
 
@@ -111,53 +110,6 @@ def tool_name_for_call_id(
     return str(name) if name else None
 
 
-def tool_calls_match_state(
-    provider_messages: list[ChatMessage],
-    state_manager: "StateManager",
-) -> bool:
-    """Check if tool calls in messages match current state.
-
-    Args:
-        provider_messages: Messages to check
-        state_manager: State manager with config and current state
-
-    Returns:
-        True if tool calls match state configuration
-    """
-    if not state_manager.predict_state_config or not state_manager.current_state:
-        return False
-
-    for state_key, config in state_manager.predict_state_config.items():
-        tool_name = config["tool"]
-        tool_arg_name = config["tool_argument"]
-        tool_args: dict[str, Any] | None = None
-
-        for msg in reversed(provider_messages):
-            if get_role_value(msg) != "assistant":
-                continue
-            for content in msg.contents:
-                if content.type == "function_call" and content.name == tool_name:
-                    tool_args = safe_json_parse(content.arguments)
-                    break
-            if tool_args is not None:
-                break
-
-        if not tool_args:
-            return False
-
-        if tool_arg_name == "*":
-            state_value = tool_args
-        elif tool_arg_name in tool_args:
-            state_value = tool_args[tool_arg_name]
-        else:
-            return False
-
-        if state_manager.current_state.get(state_key) != state_value:
-            return False
-
-    return True
-
-
 def schema_has_steps(schema: Any) -> bool:
     """Check if a schema has a steps array property.
 
@@ -202,45 +154,10 @@ def select_approval_tool_name(client_tools: list[Any] | None) -> str | None:
     return None
 
 
-def select_messages_to_run(
-    provider_messages: list[ChatMessage],
-    state_manager: "StateManager",
-) -> list[ChatMessage]:
-    """Select and prepare messages for agent execution.
-
-    Injects state context message when appropriate.
-
-    Args:
-        provider_messages: Original messages from client
-        state_manager: State manager instance
-
-    Returns:
-        Messages ready for agent execution
-    """
-    if not provider_messages:
-        return []
-
-    is_new_user_turn = get_role_value(provider_messages[-1]) == "user"
-    conversation_has_tool_calls = tool_calls_match_state(provider_messages, state_manager)
-    state_context_msg = state_manager.state_context_message(
-        is_new_user_turn=is_new_user_turn, conversation_has_tool_calls=conversation_has_tool_calls
-    )
-    if not state_context_msg:
-        return list(provider_messages)
-
-    messages_to_run = [msg for msg in provider_messages if not is_state_context_message(msg)]
-    if pending_tool_call_ids(messages_to_run):
-        return messages_to_run
-
-    insert_index = len(messages_to_run) - 1 if is_new_user_turn else len(messages_to_run)
-    if insert_index < 0:
-        insert_index = 0
-    messages_to_run.insert(insert_index, state_context_msg)
-    return messages_to_run
-
-
 def build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Build metadata dict with truncated string values.
+    """Build metadata dict with truncated string values for Azure compatibility.
+
+    Azure has a 512 character limit per metadata value.
 
     Args:
         thread_metadata: Raw metadata dict
@@ -252,68 +169,11 @@ def build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any
         return {}
     safe_metadata: dict[str, Any] = {}
     for key, value in thread_metadata.items():
-        value_str = value if isinstance(value, str) else json.dumps(make_json_safe(value))
+        value_str = value if isinstance(value, str) else json.dumps(value)
         if len(value_str) > 512:
             value_str = value_str[:512]
         safe_metadata[key] = value_str
     return safe_metadata
-
-
-def collect_approved_state_snapshots(
-    provider_messages: list[ChatMessage],
-    predict_state_config: dict[str, dict[str, str]] | None,
-    current_state: dict[str, Any],
-    event_bridge: "AgentFrameworkEventBridge",
-) -> list[StateSnapshotEvent]:
-    """Collect state snapshots from approved function calls.
-
-    Args:
-        provider_messages: Messages containing approvals
-        predict_state_config: Predictive state configuration
-        current_state: Current state dict (will be mutated)
-        event_bridge: Event bridge for creating events
-
-    Returns:
-        List of state snapshot events
-    """
-    if not predict_state_config:
-        return []
-
-    events: list[StateSnapshotEvent] = []
-    for msg in provider_messages:
-        if get_role_value(msg) != "user":
-            continue
-        for content in msg.contents:
-            if content.type == "function_approval_response":
-                if not content.function_call or not content.approved:
-                    continue
-                parsed_args = content.function_call.parse_arguments()
-                state_args = None
-                if content.additional_properties:
-                    state_args = content.additional_properties.get("ag_ui_state_args")
-                if not isinstance(state_args, dict):
-                    state_args = parsed_args
-                if not state_args:
-                    continue
-                for state_key, config in predict_state_config.items():
-                    if config["tool"] != content.function_call.name:
-                        continue
-                    tool_arg_name = config["tool_argument"]
-                    if tool_arg_name == "*":
-                        state_value = state_args
-                    elif isinstance(state_args, dict) and tool_arg_name in state_args:
-                        state_value = state_args[tool_arg_name]
-                    else:
-                        continue
-                    current_state[state_key] = state_value
-                    event_bridge.current_state[state_key] = state_value
-                    logger.info(
-                        f"Emitting StateSnapshotEvent for approved state key '{state_key}' "
-                        f"with {len(state_value) if isinstance(state_value, list) else 'N/A'} items"
-                    )
-                    events.append(StateSnapshotEvent(snapshot=current_state))
-                    break
-    return events
 
 
 def latest_approval_response(messages: list[ChatMessage]) -> Content | None:

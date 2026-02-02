@@ -6,11 +6,10 @@ from typing import Annotated
 from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
+    Content,
     RequestInfoEvent,
     WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -45,7 +44,8 @@ Prerequisites:
 
 
 # 1. Define market data tools (no approval required)
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""
     # Mock data for demonstration
@@ -54,7 +54,7 @@ def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     return f"{symbol.upper()}: ${price:.2f}"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get market sentiment analysis for a stock."""
     # Mock sentiment data
@@ -68,7 +68,7 @@ def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> s
 
 
 # 2. Define trading tools (approval required)
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def execute_trade(
     symbol: Annotated[str, "The stock ticker symbol"],
     action: Annotated[str, "Either 'buy' or 'sell'"],
@@ -78,7 +78,7 @@ def execute_trade(
     return f"Trade executed: {action.upper()} {quantity} shares of {symbol.upper()}"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_portfolio_balance() -> str:
     """Get current portfolio balance and available funds."""
     return "Portfolio: $50,000 invested, $10,000 cash available. Holdings: AAPL, GOOGL, MSFT."
@@ -138,7 +138,7 @@ async def main() -> None:
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
-            if isinstance(event.data, FunctionApprovalRequestContent):
+            if isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 print(f"\nApproval requested for tool: {event.data.function_call.name}")
                 print(f"  Arguments: {event.data.function_call.arguments}")
         elif isinstance(event, WorkflowOutputEvent):
@@ -146,12 +146,12 @@ async def main() -> None:
 
     # 6. Handle approval requests (if any)
     if request_info_events:
-        responses: dict[str, FunctionApprovalResponseContent] = {}
+        responses: dict[str, Content] = {}
         for request_event in request_info_events:
-            if isinstance(request_event.data, FunctionApprovalRequestContent):
+            if isinstance(request_event.data, Content) and request_event.data.type == "function_approval_request":
                 print(f"\nSimulating human approval for: {request_event.data.function_call.name}")
                 # Create approval response
-                responses[request_event.request_id] = request_event.data.create_response(approved=True)
+                responses[request_event.request_id] = request_event.data.to_function_approval_response(approved=True)
 
         if responses:
             # Phase 2: Send all approvals and continue workflow

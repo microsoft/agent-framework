@@ -5,12 +5,11 @@ import json
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Generic, Literal
 from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
@@ -18,6 +17,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionTool,
     Role,
     ToolProtocol,
     UsageDetails,
@@ -33,17 +33,20 @@ from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = get_logger("agent_framework.bedrock")
 
@@ -54,6 +57,8 @@ __all__ = [
     "BedrockGuardrailConfig",
     "BedrockSettings",
 ]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Bedrock Chat Options TypedDict
@@ -82,7 +87,7 @@ class BedrockGuardrailConfig(TypedDict, total=False):
     """How to process guardrails during streaming (sync blocks, async does not)."""
 
 
-class BedrockChatOptions(ChatOptions, total=False):
+class BedrockChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Amazon Bedrock Converse API-specific chat options dict.
 
     Extends base ChatOptions with Bedrock-specific parameters.
@@ -548,7 +553,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             if isinstance(tool, MutableMapping):
                 converted.append(dict(tool))
                 continue
-            if isinstance(tool, AIFunction):
+            if isinstance(tool, FunctionTool):
                 converted.append({
                     "toolSpec": {
                         "name": tool.name,

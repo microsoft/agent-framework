@@ -4,10 +4,10 @@
 
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, tool
 
 
-@ai_function
+@tool
 def get_weather(location: str) -> dict[str, Any]:
     """Get the current weather for a location.
 
@@ -39,7 +39,7 @@ def get_weather(location: str) -> dict[str, Any]:
     }
 
 
-@ai_function
+@tool
 def get_forecast(location: str, days: int = 3) -> str:
     """Get the weather forecast for a location.
 
@@ -71,7 +71,8 @@ def weather_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
         instructions=(
             "You are a helpful weather assistant. "
             "Use the get_weather and get_forecast functions to help users with weather information. "
-            "Always provide friendly and informative responses."
+            "Always provide friendly and informative responses. "
+            "First return the weather result, and then return details about the forecast."
         ),
         chat_client=chat_client,
         tools=[get_weather, get_forecast],

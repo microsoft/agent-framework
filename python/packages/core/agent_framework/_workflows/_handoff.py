@@ -41,7 +41,7 @@ from typing_extensions import Never
 from .._agents import AgentProtocol, ChatAgent
 from .._middleware import FunctionInvocationContext, FunctionMiddleware
 from .._threads import AgentThread
-from .._tools import AIFunction, ai_function
+from .._tools import FunctionTool, tool
 from .._types import AgentResponse, ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
@@ -55,9 +55,9 @@ from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -331,7 +331,7 @@ class HandoffAgentExecutor(AgentExecutor):
         existing_tools = list(default_options.get("tools") or [])
         existing_names = {getattr(tool, "name", "") for tool in existing_tools if hasattr(tool, "name")}
 
-        new_tools: list[AIFunction[Any, Any]] = []
+        new_tools: list[FunctionTool[Any, Any]] = []
         for target in targets:
             tool = self._create_handoff_tool(target.target_id, target.description)
             if tool.name in existing_names:
@@ -347,17 +347,17 @@ class HandoffAgentExecutor(AgentExecutor):
         else:
             default_options["tools"] = existing_tools
 
-    def _create_handoff_tool(self, target_id: str, description: str | None = None) -> AIFunction[Any, Any]:
+    def _create_handoff_tool(self, target_id: str, description: str | None = None) -> FunctionTool[Any, Any]:
         """Construct the synthetic handoff tool that signals routing to `target_id`."""
         tool_name = get_handoff_tool_name(target_id)
         doc = description or f"Handoff to the {target_id} agent."
-        # Note: approval_mode is intentionally NOT set for handoff tools.
-        # Handoff tools are framework-internal signals that trigger routing logic,
-        # not actual function executions. They are automatically intercepted by
+        # Note: approval_mode is set to "never_require" for handoff tools because
+        # they are framework-internal signals that trigger routing logic, not
+        # actual function executions. They are automatically intercepted by
         # _AutoHandoffMiddleware which short-circuits execution and provides synthetic
         # results, so the function body never actually runs in practice.
 
-        @ai_function(name=tool_name, description=doc)
+        @tool(name=tool_name, description=doc, approval_mode="never_require")
         def _handoff_tool(context: str | None = None) -> str:
             """Return a deterministic acknowledgement that encodes the target alias."""
             return f"Handoff to {target_id}"
@@ -603,7 +603,7 @@ class HandoffBuilder:
         self._participant_factories: dict[str, Callable[[], AgentProtocol]] = {}
         self._start_id: str | None = None
         if participant_factories:
-            self.participant_factories(participant_factories)
+            self.register_participants(participant_factories)
 
         if participants:
             self.participants(participants)
@@ -623,7 +623,7 @@ class HandoffBuilder:
         # Termination related members
         self._termination_condition: Callable[[list[ChatMessage]], bool | Awaitable[bool]] | None = None
 
-    def participant_factories(
+    def register_participants(
         self, participant_factories: Mapping[str, Callable[[], AgentProtocol]]
     ) -> "HandoffBuilder":
         """Register factories that produce agents for the handoff workflow.
@@ -641,7 +641,7 @@ class HandoffBuilder:
             Self for method chaining.
 
         Raises:
-            ValueError: If participant_factories is empty or `.participants(...)`  or `.participant_factories(...)`
+            ValueError: If participant_factories is empty or `.participants(...)`  or `.register_participants(...)`
                         has already been called.
 
         Example:
@@ -670,17 +670,14 @@ class HandoffBuilder:
 
             # Handoff will be created automatically unless specified otherwise
             # The default creates a mesh topology where all agents can handoff to all others
-            builder = HandoffBuilder().participant_factories(factories)
+            builder = HandoffBuilder().register_participants(factories)
             builder.with_start_agent("triage")
         """
         if self._participants:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .participant_factories() in the same builder instance."
-            )
+            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
 
         if self._participant_factories:
-            raise ValueError("participant_factories() has already been called on this builder instance.")
-
+            raise ValueError("register_participants() has already been called on this builder instance.")
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
@@ -698,8 +695,8 @@ class HandoffBuilder:
             Self for method chaining.
 
         Raises:
-            ValueError: If participants is empty, contains duplicates, or `.participants(...)` or
-                        `.participant_factories(...)` has already been called.
+            ValueError: If participants is empty, contains duplicates, or `.participants()` or
+                        `.register_participants()` has already been called.
             TypeError: If participants are not AgentProtocol instances.
 
         Example:
@@ -718,9 +715,7 @@ class HandoffBuilder:
             builder.with_start_agent(triage)
         """
         if self._participant_factories:
-            raise ValueError(
-                "Cannot mix .participants([...]) and .participant_factories() in the same builder instance."
-            )
+            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
 
         if self._participants:
             raise ValueError("participants have already been assigned")
@@ -900,7 +895,7 @@ class HandoffBuilder:
                 if agent not in self._participant_factories:
                     raise ValueError(f"Start agent factory name '{agent}' is not in the participant_factories list")
             else:
-                raise ValueError("Call participant_factories(...) before with_start_agent(...)")
+                raise ValueError("Call register_participants(...) before with_start_agent(...)")
             self._start_id = agent
         elif isinstance(agent, AgentProtocol):
             resolved_id = self._resolve_to_id(agent)
@@ -1043,15 +1038,6 @@ class HandoffBuilder:
             ValueError: If participants or coordinator were not configured, or if
                        required configuration is invalid.
         """
-        if not self._participants and not self._participant_factories:
-            raise ValueError(
-                "No participants or participant_factories have been configured. "
-                "Call participants(...) or participant_factories(...) first."
-            )
-
-        if self._start_id is None:
-            raise ValueError("Must call with_start_agent(...) before building the workflow.")
-
         # Resolve agents (either from instances or factories)
         # The returned map keys are either executor IDs or factory names, which is need to resolve handoff configs
         resolved_agents = self._resolve_agents()
@@ -1062,6 +1048,8 @@ class HandoffBuilder:
         executors = self._resolve_executors(resolved_agents, resolved_handoffs)
 
         # Build the workflow graph
+        if self._start_id is None:
+            raise ValueError("Must call with_start_agent(...) before building the workflow.")
         start_executor = executors[self._resolve_to_id(resolved_agents[self._start_id])]
         builder = WorkflowBuilder(
             name=self._name,
@@ -1100,8 +1088,9 @@ class HandoffBuilder:
         Returns:
             Map of executor IDs or factory names to `AgentProtocol` instances
         """
-        if self._participants and self._participant_factories:
-            raise ValueError("Cannot have both executors and participant_factories configured")
+        if not self._participants and not self._participant_factories:
+            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
+        # We don't need to check if both are set since that is handled in the respective methods
 
         if self._participants:
             return self._participants

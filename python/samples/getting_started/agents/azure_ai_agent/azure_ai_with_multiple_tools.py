@@ -9,6 +9,7 @@ from agent_framework import (
     AgentThread,
     HostedMCPTool,
     HostedWebSearchTool,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
@@ -33,6 +34,8 @@ To set up Bing Grounding:
 4. Copy the connection ID and set it as the BING_CONNECTION_ID environment variable
 """
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 
 def get_time() -> str:
     """Get the current UTC time."""
@@ -56,7 +59,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
             new_input.append(
                 ChatMessage(
                     role="user",
-                    contents=[user_input_needed.create_response(user_approval.lower() == "y")],
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
         result = await agent.run(new_input, thread=thread, store=True)

@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 import numpy as np
-from agent_framework._tools import AIFunction
+from agent_framework._tools import FunctionTool
 from agent_framework._types import ChatMessage
 from loguru import logger
 from pydantic import BaseModel
@@ -25,8 +25,8 @@ from tau2.environment.tool import Tool  # type: ignore[import-untyped]
 _original_set_state = Environment.set_state
 
 
-def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
-    """Convert a tau2 Tool to an AIFunction for agent framework compatibility.
+def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool[Any, Any]:
+    """Convert a tau2 Tool to a FunctionTool for agent framework compatibility.
 
     Creates a wrapper that preserves the tool's interface while ensuring
     results are deep-copied to prevent unintended mutations.
@@ -37,7 +37,7 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
         # Deep copy to prevent mutations of returned data
         return result.model_copy(deep=True) if isinstance(result, BaseModel) else deepcopy(result)
 
-    return AIFunction(
+    return FunctionTool(
         name=tau2_tool.name,
         description=tau2_tool._get_description(),
         func=wrapped_func,

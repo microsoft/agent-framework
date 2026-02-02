@@ -15,6 +15,7 @@ from agent_framework import (
     TextContent,
     use_chat_middleware,
     use_function_invocation,
+    tool,
 )
 from agent_framework._clients import TOptions_co
 
