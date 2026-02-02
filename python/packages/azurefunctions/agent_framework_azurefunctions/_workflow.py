@@ -31,7 +31,7 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     ChatMessage,
     Workflow,
 )
@@ -112,6 +112,40 @@ DEFAULT_HITL_TIMEOUT_HOURS = 72.0
 # ============================================================================
 
 
+def _evaluate_edge_condition_sync(edge: Any, message: Any) -> bool:
+    """Evaluate an edge's condition synchronously.
+
+    This is needed because Durable Functions orchestrators use generators,
+    not async/await, so we cannot call async methods like edge.should_route().
+
+    Args:
+        edge: The Edge object with a _condition attribute
+        message: The message to evaluate against the condition
+
+    Returns:
+        True if the edge should be traversed, False otherwise
+    """
+    # Access the internal condition directly since should_route is async
+    condition = getattr(edge, "_condition", None)
+    if condition is None:
+        return True
+    result = condition(message)
+    # If the condition is async, we cannot await it in a generator context
+    # Log a warning and assume True (or False for safety)
+    if hasattr(result, "__await__"):
+        import warnings
+
+        warnings.warn(
+            f"Edge condition for {edge.source_id}->{edge.target_id} is async, "
+            "which is not supported in Durable Functions orchestrators. "
+            "The edge will be traversed unconditionally.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return True
+    return bool(result)
+
+
 def route_message_through_edge_groups(
     edge_groups: list[EdgeGroup],
     source_id: str,
@@ -147,7 +181,7 @@ def route_message_through_edge_groups(
         elif isinstance(group, SingleEdgeGroup):
             # SingleEdgeGroup has exactly one edge
             edge = group.edges[0]
-            if edge.should_route(message):
+            if _evaluate_edge_condition_sync(edge, message):
                 targets.append(edge.target_id)
 
         elif isinstance(group, FanInEdgeGroup):
@@ -158,7 +192,7 @@ def route_message_through_edge_groups(
         else:
             # Generic EdgeGroup: check each edge's condition
             for edge in group.edges:
-                if edge.source_id == source_id and edge.should_route(message):
+                if edge.source_id == source_id and _evaluate_edge_condition_sync(edge, message):
                     targets.append(edge.target_id)
 
     return targets
@@ -189,7 +223,7 @@ def build_agent_executor_response(
 
     assistant_message = ChatMessage(role="assistant", text=final_text)
 
-    agent_run_response = AgentRunResponse(
+    agent_response = AgentResponse(
         messages=[assistant_message],
     )
 
@@ -204,7 +238,7 @@ def build_agent_executor_response(
 
     return AgentExecutorResponse(
         executor_id=executor_id,
-        agent_run_response=agent_run_response,
+        agent_response=agent_response,
         full_conversation=full_conversation,
     )
 
@@ -275,7 +309,7 @@ def _prepare_activity_task(
 
 
 def _process_agent_response(
-    agent_response: AgentRunResponse,
+    agent_response: AgentResponse,
     executor_id: str,
     message: Any,
 ) -> ExecutorResult:
@@ -619,7 +653,7 @@ def run_workflow_orchestrator(
         for executor_id, message, _source_executor_id in remaining_agent_messages:
             logger.debug("Processing sequential message for agent: %s", executor_id)
             task = _prepare_agent_task(context, executor_id, message)
-            agent_response: AgentRunResponse = yield task
+            agent_response: AgentResponse = yield task
             logger.debug("Agent %s sequential response completed", executor_id)
 
             result = _process_agent_response(agent_response, executor_id, message)
@@ -800,11 +834,11 @@ def _prepare_all_tasks(
 def _extract_message_content(message: Any) -> str:
     """Extract text content from various message types."""
     message_content = ""
-    if isinstance(message, AgentExecutorResponse) and message.agent_run_response:
-        if message.agent_run_response.text:
-            message_content = message.agent_run_response.text
-        elif message.agent_run_response.messages:
-            message_content = message.agent_run_response.messages[-1].text or ""
+    if isinstance(message, AgentExecutorResponse) and message.agent_response:
+        if message.agent_response.text:
+            message_content = message.agent_response.text
+        elif message.agent_response.messages:
+            message_content = message.agent_response.messages[-1].text or ""
     elif isinstance(message, AgentExecutorRequest) and message.messages:
         # Extract text from the last message in the request
         message_content = message.messages[-1].text or ""
@@ -835,9 +869,9 @@ def _extract_message_content_from_dict(message: dict[str, Any]) -> str:
                 message_content = last_msg.get("text") or last_msg.get("_text") or ""
         elif hasattr(last_msg, "text"):
             message_content = last_msg.text or ""
-    elif "agent_run_response" in message:
+    elif "agent_response" in message:
         # AgentExecutorResponse dict
-        arr = message.get("agent_run_response", {})
+        arr = message.get("agent_response", {})
         if isinstance(arr, dict):
             message_content = arr.get("text") or ""
             if not message_content and arr.get("messages"):

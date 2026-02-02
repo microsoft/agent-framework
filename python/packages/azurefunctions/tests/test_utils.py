@@ -9,7 +9,7 @@ import pytest
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     ChatMessage,
     Message,
     WorkflowOutputEvent,
@@ -84,7 +84,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_add_event_queues_event(self, context: CapturingRunnerContext) -> None:
         """Test that add_event queues events correctly."""
-        event = WorkflowOutputEvent(data="output", source_executor_id="exec_1")
+        event = WorkflowOutputEvent(data="output", executor_id="exec_1")
 
         await context.add_event(event)
 
@@ -96,7 +96,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_drain_events_clears_queue(self, context: CapturingRunnerContext) -> None:
         """Test that drain_events clears the event queue."""
-        await context.add_event(WorkflowOutputEvent(data="test", source_executor_id="e"))
+        await context.add_event(WorkflowOutputEvent(data="test", executor_id="e"))
 
         await context.drain_events()  # First drain
         events = await context.drain_events()  # Second drain
@@ -108,14 +108,14 @@ class TestCapturingRunnerContext:
         """Test has_events returns correct boolean."""
         assert await context.has_events() is False
 
-        await context.add_event(WorkflowOutputEvent(data="test", source_executor_id="e"))
+        await context.add_event(WorkflowOutputEvent(data="test", executor_id="e"))
 
         assert await context.has_events() is True
 
     @pytest.mark.asyncio
     async def test_next_event_waits_for_event(self, context: CapturingRunnerContext) -> None:
         """Test that next_event returns queued events."""
-        event = WorkflowOutputEvent(data="waited", source_executor_id="e")
+        event = WorkflowOutputEvent(data="waited", executor_id="e")
         await context.add_event(event)
 
         result = await context.next_event()
@@ -147,7 +147,7 @@ class TestCapturingRunnerContext:
     async def test_reset_for_new_run_clears_state(self, context: CapturingRunnerContext) -> None:
         """Test that reset_for_new_run clears all state."""
         await context.send_message(Message(data="test", target_id="t", source_id="s"))
-        await context.add_event(WorkflowOutputEvent(data="event", source_executor_id="e"))
+        await context.add_event(WorkflowOutputEvent(data="event", executor_id="e"))
         context.set_streaming(True)
 
         context.reset_for_new_run()
@@ -294,8 +294,8 @@ class TestDeserializeValue:
         """Test deserializing AgentExecutorResponse."""
         data = {
             "executor_id": "test_exec",
-            "agent_run_response": {
-                "type": "agent_run_response",
+            "agent_response": {
+                "type": "agent_response",
                 "messages": [
                     {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Hi there"}]}
                 ],
@@ -352,12 +352,12 @@ class TestReconstructAgentExecutorRequest:
 class TestReconstructAgentExecutorResponse:
     """Test suite for reconstruct_agent_executor_response function."""
 
-    def test_reconstruct_with_agent_run_response(self) -> None:
-        """Test reconstructing response with agent_run_response."""
+    def test_reconstruct_with_agent_response(self) -> None:
+        """Test reconstructing response with agent_response."""
         data = {
             "executor_id": "my_executor",
-            "agent_run_response": {
-                "type": "agent_run_response",
+            "agent_response": {
+                "type": "agent_response",
                 "messages": [
                     {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Response"}]}
                 ],
@@ -369,13 +369,13 @@ class TestReconstructAgentExecutorResponse:
 
         assert isinstance(result, AgentExecutorResponse)
         assert result.executor_id == "my_executor"
-        assert isinstance(result.agent_run_response, AgentRunResponse)
+        assert isinstance(result.agent_response, AgentResponse)
 
     def test_reconstruct_with_full_conversation(self) -> None:
         """Test reconstructing response with full_conversation."""
         data = {
             "executor_id": "exec",
-            "agent_run_response": {"type": "agent_run_response", "messages": []},
+            "agent_response": {"type": "agent_response", "messages": []},
             "full_conversation": [
                 {"type": "chat_message", "role": "user", "contents": [{"type": "text", "text": "Q"}]},
                 {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "A"}]},
@@ -400,7 +400,7 @@ class TestReconstructMessageForHandler:
         """Test reconstructing AgentExecutorResponse."""
         data = {
             "executor_id": "exec",
-            "agent_run_response": {"type": "agent_run_response", "messages": []},
+            "agent_response": {"type": "agent_response", "messages": []},
         }
 
         result = reconstruct_message_for_handler(data, [AgentExecutorResponse])

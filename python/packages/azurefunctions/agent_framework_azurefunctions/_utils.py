@@ -17,7 +17,7 @@ from typing import Any, Union, get_args, get_origin
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     ChatMessage,
     CheckpointStorage,
     Message,
@@ -254,7 +254,7 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
         except Exception:
             logger.debug("Could not reconstruct as AgentExecutorRequest, trying next strategy")
 
-    if type_name == "AgentExecutorResponse" or ("executor_id" in data and "agent_run_response" in data):
+    if type_name == "AgentExecutorResponse" or ("executor_id" in data and "agent_response" in data):
         try:
             return reconstruct_agent_executor_response(data)
         except Exception:
@@ -418,9 +418,9 @@ def reconstruct_agent_executor_request(data: dict[str, Any]) -> AgentExecutorReq
 
 def reconstruct_agent_executor_response(data: dict[str, Any]) -> AgentExecutorResponse:
     """Helper to reconstruct AgentExecutorResponse from dict."""
-    # Reconstruct AgentRunResponse
-    arr_data = data.get("agent_run_response", {})
-    agent_run_response = AgentRunResponse.from_dict(arr_data) if isinstance(arr_data, dict) else arr_data
+    # Reconstruct AgentResponse
+    arr_data = data.get("agent_response", {})
+    agent_response = AgentResponse.from_dict(arr_data) if isinstance(arr_data, dict) else arr_data
 
     # Reconstruct full_conversation
     fc_data = data.get("full_conversation", [])
@@ -429,7 +429,7 @@ def reconstruct_agent_executor_response(data: dict[str, Any]) -> AgentExecutorRe
         full_conversation = [ChatMessage.from_dict(m) if isinstance(m, dict) else m for m in fc_data]
 
     return AgentExecutorResponse(
-        executor_id=data["executor_id"], agent_run_response=agent_run_response, full_conversation=full_conversation
+        executor_id=data["executor_id"], agent_response=agent_response, full_conversation=full_conversation
     )
 
 
@@ -484,7 +484,7 @@ def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> 
         return data
 
     # Try AgentExecutorResponse first - it needs special handling for nested objects
-    if "executor_id" in data and "agent_run_response" in data:
+    if "executor_id" in data and "agent_response" in data:
         try:
             return reconstruct_agent_executor_response(data)
         except Exception:

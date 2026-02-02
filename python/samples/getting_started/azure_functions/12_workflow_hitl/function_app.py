@@ -43,7 +43,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
 
 from agent_framework_azurefunctions import AgentFunctionApp
@@ -166,7 +166,15 @@ class ContentAnalyzerExecutor(Executor):
         ctx: WorkflowContext[AnalysisWithSubmission],
     ) -> None:
         """Parse the AI analysis and forward with submission context."""
-        analysis = ContentAnalysisResult.model_validate_json(response.agent_run_response.text)
+        try:
+            analysis = ContentAnalysisResult.model_validate_json(response.agent_response.text)
+        except ValidationError:
+            analysis = ContentAnalysisResult(
+                is_appropriate=False,
+                risk_level="high",
+                concerns=["Agent execution failed or yielded invalid JSON (possible content filter)."],
+                recommendation="Manual review required",
+            )
 
         # Retrieve the original submission from shared state
         submission: ContentSubmission = await ctx.get_shared_state("current_submission")
@@ -376,10 +384,10 @@ def _create_workflow() -> Workflow:
     chat_client = AzureOpenAIChatClient(**client_kwargs)
 
     # Create the content analysis agent
-    content_analyzer_agent = chat_client.create_agent(
+    content_analyzer_agent = chat_client.as_agent(
         name=CONTENT_ANALYZER_AGENT_NAME,
         instructions=CONTENT_ANALYZER_INSTRUCTIONS,
-        response_format=ContentAnalysisResult,
+        default_options={"response_format": ContentAnalysisResult},
     )
 
     # Create executors
