@@ -2,17 +2,19 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
-    AgentRunUpdateEvent,
+    AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
     MagenticBuilder,
     MagenticPlanReviewRequest,
+    MagenticPlanReviewResponse,
     RequestInfoEvent,
+    WorkflowEvent,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -35,6 +37,62 @@ Plan review options:
 Prerequisites:
 - OpenAI credentials configured for `OpenAIChatClient`.
 """
+
+# Keep track of the last response to format output nicely in streaming mode
+last_response_id: str | None = None
+
+
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, MagenticPlanReviewResponse] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
+    global last_response_id
+
+    requests: dict[str, MagenticPlanReviewRequest] = {}
+    async for event in stream:
+        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+            requests[event.request_id] = cast(MagenticPlanReviewRequest, event.data)
+
+        if isinstance(event, WorkflowOutputEvent):
+            data = event.data
+            if isinstance(data, AgentResponseUpdate):
+                rid = data.response_id
+                if rid != last_response_id:
+                    if last_response_id is not None:
+                        print("\n")
+                    print(f"{data.author_name}:", end=" ", flush=True)
+                    last_response_id = rid
+                print(data.text, end="", flush=True)
+            else:
+                # The output of the workflow comes from the orchestrator and it's a list of messages
+                print("\n" + "=" * 60)
+                print("DISCUSSION COMPLETE")
+                print("=" * 60)
+                print("Final discussion summary:")
+                # To make the type checker happy, we cast event.data to the expected type
+                outputs = cast(list[ChatMessage], event.data)
+                for msg in outputs:
+                    speaker = msg.author_name or msg.role.value
+                    print(f"[{speaker}]: {msg.text}")
+
+    responses: dict[str, MagenticPlanReviewResponse] = {}
+    if requests:
+        for request_id, request in requests.items():
+            print("\n\n[Magentic Plan Review Request]")
+            if request.current_progress is not None:
+                print("Current Progress Ledger:")
+                print(json.dumps(request.current_progress.to_dict(), indent=2))
+                print()
+            print(f"Proposed Plan:\n{request.plan.text}\n")
+            print("Please provide your feedback (press Enter to approve):")
+
+            reply = input("> ")  # noqa: ASYNC250
+            if reply.strip() == "":
+                print("Plan approved.\n")
+                responses[request_id] = request.approve()
+            else:
+                print("Plan revised by human.\n")
+                responses[request_id] = request.revise(reply)
+
+    return responses if responses else None
 
 
 async def main() -> None:
@@ -70,7 +128,11 @@ async def main() -> None:
             max_stall_count=1,
             max_reset_count=2,
         )
-        .with_plan_review()  # Request human input for plan review
+        # Request human input for plan review
+        .with_plan_review()
+        # Enable intermediate outputs to observe the conversation as it unfolds
+        # Intermediate outputs will be emitted as WorkflowOutputEvent events
+        .with_intermediate_outputs()
         .build()
     )
 
@@ -80,66 +142,16 @@ async def main() -> None:
     print("\nStarting workflow execution...")
     print("=" * 60)
 
-    pending_request: RequestInfoEvent | None = None
-    pending_responses: dict[str, object] | None = None
-    output_event: WorkflowOutputEvent | None = None
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    stream = workflow.run_stream(task)
 
-    while not output_event:
-        if pending_responses is not None:
-            stream = workflow.send_responses_streaming(pending_responses)
-        else:
-            stream = workflow.run_stream(task)
-
-        last_message_id: str | None = None
-        async for event in stream:
-            if isinstance(event, AgentRunUpdateEvent):
-                message_id = event.data.message_id
-                if message_id != last_message_id:
-                    if last_message_id is not None:
-                        print("\n")
-                    print(f"- {event.executor_id}:", end=" ", flush=True)
-                    last_message_id = message_id
-                print(event.data, end="", flush=True)
-
-            elif isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
-                pending_request = event
-
-            elif isinstance(event, WorkflowOutputEvent):
-                output_event = event
-
-        pending_responses = None
-
-        # Handle plan review request if any
-        if pending_request is not None:
-            event_data = cast(MagenticPlanReviewRequest, pending_request.data)
-
-            print("\n\n[Magentic Plan Review Request]")
-            if event_data.current_progress is not None:
-                print("Current Progress Ledger:")
-                print(json.dumps(event_data.current_progress.to_dict(), indent=2))
-                print()
-            print(f"Proposed Plan:\n{event_data.plan.text}\n")
-            print("Please provide your feedback (press Enter to approve):")
-
-            reply = await asyncio.get_event_loop().run_in_executor(None, input, "> ")
-            if reply.strip() == "":
-                print("Plan approved.\n")
-                pending_responses = {pending_request.request_id: event_data.approve()}
-            else:
-                print("Plan revised by human.\n")
-                pending_responses = {pending_request.request_id: event_data.revise(reply)}
-            pending_request = None
-
-    print("\n" + "=" * 60)
-    print("WORKFLOW COMPLETED")
-    print("=" * 60)
-    print("Final Output:")
-    # The output of the Magentic workflow is a list of ChatMessages with only one final message
-    # generated by the orchestrator.
-    output_messages = cast(list[ChatMessage], output_event.data)
-    if output_messages:
-        output = output_messages[-1].text
-        print(output)
+    pending_responses = await process_event_stream(stream)
+    while pending_responses is not None:
+        # Run the workflow until there is no more human feedback to provide,
+        # in which case this workflow completes.
+        stream = workflow.send_responses_streaming(pending_responses)
+        pending_responses = await process_event_stream(stream)
 
 
 if __name__ == "__main__":

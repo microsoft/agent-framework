@@ -22,7 +22,8 @@ Prerequisites:
 """
 
 import asyncio
-from typing import Any, AsyncIterable
+from typing import Any
+from collections.abc import AsyncIterable
 
 from agent_framework import (
     AgentRequestInfoResponse,
@@ -96,24 +97,35 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, AgentRequestInfoResponse] | None:
     """Process events from the workflow stream to capture human feedback requests."""
 
-    responses: dict[str, AgentRequestInfoResponse] = {}
-
+    requests: dict[str, AgentExecutorResponse] = {}
     async for event in stream:
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             # Display agent output for review and potential modification
+            requests[event.request_id] = event.data
+
+        if isinstance(event, WorkflowOutputEvent):
+            # The output of the workflow comes from the aggregator and it's a single string
+            print("\n" + "=" * 60)
+            print("ANALYSIS COMPLETE")
+            print("=" * 60)
+            print("Final synthesized analysis:")
+            print(event.data)
+
+    # Process any requests for human feedback
+    responses: dict[str, AgentRequestInfoResponse] = {}
+    if requests:
+        for request_id, request in requests.items():
             print("\n" + "-" * 40)
             print("INPUT REQUESTED")
             print(
-                f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
+                f"Agent {request.executor_id} just responded with: '{request.agent_response.text}'. "
                 "Please provide your feedback."
             )
             print("-" * 40)
-            if event.data.full_conversation:
+            if request.full_conversation:
                 print("Conversation context:")
                 recent = (
-                    event.data.full_conversation[-2:]
-                    if len(event.data.full_conversation) > 2
-                    else event.data.full_conversation
+                    request.full_conversation[-2:] if len(request.full_conversation) > 2 else request.full_conversation
                 )
                 for msg in recent:
                     name = msg.author_name or msg.role.value
@@ -128,15 +140,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
             else:
                 user_input = AgentRequestInfoResponse.from_strings([user_input])
 
-            responses[event.request_id] = user_input
-
-        if isinstance(event, WorkflowOutputEvent):
-            # The output of the workflow comes from the aggregator and it's a single string
-            print("\n" + "=" * 60)
-            print("ANALYSIS COMPLETE")
-            print("=" * 60)
-            print("Final synthesized analysis:")
-            print(event.data)
+            responses[request_id] = user_input
 
     return responses if responses else None
 

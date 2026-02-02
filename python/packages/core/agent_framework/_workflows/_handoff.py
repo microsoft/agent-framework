@@ -562,7 +562,10 @@ class HandoffBuilder:
     The final conversation history as a list of ChatMessage once the group chat completes.
 
     Note:
-    Agents in handoff workflows must be ChatAgent instances and support local tool calls.
+    1. Agents in handoff workflows must be ChatAgent instances and support local tool calls.
+    2. Handoff doesn't support intermediate outputs from agents. All outputs are returned as
+       they become available. This is because agents in handoff workflows are not considered
+       sub-agents of a central orchestrator, thus all outputs are directly emitted.
     """
 
     def __init__(

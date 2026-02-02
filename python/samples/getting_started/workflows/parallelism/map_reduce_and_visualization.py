@@ -14,7 +14,6 @@ from agent_framework import (
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
-    tool,
 )
 from typing_extensions import Never
 
@@ -287,7 +286,8 @@ async def main():
 
     # Step 2: Build the workflow graph using fan out and fan in edges.
     workflow = (
-        workflow_builder.set_start_executor("split_data_executor")
+        workflow_builder
+        .set_start_executor("split_data_executor")
         .add_fan_out_edges(
             "split_data_executor",
             ["map_executor_0", "map_executor_1", "map_executor_2"],

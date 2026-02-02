@@ -884,7 +884,7 @@ class GroupChatBuilder:
         return self
 
     def with_intermediate_outputs(self) -> "GroupChatBuilder":
-        """Enable intermediate outputs from agent participants before aggregation.
+        """Enable intermediate outputs from agent participants.
 
         When enabled, the workflow returns each agent participant's response or yields
         streaming updates as they become available. The output of the orchestrator will
