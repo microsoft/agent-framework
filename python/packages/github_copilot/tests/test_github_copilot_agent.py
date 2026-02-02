@@ -135,12 +135,44 @@ class TestGitHubCopilotAgentInit:
         agent = GitHubCopilotAgent(tools=[my_tool])
         assert len(agent._tools) == 1  # type: ignore
 
-    def test_init_with_instructions(self) -> None:
-        """Test initialization with custom instructions."""
+    def test_init_with_instructions_parameter(self) -> None:
+        """Test initialization with instructions parameter."""
+        agent = GitHubCopilotAgent(instructions="You are a helpful assistant.")
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "append",
+            "content": "You are a helpful assistant.",
+        }
+
+    def test_init_with_system_message_in_default_options(self) -> None:
+        """Test initialization with system_message object in default_options."""
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-            default_options={"instructions": "You are a helpful assistant."}
+            default_options={"system_message": {"mode": "append", "content": "You are a helpful assistant."}}
         )
-        assert agent._instructions == "You are a helpful assistant."  # type: ignore
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "append",
+            "content": "You are a helpful assistant.",
+        }
+
+    def test_init_with_system_message_replace_mode(self) -> None:
+        """Test initialization with system_message in replace mode."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"system_message": {"mode": "replace", "content": "Custom system prompt."}}
+        )
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "replace",
+            "content": "Custom system prompt.",
+        }
+
+    def test_instructions_parameter_takes_precedence(self) -> None:
+        """Test that direct instructions parameter takes precedence over default_options."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            instructions="Direct instructions",
+            default_options={"system_message": {"mode": "replace", "content": "Options system_message"}},
+        )
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "append",
+            "content": "Direct instructions",
+        }
 
 
 class TestGitHubCopilotAgentLifecycle:
@@ -462,10 +494,10 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that session config includes instructions."""
-        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+        """Test that session config includes instructions from direct parameter."""
+        agent = GitHubCopilotAgent(
+            instructions="You are a helpful assistant.",
             client=mock_client,
-            default_options={"instructions": "You are a helpful assistant."},
         )
         await agent.start()
 

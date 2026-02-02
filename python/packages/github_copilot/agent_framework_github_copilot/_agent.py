@@ -31,6 +31,7 @@ from copilot.types import (
     PermissionRequestResult,
     ResumeSessionConfig,
     SessionConfig,
+    SystemMessageConfig,
     ToolInvocation,
     ToolResult,
 )
@@ -57,8 +58,9 @@ logger = logging.getLogger("agent_framework.github_copilot")
 class GitHubCopilotOptions(TypedDict, total=False):
     """GitHub Copilot-specific options."""
 
-    instructions: str
-    """System message to append to the session."""
+    system_message: SystemMessageConfig
+    """System message configuration for the session. Use mode 'append' to add to the default
+    system prompt, or 'replace' to completely override it."""
 
     cli_path: str
     """Path to the Copilot CLI executable. Defaults to GITHUB_COPILOT_CLI_PATH environment variable
@@ -139,6 +141,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
 
     def __init__(
         self,
+        instructions: str | None = None,
         *,
         client: CopilotClient | None = None,
         id: str | None = None,
@@ -156,6 +159,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize the GitHub Copilot Agent.
+
+        Args:
+            instructions: System message for the agent.
 
         Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
@@ -188,7 +194,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         # Parse options
         opts: dict[str, Any] = dict(default_options) if default_options else {}
-        instructions = opts.pop("instructions", None)
+
+        # Handle instructions - direct parameter takes precedence over default_options.system_message
+        self._prepare_system_message(instructions, opts)
+
         cli_path = opts.pop("cli_path", None)
         model = opts.pop("model", None)
         timeout = opts.pop("timeout", None)
@@ -208,7 +217,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create GitHub Copilot settings.", ex) from ex
 
-        self._instructions = instructions
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
         self._mcp_servers = mcp_servers
@@ -400,6 +408,26 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         finally:
             unsubscribe()
 
+    @staticmethod
+    def _prepare_system_message(
+        instructions: str | None,
+        opts: dict[str, Any],
+    ) -> None:
+        """Prepare system message configuration in opts.
+
+        Direct instructions parameter takes precedence over opts["system_message"].
+        Modifies opts in place.
+
+        Args:
+            instructions: Direct instructions parameter (creates append mode).
+            opts: Options dictionary to modify.
+        """
+        opts_system_message = opts.pop("system_message", None)
+        if instructions is not None:
+            opts["system_message"] = {"mode": "append", "content": instructions}
+        elif opts_system_message is not None:
+            opts["system_message"] = opts_system_message
+
     def _prepare_tools(
         self,
         tools: list[ToolProtocol | MutableMapping[str, Any]],
@@ -495,8 +523,8 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         if self._settings.model:
             config["model"] = self._settings.model  # type: ignore[typeddict-item]
 
-        if self._instructions:
-            config["system_message"] = {"mode": "append", "content": self._instructions}
+        if self._default_options.get("system_message"):
+            config["system_message"] = self._default_options["system_message"]
 
         if self._tools:
             config["tools"] = self._prepare_tools(self._tools)
