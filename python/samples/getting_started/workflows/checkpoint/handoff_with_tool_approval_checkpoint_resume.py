@@ -9,11 +9,10 @@ from typing import cast
 from agent_framework import (
     ChatAgent,
     ChatMessage,
+    Content,
     FileCheckpointStorage,
-    FunctionApprovalRequestContent,
     HandoffAgentUserRequest,
     HandoffBuilder,
-    HandoffUserInputRequest,
     RequestInfoEvent,
     Workflow,
     WorkflowOutputEvent,
@@ -27,7 +26,7 @@ from azure.identity import AzureCliCredential
 Sample: Handoff Workflow with Tool Approvals + Checkpoint Resume
 
 Demonstrates the two-step pattern for resuming a handoff workflow from a checkpoint
-while handling both HandoffUserInputRequest prompts and FunctionApprovalRequestContent
+while handling both HandoffAgentUserRequest prompts and function approval request Content
 for tool calls (e.g., submit_refund).
 
 Scenario:
@@ -137,7 +136,7 @@ def _print_handoff_request(request: HandoffAgentUserRequest, request_id: str) ->
     print(f"{'=' * 60}\n")
 
 
-def _print_function_approval_request(request: FunctionApprovalRequestContent, request_id: str) -> None:
+def _print_function_approval_request(request: Content, request_id: str) -> None:
     """Log pending tool approval details for debugging."""
     args = request.function_call.parse_arguments() or {}
     print(f"\n{'=' * 60}")
@@ -157,14 +156,14 @@ def _build_responses_for_requests(
     """Create response payloads for each pending request."""
     responses: dict[str, object] = {}
     for request in pending_requests:
-        if isinstance(request.data, HandoffUserInputRequest):
+        if isinstance(request.data, HandoffAgentUserRequest):
             if user_response is None:
-                raise ValueError("User response is required for HandoffUserInputRequest")
+                raise ValueError("User response is required for HandoffAgentUserRequest")
             responses[request.request_id] = user_response
-        elif isinstance(request.data, FunctionApprovalRequestContent):
+        elif isinstance(request.data, Content) and request.data.type == "function_approval_request":
             if approve_tools is None:
-                raise ValueError("Approval decision is required for FunctionApprovalRequestContent")
-            responses[request.request_id] = request.data.create_response(approved=approve_tools)
+                raise ValueError("Approval decision is required for function approval request")
+            responses[request.request_id] = request.data.to_function_approval_response(approved=approve_tools)
         else:
             raise ValueError(f"Unsupported request type: {type(request.data)}")
     return responses
@@ -199,9 +198,9 @@ async def run_until_user_input_needed(
 
         elif isinstance(event, RequestInfoEvent):
             pending_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
-            elif isinstance(event.data, FunctionApprovalRequestContent):
+            elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
         elif isinstance(event, WorkflowOutputEvent):
@@ -256,9 +255,9 @@ async def resume_with_responses(
     async for event in workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id):  # type: ignore[attr-defined]
         if isinstance(event, RequestInfoEvent):
             restored_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
-            elif isinstance(event.data, FunctionApprovalRequestContent):
+            elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
     if not restored_requests:
@@ -289,9 +288,9 @@ async def resume_with_responses(
 
         elif isinstance(event, RequestInfoEvent):
             new_pending_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
-            elif isinstance(event.data, FunctionApprovalRequestContent):
+            elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
     return new_pending_requests, latest_checkpoint.checkpoint_id
@@ -361,8 +360,10 @@ async def main() -> None:
         print("\n>>> Simulating process restart...\n")
         workflow_step, _, _, _ = create_workflow(checkpoint_storage=storage)
 
-        needs_user_input = any(isinstance(req.data, HandoffUserInputRequest) for req in pending_requests)
-        needs_tool_approval = any(isinstance(req.data, FunctionApprovalRequestContent) for req in pending_requests)
+        needs_user_input = any(isinstance(req.data, HandoffAgentUserRequest) for req in pending_requests)
+        needs_tool_approval = any(
+            isinstance(req.data, Content) and req.data.type == "function_approval_request" for req in pending_requests
+        )
 
         user_response = None
         if needs_user_input:

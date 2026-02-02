@@ -22,7 +22,7 @@ const string AssistantName = "WeatherAssistant";
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Get anthropic client to create agents.
-AIAgent agent = new AnthropicClient { APIKey = apiKey }
+AIAgent agent = new AnthropicClient { ApiKey = apiKey }
     .AsAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.

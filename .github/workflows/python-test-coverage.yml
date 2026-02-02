@@ -9,6 +9,8 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
+  # Coverage threshold percentage for enforced modules
+  COVERAGE_THRESHOLD: 85
 
 jobs:
   python-tests-coverage:
@@ -37,6 +39,8 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Run all tests with coverage report
         run: uv run poe all-tests-cov --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
+      - name: Check coverage threshold
+        run: python ${{ github.workspace }}/.github/workflows/python-check-coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
       - name: Upload coverage report
         uses: actions/upload-artifact@v6
         with:

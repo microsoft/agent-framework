@@ -255,7 +255,6 @@ async def main() -> None:
     # Run until there are no more approval requests
     while request_info_events:
         responses: dict[str, Content] = {}
-
         for request_info_event in request_info_events:
             # We should only expect FunctionApprovalRequestContent in this sample
             data = request_info_event.data
@@ -271,8 +270,8 @@ async def main() -> None:
             print(f"Received approval request for function: {data.function_call.name} with args:\n{arguments}")
 
             # For demo purposes, we automatically approve the request
-            # The expected response type of the request is `FunctionApprovalResponseContent`,
-            # which can be created via `create_response` method on the request content
+            # The expected response type of the request is `function_approval_response Content`,
+            # which can be created via `to_function_approval_response` method on the request content
             print("Performing automatic approval for demo purposes...")
             responses[request_info_event.request_id] = data.to_function_approval_response(approved=True)
 

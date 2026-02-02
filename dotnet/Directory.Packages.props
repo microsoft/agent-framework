@@ -11,8 +11,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.0.1" />
-    <PackageVersion Include="Anthropic.Foundry" Version="0.1.0" />
+    <PackageVersion Include="Anthropic" Version="12.3.0" />
+    <PackageVersion Include="Anthropic.Foundry" Version="0.4.1" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
@@ -42,7 +42,7 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.2" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.0" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.0" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.1" />
     <PackageVersion Include="System.Text.Json" Version="10.0.2" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.2" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
