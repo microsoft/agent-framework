@@ -516,6 +516,31 @@ class TestGitHubCopilotAgentSessionManagement:
         assert config["system_message"]["mode"] == "append"
         assert config["system_message"]["content"] == "You are a helpful assistant."
 
+    async def test_runtime_options_take_precedence_over_default(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that runtime options from run() take precedence over default_options."""
+        agent = GitHubCopilotAgent(
+            instructions="Default instructions",
+            client=mock_client,
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {
+            "system_message": {"mode": "replace", "content": "Runtime instructions"}
+        }
+        await agent._get_or_create_session(  # type: ignore
+            AgentThread(),
+            runtime_options=runtime_options,
+        )
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert config["system_message"]["mode"] == "replace"
+        assert config["system_message"]["content"] == "Runtime instructions"
+
     async def test_session_config_includes_streaming_flag(
         self,
         mock_client: MagicMock,

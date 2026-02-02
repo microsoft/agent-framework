@@ -67,11 +67,46 @@ async def streaming_example() -> None:
         print("\n")
 
 
+async def runtime_options_example() -> None:
+    """Example of overriding system message at runtime."""
+    print("=== Runtime Options Example ===")
+
+    agent = GitHubCopilotAgent(
+        instructions="Always respond in exactly 3 words.",
+        tools=[get_weather],
+    )
+
+    async with agent:
+        query = "What's the weather like in Paris?"
+
+        # First call uses default instructions (3 words response)
+        print("Using default instructions (3 words):")
+        print(f"User: {query}")
+        result1 = await agent.run(query)
+        print(f"Agent: {result1}\n")
+
+        # Second call overrides with runtime system_message in replace mode
+        print("Using runtime system_message with replace mode (detailed response):")
+        print(f"User: {query}")
+        result2 = await agent.run(
+            query,
+            options={
+                "system_message": {
+                    "mode": "replace",
+                    "content": "You are a weather expert. Provide detailed weather information "
+                    "with temperature, and recommendations.",
+                }
+            },
+        )
+        print(f"Agent: {result2}\n")
+
+
 async def main() -> None:
     print("=== Basic GitHub Copilot Agent Example ===")
 
     await non_streaming_example()
     await streaming_example()
+    await runtime_options_example()
 
 
 if __name__ == "__main__":
