@@ -163,12 +163,20 @@ class TestGitHubCopilotAgentInit:
             "content": "Custom system prompt.",
         }
 
-    def test_instructions_parameter_takes_precedence(self) -> None:
-        """Test that direct instructions parameter takes precedence over default_options."""
+    def test_instructions_parameter_takes_precedence_for_content(self) -> None:
+        """Test that direct instructions parameter takes precedence for content but preserves mode."""
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
             instructions="Direct instructions",
             default_options={"system_message": {"mode": "replace", "content": "Options system_message"}},
         )
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "replace",
+            "content": "Direct instructions",
+        }
+
+    def test_instructions_parameter_defaults_to_append_mode(self) -> None:
+        """Test that instructions parameter defaults to append mode when no system_message provided."""
+        agent = GitHubCopilotAgent(instructions="Direct instructions")
         assert agent._default_options.get("system_message") == {  # type: ignore
             "mode": "append",
             "content": "Direct instructions",

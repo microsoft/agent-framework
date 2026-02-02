@@ -415,16 +415,19 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
     ) -> None:
         """Prepare system message configuration in opts.
 
-        Direct instructions parameter takes precedence over opts["system_message"].
+        If instructions is provided, it takes precedence for content.
+        If system_message is also provided, its mode is preserved.
         Modifies opts in place.
 
         Args:
-            instructions: Direct instructions parameter (creates append mode).
+            instructions: Direct instructions parameter for content.
             opts: Options dictionary to modify.
         """
         opts_system_message = opts.pop("system_message", None)
         if instructions is not None:
-            opts["system_message"] = {"mode": "append", "content": instructions}
+            # Use instructions for content, but preserve mode from system_message if provided
+            mode = opts_system_message.get("mode", "append") if opts_system_message else "append"
+            opts["system_message"] = {"mode": mode, "content": instructions}
         elif opts_system_message is not None:
             opts["system_message"] = opts_system_message
 
