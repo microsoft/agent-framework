@@ -171,7 +171,7 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = 'packages/**/tests'
+testpaths = ['packages/**/tests', 'packages/**/ag_ui_tests']
 norecursedirs = '**/lab/**'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
@@ -262,7 +262,8 @@ pytest --import-mode=importlib
 --ignore-glob=packages/devui/**
 -rs
 -n logical --dist loadfile --dist worksteal
-packages/**/tests
+    packages/**/tests
+    packages/**/ag_ui_tests
 """
 
 [tool.poe.tasks.all-tests]
@@ -272,7 +273,8 @@ pytest --import-mode=importlib
 --ignore-glob=packages/devui/**
 -rs
 -n logical --dist loadfile --dist worksteal
-packages/**/tests
+    packages/**/tests
+    packages/**/ag_ui_tests
 """
 
 [tool.poe.tasks.venv]

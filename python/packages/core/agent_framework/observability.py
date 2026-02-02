@@ -1161,6 +1161,8 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 duration_state["duration"] = perf_counter() - start_time
 
             async def _finalize_stream() -> None:
+                from ._types import ChatResponse
+
                 try:
                     response = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
@@ -1188,7 +1190,12 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 finally:
                     _close_span()
 
-            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            return (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_cleanup_hook(_close_span)
+            )
 
         async def _get_response() -> "ChatResponse":
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
@@ -1340,6 +1347,8 @@ class AgentTelemetryLayer:
                 duration_state["duration"] = perf_counter() - start_time
 
             async def _finalize_stream() -> None:
+                from ._types import AgentResponse
+
                 try:
                     response = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
@@ -1366,7 +1375,12 @@ class AgentTelemetryLayer:
                 finally:
                     _close_span()
 
-            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            return (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_cleanup_hook(_close_span)
+            )
 
         async def _run() -> "AgentResponse":
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1656,10 +1670,6 @@ def _get_response_attributes(
     capture_usage: bool = True,
 ) -> dict[str, Any]:
     """Get the response attributes from a response."""
-    from ._types import AgentResponse, ChatResponse
-
-    if not isinstance(response, (ChatResponse, AgentResponse)):
-        return attributes
     if response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
     finish_reason = getattr(response, "finish_reason", None)

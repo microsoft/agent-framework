@@ -1007,8 +1007,8 @@ def test_enable_instrumentation_function(monkeypatch):
     """Test enable_instrumentation function enables instrumentation."""
     import importlib
 
-    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
-    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
 
     observability = importlib.import_module("agent_framework.observability")
     importlib.reload(observability)
@@ -1023,8 +1023,8 @@ def test_enable_instrumentation_with_sensitive_data(monkeypatch):
     """Test enable_instrumentation function with sensitive_data parameter."""
     import importlib
 
-    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
-    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
 
     observability = importlib.import_module("agent_framework.observability")
     importlib.reload(observability)
