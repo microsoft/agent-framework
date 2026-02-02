@@ -35,6 +35,18 @@ This creates cognitive overhead for developers doing "Context Engineering" - the
 - **Attribution**: Enable tracking which middleware added which messages/tools
 - **Zero-config**: Simple use cases should work without configuration
 
+## Related Issues
+
+This ADR addresses the following issues from the parent issue [#3575](https://github.com/microsoft/agent-framework/issues/3575):
+
+| Issue | Title | How Addressed |
+|-------|-------|---------------|
+| [#3587](https://github.com/microsoft/agent-framework/issues/3587) | Rename AgentThread to AgentSession | ✅ `AgentThread` → `AgentSession` (clean break, no alias). See [§7 Renaming](#7-renaming-thread--session). |
+| [#3588](https://github.com/microsoft/agent-framework/issues/3588) | Add get_new_session, get_session_by_id methods | ✅ `agent.get_new_session()` creates session with resolved middleware pipeline. `agent.restore_session(state)` restores from serialized state. See [§8 Serialization](#8-session-serializationdeserialization). |
+| [#3589](https://github.com/microsoft/agent-framework/issues/3589) | Move serialize method into the agent | ✅ `session.serialize()` captures state, but `agent.restore_session()` handles restoration (agent owns middleware config). See [§8 Serialization](#8-session-serializationdeserialization). |
+| [#3590](https://github.com/microsoft/agent-framework/issues/3590) | Design orthogonal ChatMessageStore for service vs local | ✅ `StorageContextMiddleware` works orthogonally: `service_session_id` presence triggers smart behavior (don't load if service manages storage). Multiple storage middleware allowed. See [§3 Unified Storage](#3-unified-storage-middleware). |
+| [#3601](https://github.com/microsoft/agent-framework/issues/3601) | Rename ChatMessageStore to ChatHistoryProvider | ✅ Superseded: `ChatMessageStore` removed entirely. Replaced by `StorageContextMiddleware` (e.g., `InMemoryStorageMiddleware`). The middleware pattern is more flexible than a "provider" rename. |
+
 ## Current State Analysis
 
 ### ContextProvider (Current)
