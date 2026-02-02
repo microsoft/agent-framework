@@ -2,47 +2,32 @@
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Reflection;
 using System.Text;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
+/// <summary>
+/// Integration tests for validating the durable agent console app samples
+/// located in samples/Durable/Agents/ConsoleApps.
+/// </summary>
 [Collection("Samples")]
 [Trait("Category", "SampleValidation")]
-public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
+public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
-    private const string DtsPort = "8080";
-    private const string RedisPort = "6379";
-
-    private static readonly string s_dotnetTargetFramework = GetTargetFramework();
-    private static readonly IConfiguration s_configuration =
-        new ConfigurationBuilder()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .AddEnvironmentVariables()
-            .Build();
-
-    private static bool s_infrastructureStarted;
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "ConsoleApps"));
 
-    private readonly ITestOutputHelper _outputHelper = outputHelper;
+    /// <inheritdoc />
+    protected override string SamplesPath => s_samplesPath;
 
-    async Task IAsyncLifetime.InitializeAsync()
-    {
-        if (!s_infrastructureStarted)
-        {
-            await this.StartSharedInfrastructureAsync();
-            s_infrastructureStarted = true;
-        }
-    }
+    /// <inheritdoc />
+    protected override bool RequiresRedis => true;
 
-    async Task IAsyncLifetime.DisposeAsync()
+    /// <inheritdoc />
+    protected override void ConfigureAdditionalEnvironmentVariables(ProcessStartInfo startInfo, Action<string, string> setEnvVar)
     {
-        // Nothing to clean up
-        await Task.CompletedTask;
+        setEnvVar("REDIS_CONNECTION_STRING", $"localhost:{RedisPort}");
     }
 
     [Fact]
@@ -475,7 +460,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                     // (streams can complete very quickly, so we need to interrupt early)
                     if (foundConversationStart && !interrupted && contentLinesBeforeInterrupt >= 2)
                     {
-                        this._outputHelper.WriteLine($"Interrupting stream after {contentLinesBeforeInterrupt} content lines");
+                        this.OutputHelper.WriteLine($"Interrupting stream after {contentLinesBeforeInterrupt} content lines");
                         interrupted = true;
                         interruptTime = DateTime.Now;
 
@@ -493,7 +478,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                         foundLastCursor = true;
 
                         // Send Enter again to resume
-                        this._outputHelper.WriteLine("Resuming stream from last cursor");
+                        this.OutputHelper.WriteLine("Resuming stream from last cursor");
                         await this.WriteInputAsync(process, string.Empty, testTimeoutCts.Token);
                         resumed = true;
                     }
@@ -521,7 +506,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                             if (timeSinceInterrupt < TimeSpan.FromSeconds(2))
                             {
                                 // Continue reading for a bit more to catch the cancellation message
-                                this._outputHelper.WriteLine("Stream completed naturally, but waiting for Last cursor message after interrupt...");
+                                this.OutputHelper.WriteLine("Stream completed naturally, but waiting for Last cursor message after interrupt...");
                                 continue;
                             }
                         }
@@ -536,7 +521,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                     // Stop once we've verified the interrupt/resume flow works
                     if (resumed && foundResumeMessage && contentLinesAfterResume >= 5)
                     {
-                        this._outputHelper.WriteLine($"Successfully verified interrupt/resume: {contentLinesBeforeInterrupt} lines before, {contentLinesAfterResume} lines after");
+                        this.OutputHelper.WriteLine($"Successfully verified interrupt/resume: {contentLinesBeforeInterrupt} lines before, {contentLinesAfterResume} lines after");
                         break;
                     }
                 }
@@ -547,7 +532,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                     TimeSpan timeSinceInterrupt = DateTime.Now - interruptTime.Value;
                     if (timeSinceInterrupt < TimeSpan.FromSeconds(3))
                     {
-                        this._outputHelper.WriteLine("Waiting for Last cursor message after interrupt...");
+                        this.OutputHelper.WriteLine("Waiting for Last cursor message after interrupt...");
                         using CancellationTokenSource waitCts = new(TimeSpan.FromSeconds(2));
                         try
                         {
@@ -558,7 +543,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                                     foundLastCursor = true;
                                     if (!resumed)
                                     {
-                                        this._outputHelper.WriteLine("Resuming stream from last cursor");
+                                        this.OutputHelper.WriteLine("Resuming stream from last cursor");
                                         await this.WriteInputAsync(process, string.Empty, testTimeoutCts.Token);
                                         resumed = true;
                                     }
@@ -576,7 +561,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             catch (OperationCanceledException)
             {
                 // Timeout - check if we got enough to verify the flow
-                this._outputHelper.WriteLine($"Read timeout reached. Interrupted: {interrupted}, Resumed: {resumed}, Content before: {contentLinesBeforeInterrupt}, Content after: {contentLinesAfterResume}");
+                this.OutputHelper.WriteLine($"Read timeout reached. Interrupted: {interrupted}, Resumed: {resumed}, Content before: {contentLinesBeforeInterrupt}, Content after: {contentLinesAfterResume}");
             }
 
             Assert.True(foundConversationStart, "Conversation start message not found.");
@@ -586,7 +571,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             // but we should still verify we got the conversation started
             if (!interrupted)
             {
-                this._outputHelper.WriteLine("WARNING: Stream completed before interrupt could be sent. This may indicate the stream is too fast.");
+                this.OutputHelper.WriteLine("WARNING: Stream completed before interrupt could be sent. This may indicate the stream is too fast.");
             }
 
             Assert.True(interrupted, "Stream was not interrupted (may have completed too quickly).");
@@ -595,366 +580,5 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             Assert.True(foundResumeMessage, "Resume message not found.");
             Assert.True(contentLinesAfterResume > 0, "No content received after resume (expected to continue from cursor, not restart).");
         });
-    }
-
-    private static string GetTargetFramework()
-    {
-        string filePath = new Uri(typeof(ConsoleAppSamplesValidation).Assembly.Location).LocalPath;
-        string directory = Path.GetDirectoryName(filePath)!;
-        string tfm = Path.GetFileName(directory);
-        if (tfm.StartsWith("net", StringComparison.OrdinalIgnoreCase))
-        {
-            return tfm;
-        }
-
-        throw new InvalidOperationException($"Unable to find target framework in path: {filePath}");
-    }
-
-    private async Task StartSharedInfrastructureAsync()
-    {
-        this._outputHelper.WriteLine("Starting shared infrastructure for console app samples...");
-
-        // Start DTS emulator
-        await this.StartDtsEmulatorAsync();
-
-        // Start Redis
-        await this.StartRedisAsync();
-
-        // Wait for infrastructure to be ready
-        await Task.Delay(TimeSpan.FromSeconds(5));
-    }
-
-    private async Task StartDtsEmulatorAsync()
-    {
-        // Start DTS emulator if it's not already running
-        if (!await this.IsDtsEmulatorRunningAsync())
-        {
-            this._outputHelper.WriteLine("Starting DTS emulator...");
-            await this.RunCommandAsync("docker", [
-                "run", "-d",
-                "--name", "dts-emulator",
-                "-p", $"{DtsPort}:8080",
-                "-e", "DTS_USE_DYNAMIC_TASK_HUBS=true",
-                "mcr.microsoft.com/dts/dts-emulator:latest"
-            ]);
-        }
-    }
-
-    private async Task StartRedisAsync()
-    {
-        if (!await this.IsRedisRunningAsync())
-        {
-            this._outputHelper.WriteLine("Starting Redis...");
-            await this.RunCommandAsync("docker", [
-                "run", "-d",
-                "--name", "redis",
-                "-p", $"{RedisPort}:6379",
-                "redis:latest"
-            ]);
-        }
-    }
-
-    private async Task<bool> IsDtsEmulatorRunningAsync()
-    {
-        this._outputHelper.WriteLine($"Checking if DTS emulator is running at http://localhost:{DtsPort}/healthz...");
-
-        // DTS emulator doesn't support HTTP/1.1, so we need to use HTTP/2.0
-        using HttpClient http2Client = new()
-        {
-            DefaultRequestVersion = new Version(2, 0),
-            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
-        };
-
-        try
-        {
-            using CancellationTokenSource timeoutCts = new(TimeSpan.FromSeconds(30));
-            using HttpResponseMessage response = await http2Client.GetAsync(new Uri($"http://localhost:{DtsPort}/healthz"), timeoutCts.Token);
-            if (response.Content.Headers.ContentLength > 0)
-            {
-                string content = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-                this._outputHelper.WriteLine($"DTS emulator health check response: {content}");
-            }
-
-            if (response.IsSuccessStatusCode)
-            {
-                this._outputHelper.WriteLine("DTS emulator is running");
-                return true;
-            }
-
-            this._outputHelper.WriteLine($"DTS emulator is not running. Status code: {response.StatusCode}");
-            return false;
-        }
-        catch (HttpRequestException ex)
-        {
-            this._outputHelper.WriteLine($"DTS emulator is not running: {ex.Message}");
-            return false;
-        }
-    }
-
-    private async Task<bool> IsRedisRunningAsync()
-    {
-        this._outputHelper.WriteLine($"Checking if Redis is running at localhost:{RedisPort}...");
-
-        try
-        {
-            using CancellationTokenSource timeoutCts = new(TimeSpan.FromSeconds(30));
-            ProcessStartInfo startInfo = new()
-            {
-                FileName = "docker",
-                Arguments = "exec redis redis-cli ping",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using Process process = new() { StartInfo = startInfo };
-            if (!process.Start())
-            {
-                this._outputHelper.WriteLine("Failed to start docker exec command");
-                return false;
-            }
-
-            string output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-            await process.WaitForExitAsync(timeoutCts.Token);
-
-            if (process.ExitCode == 0 && output.Contains("PONG", StringComparison.OrdinalIgnoreCase))
-            {
-                this._outputHelper.WriteLine("Redis is running");
-                return true;
-            }
-
-            this._outputHelper.WriteLine($"Redis is not running. Exit code: {process.ExitCode}, Output: {output}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            this._outputHelper.WriteLine($"Redis is not running: {ex.Message}");
-            return false;
-        }
-    }
-
-    private async Task RunSampleTestAsync(string samplePath, Func<Process, BlockingCollection<OutputLog>, Task> testAction)
-    {
-        // Generate a unique TaskHub name for this sample test to prevent cross-test interference
-        // when multiple tests run together and share the same DTS emulator.
-        string uniqueTaskHubName = $"sample-{Guid.NewGuid().ToString("N").Substring(0, 6)}";
-
-        // Start the console app
-        // Use BlockingCollection to safely read logs asynchronously captured from the process
-        using BlockingCollection<OutputLog> logsContainer = [];
-        using Process appProcess = this.StartConsoleApp(samplePath, logsContainer, uniqueTaskHubName);
-        try
-        {
-            // Run the test
-            await testAction(appProcess, logsContainer);
-        }
-        catch (OperationCanceledException e)
-        {
-            throw new TimeoutException("Core test logic timed out!", e);
-        }
-        finally
-        {
-            logsContainer.CompleteAdding();
-            await this.StopProcessAsync(appProcess);
-        }
-    }
-
-    private sealed record OutputLog(DateTime Timestamp, LogLevel Level, string Message);
-
-    /// <summary>
-    /// Writes a line to the process's stdin and flushes it.
-    /// Logs the input being sent for debugging purposes.
-    /// </summary>
-    private async Task WriteInputAsync(Process process, string input, CancellationToken cancellationToken)
-    {
-        this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} [{process.ProcessName}(in)]: {input}");
-        await process.StandardInput.WriteLineAsync(input);
-        await process.StandardInput.FlushAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Reads a line from the logs queue, filtering for Information level logs (stdout).
-    /// Returns null if the collection is completed and empty, or if cancellation is requested.
-    /// </summary>
-    private string? ReadLogLine(BlockingCollection<OutputLog> logs, CancellationToken cancellationToken)
-    {
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                // Block until a log entry is available or cancellation is requested
-                // Take will throw OperationCanceledException if cancelled, or InvalidOperationException if collection is completed
-                OutputLog log = logs.Take(cancellationToken);
-
-                // Check for unhandled exceptions in the logs, which are never expected (but can happen)
-                if (log.Message.Contains("Unhandled exception"))
-                {
-                    Assert.Fail("Console app encountered an unhandled exception.");
-                }
-
-                // Only return Information level logs (stdout), skip Error logs (stderr)
-                if (log.Level == LogLevel.Information)
-                {
-                    return log.Message;
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Cancellation requested
-            return null;
-        }
-        catch (InvalidOperationException)
-        {
-            // Collection is completed and empty
-            return null;
-        }
-
-        return null;
-    }
-
-    private Process StartConsoleApp(string samplePath, BlockingCollection<OutputLog> logs, string taskHubName)
-    {
-        ProcessStartInfo startInfo = new()
-        {
-            FileName = "dotnet",
-            Arguments = $"run --framework {s_dotnetTargetFramework}",
-            WorkingDirectory = samplePath,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-        };
-
-        string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
-
-        void SetAndLogEnvironmentVariable(string key, string value)
-        {
-            this._outputHelper.WriteLine($"Setting environment variable for {startInfo.FileName} sub-process: {key}={value}");
-            startInfo.EnvironmentVariables[key] = value;
-        }
-
-        // Set required environment variables for the app
-        SetAndLogEnvironmentVariable("AZURE_OPENAI_ENDPOINT", openAiEndpoint);
-        SetAndLogEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", openAiDeployment);
-        SetAndLogEnvironmentVariable("DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
-            $"Endpoint=http://localhost:{DtsPort};TaskHub={taskHubName};Authentication=None");
-        SetAndLogEnvironmentVariable("REDIS_CONNECTION_STRING", $"localhost:{RedisPort}");
-
-        Process process = new() { StartInfo = startInfo };
-
-        // Capture the output and error streams asynchronously
-        // These events fire asynchronously, so we add to the blocking collection which is thread-safe
-        process.ErrorDataReceived += (sender, e) =>
-        {
-            if (e.Data != null)
-            {
-                string logMessage = $"{DateTime.Now:HH:mm:ss.fff} [{startInfo.FileName}(err)]: {e.Data}";
-                this._outputHelper.WriteLine(logMessage);
-                Debug.WriteLine(logMessage);
-                try
-                {
-                    logs.Add(new OutputLog(DateTime.Now, LogLevel.Error, e.Data));
-                }
-                catch (InvalidOperationException)
-                {
-                    // Collection is completed, ignore
-                }
-            }
-        };
-
-        process.OutputDataReceived += (sender, e) =>
-        {
-            if (e.Data != null)
-            {
-                string logMessage = $"{DateTime.Now:HH:mm:ss.fff} [{startInfo.FileName}(out)]: {e.Data}";
-                this._outputHelper.WriteLine(logMessage);
-                Debug.WriteLine(logMessage);
-                try
-                {
-                    logs.Add(new OutputLog(DateTime.Now, LogLevel.Information, e.Data));
-                }
-                catch (InvalidOperationException)
-                {
-                    // Collection is completed, ignore
-                }
-            }
-        };
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start the console app");
-        }
-
-        process.BeginErrorReadLine();
-        process.BeginOutputReadLine();
-
-        return process;
-    }
-
-    private async Task RunCommandAsync(string command, string[] args)
-    {
-        await this.RunCommandAsync(command, workingDirectory: null, args: args);
-    }
-
-    private async Task RunCommandAsync(string command, string? workingDirectory, string[] args)
-    {
-        ProcessStartInfo startInfo = new()
-        {
-            FileName = command,
-            Arguments = string.Join(" ", args),
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-
-        this._outputHelper.WriteLine($"Running command: {command} {string.Join(" ", args)}");
-
-        using Process process = new() { StartInfo = startInfo };
-        process.ErrorDataReceived += (sender, e) => this._outputHelper.WriteLine($"[{command}(err)]: {e.Data}");
-        process.OutputDataReceived += (sender, e) => this._outputHelper.WriteLine($"[{command}(out)]: {e.Data}");
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start the command");
-        }
-        process.BeginErrorReadLine();
-        process.BeginOutputReadLine();
-
-        using CancellationTokenSource cancellationTokenSource = new(TimeSpan.FromMinutes(1));
-        await process.WaitForExitAsync(cancellationTokenSource.Token);
-
-        this._outputHelper.WriteLine($"Command completed with exit code: {process.ExitCode}");
-    }
-
-    private async Task StopProcessAsync(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Killing process {process.ProcessName}#{process.Id}");
-                process.Kill(entireProcessTree: true);
-
-                using CancellationTokenSource timeoutCts = new(TimeSpan.FromSeconds(10));
-                await process.WaitForExitAsync(timeoutCts.Token);
-                this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Process exited: {process.Id}");
-            }
-        }
-        catch (Exception ex)
-        {
-            this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Failed to stop process: {ex.Message}");
-        }
-    }
-
-    private CancellationTokenSource CreateTestTimeoutCts(TimeSpan? timeout = null)
-    {
-        TimeSpan testTimeout = Debugger.IsAttached ? TimeSpan.FromMinutes(5) : timeout ?? TimeSpan.FromSeconds(60);
-        return new CancellationTokenSource(testTimeout);
     }
 }

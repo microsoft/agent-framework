@@ -1,9 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
-using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker;
@@ -96,7 +92,7 @@ public static class ServiceCollectionExtensions
 
         // A custom data converter is needed because the default chat client uses camel case for JSON properties,
         // which is not the default behavior for the Durable Task SDK.
-        services.AddSingleton<DataConverter, DefaultDataConverter>();
+        services.AddSingleton<DataConverter, DurableDataConverter>();
 
         return options;
     }
@@ -122,65 +118,6 @@ public static class ServiceCollectionExtensions
         if (!agents.ContainsKey(agentName))
         {
             throw new AgentNotRegisteredException(agentName);
-        }
-    }
-
-    private sealed class DefaultDataConverter : DataConverter
-    {
-        // Use durable agent options (web defaults + camel case by default) with case-insensitive matching.
-        // We clone to apply naming/casing tweaks while retaining source-generated metadata where available.
-        private static readonly JsonSerializerOptions s_options = new(DurableAgentJsonUtilities.DefaultOptions)
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true,
-        };
-
-        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fallback path uses reflection when metadata unavailable.")]
-        [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050", Justification = "Fallback path uses reflection when metadata unavailable.")]
-        public override object? Deserialize(string? data, Type targetType)
-        {
-            if (data is null)
-            {
-                return null;
-            }
-
-            if (targetType == typeof(DurableAgentState))
-            {
-                return JsonSerializer.Deserialize(data, DurableAgentStateJsonContext.Default.DurableAgentState);
-            }
-
-            JsonTypeInfo? typeInfo = s_options.GetTypeInfo(targetType);
-            if (typeInfo is JsonTypeInfo typedInfo)
-            {
-                return JsonSerializer.Deserialize(data, typedInfo);
-            }
-
-            // Fallback (may trigger trimming/AOT warnings for unsupported dynamic types).
-            return JsonSerializer.Deserialize(data, targetType, s_options);
-        }
-
-        [return: NotNullIfNotNull(nameof(value))]
-        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fallback path uses reflection when metadata unavailable.")]
-        [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050", Justification = "Fallback path uses reflection when metadata unavailable.")]
-        public override string? Serialize(object? value)
-        {
-            if (value is null)
-            {
-                return null;
-            }
-
-            if (value is DurableAgentState durableAgentState)
-            {
-                return JsonSerializer.Serialize(durableAgentState, DurableAgentStateJsonContext.Default.DurableAgentState);
-            }
-
-            JsonTypeInfo? typeInfo = s_options.GetTypeInfo(value.GetType());
-            if (typeInfo is JsonTypeInfo typedInfo)
-            {
-                return JsonSerializer.Serialize(value, typedInfo);
-            }
-
-            return JsonSerializer.Serialize(value, s_options);
         }
     }
 }

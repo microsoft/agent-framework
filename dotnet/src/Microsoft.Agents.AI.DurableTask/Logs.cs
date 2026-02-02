@@ -100,4 +100,77 @@ internal static partial class Logs
     public static partial void LogTTLExpirationTimeCleared(
         this ILogger logger,
         AgentSessionId sessionId);
+
+    // Durable workflow logs (EventIds 100-199)
+
+    [LoggerMessage(
+        EventId = 100,
+        Level = LogLevel.Information,
+        Message = "Starting workflow '{WorkflowName}' with instance '{InstanceId}'")]
+    public static partial void LogWorkflowStarting(
+        this ILogger logger,
+        string workflowName,
+        string instanceId);
+
+    [LoggerMessage(
+        EventId = 101,
+        Level = LogLevel.Information,
+        Message = "Superstep {Step}: {Count} active executor(s)")]
+    public static partial void LogSuperstepStarting(
+        this ILogger logger,
+        int step,
+        int count);
+
+    [LoggerMessage(
+        EventId = 102,
+        Level = LogLevel.Debug,
+        Message = "Superstep {Step} executors: [{Executors}]")]
+    public static partial void LogSuperstepExecutors(
+        this ILogger logger,
+        int step,
+        string executors);
+
+    [LoggerMessage(
+        EventId = 103,
+        Level = LogLevel.Information,
+        Message = "Workflow completed")]
+    public static partial void LogWorkflowCompleted(
+        this ILogger logger);
+
+    [LoggerMessage(
+        EventId = 104,
+        Level = LogLevel.Debug,
+        Message = "Fan-In executor {ExecutorId}: aggregated {Count} messages from [{Sources}]")]
+    public static partial void LogFanInAggregated(
+        this ILogger logger,
+        string executorId,
+        int count,
+        string sources);
+
+    [LoggerMessage(
+        EventId = 105,
+        Level = LogLevel.Debug,
+        Message = "Executor '{ExecutorId}' returned result (length: {Length}, messages: {MessageCount})")]
+    public static partial void LogExecutorResultReceived(
+        this ILogger logger,
+        string executorId,
+        int length,
+        int messageCount);
+
+    [LoggerMessage(
+        EventId = 106,
+        Level = LogLevel.Debug,
+        Message = "Dispatching executor '{ExecutorId}' (agentic: {IsAgentic})")]
+    public static partial void LogDispatchingExecutor(
+        this ILogger logger,
+        string executorId,
+        bool isAgentic);
+
+    [LoggerMessage(
+        EventId = 107,
+        Level = LogLevel.Warning,
+        Message = "Agent '{AgentName}' not found")]
+    public static partial void LogAgentNotFound(
+        this ILogger logger,
+        string agentName);
 }

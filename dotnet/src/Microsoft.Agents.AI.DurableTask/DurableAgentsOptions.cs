@@ -141,4 +141,15 @@ public sealed class DurableAgentsOptions
     {
         return this._agentTimeToLive.TryGetValue(agentName, out TimeSpan? ttl) ? ttl : this.DefaultTimeToLive;
     }
+
+    /// <summary>
+    /// Determines whether an agent with the specified name is registered.
+    /// </summary>
+    /// <param name="agentName">The name of the agent to locate. Cannot be null.</param>
+    /// <returns>true if an agent with the specified name is registered; otherwise, false.</returns>
+    internal bool ContainsAgent(string agentName)
+    {
+        ArgumentNullException.ThrowIfNull(agentName);
+        return this._agentFactories.ContainsKey(agentName);
+    }
 }
