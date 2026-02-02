@@ -42,10 +42,10 @@ This ADR addresses the following issues from the parent issue [#3575](https://gi
 | Issue | Title | How Addressed |
 |-------|-------|---------------|
 | [#3587](https://github.com/microsoft/agent-framework/issues/3587) | Rename AgentThread to AgentSession | ✅ `AgentThread` → `AgentSession` (clean break, no alias). See [§7 Renaming](#7-renaming-thread--session). |
-| [#3588](https://github.com/microsoft/agent-framework/issues/3588) | Add get_new_session, get_session_by_id methods | ✅ `agent.get_new_session()` creates session with resolved middleware pipeline. `agent.restore_session(state)` restores from serialized state. See [§8 Serialization](#8-session-serializationdeserialization). |
-| [#3589](https://github.com/microsoft/agent-framework/issues/3589) | Move serialize method into the agent | ✅ `session.serialize()` captures state, but `agent.restore_session()` handles restoration (agent owns middleware config). See [§8 Serialization](#8-session-serializationdeserialization). |
+| [#3588](https://github.com/microsoft/agent-framework/issues/3588) | Add get_new_session, get_session_by_id methods | ✅ `agent.create_session()` (no params) and `agent.get_session_by_id(id)`. See [§9 Session Management Methods](#9-session-management-methods). |
+| [#3589](https://github.com/microsoft/agent-framework/issues/3589) | Move serialize method into the agent | ✅ `agent.serialize_session(session)` and `agent.restore_session(state)`. Agent handles all serialization. See [§8 Serialization](#8-session-serializationdeserialization). |
 | [#3590](https://github.com/microsoft/agent-framework/issues/3590) | Design orthogonal ChatMessageStore for service vs local | ✅ `StorageContextMiddleware` works orthogonally: `service_session_id` presence triggers smart behavior (don't load if service manages storage). Multiple storage middleware allowed. See [§3 Unified Storage](#3-unified-storage-middleware). |
-| [#3601](https://github.com/microsoft/agent-framework/issues/3601) | Rename ChatMessageStore to ChatHistoryProvider | ✅ Superseded: `ChatMessageStore` removed entirely. Replaced by `StorageContextMiddleware` (e.g., `InMemoryStorageMiddleware`). The middleware pattern is more flexible than a "provider" rename. |
+| [#3601](https://github.com/microsoft/agent-framework/issues/3601) | Rename ChatMessageStore to ChatHistoryProvider | 🔒 **Closed** - Superseded by this ADR. `ChatMessageStore` removed entirely, replaced by `StorageContextMiddleware`. |
 
 ## Current State Analysis
 
@@ -131,7 +131,8 @@ The following key decisions shape the ContextMiddleware design:
 | 10 | **Tool Attribution** | `add_tools()` automatically sets `tool.metadata["context_source"] = source_id`. |
 | 11 | **Clean Break** | Remove `AgentThread`, `ContextProvider`, `ChatMessageStore` completely (preview, no compatibility shims). |
 | 12 | **Middleware Ordering** | User-defined order; storage sees prior middleware (pre-processing) or all middleware (post-processing). |
-| 13 | **Session Serialization via Agent** | `session.serialize()` captures middleware state; `agent.restore_session()` reconstructs pipeline. Each middleware implements optional `serialize()`/`restore()`. |
+| 13 | **Agent-owned Serialization** | `agent.serialize_session(session)` and `agent.restore_session(state)`. Agent handles all serialization. |
+| 14 | **Session Management Methods** | `agent.create_session()` (no required params) and `agent.get_session_by_id(id)` for clear lifecycle management. |
 
 ## Considered Options
 
@@ -209,7 +210,7 @@ agent = ChatAgent(
 )
 
 # Session holds the resolved pipeline
-session = agent.get_new_session()
+session = agent.create_session()
 ```
 
 **Comparison to Current:**
@@ -285,7 +286,7 @@ Zero-config works out of the box:
 ```python
 # No middleware configured - still gets conversation history!
 agent = ChatAgent(chat_client=client, name="assistant")
-session = agent.get_new_session()
+session = agent.create_session()
 response = await agent.run("Hello!", session=session)
 response = await agent.run("What did I say?", session=session)  # Remembers!
 ```
@@ -329,7 +330,7 @@ agent = ChatAgent(
 
 #### 8. Session Serialization/Deserialization
 
-Sessions need to be serializable for persistence across process restarts. Serialization happens through **agent methods** (not directly on session) because the agent holds the middleware configuration needed to reconstruct the pipeline.
+Sessions need to be serializable for persistence across process restarts. Serialization happens through **agent methods** because the agent holds the middleware configuration needed to reconstruct the pipeline.
 
 ```python
 class ContextMiddleware(ABC):
@@ -365,27 +366,33 @@ class InMemoryStorageMiddleware(StorageContextMiddleware):
         self._messages = [ChatMessage.from_dict(m) for m in state.get("messages", [])]
 
 
-class AgentSession:
-    """Session serialization delegates to middleware."""
+class ChatAgent:
+    """Agent handles all session serialization."""
     
-    async def serialize(self) -> dict[str, Any]:
-        """Serialize session state including all middleware state."""
+    async def serialize_session(self, session: AgentSession) -> dict[str, Any]:
+        """Serialize a session's state for persistence.
+        
+        The agent handles serialization because it understands the middleware
+        configuration and can coordinate state capture across all middleware.
+        
+        Args:
+            session: The session to serialize
+            
+        Returns:
+            Serialized state that can be persisted (JSON-compatible dict)
+        """
         middleware_states: dict[str, Any] = {}
-        if self._context_pipeline:
-            for middleware in self._context_pipeline:
+        if session.context_pipeline:
+            for middleware in session.context_pipeline:
                 state = await middleware.serialize()
                 if state is not None:
                     middleware_states[middleware.source_id] = state
         
         return {
-            "session_id": self._session_id,
-            "service_session_id": self._service_session_id,
+            "session_id": session.session_id,
+            "service_session_id": session.service_session_id,
             "middleware_states": middleware_states,
         }
-
-
-class ChatAgent:
-    """Agent handles session restore because it owns middleware config."""
     
     async def restore_session(self, serialized: dict[str, Any]) -> AgentSession:
         """Restore a session from serialized state.
@@ -404,7 +411,7 @@ class ChatAgent:
         middleware_states = serialized.get("middleware_states", {})
         
         # Create fresh session with new pipeline
-        session = self.get_new_session(
+        session = self.create_session(
             session_id=session_id,
             service_session_id=service_session_id,
         )
@@ -421,7 +428,7 @@ class ChatAgent:
 **Usage:**
 ```python
 # Save session
-state = await session.serialize()
+state = await agent.serialize_session(session)
 json_str = json.dumps(state)  # Or store in database, Redis, etc.
 
 # Later: restore session
@@ -433,19 +440,95 @@ response = await agent.run("What did we talk about?", session=session)
 ```
 
 **Key Points:**
+- `agent.serialize_session(session)` - agent handles serialization
+- `agent.restore_session(state)` - agent handles restoration
+- Each middleware implements optional `serialize()` and `restore()` methods
 - `serialize()` returns `Any` - typically dict for JSON, but could be bytes, protobuf, etc.
-- Each middleware decides what state to persist (messages, counters, embeddings, etc.)
 - Stateless middleware returns `None` from `serialize()` (skipped in output)
-- Agent reconstructs pipeline from its config, then restores state by `source_id`
 - `source_id` acts as the key to match serialized state to middleware instances
 
 **Comparison to Current:**
 | Aspect | AgentThread (Current) | AgentSession (New) |
 |--------|----------------------|-------------------|
-| Serialization | `thread.serialize()` → dict with messages | `session.serialize()` → dict with middleware states |
+| Serialization | `thread.serialize()` | `agent.serialize_session(session)` |
 | Deserialization | `AgentThread.deserialize(state, message_store=...)` | `agent.restore_session(state)` |
 | What's saved | Just messages | Each middleware's custom state |
-| Restore location | Class method on AgentThread | Instance method on Agent |
+| Owner | Thread class | Agent instance |
+
+#### 9. Session Management Methods
+
+The agent provides clear methods for session lifecycle management:
+
+```python
+class ChatAgent:
+    def create_session(
+        self,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
+    ) -> AgentSession:
+        """Create a new session with a fresh middleware pipeline.
+        
+        This is the primary way to create sessions. Middleware factories
+        are called with the session_id to create session-specific instances.
+        
+        Args:
+            session_id: Optional session ID (generated if not provided)
+            service_session_id: Optional service-managed session ID
+            
+        Returns:
+            New AgentSession with resolved middleware pipeline
+        """
+        resolved_session_id = session_id or str(uuid.uuid4())
+        
+        pipeline = None
+        if self._context_middleware:
+            pipeline = ContextMiddlewarePipeline.from_config(
+                self._context_middleware,
+                session_id=resolved_session_id,
+            )
+        
+        return AgentSession(
+            session_id=resolved_session_id,
+            service_session_id=service_session_id,
+            context_pipeline=pipeline,
+        )
+    
+    def get_session_by_id(self, session_id: str) -> AgentSession:
+        """Get a session by ID with a fresh middleware pipeline.
+        
+        Use this when you have a session ID but no persisted state.
+        The middleware pipeline is freshly created (no state restored).
+        
+        For restoring a session with state, use restore_session() instead.
+        
+        Args:
+            session_id: The session ID to use
+            
+        Returns:
+            AgentSession with the specified ID and fresh middleware
+        """
+        return self.create_session(session_id=session_id)
+```
+
+**Usage:**
+```python
+# Create a brand new session
+session = agent.create_session()
+
+# Create session with specific ID (e.g., from external system)
+session = agent.create_session(session_id="user-123-session-456")
+
+# Create session for service-managed storage
+session = agent.create_session(service_session_id="thread_abc123")
+
+# Get session by ID (fresh pipeline, no state)
+session = agent.get_session_by_id("existing-session-id")
+
+# Restore session with full state
+state = load_from_database(session_id)
+session = await agent.restore_session(state)
+```
 
 ### Migration Impact
 
@@ -497,7 +580,7 @@ agent = ChatAgent(
         RAGMiddleware("rag"),
     ]
 )
-session = agent.get_new_session()
+session = agent.create_session()
 response = await agent.run("Hello", session=session)
 ```
 
@@ -1057,7 +1140,7 @@ class AgentSession:
     AgentSession manages the conversation state and owns a ContextMiddlewarePipeline
     that processes context before each invocation and handles responses after.
 
-    Note: The session is created by calling agent.get_new_session(), which constructs
+    Note: The session is created by calling agent.create_session(), which constructs
     the pipeline from the agent's context_middleware sequence, resolving any factories.
 
     Attributes:
@@ -1075,7 +1158,7 @@ class AgentSession:
     ):
         """Initialize the session.
 
-        Note: Prefer using agent.get_new_session() instead of direct construction.
+        Note: Prefer using agent.create_session() instead of direct construction.
 
         Default storage behavior (applied at runtime, not init):
         - If service_session_id is set: service handles storage, no default added
@@ -1208,7 +1291,7 @@ class ChatAgent:
         self._context_middleware = list(context_middleware or [])
         # ... other init
 
-    def get_new_session(
+    def create_session(
         self,
         *,
         session_id: str | None = None,
@@ -1262,7 +1345,7 @@ agent = ChatAgent(
 )
 
 # Create session - automatically gets InMemoryStorageMiddleware on first run
-session = agent.get_new_session()
+session = agent.create_session()
 response = await agent.run("Hello, my name is Alice!", session=session)
 
 # Conversation history is preserved automatically
@@ -1270,13 +1353,13 @@ response = await agent.run("What's my name?", session=session)
 # Agent remembers: "Your name is Alice!"
 
 # With service-managed session - no default storage added (service handles it)
-service_session = agent.get_new_session()
+service_session = agent.create_session()
 
 # With store=True in options - user expects service storage, no default added
 response = await agent.run("Hello!", session=session, options={"store": True})
 
 # User can manually add middleware to session before first run
-session = agent.get_new_session()
+session = agent.create_session()
 session.context_pipeline = ContextMiddlewarePipeline([
     MyCustomMiddleware(source_id="custom")
 ])
@@ -1299,7 +1382,7 @@ agent = ChatAgent(
 )
 
 # Create session and chat
-session = agent.get_new_session()
+session = agent.create_session()
 response = await agent.run("Hello!", session=session)
 
 # Messages are automatically stored and loaded on next invocation
@@ -1348,8 +1431,8 @@ agent = ChatAgent(
 )
 
 # Each session gets a fresh SessionSpecificMiddleware instance
-session1 = agent.get_new_session()
-session2 = agent.get_new_session()
+session1 = agent.create_session()
+session2 = agent.create_session()
 # session1 and session2 have independent invocation_count
 ```
 
@@ -1539,7 +1622,7 @@ agent = ChatAgent(
     ]
 )
 
-session = agent.get_new_session()
+session = agent.create_session()
 
 # Normal run - loads and stores messages
 response = await agent.run("Hello!", session=session)
@@ -1796,7 +1879,7 @@ class StorageWithLogging(StorageContextMiddleware):
 #### Phase 2: AgentSession Implementation
 - [ ] Create `AgentSession` class with `context_pipeline` attribute
 - [ ] Add `context_middleware: Sequence[ContextMiddlewareConfig]` parameter to `BaseAgent` and `ChatAgent`
-- [ ] Implement `get_new_session()` that resolves factories and creates pipeline
+- [ ] Implement `create_session()` that resolves factories and creates pipeline
 - [ ] Wire up context pipeline execution in agent invocation flow
 - [ ] Implement `AgentSession.serialize()` to capture middleware states
 - [ ] Implement `Agent.restore_session()` to reconstruct session from serialized state
