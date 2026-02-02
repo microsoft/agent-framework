@@ -42,16 +42,14 @@ public sealed class A2AAgentTests : IDisposable
         const string TestId = "test-id";
         const string TestName = "test-name";
         const string TestDescription = "test-description";
-        const string TestDisplayName = "test-display-name";
 
         // Act
-        var agent = new A2AAgent(this._a2aClient, TestId, TestName, TestDescription, TestDisplayName);
+        var agent = new A2AAgent(this._a2aClient, TestId, TestName, TestDescription);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
         Assert.Equal(TestName, agent.Name);
         Assert.Equal(TestDescription, agent.Description);
-        Assert.Equal(TestDisplayName, agent.DisplayName);
     }
 
     [Fact]
@@ -70,7 +68,6 @@ public sealed class A2AAgentTests : IDisposable
         Assert.NotEmpty(agent.Id);
         Assert.Null(agent.Name);
         Assert.Null(agent.Description);
-        Assert.Equal(agent.Id, agent.DisplayName);
     }
 
     [Fact]
@@ -132,7 +129,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_WithNewThread_UpdatesThreadConversationIdAsync()
+    public async Task RunAsync_WithNewSession_UpdatesSessionConversationIdAsync()
     {
         // Arrange
         this._handler.ResponseToReturn = new AgentMessage
@@ -151,19 +148,19 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var thread = this._agent.GetNewThread();
+        var session = await this._agent.GetNewSessionAsync();
 
         // Act
-        await this._agent.RunAsync(inputMessages, thread);
+        await this._agent.RunAsync(inputMessages, session);
 
         // Assert
-        Assert.IsType<A2AAgentThread>(thread);
-        var a2aThread = (A2AAgentThread)thread;
-        Assert.Equal("new-context-id", a2aThread.ContextId);
+        Assert.IsType<A2AAgentSession>(session);
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal("new-context-id", a2aSession.ContextId);
     }
 
     [Fact]
-    public async Task RunAsync_WithExistingThread_SetConversationIdToMessageAsync()
+    public async Task RunAsync_WithExistingSession_SetConversationIdToMessageAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -171,12 +168,12 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var thread = this._agent.GetNewThread();
-        var a2aThread = (A2AAgentThread)thread;
-        a2aThread.ContextId = "existing-context-id";
+        var session = await this._agent.GetNewSessionAsync();
+        var a2aSession = (A2AAgentSession)session;
+        a2aSession.ContextId = "existing-context-id";
 
         // Act
-        await this._agent.RunAsync(inputMessages, thread);
+        await this._agent.RunAsync(inputMessages, session);
 
         // Assert
         var message = this._handler.CapturedMessageSendParams?.Message;
@@ -185,7 +182,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_WithThreadHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
+    public async Task RunAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -204,16 +201,16 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "different-context"
         };
 
-        var thread = this._agent.GetNewThread();
-        var a2aThread = (A2AAgentThread)thread;
-        a2aThread.ContextId = "existing-context-id";
+        var session = await this._agent.GetNewSessionAsync();
+        var a2aSession = (A2AAgentSession)session;
+        a2aSession.ContextId = "existing-context-id";
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, thread));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, session));
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentRunResponseUpdatesAsync()
+    public async Task RunStreamingAsync_WithValidUserMessage_YieldsAgentResponseUpdatesAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -230,7 +227,7 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         // Act
-        var updates = new List<AgentRunResponseUpdate>();
+        var updates = new List<AgentResponseUpdate>();
         await foreach (var update in this._agent.RunStreamingAsync(inputMessages))
         {
             updates.Add(update);
@@ -259,7 +256,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithThread_UpdatesThreadConversationIdAsync()
+    public async Task RunStreamingAsync_WithSession_UpdatesSessionConversationIdAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -275,21 +272,21 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "new-stream-context"
         };
 
-        var thread = this._agent.GetNewThread();
+        var session = await this._agent.GetNewSessionAsync();
 
         // Act
-        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, session))
         {
             // Just iterate through to trigger the logic
         }
 
         // Assert
-        var a2aThread = (A2AAgentThread)thread;
-        Assert.Equal("new-stream-context", a2aThread.ContextId);
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal("new-stream-context", a2aSession.ContextId);
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithExistingThread_SetConversationIdToMessageAsync()
+    public async Task RunStreamingAsync_WithExistingSession_SetConversationIdToMessageAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -299,12 +296,12 @@ public sealed class A2AAgentTests : IDisposable
 
         this._handler.StreamingResponseToReturn = new AgentMessage();
 
-        var thread = this._agent.GetNewThread();
-        var a2aThread = (A2AAgentThread)thread;
-        a2aThread.ContextId = "existing-context-id";
+        var session = await this._agent.GetNewSessionAsync();
+        var a2aSession = (A2AAgentSession)session;
+        a2aSession.ContextId = "existing-context-id";
 
         // Act
-        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, thread))
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, session))
         {
             // Just iterate through to trigger the logic
         }
@@ -316,12 +313,12 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithThreadHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
+    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var thread = this._agent.GetNewThread();
-        var a2aThread = (A2AAgentThread)thread;
-        a2aThread.ContextId = "existing-context-id";
+        var session = await this._agent.GetNewSessionAsync();
+        var a2aSession = (A2AAgentSession)session;
+        a2aSession.ContextId = "existing-context-id";
 
         var inputMessages = new List<ChatMessage>
         {
@@ -339,7 +336,7 @@ public sealed class A2AAgentTests : IDisposable
         // Act
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var update in this._agent.RunStreamingAsync(inputMessages, thread))
+            await foreach (var update in this._agent.RunStreamingAsync(inputMessages, session))
             {
             }
         });
@@ -367,6 +364,7 @@ public sealed class A2AAgentTests : IDisposable
         // Act & Assert
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages))
         {
+            // Just iterate through to trigger the logic
         }
     }
 
@@ -396,14 +394,778 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("https://example.com/file.pdf", ((FilePart)message.Parts[1]).File.Uri?.ToString());
     }
 
+    [Fact]
+    public async Task RunAsync_WithContinuationTokenAndMessages_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithContinuationToken_CallsGetTaskAsyncAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123"
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act
+        await this._agent.RunAsync([], options: options);
+
+        // Assert
+        Assert.Equal("tasks/get", this._handler.CapturedJsonRpcRequest?.Method);
+        Assert.Equal("task-123", this._handler.CapturedTaskIdParams?.Id);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithTaskInSessionAndMessage_AddTaskAsReferencesToMessageAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response to task" }]
+        };
+
+        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        session.TaskId = "task-123";
+
+        var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
+
+        // Act
+        await this._agent.RunAsync(inputMessage, session);
+
+        // Assert
+        var message = this._handler.CapturedMessageSendParams?.Message;
+        Assert.Null(message?.TaskId);
+        Assert.NotNull(message?.ReferenceTaskIds);
+        Assert.Contains("task-123", message.ReferenceTaskIds);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAgentTask_UpdatesSessionTaskIdAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-456",
+            ContextId = "context-789",
+            Status = new() { State = TaskState.Submitted }
+        };
+
+        var session = await this._agent.GetNewSessionAsync();
+
+        // Act
+        await this._agent.RunAsync("Start a task", session);
+
+        // Assert
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal("task-456", a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAgentTaskResponse_ReturnsTaskResponseCorrectlyAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-789",
+            ContextId = "context-456",
+            Status = new() { State = TaskState.Submitted },
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                { "key1", JsonSerializer.SerializeToElement("value1") },
+                { "count", JsonSerializer.SerializeToElement(42) }
+            }
+        };
+
+        var session = await this._agent.GetNewSessionAsync();
+
+        // Act
+        var result = await this._agent.RunAsync("Start a long-running task", session);
+
+        // Assert - verify task is converted correctly
+        Assert.NotNull(result);
+        Assert.Equal(this._agent.Id, result.AgentId);
+        Assert.Equal("task-789", result.ResponseId);
+
+        Assert.NotNull(result.RawRepresentation);
+        Assert.IsType<AgentTask>(result.RawRepresentation);
+        Assert.Equal("task-789", ((AgentTask)result.RawRepresentation).Id);
+
+        // Assert - verify continuation token is set for submitted task
+        Assert.NotNull(result.ContinuationToken);
+        Assert.IsType<A2AContinuationToken>(result.ContinuationToken);
+        Assert.Equal("task-789", ((A2AContinuationToken)result.ContinuationToken).TaskId);
+
+        // Assert - verify session is updated with context and task IDs
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal("context-456", a2aSession.ContextId);
+        Assert.Equal("task-789", a2aSession.TaskId);
+
+        // Assert - verify metadata is preserved
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.NotNull(result.AdditionalProperties["key1"]);
+        Assert.Equal("value1", ((JsonElement)result.AdditionalProperties["key1"]!).GetString());
+        Assert.NotNull(result.AdditionalProperties["count"]);
+        Assert.Equal(42, ((JsonElement)result.AdditionalProperties["count"]!).GetInt32());
+    }
+
+    [Theory]
+    [InlineData(TaskState.Submitted)]
+    [InlineData(TaskState.Working)]
+    [InlineData(TaskState.Completed)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    public async Task RunAsync_WithVariousTaskStates_ReturnsCorrectTokenAsync(TaskState taskState)
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123",
+            Status = new() { State = taskState }
+        };
+
+        // Act
+        var result = await this._agent.RunAsync("Test message");
+
+        // Assert
+        if (taskState is TaskState.Submitted or TaskState.Working)
+        {
+            Assert.NotNull(result.ContinuationToken);
+        }
+        else
+        {
+            Assert.Null(result.ContinuationToken);
+        }
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithContinuationTokenAndMessages_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+            {
+                // Just iterate through to trigger the exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskInSessionAndMessage_AddTaskAsReferencesToMessageAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response to task" }]
+        };
+
+        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        session.TaskId = "task-123";
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync("Please make the background transparent", session))
+        {
+            // Just iterate through to trigger the logic
+        }
+
+        // Assert
+        var message = this._handler.CapturedMessageSendParams?.Message;
+        Assert.Null(message?.TaskId);
+        Assert.NotNull(message?.ReferenceTaskIds);
+        Assert.Contains("task-123", message.ReferenceTaskIds);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAgentTask_UpdatesSessionTaskIdAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentTask
+        {
+            Id = "task-456",
+            ContextId = "context-789",
+            Status = new() { State = TaskState.Submitted }
+        };
+
+        var session = await this._agent.GetNewSessionAsync();
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync("Start a task", session))
+        {
+            // Just iterate through to trigger the logic
+        }
+
+        // Assert
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal("task-456", a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAgentMessage_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string MessageId = "msg-123";
+        const string ContextId = "ctx-456";
+        const string MessageText = "Hello from agent!";
+
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = MessageId,
+            Role = MessageRole.Agent,
+            ContextId = ContextId,
+            Parts =
+            [
+                new TextPart { Text = MessageText }
+            ]
+        };
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Test message"))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(MessageId, update0.MessageId);
+        Assert.Equal(MessageId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Equal(MessageText, update0.Text);
+        Assert.IsType<AgentMessage>(update0.RawRepresentation);
+        Assert.Equal(MessageId, ((AgentMessage)update0.RawRepresentation!).MessageId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAgentTask_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string TaskId = "task-789";
+        const string ContextId = "ctx-012";
+
+        this._handler.StreamingResponseToReturn = new AgentTask
+        {
+            Id = TaskId,
+            ContextId = ContextId,
+            Status = new() { State = TaskState.Submitted },
+            Artifacts = [
+                new()
+                {
+                    ArtifactId = "art-123",
+                    Parts = [new TextPart { Text = "Task artifact content" }]
+                }
+            ]
+        };
+
+        var session = await this._agent.GetNewSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Start long-running task", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded from artifact
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.IsType<AgentTask>(update0.RawRepresentation);
+        Assert.Equal(TaskId, ((AgentTask)update0.RawRepresentation!).Id);
+
+        // Assert - session should be updated with context and task IDs
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, a2aSession.ContextId);
+        Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskStatusUpdateEvent_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string TaskId = "task-status-123";
+        const string ContextId = "ctx-status-456";
+
+        this._handler.StreamingResponseToReturn = new TaskStatusUpdateEvent
+        {
+            TaskId = TaskId,
+            ContextId = ContextId,
+            Status = new() { State = TaskState.Working }
+        };
+
+        var session = await this._agent.GetNewSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Check task status", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
+
+        // Assert - session should be updated with context and task IDs
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, a2aSession.ContextId);
+        Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskArtifactUpdateEvent_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string TaskId = "task-artifact-123";
+        const string ContextId = "ctx-artifact-456";
+        const string ArtifactContent = "Task artifact data";
+
+        this._handler.StreamingResponseToReturn = new TaskArtifactUpdateEvent
+        {
+            TaskId = TaskId,
+            ContextId = ContextId,
+            Artifact = new()
+            {
+                ArtifactId = "artifact-789",
+                Parts = [new TextPart { Text = ArtifactContent }]
+            }
+        };
+
+        var session = await this._agent.GetNewSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Process artifact", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.IsType<TaskArtifactUpdateEvent>(update0.RawRepresentation);
+
+        // Assert - artifact content should be in the update
+        Assert.NotEmpty(update0.Contents);
+        Assert.Equal(ArtifactContent, update0.Text);
+
+        // Assert - session should be updated with context and task IDs
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, a2aSession.ContextId);
+        Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAllowBackgroundResponsesAndNoSession_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { AllowBackgroundResponses = true };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAllowBackgroundResponsesAndNoSession_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { AllowBackgroundResponses = true };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+            {
+                // Just iterate through to trigger the exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAgentMessageResponseMetadata_ReturnsMetadataAsAdditionalPropertiesAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response with metadata" }],
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                { "responseKey1", JsonSerializer.SerializeToElement("responseValue1") },
+                { "responseCount", JsonSerializer.SerializeToElement(99) }
+            }
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Act
+        var result = await this._agent.RunAsync(inputMessages);
+
+        // Assert
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.NotNull(result.AdditionalProperties["responseKey1"]);
+        Assert.Equal("responseValue1", ((JsonElement)result.AdditionalProperties["responseKey1"]!).GetString());
+        Assert.NotNull(result.AdditionalProperties["responseCount"]);
+        Assert.Equal(99, ((JsonElement)result.AdditionalProperties["responseCount"]!).GetInt32());
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAdditionalProperties_PropagatesThemAsMetadataToMessageSendParamsAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = new()
+            {
+                { "key1", "value1" },
+                { "key2", 42 },
+                { "key3", true }
+            }
+        };
+
+        // Act
+        await this._agent.RunAsync(inputMessages, null, options);
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.NotNull(this._handler.CapturedMessageSendParams.Metadata);
+        Assert.Equal("value1", this._handler.CapturedMessageSendParams.Metadata["key1"].GetString());
+        Assert.Equal(42, this._handler.CapturedMessageSendParams.Metadata["key2"].GetInt32());
+        Assert.True(this._handler.CapturedMessageSendParams.Metadata["key3"].GetBoolean());
+    }
+
+    [Fact]
+    public async Task RunAsync_WithNullAdditionalProperties_DoesNotSetMetadataAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = null
+        };
+
+        // Act
+        await this._agent.RunAsync(inputMessages, null, options);
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.Null(this._handler.CapturedMessageSendParams.Metadata);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAdditionalProperties_PropagatesThemAsMetadataToMessageSendParamsAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = "stream-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Streaming response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test streaming message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = new()
+            {
+                { "streamKey1", "streamValue1" },
+                { "streamKey2", 100 },
+                { "streamKey3", false }
+            }
+        };
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+        {
+        }
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.NotNull(this._handler.CapturedMessageSendParams.Metadata);
+        Assert.Equal("streamValue1", this._handler.CapturedMessageSendParams.Metadata["streamKey1"].GetString());
+        Assert.Equal(100, this._handler.CapturedMessageSendParams.Metadata["streamKey2"].GetInt32());
+        Assert.False(this._handler.CapturedMessageSendParams.Metadata["streamKey3"].GetBoolean());
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithNullAdditionalProperties_DoesNotSetMetadataAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = "stream-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Streaming response" }]
+        };
+
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test streaming message")
+        };
+
+        var options = new AgentRunOptions
+        {
+            AdditionalProperties = null
+        };
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+        {
+        }
+
+        // Assert
+        Assert.NotNull(this._handler.CapturedMessageSendParams);
+        Assert.Null(this._handler.CapturedMessageSendParams.Metadata);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithInvalidSessionType_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        // Create a session from a different agent type
+        var invalidSession = new CustomAgentSession();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(invalidSession));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithInvalidSessionType_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Create a session from a different agent type
+        var invalidSession = new CustomAgentSession();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await this._agent.RunStreamingAsync(inputMessages, invalidSession).ToListAsync());
+    }
+
+    #region GetService Method Tests
+
+    /// <summary>
+    /// Verify that GetService returns A2AClient when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingA2AClient_ReturnsA2AClient()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(A2AClient));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._a2aClient, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns AIAgentMetadata when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_ReturnsMetadata()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<AIAgentMetadata>(result);
+        var metadata = (AIAgentMetadata)result;
+        Assert.Equal("a2a", metadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for unknown service types.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceType_ReturnsNull()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(string));
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService with serviceKey parameter returns null for unknown service types.
+    /// </summary>
+    [Fact]
+    public void GetService_WithServiceKey_ReturnsNull()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(string), "test-key");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting A2AAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingA2AAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(A2AAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting AIAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(AIAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first but continues to derived logic when base returns null.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingA2AClientWithServiceKey_CallsBaseFirstThenDerivedLogic()
+    {
+        // Arrange & Act - Request A2AClient with a service key (base.GetService will return null due to serviceKey)
+        var result = this._agent.GetService(typeof(A2AClient), "some-key");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._a2aClient, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns consistent AIAgentMetadata across multiple calls.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_ReturnsConsistentMetadata()
+    {
+        // Arrange & Act
+        var result1 = this._agent.GetService(typeof(AIAgentMetadata));
+        var result2 = this._agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result1);
+        Assert.NotNull(result2);
+        Assert.Same(result1, result2); // Should return the same instance
+        Assert.IsType<AIAgentMetadata>(result1);
+        var metadata = (AIAgentMetadata)result1;
+        Assert.Equal("a2a", metadata.ProviderName);
+    }
+
+    #endregion
+
     public void Dispose()
     {
         this._handler.Dispose();
         this._httpClient.Dispose();
     }
+
+    /// <summary>
+    /// Custom agent session class for testing invalid session type scenario.
+    /// </summary>
+    private sealed class CustomAgentSession : AgentSession;
+
     internal sealed class A2AClientHttpMessageHandlerStub : HttpMessageHandler
     {
+        public JsonRpcRequest? CapturedJsonRpcRequest { get; set; }
+
         public MessageSendParams? CapturedMessageSendParams { get; set; }
+
+        public TaskIdParams? CapturedTaskIdParams { get; set; }
 
         public A2AEvent? ResponseToReturn { get; set; }
 
@@ -416,9 +1178,19 @@ public sealed class A2AAgentTests : IDisposable
             var content = await request.Content!.ReadAsStringAsync();
 #pragma warning restore CA2016
 
-            var jsonRpcRequest = JsonSerializer.Deserialize<JsonRpcRequest>(content)!;
+            this.CapturedJsonRpcRequest = JsonSerializer.Deserialize<JsonRpcRequest>(content);
 
-            this.CapturedMessageSendParams = jsonRpcRequest.Params?.Deserialize<MessageSendParams>();
+            try
+            {
+                this.CapturedMessageSendParams = this.CapturedJsonRpcRequest?.Params?.Deserialize<MessageSendParams>();
+            }
+            catch { /* Ignore deserialization errors for non-MessageSendParams requests */ }
+
+            try
+            {
+                this.CapturedTaskIdParams = this.CapturedJsonRpcRequest?.Params?.Deserialize<TaskIdParams>();
+            }
+            catch { /* Ignore deserialization errors for non-TaskIdParams requests */ }
 
             // Return the pre-configured non-streaming response
             if (this.ResponseToReturn is not null)

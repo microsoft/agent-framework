@@ -39,7 +39,7 @@ public class InProcessExecutionTests
         run.OutgoingEvents.Should().NotBeEmpty("workflow should produce events during execution");
 
         // Check that we have an agent execution event
-        var agentEvents = run.OutgoingEvents.OfType<AgentRunUpdateEvent>().ToList();
+        var agentEvents = run.OutgoingEvents.OfType<AgentResponseUpdateEvent>().ToList();
         agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
 
         // Check that we have output events
@@ -66,7 +66,7 @@ public class InProcessExecutionTests
         messageSent.Should().BeTrue("TurnToken should be accepted");
 
         // Collect events
-        List<WorkflowEvent> events = new();
+        List<WorkflowEvent> events = [];
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             events.Add(evt);
@@ -79,7 +79,7 @@ public class InProcessExecutionTests
         events.Should().NotBeEmpty("workflow should produce events during execution");
 
         // Check that we have agent execution events
-        var agentEvents = events.OfType<AgentRunUpdateEvent>().ToList();
+        var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
         agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
 
         // Check that we have output events
@@ -111,7 +111,7 @@ public class InProcessExecutionTests
         await using StreamingRun streamingRun = await InProcessExecution.StreamAsync(workflow2, new List<ChatMessage> { inputMessage });
         await streamingRun.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
-        List<WorkflowEvent> streamingEvents = new();
+        List<WorkflowEvent> streamingEvents = [];
         await foreach (WorkflowEvent evt in streamingRun.WatchStreamAsync())
         {
             streamingEvents.Add(evt);
@@ -125,8 +125,8 @@ public class InProcessExecutionTests
         nonStreamingEvents.Should().NotBeEmpty("non-streaming version should also produce events");
 
         // Both should have similar types of events
-        var streamingAgentEvents = streamingEvents.OfType<AgentRunUpdateEvent>().Count();
-        var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentRunUpdateEvent>().Count();
+        var streamingAgentEvents = streamingEvents.OfType<AgentResponseUpdateEvent>().Count();
+        var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentResponseUpdateEvent>().Count();
 
         nonStreamingAgentEvents.Should().Be(streamingAgentEvents,
             "both versions should produce the same number of agent events");
@@ -137,34 +137,32 @@ public class InProcessExecutionTests
     /// </summary>
     private sealed class SimpleTestAgent : AIAgent
     {
-        private readonly string _name;
-
         public SimpleTestAgent(string name)
         {
-            this._name = name;
+            this.Name = name;
         }
 
-        public override string Name => this._name;
+        public override string Name { get; }
 
-        public override AgentThread GetNewThread() => new SimpleTestAgentThread();
+        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) => new SimpleTestAgentThread();
+        public override ValueTask<AgentSession> DeserializeSessionAsync(System.Text.Json.JsonElement serializedSession,
+            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
         {
             var lastMessage = messages.LastOrDefault();
             var responseMessage = new ChatMessage(ChatRole.Assistant, $"Echo: {lastMessage?.Text ?? "no message"}");
-            return Task.FromResult(new AgentRunResponse(responseMessage));
+            return Task.FromResult(new AgentResponse(responseMessage));
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
@@ -176,25 +174,23 @@ public class InProcessExecutionTests
             string messageId = Guid.NewGuid().ToString("N");
 
             // Yield role first
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this._name)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name)
             {
-                AuthorName = this._name,
+                AuthorName = this.Name,
                 MessageId = messageId
             };
 
             // Then yield content
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, responseText)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, responseText)
             {
-                AuthorName = this._name,
+                AuthorName = this.Name,
                 MessageId = messageId
             };
         }
     }
 
     /// <summary>
-    /// Simple thread implementation for SimpleTestAgent.
+    /// Simple session implementation for SimpleTestAgent.
     /// </summary>
-    private sealed class SimpleTestAgentThread : InMemoryAgentThread
-    {
-    }
+    private sealed class SimpleTestAgentSession : InMemoryAgentSession;
 }

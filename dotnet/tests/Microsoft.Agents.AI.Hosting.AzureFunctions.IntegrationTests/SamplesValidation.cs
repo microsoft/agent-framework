@@ -19,6 +19,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
     private const string DtsPort = "8080";
+    private const string RedisPort = "6379";
 
     private static readonly string s_dotnetTargetFramework = GetTargetFramework();
     private static readonly HttpClient s_sharedHttpClient = new();
@@ -31,7 +32,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "AzureFunctions"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "AzureFunctions"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
@@ -72,12 +73,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             Assert.NotEmpty(responseText);
             this._outputHelper.WriteLine($"Agent run response: {responseText}");
 
-            // The response headers should include the agent thread ID, which can be used to continue the conversation.
-            string? threadId = response.Headers.GetValues("x-ms-thread-id")?.FirstOrDefault();
-            Assert.NotNull(threadId);
+            // The response headers should include the agent session ID, which can be used to continue the conversation.
+            string? sessionId = response.Headers.GetValues("x-ms-thread-id")?.FirstOrDefault();
+            Assert.NotNull(sessionId);
+            Assert.NotEmpty(sessionId);
 
-            this._outputHelper.WriteLine($"Agent thread ID: {threadId}");
-            Assert.StartsWith("@dafx-joker@", threadId);
+            this._outputHelper.WriteLine($"Agent session ID: {sessionId}");
 
             // Wait for up to 30 seconds to see if the agent response is available in the logs
             await this.WaitForConditionAsync(
@@ -86,7 +87,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     lock (logs)
                     {
                         bool exists = logs.Any(
-                            log => log.Message.Contains("Response:") && log.Message.Contains(threadId));
+                            log => log.Message.Contains("Response:") && log.Message.Contains(sessionId));
                         return Task.FromResult(exists);
                     }
                 },
@@ -111,7 +112,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 startResponse.IsSuccessStatusCode,
                 $"Start orchestration failed with status: {startResponse.StatusCode}");
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
-            JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+            JsonElement startResult = JsonElement.Parse(startResponseText);
 
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
             Uri statusUri = new(statusUriElement.GetString()!);
@@ -126,7 +127,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 $"Status check failed with status: {statusResponse.StatusCode}");
 
             string statusText = await statusResponse.Content.ReadAsStringAsync();
-            JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+            JsonElement statusResult = JsonElement.Parse(statusText);
 
             Assert.Equal("Completed", statusResult.GetProperty("runtimeStatus").GetString());
             Assert.True(statusResult.TryGetProperty("output", out JsonElement outputElement));
@@ -154,7 +155,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
             Assert.True(startResponse.IsSuccessStatusCode, $"Start orchestration failed with status: {startResponse.StatusCode}");
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
-            JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+            JsonElement startResult = JsonElement.Parse(startResponseText);
 
             Assert.True(startResult.TryGetProperty("instanceId", out JsonElement instanceIdElement));
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
@@ -169,7 +170,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             Assert.True(statusResponse.IsSuccessStatusCode, $"Status check failed with status: {statusResponse.StatusCode}");
 
             string statusText = await statusResponse.Content.ReadAsStringAsync();
-            JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+            JsonElement statusResult = JsonElement.Parse(statusText);
 
             Assert.Equal("Completed", statusResult.GetProperty("runtimeStatus").GetString());
             Assert.True(statusResult.TryGetProperty("output", out JsonElement outputElement));
@@ -233,7 +234,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 startResponse.IsSuccessStatusCode,
                 $"Start HITL orchestration failed with status: {startResponse.StatusCode}");
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
-            JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+            JsonElement startResult = JsonElement.Parse(startResponseText);
 
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
             Uri statusUri = new(statusUriElement.GetString()!);
@@ -250,7 +251,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             string statusText = await statusResponse.Content.ReadAsStringAsync();
             this._outputHelper.WriteLine($"HITL orchestration status text: {statusText}");
 
-            JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+            JsonElement statusResult = JsonElement.Parse(statusText);
 
             // The orchestration should complete with a failed status due to timeout
             Assert.Equal("Failed", statusResult.GetProperty("runtimeStatus").GetString());
@@ -285,11 +286,11 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
             this._outputHelper.WriteLine($"Agent response: {startResponseText}");
 
-            // The response should be deserializable as an AgentRunResponse object and have a valid thread ID
+            // The response should be deserializable as an AgentResponse object and have a valid session ID
             startResponse.Headers.TryGetValues("x-ms-thread-id", out IEnumerable<string>? agentIdValues);
-            string? threadId = agentIdValues?.FirstOrDefault();
-            Assert.NotNull(threadId);
-            Assert.StartsWith("@dafx-publisher@", threadId);
+            string? sessionId = agentIdValues?.FirstOrDefault();
+            Assert.NotNull(sessionId);
+            Assert.NotEmpty(sessionId);
 
             // Wait for the orchestration to report that it's waiting for human approval
             await this.WaitForConditionAsync(
@@ -307,7 +308,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 timeout: TimeSpan.FromSeconds(60));
 
             // Approve the content
-            Uri approvalUri = new($"{runAgentUri}?thread_id={threadId}");
+            Uri approvalUri = new($"{runAgentUri}?thread_id={sessionId}");
             using HttpContent approvalContent = new StringContent("Approve the content", Encoding.UTF8, "text/plain");
             using HttpResponseMessage approvalResponse = await s_sharedHttpClient.PostAsync(approvalUri, approvalContent);
             Assert.True(approvalResponse.IsSuccessStatusCode, $"Approve content request failed with status: {approvalResponse.StatusCode}");
@@ -327,7 +328,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 timeout: TimeSpan.FromSeconds(60));
 
             // Verify the final orchestration status by asking the agent for the status
-            Uri statusUri = new($"{runAgentUri}?thread_id={threadId}");
+            Uri statusUri = new($"{runAgentUri}?thread_id={sessionId}");
             await this.WaitForConditionAsync(
                 condition: async () =>
                 {
@@ -392,6 +393,136 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
+    [Fact]
+    public async Task ReliableStreamingSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
+        await this.RunSampleTestAsync(samplePath, async (logs) =>
+        {
+            Uri createUri = new($"http://localhost:{AzureFunctionsPort}/api/agent/create");
+            this._outputHelper.WriteLine($"Starting reliable streaming agent via POST request to {createUri}...");
+
+            // Test the agent endpoint with a simple prompt
+            const string RequestBody = "Plan a 3-day trip to Seattle. Include daily activities.";
+            using HttpContent content = new StringContent(RequestBody, Encoding.UTF8, "text/plain");
+            using HttpRequestMessage request = new(HttpMethod.Post, createUri)
+            {
+                Content = content
+            };
+            request.Headers.Add("Accept", "text/plain");
+
+            using HttpResponseMessage response = await s_sharedHttpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead);
+
+            // The response should be successful
+            Assert.True(response.IsSuccessStatusCode, $"Agent request failed with status: {response.StatusCode}");
+            Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
+
+            // The response headers should include the conversation ID
+            string? conversationId = response.Headers.GetValues("x-conversation-id")?.FirstOrDefault();
+            Assert.NotNull(conversationId);
+            Assert.NotEmpty(conversationId);
+            this._outputHelper.WriteLine($"Agent conversation ID: {conversationId}");
+
+            // Read the streamed response
+            using Stream responseStream = await response.Content.ReadAsStreamAsync();
+            using StreamReader reader = new(responseStream);
+            StringBuilder responseText = new();
+            char[] buffer = new char[1024];
+            int bytesRead;
+
+            // Read for a reasonable amount of time to get some content
+            using CancellationTokenSource readTimeout = new(TimeSpan.FromSeconds(30));
+            try
+            {
+                while (!readTimeout.Token.IsCancellationRequested)
+                {
+                    bytesRead = await reader.ReadAsync(buffer, 0, buffer.Length);
+                    if (bytesRead == 0)
+                    {
+                        // Check if we've received enough content
+                        if (responseText.Length > 50)
+                        {
+                            break;
+                        }
+                        await Task.Delay(100, readTimeout.Token);
+                        continue;
+                    }
+
+                    responseText.Append(buffer, 0, bytesRead);
+                    if (responseText.Length > 200)
+                    {
+                        // We've received enough content to validate
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout is acceptable if we got some content
+            }
+
+            string responseContent = responseText.ToString();
+            Assert.True(responseContent.Length > 0, "Expected to receive some streamed content");
+            this._outputHelper.WriteLine($"Received {responseContent.Length} characters of streamed content");
+
+            // Test resumption by calling the stream endpoint
+            Uri streamUri = new($"http://localhost:{AzureFunctionsPort}/api/agent/stream/{conversationId}");
+            this._outputHelper.WriteLine($"Testing stream resumption via GET request to {streamUri}...");
+
+            using HttpRequestMessage streamRequest = new(HttpMethod.Get, streamUri);
+            streamRequest.Headers.Add("Accept", "text/plain");
+
+            using HttpResponseMessage streamResponse = await s_sharedHttpClient.SendAsync(
+                streamRequest,
+                HttpCompletionOption.ResponseHeadersRead);
+            Assert.True(streamResponse.IsSuccessStatusCode, $"Stream request failed with status: {streamResponse.StatusCode}");
+            Assert.Equal("text/plain", streamResponse.Content.Headers.ContentType?.MediaType);
+
+            // Verify the conversation ID header is present
+            string? resumedConversationId = streamResponse.Headers.GetValues("x-conversation-id")?.FirstOrDefault();
+            Assert.Equal(conversationId, resumedConversationId);
+
+            // Read some content from the resumed stream
+            using Stream resumedStream = await streamResponse.Content.ReadAsStreamAsync();
+            using StreamReader resumedReader = new(resumedStream);
+            StringBuilder resumedText = new();
+
+            using CancellationTokenSource resumedReadTimeout = new(TimeSpan.FromSeconds(10));
+            try
+            {
+                while (!resumedReadTimeout.Token.IsCancellationRequested)
+                {
+                    bytesRead = await resumedReader.ReadAsync(buffer, 0, buffer.Length);
+                    if (bytesRead == 0)
+                    {
+                        if (resumedText.Length > 50)
+                        {
+                            break;
+                        }
+                        await Task.Delay(100, resumedReadTimeout.Token);
+                        continue;
+                    }
+
+                    resumedText.Append(buffer, 0, bytesRead);
+                    if (resumedText.Length > 100)
+                    {
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout is acceptable if we got some content
+            }
+
+            string resumedContent = resumedText.ToString();
+            Assert.True(resumedContent.Length > 0, "Expected to receive some content from resumed stream");
+            this._outputHelper.WriteLine($"Received {resumedContent.Length} characters from resumed stream");
+        });
+    }
+
     private async Task<string> InvokeMcpToolAsync(McpClient mcpClient, string toolName, string query)
     {
         this._outputHelper.WriteLine($"Invoking MCP tool '{toolName}'...");
@@ -423,7 +554,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
         Assert.True(startResponse.IsSuccessStatusCode, $"Start orchestration failed with status: {startResponse.StatusCode}");
         string startResponseText = await startResponse.Content.ReadAsStringAsync();
-        JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+        JsonElement startResult = JsonElement.Parse(startResponseText);
 
         Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
         Uri statusUri = new(statusUriElement.GetString()!);
@@ -436,7 +567,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         Assert.True(statusResponse.IsSuccessStatusCode, $"Status check failed with status: {statusResponse.StatusCode}");
 
         string statusText = await statusResponse.Content.ReadAsStringAsync();
-        JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+        JsonElement statusResult = JsonElement.Parse(statusText);
 
         Assert.Equal("Completed", statusResult.GetProperty("runtimeStatus").GetString());
         Assert.True(statusResult.TryGetProperty("output", out JsonElement outputElement));
@@ -480,6 +611,21 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             await this.WaitForConditionAsync(
                 condition: this.IsDtsEmulatorRunningAsync,
                 message: "DTS emulator is running",
+                timeout: TimeSpan.FromSeconds(30));
+        }
+
+        // Start Redis if it's not already running
+        if (!await this.IsRedisRunningAsync())
+        {
+            await this.StartDockerContainerAsync(
+                containerName: "redis",
+                image: "redis:latest",
+                ports: ["-p", "6379:6379"]);
+
+            // Wait for Redis
+            await this.WaitForConditionAsync(
+                condition: this.IsRedisRunningAsync,
+                message: "Redis is running",
                 timeout: TimeSpan.FromSeconds(30));
         }
     }
@@ -558,6 +704,49 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         catch (HttpRequestException ex)
         {
             this._outputHelper.WriteLine($"DTS emulator is not running: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task<bool> IsRedisRunningAsync()
+    {
+        this._outputHelper.WriteLine($"Checking if Redis is running at localhost:{RedisPort}...");
+
+        try
+        {
+            using CancellationTokenSource timeoutCts = new(TimeSpan.FromSeconds(30));
+            ProcessStartInfo startInfo = new()
+            {
+                FileName = "docker",
+                Arguments = "exec redis redis-cli ping",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using Process process = new() { StartInfo = startInfo };
+            if (!process.Start())
+            {
+                this._outputHelper.WriteLine("Failed to start docker exec command");
+                return false;
+            }
+
+            string output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            await process.WaitForExitAsync(timeoutCts.Token);
+
+            if (process.ExitCode == 0 && output.Contains("PONG", StringComparison.OrdinalIgnoreCase))
+            {
+                this._outputHelper.WriteLine("Redis is running");
+                return true;
+            }
+
+            this._outputHelper.WriteLine($"Redis is not running. Exit code: {process.ExitCode}, Output: {output}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            this._outputHelper.WriteLine($"Redis is not running: {ex.Message}");
             return false;
         }
     }
@@ -646,6 +835,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
             $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
         startInfo.EnvironmentVariables["AzureWebJobsStorage"] = "UseDevelopmentStorage=true";
+        startInfo.EnvironmentVariables["REDIS_CONNECTION_STRING"] = $"localhost:{RedisPort}";
 
         Process process = new() { StartInfo = startInfo };
 
@@ -722,15 +912,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 if (response.IsSuccessStatusCode)
                 {
                     string responseText = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-                    JsonElement result = JsonSerializer.Deserialize<JsonElement>(responseText);
+                    JsonElement result = JsonElement.Parse(responseText);
 
-                    if (result.TryGetProperty("runtimeStatus", out JsonElement statusElement))
+                    if (result.TryGetProperty("runtimeStatus", out JsonElement statusElement) &&
+                        statusElement.GetString() is "Completed" or "Failed" or "Terminated")
                     {
-                        string status = statusElement.GetString()!;
-                        if (status == "Completed" || status == "Failed" || status == "Terminated")
-                        {
-                            return;
-                        }
+                        return;
                     }
                 }
             }

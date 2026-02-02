@@ -56,18 +56,18 @@ public sealed class ScopedContentProcessorTests
 
         var psResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
@@ -76,10 +76,10 @@ public sealed class ScopedContentProcessorTests
 
         var pcResponse = new ProcessContentResponse
         {
-            PolicyActions = new List<DlpActionInfo>
-            {
+            PolicyActions =
+            [
                 new() { Action = DlpAction.BlockAccess }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
@@ -88,7 +88,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
         Assert.True(result.shouldBlock);
@@ -115,18 +115,18 @@ public sealed class ScopedContentProcessorTests
 
         var psResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
@@ -135,10 +135,10 @@ public sealed class ScopedContentProcessorTests
 
         var pcResponse = new ProcessContentResponse
         {
-            PolicyActions = new List<DlpActionInfo>
-            {
+            PolicyActions =
+            [
                 new() { RestrictionAction = RestrictionAction.Block }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
@@ -147,7 +147,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
         Assert.True(result.shouldBlock);
@@ -174,18 +174,18 @@ public sealed class ScopedContentProcessorTests
 
         var psResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
@@ -194,10 +194,10 @@ public sealed class ScopedContentProcessorTests
 
         var pcResponse = new ProcessContentResponse
         {
-            PolicyActions = new List<DlpActionInfo>
-            {
+            PolicyActions =
+            [
                 new() { Action = DlpAction.NotifyUser }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
@@ -206,7 +206,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
         Assert.False(result.shouldBlock);
@@ -229,18 +229,18 @@ public sealed class ScopedContentProcessorTests
 
         var cachedPsResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
-            }
+            ]
         };
 
         this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
@@ -249,7 +249,7 @@ public sealed class ScopedContentProcessorTests
 
         var pcResponse = new ProcessContentResponse
         {
-            PolicyActions = new List<DlpActionInfo>()
+            PolicyActions = []
         };
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
@@ -258,7 +258,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
         this._mockPurviewClient.Verify(x => x.GetProtectionScopesAsync(
@@ -285,18 +285,18 @@ public sealed class ScopedContentProcessorTests
 
         var psResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
@@ -306,7 +306,7 @@ public sealed class ScopedContentProcessorTests
         var pcResponse = new ProcessContentResponse
         {
             ProtectionScopeState = ProtectionScopeState.Modified,
-            PolicyActions = new List<DlpActionInfo>()
+            PolicyActions = []
         };
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
@@ -315,7 +315,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
         this._mockCacheProvider.Verify(x => x.RemoveAsync(
@@ -342,17 +342,17 @@ public sealed class ScopedContentProcessorTests
 
         var psResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-456")
-                    }
+                    ]
                 }
-            }
+            ]
         };
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
@@ -361,7 +361,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
         // Content activities are now queued as background jobs, not called directly
@@ -386,7 +386,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
-            this._processor.ProcessMessagesAsync(messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None));
+            this._processor.ProcessMessagesAsync(messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None));
 
         Assert.Contains("No tenant id provided or inferred", exception.Message);
     }
@@ -407,7 +407,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
-            this._processor.ProcessMessagesAsync(messages, "thread-123", Activity.UploadText, settings, null, CancellationToken.None));
+            this._processor.ProcessMessagesAsync(messages, "session-123", Activity.UploadText, settings, null, CancellationToken.None));
 
         Assert.Contains("No user id provided or inferred", exception.Message);
     }
@@ -436,14 +436,14 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProtectionScopesResponse?)null);
 
-        var psResponse = new ProtectionScopesResponse { Scopes = new List<PolicyScopeBase>() };
+        var psResponse = new ProtectionScopesResponse { Scopes = [] };
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, null, CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, null, CancellationToken.None);
 
         // Assert
         Assert.Equal("user-from-props", result.userId);
@@ -471,14 +471,14 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProtectionScopesResponse?)null);
 
-        var psResponse = new ProtectionScopesResponse { Scopes = new List<PolicyScopeBase>() };
+        var psResponse = new ProtectionScopesResponse { Scopes = [] };
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(
-            messages, "thread-123", Activity.UploadText, settings, null, CancellationToken.None);
+            messages, "session-123", Activity.UploadText, settings, null, CancellationToken.None);
 
         // Assert
         Assert.Equal(userId, result.userId);

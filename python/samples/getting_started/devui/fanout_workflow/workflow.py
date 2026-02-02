@@ -25,6 +25,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    tool,
 )
 from pydantic import BaseModel, Field
 from typing_extensions import Never

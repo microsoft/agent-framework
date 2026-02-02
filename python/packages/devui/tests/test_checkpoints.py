@@ -8,8 +8,10 @@ import pytest
 from agent_framework import (
     Executor,
     InMemoryCheckpointStorage,
+    RequestInfoEvent,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowStatusEvent,
     handler,
     response_handler,
 )
@@ -37,10 +39,14 @@ class WorkflowHILRequest:
 class WorkflowTestExecutor(Executor):
     """Test executor with HIL."""
 
+    def __init__(self, id: str) -> None:
+        super().__init__(id=id)
+        self._data_value: str | None = None
+
     @handler
     async def process(self, data: WorkflowTestData, ctx: WorkflowContext) -> None:
         """Process data and request approval."""
-        await ctx.set_executor_state({"data_value": data.value})
+        self._data_value = data.value
 
         # Request HIL (checkpoint created here)
         await ctx.request_info(request_data=WorkflowHILRequest(question=f"Approve {data.value}?"), response_type=str)
@@ -50,8 +56,7 @@ class WorkflowTestExecutor(Executor):
         self, original_request: WorkflowHILRequest, response: str, ctx: WorkflowContext[str]
     ) -> None:
         """Handle HIL response."""
-        state = await ctx.get_executor_state() or {}
-        value = state.get("data_value", "")
+        value = self._data_value or ""
         await ctx.send_message(f"{value}_approved" if response.lower() == "yes" else f"{value}_rejected")
 
 
@@ -423,14 +428,11 @@ class TestIntegration:
         # Run workflow until it reaches IDLE_WITH_PENDING_REQUESTS (after checkpoint is created)
         saw_request_event = False
         async for event in test_workflow.run_stream(WorkflowTestData(value="test")):
-            if hasattr(event, "__class__"):
-                if event.__class__.__name__ == "RequestInfoEvent":
-                    saw_request_event = True
-                # Wait for IDLE_WITH_PENDING_REQUESTS status (comes after checkpoint creation)
-                is_status_event = event.__class__.__name__ == "WorkflowStatusEvent"
-                has_pending_status = hasattr(event, "status") and "IDLE_WITH_PENDING_REQUESTS" in str(event.status)
-                if is_status_event and has_pending_status:
-                    break
+            if isinstance(event, RequestInfoEvent):
+                saw_request_event = True
+            # Wait for IDLE_WITH_PENDING_REQUESTS status (comes after checkpoint creation)
+            if isinstance(event, WorkflowStatusEvent) and "IDLE_WITH_PENDING_REQUESTS" in str(event.state):
+                break
 
         assert saw_request_event, "Test workflow should have emitted RequestInfoEvent"
 

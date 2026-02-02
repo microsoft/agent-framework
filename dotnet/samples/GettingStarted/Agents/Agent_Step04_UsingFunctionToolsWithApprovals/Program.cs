@@ -10,7 +10,8 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Chat;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -26,15 +27,15 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
+    .AsAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
 // Call the agent and check if there are any user input requests to handle.
-AgentThread thread = agent.GetNewThread();
-var response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
+AgentSession session = await agent.GetNewSessionAsync();
+var response = await agent.RunAsync("What is the weather like in Amsterdam?", session);
 var userInputRequests = response.UserInputRequests.ToList();
 
 // For streaming use:
-// var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread).ToListAsync();
+// var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", session).ToListAsync();
 // userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 
 while (userInputRequests.Count > 0)
@@ -51,16 +52,16 @@ while (userInputRequests.Count > 0)
         .ToList();
 
     // Pass the user input responses back to the agent for further processing.
-    response = await agent.RunAsync(userInputResponses, thread);
+    response = await agent.RunAsync(userInputResponses, session);
 
     userInputRequests = response.UserInputRequests.ToList();
 
     // For streaming use:
-    // updates = await agent.RunStreamingAsync(userInputResponses, thread).ToListAsync();
+    // updates = await agent.RunStreamingAsync(userInputResponses, session).ToListAsync();
     // userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
 }
 
 Console.WriteLine($"\nAgent: {response}");
 
 // For streaming use:
-// Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
+// Console.WriteLine($"\nAgent: {updates.ToAgentResponse()}");

@@ -10,7 +10,7 @@ standard chat interface.
 import asyncio
 import os
 
-from agent_framework_ag_ui import AGUIChatClient
+from agent_framework.ag_ui import AGUIChatClient
 
 
 async def main():
@@ -50,11 +50,9 @@ async def main():
                             print("\nAssistant: ", end="", flush=True)
 
                     # Display text content as it streams
-                    from agent_framework import TextContent
-
                     for content in update.contents:
-                        if isinstance(content, TextContent) and content.text:
-                            print(f"\033[96m{content.text}\033[0m", end="", flush=True)
+                        if hasattr(content, "text") and content.text:  # type: ignore[attr-defined]
+                            print(f"\033[96m{content.text}\033[0m", end="", flush=True)  # type: ignore[attr-defined]
 
                     # Display finish reason if present
                     if update.finish_reason:

@@ -10,9 +10,11 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
-from typing import Any
+from collections.abc import Generator
+from typing import Any, cast
 
 import azure.functions as func
+from agent_framework import AgentResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
@@ -28,12 +30,12 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 def _create_agents() -> list[Any]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physicist = chat_client.create_agent(
+    physicist = chat_client.as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
-    chemist = chat_client.create_agent(
+    chemist = chat_client.as_agent(
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )
@@ -50,7 +52,7 @@ app.add_agent(agents[1])
 
 # 4. Durable Functions orchestration that runs both agents in parallel.
 @app.orchestration_trigger(context_name="context")
-def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
+def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, dict[str, str]]:
     """Fan out to two domain-specific agents and aggregate their responses."""
 
     prompt = context.get_input()
@@ -63,14 +65,19 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     physicist_thread = physicist.get_new_thread()
     chemist_thread = chemist.get_new_thread()
 
+    # Create tasks from agent.run() calls
     physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
     chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
 
-    results = yield context.task_all([physicist_task, chemist_task])
+    # Execute both tasks concurrently using task_all
+    task_results = yield context.task_all([physicist_task, chemist_task])
+
+    physicist_result = cast(AgentResponse, task_results[0])
+    chemist_result = cast(AgentResponse, task_results[1])
 
     return {
-        "physicist": results[0].get("response", ""),
-        "chemist": results[1].get("response", ""),
+        "physicist": physicist_result.text,
+        "chemist": chemist_result.text,
     }
 
 
@@ -131,12 +138,6 @@ async def get_orchestration_status(
         )
 
     status = await client.get_status(instance_id)
-    if status is None:
-        return func.HttpResponse(
-            body=json.dumps({"error": "Instance not found"}),
-            status_code=404,
-            mimetype="application/json",
-        )
 
     response_data: dict[str, Any] = {
         "instanceId": status.instance_id,

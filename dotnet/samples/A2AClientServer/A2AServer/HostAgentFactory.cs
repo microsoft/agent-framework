@@ -6,6 +6,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 namespace A2AServer;
 
@@ -34,7 +35,7 @@ internal static class HostAgentFactory
     {
         AIAgent agent = new OpenAIClient(apiKey)
              .GetChatClient(model)
-             .CreateAIAgent(instructions, name, tools: tools);
+             .AsAIAgent(instructions, name, tools: tools);
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {

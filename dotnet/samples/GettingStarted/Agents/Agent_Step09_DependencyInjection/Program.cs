@@ -18,8 +18,7 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add agent options to the service collection.
-builder.Services.AddSingleton(
-    new ChatClientAgentOptions(instructions: "You are good at telling jokes.", name: "Joker"));
+builder.Services.AddSingleton(new ChatClientAgentOptions() { Name = "Joker", ChatOptions = new() { Instructions = "You are good at telling jokes." } });
 
 // Add a chat client to the service collection.
 builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new AzureOpenAIClient(
@@ -45,12 +44,12 @@ await host.RunAsync().ConfigureAwait(false);
 /// </summary>
 internal sealed class SampleService(AIAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
 {
-    private AgentThread? _thread;
+    private AgentSession? _session;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Create a thread that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-        this._thread = agent.GetNewThread();
+        // Create a session that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
+        this._session = await agent.GetNewSessionAsync(cancellationToken);
         _ = this.RunAsync(appLifetime.ApplicationStopping);
     }
 
@@ -73,7 +72,7 @@ internal sealed class SampleService(AIAgent agent, IHostApplicationLifetime appL
             }
 
             // Stream the output to the console as it is generated.
-            await foreach (var update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
+            await foreach (var update in agent.RunStreamingAsync(input, this._session, cancellationToken: cancellationToken))
             {
                 Console.Write(update);
             }

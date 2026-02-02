@@ -13,10 +13,12 @@ from typing import Any
 
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from agent_framework import tool
 
 logger = logging.getLogger(__name__)
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
 
@@ -30,7 +32,7 @@ def get_weather(location: str) -> dict[str, Any]:
     logger.info(f"✓ [TOOL RESULT] {result}")
     return result
 
-
+@tool(approval_mode="never_require")
 def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str, Any]:
     """Calculate tip amount and total bill."""
 
@@ -52,13 +54,13 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 # 1. Create multiple agents, each with its own instruction set and tools.
 chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-weather_agent = chat_client.create_agent(
+weather_agent = chat_client.as_agent(
     name="WeatherAgent",
     instructions="You are a helpful weather assistant. Provide current weather information.",
     tools=[get_weather],
 )
 
-math_agent = chat_client.create_agent(
+math_agent = chat_client.as_agent(
     name="MathAgent",
     instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
     tools=[calculate_tip],

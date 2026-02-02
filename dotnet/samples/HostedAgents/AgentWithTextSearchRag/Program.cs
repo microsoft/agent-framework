@@ -8,9 +8,8 @@ using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Data;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -28,7 +27,10 @@ AIAgent agent = new AzureOpenAIClient(
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {
-        Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
+        ChatOptions = new ChatOptions
+        {
+            Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
+        },
         AIContextProviderFactory = ctx => new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
     });
 
@@ -38,7 +40,7 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
 {
     // The mock search inspects the user's question and returns pre-defined snippets
     // that resemble documents stored in an external knowledge source.
-    List<TextSearchProvider.TextSearchResult> results = new();
+    List<TextSearchProvider.TextSearchResult> results = [];
 
     if (query.Contains("return", StringComparison.OrdinalIgnoreCase) || query.Contains("refund", StringComparison.OrdinalIgnoreCase))
     {

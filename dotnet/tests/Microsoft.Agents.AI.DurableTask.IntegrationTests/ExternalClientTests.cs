@@ -8,7 +8,7 @@ using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using OpenAI;
+using OpenAI.Chat;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
@@ -41,7 +41,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
     public async Task SimplePromptAsync()
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             instructions: "You are a helpful assistant that always responds with a friendly greeting.",
             name: "TestAgent");
 
@@ -51,15 +51,15 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
         // Act: send a prompt to the agent and wait for a response
-        AgentThread thread = simpleAgentProxy.GetNewThread();
+        AgentSession session = await simpleAgentProxy.GetNewSessionAsync(this.TestTimeoutToken);
         await simpleAgentProxy.RunAsync(
             message: "Hello!",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
-        AgentRunResponse response = await simpleAgentProxy.RunAsync(
+        AgentResponse response = await simpleAgentProxy.RunAsync(
             message: "Repeat what you just said but say it like a pirate",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Assert: verify the agent responded appropriately
@@ -94,7 +94,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
             return isSunny ? "Pack sunglasses and sunscreen." : "Pack a raincoat and umbrella.";
         }
 
-        AIAgent tripPlanningAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent tripPlanningAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             instructions: "You are a trip planning assistant. Use the weather tool and packing list tool as needed.",
             name: "TripPlanningAgent",
             description: "An agent to help plan your day trips",
@@ -105,7 +105,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent tripPlanningAgentProxy = tripPlanningAgent.AsDurableAgentProxy(testHelper.Services);
 
         // Act: send a prompt to the agent
-        AgentRunResponse response = await tripPlanningAgentProxy.RunAsync(
+        AgentResponse response = await tripPlanningAgentProxy.RunAsync(
             message: "Help me figure out what to pack for my Seattle trip next Sunday",
             cancellationToken: this.TestTimeoutToken);
 
@@ -156,13 +156,13 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         {
             // 1. Get agent and create a session
             DurableAIAgent agent = context.GetAgent("SimpleAgent");
-            AgentThread thread = agent.GetNewThread();
+            AgentSession session = await agent.GetNewSessionAsync(this.TestTimeoutToken);
 
             // 2. Call an agent and tell it my name
-            await agent.RunAsync($"My name is {name}.", thread);
+            await agent.RunAsync($"My name is {name}.", session);
 
-            // 3. Call the agent again with the same thread (ask it to tell me my name)
-            AgentRunResponse response = await agent.RunAsync("What is my name?", thread);
+            // 3. Call the agent again with the same session (ask it to tell me my name)
+            AgentResponse response = await agent.RunAsync("What is my name?", session);
 
             return response.Text;
         }
@@ -174,7 +174,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
                 // This is the agent that will be used to start the workflow
                 agents.AddAIAgentFactory(
                     "WorkflowAgent",
-                    sp => TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+                    sp => TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
                         name: "WorkflowAgent",
                         instructions: "You can start greeting workflows and check their status.",
                         services: sp,
@@ -184,7 +184,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
                         ]));
 
                 // This is the agent that will be called by the workflow
-                agents.AddAIAgent(TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+                agents.AddAIAgent(TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
                     name: "SimpleAgent",
                     instructions: "You are a simple assistant."
                 ));
@@ -194,16 +194,16 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent workflowManagerAgentProxy = testHelper.Services.GetDurableAgentProxy("WorkflowAgent");
 
         // Act: send a prompt to the agent
-        AgentThread thread = workflowManagerAgentProxy.GetNewThread();
+        AgentSession session = await workflowManagerAgentProxy.GetNewSessionAsync(this.TestTimeoutToken);
         await workflowManagerAgentProxy.RunAsync(
             message: "Start a greeting workflow for \"John Doe\".",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Act: prompt it again to wait for the workflow to complete
-        AgentRunResponse response = await workflowManagerAgentProxy.RunAsync(
+        AgentResponse response = await workflowManagerAgentProxy.RunAsync(
             message: "Wait for the workflow to complete and tell me the result.",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Assert: verify the agent responded appropriately
@@ -217,14 +217,14 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
     public void AsDurableAgentProxy_ThrowsWhenAgentNotRegistered()
     {
         // Setup: Register one agent but try to use a different one
-        AIAgent registeredAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent registeredAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             instructions: "You are a helpful assistant.",
             name: "RegisteredAgent");
 
         using TestHelper testHelper = TestHelper.Start([registeredAgent], this._outputHelper);
 
         // Create an agent with a different name that isn't registered
-        AIAgent unregisteredAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent unregisteredAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             instructions: "You are a helpful assistant.",
             name: "UnregisteredAgent");
 

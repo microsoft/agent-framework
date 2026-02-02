@@ -59,6 +59,14 @@ interface DevUIState {
   debugPanelWidth: number;
   debugEvents: ExtendedResponseStreamEvent[];
   isResizing: boolean;
+  showToolCalls: boolean; // UI setting to show/hide tool calls in chat
+  streamingEnabled: boolean; // Whether to use streaming mode for responses
+
+  // Debug Panel Preferences (persisted)
+  debugPanelTab: "events" | "traces" | "tools"; // Main debug panel tab
+  debugTraceSubTab: "spans" | "context"; // OTel Spans vs Context Inspector
+  contextInspectorViewMode: "tokens" | "composition";
+  contextInspectorCumulative: boolean;
 
   // Modal Slice
   showAboutModal: boolean;
@@ -81,11 +89,12 @@ interface DevUIState {
   uiMode: "developer" | "user";
   runtime: "python" | "dotnet";
   serverCapabilities: {
-    tracing: boolean;
+    instrumentation: boolean;
     openai_proxy: boolean;
     deployment: boolean;
   };
   authRequired: boolean;
+  serverVersion: string | null;
 
   // Deployment Slice
   isDeploying: boolean;
@@ -143,6 +152,14 @@ interface DevUIActions {
   addDebugEvent: (event: ExtendedResponseStreamEvent) => void;
   clearDebugEvents: () => void;
   setIsResizing: (resizing: boolean) => void;
+  setShowToolCalls: (show: boolean) => void;
+  setStreamingEnabled: (enabled: boolean) => void;
+
+  // Debug Panel Preference Actions
+  setDebugPanelTab: (tab: "events" | "traces" | "tools") => void;
+  setDebugTraceSubTab: (tab: "spans" | "context") => void;
+  setContextInspectorViewMode: (mode: "tokens" | "composition") => void;
+  setContextInspectorCumulative: (cumulative: boolean) => void;
 
   // Modal Actions
   setShowAboutModal: (show: boolean) => void;
@@ -163,7 +180,7 @@ interface DevUIActions {
   toggleOAIMode: () => void;
 
   // Server Meta Actions
-  setServerMeta: (meta: { uiMode: "developer" | "user"; runtime: "python" | "dotnet"; capabilities: { tracing: boolean; openai_proxy: boolean; deployment: boolean }; authRequired: boolean }) => void;
+  setServerMeta: (meta: { uiMode: "developer" | "user"; runtime: "python" | "dotnet"; capabilities: { instrumentation: boolean; openai_proxy: boolean; deployment: boolean }; authRequired: boolean; version?: string }) => void;
 
   // Deployment Actions
   startDeployment: () => void;
@@ -224,6 +241,14 @@ export const useDevUIStore = create<DevUIStore>()(
         debugPanelWidth: 320,
         debugEvents: [],
         isResizing: false,
+        showToolCalls: true, // Default to showing tool calls
+        streamingEnabled: true, // Default to streaming mode (recommended)
+
+        // Debug Panel Preferences (persisted)
+        debugPanelTab: "events", // Default to events tab
+        debugTraceSubTab: "spans", // Default to spans sub-tab
+        contextInspectorViewMode: "tokens", // Default to tokens view
+        contextInspectorCumulative: false, // Default to per-message view
 
         // Modal State
         showAboutModal: false,
@@ -244,11 +269,12 @@ export const useDevUIStore = create<DevUIStore>()(
         uiMode: "developer", // Default to developer mode
         runtime: "python", // Default to Python runtime
         serverCapabilities: {
-          tracing: false,
+          instrumentation: false,
           openai_proxy: false,
           deployment: false,
         },
         authRequired: false,
+        serverVersion: null,
 
         // Deployment State
         isDeploying: false,
@@ -365,14 +391,17 @@ export const useDevUIStore = create<DevUIStore>()(
         setShowDebugPanel: (show) => set({ showDebugPanel: show }),
         setDebugPanelMinimized: (minimized) => set({ debugPanelMinimized: minimized }),
         setDebugPanelWidth: (width) => set({ debugPanelWidth: width }),
+        setShowToolCalls: (show) => set({ showToolCalls: show }),
+        setStreamingEnabled: (enabled) => set({ streamingEnabled: enabled }),
         addDebugEvent: (event) =>
           set((state) => {
             // Generate unique timestamp for each event
             // Use current time + small increment to ensure uniqueness even for rapid events
             const baseTimestamp = Math.floor(Date.now() / 1000);
-            const lastTimestamp = state.debugEvents.length > 0
-              ? (state.debugEvents[state.debugEvents.length - 1] as any)._uiTimestamp || 0
-              : 0;
+            const lastEvent = state.debugEvents.length > 0
+              ? state.debugEvents[state.debugEvents.length - 1] as { _uiTimestamp?: number }
+              : null;
+            const lastTimestamp = lastEvent?._uiTimestamp ?? 0;
             // Ensure new timestamp is always greater than the last one
             const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
 
@@ -392,6 +421,12 @@ export const useDevUIStore = create<DevUIStore>()(
           }),
         clearDebugEvents: () => set({ debugEvents: [] }),
         setIsResizing: (resizing) => set({ isResizing: resizing }),
+
+        // Debug Panel Preference Actions
+        setDebugPanelTab: (tab) => set({ debugPanelTab: tab }),
+        setDebugTraceSubTab: (tab) => set({ debugTraceSubTab: tab }),
+        setContextInspectorViewMode: (mode) => set({ contextInspectorViewMode: mode }),
+        setContextInspectorCumulative: (cumulative) => set({ contextInspectorCumulative: cumulative }),
 
         // ========================================
         // Modal Actions
@@ -512,6 +547,7 @@ export const useDevUIStore = create<DevUIStore>()(
             runtime: meta.runtime,
             serverCapabilities: meta.capabilities,
             authRequired: meta.authRequired,
+            serverVersion: meta.version || null,
           }),
 
         // ========================================
@@ -597,8 +633,15 @@ export const useDevUIStore = create<DevUIStore>()(
           showDebugPanel: state.showDebugPanel,
           debugPanelMinimized: state.debugPanelMinimized,
           debugPanelWidth: state.debugPanelWidth,
+          showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
+          streamingEnabled: state.streamingEnabled, // Persist streaming mode preference
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
+          // Debug panel tab preferences
+          debugPanelTab: state.debugPanelTab,
+          debugTraceSubTab: state.debugTraceSubTab,
+          contextInspectorViewMode: state.contextInspectorViewMode,
+          contextInspectorCumulative: state.contextInspectorCumulative,
         }),
       }
     ),

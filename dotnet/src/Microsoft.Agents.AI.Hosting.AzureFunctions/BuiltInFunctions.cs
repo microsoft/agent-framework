@@ -7,6 +7,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask.Client;
+using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -22,14 +23,14 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
 
     // Exposed as an entity trigger via AgentFunctionsProvider
-    public static async Task InvokeAgentAsync(
-        [EntityTrigger] TaskEntityDispatcher dispatcher,
+    public static Task<string> InvokeAgentAsync(
         [DurableClient] DurableTaskClient client,
+        string encodedEntityRequest,
         FunctionContext functionContext)
     {
         // This should never be null except if the function trigger is misconfigured.
-        ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(encodedEntityRequest);
         ArgumentNullException.ThrowIfNull(functionContext);
 
         // Create a combined service provider that includes both the existing services
@@ -38,7 +39,8 @@ internal static class BuiltInFunctions
 
         // This method is the entry point for the agent entity.
         // It will be invoked by the Azure Functions runtime when the entity is called.
-        await dispatcher.DispatchAsync(new AgentEntity(combinedServiceProvider, functionContext.CancellationToken));
+        AgentEntity entity = new(combinedServiceProvider, functionContext.CancellationToken);
+        return GrpcEntityRunner.LoadAndRunAsync(encodedEntityRequest, entity, combinedServiceProvider);
     }
 
     public static async Task<HttpResponseData> RunAgentHttpAsync(
@@ -67,7 +69,7 @@ internal static class BuiltInFunctions
             message = await req.ReadAsStringAsync();
         }
 
-        // The thread ID can come from query string or JSON body
+        // The session ID can come from query string or JSON body
         string? threadIdFromQuery = req.Query["thread_id"];
 
         // Validate that if thread_id is specified in both places, they must match
@@ -83,12 +85,13 @@ internal static class BuiltInFunctions
 
         string? threadIdValue = threadIdFromBody ?? threadIdFromQuery;
 
-        // If no session ID is provided, use a new one based on the function name and invocation ID.
-        // This may be better than a random one because it can be correlated with the function invocation.
-        // Specifying a session ID is how the caller correlates multiple calls to the same agent session.
+        // The thread_id is treated as a session key (not a full session ID).
+        // If no session key is provided, use the function invocation ID as the session key
+        // to help correlate the session with the function invocation.
+        string agentName = GetAgentName(context);
         AgentSessionId sessionId = string.IsNullOrEmpty(threadIdValue)
-            ? new AgentSessionId(GetAgentName(context), context.InvocationId)
-            : AgentSessionId.Parse(threadIdValue);
+            ? new AgentSessionId(agentName, context.InvocationId)
+            : new AgentSessionId(agentName, threadIdValue);
 
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -110,15 +113,15 @@ internal static class BuiltInFunctions
             }
         }
 
-        AIAgent agentProxy = client.AsDurableAgentProxy(context, GetAgentName(context));
+        AIAgent agentProxy = client.AsDurableAgentProxy(context, agentName);
 
         DurableAgentRunOptions options = new() { IsFireAndForget = !waitForResponse };
 
         if (waitForResponse)
         {
-            AgentRunResponse agentResponse = await agentProxy.RunAsync(
+            AgentResponse agentResponse = await agentProxy.RunAsync(
                 message: new ChatMessage(ChatRole.User, message),
-                thread: new DurableAgentThread(sessionId),
+                session: new DurableAgentSession(sessionId),
                 options: options,
                 cancellationToken: context.CancellationToken);
 
@@ -126,21 +129,21 @@ internal static class BuiltInFunctions
                 req,
                 context,
                 HttpStatusCode.OK,
-                sessionId.ToString(),
+                sessionId.Key,
                 agentResponse);
         }
 
         // Fire and forget - return 202 Accepted
         await agentProxy.RunAsync(
             message: new ChatMessage(ChatRole.User, message),
-            thread: new DurableAgentThread(sessionId),
+            session: new DurableAgentSession(sessionId),
             options: options,
             cancellationToken: context.CancellationToken);
 
         return await CreateAcceptedResponseAsync(
             req,
             context,
-            sessionId.ToString());
+            sessionId.Key);
     }
 
     public static async Task<string?> RunMcpToolAsync(
@@ -167,9 +170,9 @@ internal static class BuiltInFunctions
 
         AIAgent agentProxy = client.AsDurableAgentProxy(functionContext, agentName);
 
-        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+        AgentResponse agentResponse = await agentProxy.RunAsync(
             message: new ChatMessage(ChatRole.User, query),
-            thread: new DurableAgentThread(sessionId),
+            session: new DurableAgentSession(sessionId),
             options: null);
 
         return agentResponse.Text;
@@ -213,25 +216,25 @@ internal static class BuiltInFunctions
     /// <param name="req">The HTTP request data.</param>
     /// <param name="context">The function context.</param>
     /// <param name="statusCode">The HTTP status code (typically 200 OK).</param>
-    /// <param name="threadId">The thread ID for the conversation.</param>
+    /// <param name="sessionId">The session ID for the conversation.</param>
     /// <param name="agentResponse">The agent's response.</param>
     /// <returns>The HTTP response data containing the success response.</returns>
     private static async Task<HttpResponseData> CreateSuccessResponseAsync(
         HttpRequestData req,
         FunctionContext context,
         HttpStatusCode statusCode,
-        string threadId,
-        AgentRunResponse agentResponse)
+        string sessionId,
+        AgentResponse agentResponse)
     {
         HttpResponseData response = req.CreateResponse(statusCode);
-        response.Headers.Add("x-ms-thread-id", threadId);
+        response.Headers.Add("x-ms-thread-id", sessionId);
 
         bool acceptsJson = req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
             acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase);
 
         if (acceptsJson)
         {
-            AgentRunSuccessResponse successResponse = new((int)statusCode, threadId, agentResponse);
+            AgentRunSuccessResponse successResponse = new((int)statusCode, sessionId, agentResponse);
             await response.WriteAsJsonAsync(successResponse, context.CancellationToken);
         }
         else
@@ -248,22 +251,22 @@ internal static class BuiltInFunctions
     /// </summary>
     /// <param name="req">The HTTP request data.</param>
     /// <param name="context">The function context.</param>
-    /// <param name="threadId">The thread ID for the conversation.</param>
+    /// <param name="sessionId">The session ID for the conversation.</param>
     /// <returns>The HTTP response data containing the accepted response.</returns>
     private static async Task<HttpResponseData> CreateAcceptedResponseAsync(
         HttpRequestData req,
         FunctionContext context,
-        string threadId)
+        string sessionId)
     {
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
-        response.Headers.Add("x-ms-thread-id", threadId);
+        response.Headers.Add("x-ms-thread-id", sessionId);
 
         bool acceptsJson = req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
             acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase);
 
         if (acceptsJson)
         {
-            AgentRunAcceptedResponse acceptedResponse = new((int)HttpStatusCode.Accepted, threadId);
+            AgentRunAcceptedResponse acceptedResponse = new((int)HttpStatusCode.Accepted, sessionId);
             await response.WriteAsJsonAsync(acceptedResponse, context.CancellationToken);
         }
         else
@@ -295,7 +298,7 @@ internal static class BuiltInFunctions
     /// Represents a request to run an agent.
     /// </summary>
     /// <param name="Message">The message to send to the agent.</param>
-    /// <param name="ThreadId">The optional thread ID to continue a conversation.</param>
+    /// <param name="ThreadId">The optional session ID to continue a conversation.</param>
     private sealed record AgentRunRequest(
         [property: JsonPropertyName("message")] string? Message,
         [property: JsonPropertyName("thread_id")] string? ThreadId);
@@ -313,18 +316,18 @@ internal static class BuiltInFunctions
     /// Represents a successful agent run response.
     /// </summary>
     /// <param name="Status">The HTTP status code.</param>
-    /// <param name="ThreadId">The thread ID for the conversation.</param>
+    /// <param name="ThreadId">The session ID for the conversation.</param>
     /// <param name="Response">The agent response.</param>
     private sealed record AgentRunSuccessResponse(
         [property: JsonPropertyName("status")] int Status,
         [property: JsonPropertyName("thread_id")] string ThreadId,
-        [property: JsonPropertyName("response")] AgentRunResponse Response);
+        [property: JsonPropertyName("response")] AgentResponse Response);
 
     /// <summary>
     /// Represents an accepted (fire-and-forget) agent run response.
     /// </summary>
     /// <param name="Status">The HTTP status code.</param>
-    /// <param name="ThreadId">The thread ID for the conversation.</param>
+    /// <param name="ThreadId">The session ID for the conversation.</param>
     private sealed record AgentRunAcceptedResponse(
         [property: JsonPropertyName("status")] int Status,
         [property: JsonPropertyName("thread_id")] string ThreadId);

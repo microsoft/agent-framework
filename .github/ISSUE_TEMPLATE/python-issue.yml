@@ -1,0 +1,70 @@
+name: Python Bug Report
+description: Report a bug in the Agent Framework Python SDK
+title: "Python: [Bug]: "
+labels: ["bug", "Python"]
+type: bug
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Please provide a clear and detailed description of the bug.
+      placeholder: |
+        - What happened?
+        - What did you expect to happen?
+        - Steps to reproduce the issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: If applicable, provide a minimal code sample that demonstrates the issue.
+      placeholder: |
+        ```python
+        # Your code here
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: error-messages
+    attributes:
+      label: Error Messages / Stack Traces
+      description: Include any error messages or stack traces you received.
+      placeholder: |
+        ```
+        Paste error messages or stack traces here
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: input
+    id: python-packages
+    attributes:
+      label: Package Versions
+      description: List the agent-framework-* packages and versions you are using
+      placeholder: "e.g., agent-framework-core: 1.0.0, agent-framework-azure-ai: 1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: What version of Python are you using?
+      placeholder: "e.g., Python 3.11"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots that might be helpful.
+      placeholder: "Any additional information..."
+    validations:
+      required: false

@@ -12,7 +12,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5";
@@ -22,8 +22,8 @@ var stateStore = new Dictionary<string, JsonElement?>();
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetOpenAIResponseClient(deploymentName)
-     .CreateAIAgent(
+     .GetResponsesClient(deploymentName)
+     .AsAIAgent(
         name: "SpaceNovelWriter",
         instructions: "You are a space novel writer. Always research relevant facts and generate character profiles for the main characters before writing novels." +
                       "Write complete chapters without asking for approval or feedback. Do not ask the user about tone, style, pace, or format preferences - just write the novel based on the request.",
@@ -32,39 +32,41 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.GetNewSessionAsync();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", session, options);
 
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)
 {
-    PersistAgentState(thread, response.ContinuationToken);
+    PersistAgentState(session, response.ContinuationToken);
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
-    RestoreAgentState(agent, out thread, out object? continuationToken);
+    var (restoredSession, continuationToken) = await RestoreAgentState(agent);
 
     options.ContinuationToken = continuationToken;
-    response = await agent.RunAsync(thread, options);
+    response = await agent.RunAsync(restoredSession, options);
 }
 
 Console.WriteLine(response.Text);
 
-void PersistAgentState(AgentThread thread, object? continuationToken)
+void PersistAgentState(AgentSession? session, ResponseContinuationToken? continuationToken)
 {
-    stateStore["thread"] = thread.Serialize();
+    stateStore["session"] = session!.Serialize();
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 
-void RestoreAgentState(AIAgent agent, out AgentThread thread, out object? continuationToken)
+async Task<(AgentSession Session, ResponseContinuationToken? ContinuationToken)> RestoreAgentState(AIAgent agent)
 {
-    JsonElement serializedThread = stateStore["thread"] ?? throw new InvalidOperationException("No serialized thread found in state store.");
+    JsonElement serializedSession = stateStore["session"] ?? throw new InvalidOperationException("No serialized session found in state store.");
     JsonElement? serializedToken = stateStore["continuationToken"];
 
-    thread = agent.DeserializeThread(serializedThread);
-    continuationToken = serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
+    AgentSession session = await agent.DeserializeSessionAsync(serializedSession);
+    ResponseContinuationToken? continuationToken = (ResponseContinuationToken?)serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
+
+    return (session, continuationToken);
 }
 
 [Description("Researches relevant space facts and scientific information for writing a science fiction novel")]

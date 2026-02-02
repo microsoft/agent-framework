@@ -5,7 +5,7 @@
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI;
+using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -13,16 +13,16 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetOpenAIResponseClient(deploymentName)
-     .CreateAIAgent();
+     .GetResponsesClient(deploymentName)
+     .AsAIAgent();
 
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.GetNewSessionAsync();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about otters in space.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about otters in space.", session, options);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
@@ -33,19 +33,19 @@ while (response.ContinuationToken is { } token)
     // Continue with the token.
     options.ContinuationToken = token;
 
-    response = await agent.RunAsync(thread, options);
+    response = await agent.RunAsync(session, options);
 }
 
 // Display the result.
 Console.WriteLine(response.Text);
 
-// Reset options and thread for streaming.
+// Reset options and session for streaming.
 options = new() { AllowBackgroundResponses = true };
-thread = agent.GetNewThread();
+session = await agent.GetNewSessionAsync();
 
-AgentRunResponseUpdate? lastReceivedUpdate = null;
+AgentResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", session, options))
 {
     // Output each update.
     Console.Write(update.Text);
@@ -63,7 +63,7 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Write a
 // Resume from interruption point.
 options.ContinuationToken = lastReceivedUpdate?.ContinuationToken;
 
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(session, options))
 {
     // Output each update.
     Console.Write(update.Text);

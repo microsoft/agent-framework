@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, DataContent, Role, TextContent
+from agent_framework import ChatMessage, Content, Role
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -12,6 +12,7 @@ def create_sample_image() -> str:
     # This is a tiny red pixel in PNG format
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
+
 
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI."""
@@ -25,7 +26,10 @@ async def test_image() -> None:
     image_uri = create_sample_image()
     message = ChatMessage(
         role=Role.USER,
-        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/png")],
+        contents=[
+            Content.from_text(text="What's in this image?"),
+            Content.from_uri(uri=image_uri, media_type="image/png"),
+        ],
     )
 
     response = await client.get_response(message)
@@ -36,6 +40,7 @@ async def main() -> None:
     print("=== Testing Azure OpenAI Multimodal ===")
     print("Testing image analysis (supported by Chat Completions API)")
     await test_image()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -400,7 +400,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
 
         // Verify the JSON content
         string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
-        JsonElement deserializedState = JsonSerializer.Deserialize<JsonElement>(jsonText);
+        JsonElement deserializedState = JsonElement.Parse(jsonText);
         Assert.Equal(42, deserializedState.GetProperty("counter").GetInt32());
         Assert.Equal("active", deserializedState.GetProperty("status").GetString());
 
@@ -484,7 +484,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         ChatResponseUpdate stateUpdate = updates.First();
         DataContent dataContent = Assert.IsType<DataContent>(stateUpdate.Contents[0]);
         string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
-        JsonElement roundTrippedState = JsonSerializer.Deserialize<JsonElement>(jsonText);
+        JsonElement roundTrippedState = JsonElement.Parse(jsonText);
 
         Assert.Equal("Alice", roundTrippedState.GetProperty("user").GetProperty("name").GetString());
         Assert.Equal(30, roundTrippedState.GetProperty("user").GetProperty("age").GetInt32());
@@ -555,7 +555,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
 
         // Verify the JSON Patch content
         string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
-        JsonElement deserializedDelta = JsonSerializer.Deserialize<JsonElement>(jsonText);
+        JsonElement deserializedDelta = JsonElement.Parse(jsonText);
         Assert.Equal(JsonValueKind.Array, deserializedDelta.ValueKind);
         Assert.Equal(2, deserializedDelta.GetArrayLength());
 

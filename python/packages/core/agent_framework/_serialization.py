@@ -259,7 +259,7 @@ class SerializationMixin:
 
 
             agent = CustomAgent(
-                context_providers=[...],
+                context_provider=[...],
                 middleware=[...]
             )
 
@@ -339,10 +339,16 @@ class SerializationMixin:
                     continue
                 # Handle dicts containing SerializationProtocol values
                 if isinstance(value, dict):
+                    from datetime import date, datetime, time
+
                     serialized_dict: dict[str, Any] = {}
                     for k, v in value.items():
                         if isinstance(v, SerializationProtocol):
                             serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
+                            continue
+                        # Convert datetime objects to strings
+                        if isinstance(v, (datetime, date, time)):
+                            serialized_dict[k] = str(v)
                             continue
                         # Check if the value is JSON serializable
                         if is_serializable(v):
@@ -438,11 +444,11 @@ class SerializationMixin:
                 chat_client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
                 # Now ready to make API calls with the injected client
 
-            **Function Injection for Tools** - AIFunction runtime dependency:
+            **Function Injection for Tools** - FunctionTool runtime dependency:
 
             .. code-block:: python
 
-                from agent_framework import AIFunction
+                from agent_framework import FunctionTool
                 from typing import Annotated
 
 
@@ -452,19 +458,19 @@ class SerializationMixin:
                     return f"Current weather in {location}: 72°F and sunny"
 
 
-                # AIFunction has INJECTABLE = {"func"}
+                # FunctionTool has INJECTABLE = {"func"}
                 function_data = {
-                    "type": "ai_function",
+                    "type": "function_tool",
                     "name": "get_weather",
                     "description": "Get current weather for a location",
                     # func is excluded from serialization
                 }
 
                 # Inject the actual function implementation during deserialization
-                dependencies = {"ai_function": {"func": get_current_weather}}
+                dependencies = {"function_tool": {"func": get_current_weather}}
 
-                # Reconstruct the AIFunction with the callable injected
-                weather_func = AIFunction.from_dict(function_data, dependencies=dependencies)
+                # Reconstruct the FunctionTool with the callable injected
+                weather_func = FunctionTool.from_dict(function_data, dependencies=dependencies)
                 # The function is now callable and ready for agent use
 
             **Middleware Context Injection** - Agent execution context:

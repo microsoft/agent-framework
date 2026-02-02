@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -34,6 +35,10 @@ public class ChatHistoryMemoryProviderTests
         this._loggerFactoryMock
             .Setup(f => f.CreateLogger(typeof(ChatHistoryMemoryProvider).FullName!))
             .Returns(this._loggerMock.Object);
+
+        this._loggerMock
+            .Setup(f => f.IsEnabled(It.IsAny<LogLevel>()))
+            .Returns(true);
 
         this._vectorStoreCollectionMock = new(MockBehavior.Strict);
         this._vectorStoreMock = new(MockBehavior.Strict);
@@ -101,7 +106,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app1",
             AgentId = "agent1",
-            ThreadId = "thread1",
+            SessionId = "session1",
             UserId = "user1"
         };
 
@@ -133,7 +138,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal("2000-01-01T00:00:00.0000000+00:00", stored[0]["CreatedAt"]);
         Assert.Equal("app1", stored[0]["ApplicationId"]);
         Assert.Equal("agent1", stored[0]["AgentId"]);
-        Assert.Equal("thread1", stored[0]["ThreadId"]);
+        Assert.Equal("session1", stored[0]["SessionId"]);
         Assert.Equal("user1", stored[0]["UserId"]);
 
         Assert.Null(stored[1]["MessageId"]);
@@ -142,7 +147,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(ChatRole.User.ToString(), stored[1]["Role"]);
         Assert.Equal("app1", stored[1]["ApplicationId"]);
         Assert.Equal("agent1", stored[1]["AgentId"]);
-        Assert.Equal("thread1", stored[1]["ThreadId"]);
+        Assert.Equal("session1", stored[1]["SessionId"]);
         Assert.Equal("user1", stored[1]["UserId"]);
 
         Assert.Equal("resp-1", stored[2]["MessageId"]);
@@ -151,7 +156,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(ChatRole.Assistant.ToString(), stored[2]["Role"]);
         Assert.Equal("app1", stored[2]["ApplicationId"]);
         Assert.Equal("agent1", stored[2]["AgentId"]);
-        Assert.Equal("thread1", stored[2]["ThreadId"]);
+        Assert.Equal("session1", stored[2]["SessionId"]);
         Assert.Equal("user1", stored[2]["UserId"]);
     }
 
@@ -212,6 +217,61 @@ public class ChatHistoryMemoryProviderTests
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false, false, 0)]
+    [InlineData(true, false, 0)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, true, 2)]
+    public async Task InvokedAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    {
+        // Arrange
+        var options = new ChatHistoryMemoryProviderOptions
+        {
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData
+        };
+
+        if (requestThrows)
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("Upsert failed"));
+        }
+        else
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        }
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            new ChatHistoryMemoryProviderScope { UserId = "user1" },
+            options: options,
+            loggerFactory: this._loggerFactoryMock.Object);
+
+        var requestMsg = new ChatMessage(ChatRole.User, "request text");
+        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null);
+
+        // Act
+        await provider.InvokedAsync(invokedContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
+        foreach (var logInvocation in this._loggerMock.Invocations)
+        {
+            if (logInvocation.Method.Name == nameof(ILogger.IsEnabled))
+            {
+                continue;
+            }
+
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
+            var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
+            Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
+        }
     }
 
     #endregion
@@ -297,7 +357,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app1",
             AgentId = "agent1",
-            ThreadId = "thread1",
+            SessionId = "session1",
             UserId = "user1"
         };
 
@@ -310,7 +370,7 @@ public class ChatHistoryMemoryProviderTests
             .Callback((string query, int maxResults, VectorSearchOptions<Dictionary<string, object?>> options, CancellationToken ct) =>
             {
                 // Verify that the filter was created correctly
-                const string ExpectedFilter = "x => ((((x.ApplicationId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).applicationId) AndAlso (x.AgentId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).agentId)) AndAlso (x.UserId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).userId)) AndAlso (x.ThreadId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).threadId))";
+                const string ExpectedFilter = "x => ((((x.ApplicationId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).applicationId) AndAlso (x.AgentId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).agentId)) AndAlso (x.UserId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).userId)) AndAlso (x.SessionId == value(Microsoft.Agents.AI.VectorDataMemory.ChatHistoryMemoryProvider+<>c__DisplayClass20_0).sessionId))";
                 Assert.Equal(ExpectedFilter, options.Filter!.ToString());
             })
             .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
@@ -333,6 +393,87 @@ public class ChatHistoryMemoryProviderTests
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(false, false, 2)]
+    [InlineData(true, false, 2)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, true, 2)]
+    public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    {
+        // Arrange
+        var options = new ChatHistoryMemoryProviderOptions
+        {
+            SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData
+        };
+
+        var scope = new ChatHistoryMemoryProviderScope
+        {
+            UserId = "user1"
+        };
+
+        if (requestThrows)
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<int>(),
+                    It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                    It.IsAny<CancellationToken>()))
+                .Throws(new InvalidOperationException("Search failed"));
+        }
+        else
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<int>(),
+                    It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+        }
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            storageScope: scope,
+            searchScope: scope,
+            options: options,
+            loggerFactory: this._loggerFactoryMock.Object);
+
+        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "requesting relevant history")]);
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
+        foreach (var logInvocation in this._loggerMock.Invocations)
+        {
+            if (logInvocation.Method.Name == nameof(ILogger.IsEnabled))
+            {
+                continue;
+            }
+
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
+            var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
+            Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
+
+            var inputValue = state.FirstOrDefault(kvp => kvp.Key == "Input").Value;
+            if (inputValue != null)
+            {
+                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : "<redacted>", inputValue);
+            }
+
+            var messageTextValue = state.FirstOrDefault(kvp => kvp.Key == "MessageText").Value;
+            if (messageTextValue != null)
+            {
+                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : "<redacted>", messageTextValue);
+            }
+        }
+    }
+
     #endregion
 
     #region Serialization Tests
@@ -345,7 +486,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app",
             AgentId = "agent",
-            ThreadId = "thread",
+            SessionId = "session",
             UserId = "user"
         };
 
@@ -353,7 +494,7 @@ public class ChatHistoryMemoryProviderTests
         {
             ApplicationId = "app2",
             AgentId = "agent2",
-            ThreadId = "thread2",
+            SessionId = "session2",
             UserId = "user2"
         };
 
@@ -366,13 +507,13 @@ public class ChatHistoryMemoryProviderTests
         var storage = doc.RootElement.GetProperty("storageScope");
         Assert.Equal("app", storage.GetProperty("applicationId").GetString());
         Assert.Equal("agent", storage.GetProperty("agentId").GetString());
-        Assert.Equal("thread", storage.GetProperty("threadId").GetString());
+        Assert.Equal("session", storage.GetProperty("sessionId").GetString());
         Assert.Equal("user", storage.GetProperty("userId").GetString());
 
         var search = doc.RootElement.GetProperty("searchScope");
         Assert.Equal("app2", search.GetProperty("applicationId").GetString());
         Assert.Equal("agent2", search.GetProperty("agentId").GetString());
-        Assert.Equal("thread2", search.GetProperty("threadId").GetString());
+        Assert.Equal("session2", search.GetProperty("sessionId").GetString());
         Assert.Equal("user2", search.GetProperty("userId").GetString());
 
         // Act - deserialize and serialize again

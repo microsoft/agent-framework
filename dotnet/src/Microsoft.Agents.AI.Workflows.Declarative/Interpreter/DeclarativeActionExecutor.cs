@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx;
@@ -24,7 +24,6 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IResettableExecutor, IModeledAction
 {
-    private string? _parentId;
     private readonly WorkflowFormulaState _state;
 
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
@@ -42,7 +41,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     public DialogAction Model { get; }
 
-    public string ParentId => this._parentId ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root();
+    public string ParentId { get => field ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root(); }
 
     public RecalcEngine Engine => this._state.Engine;
 

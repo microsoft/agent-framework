@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Bing Grounding Example
 
-This sample demonstrates usage of AzureAIClient with Bing Grounding
+This sample demonstrates usage of AzureAIProjectAgentProvider with Bing Grounding
 to search the web for current information and provide grounded responses.
 
 Prerequisites:
@@ -27,7 +27,9 @@ To get your Bing connection ID:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyBingGroundingAgent",
             instructions="""You are a helpful assistant that can search the web for current information.
             Use the Bing search tool to find up-to-date information and provide accurate, well-sourced answers.
@@ -42,8 +44,8 @@ async def main() -> None:
                     ]
                 },
             },
-        ) as agent,
-    ):
+        )
+
         query = "What is today's date and weather in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)

@@ -24,16 +24,16 @@ public class RepresentationTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override AgentThread GetNewThread()
+        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
 
@@ -85,7 +85,7 @@ public class RepresentationTests
     [Fact]
     public async Task Test_SpecializedExecutor_InfosAsync()
     {
-        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
+        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent(), new()));
         await RunExecutorBindingInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 
@@ -137,17 +137,17 @@ public class RepresentationTests
         RunEdgeInfoMatchTest(fanOutEdgeWithAssigner);
 
         // FanIn Edges
-        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge);
 
-        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge2);
 
-        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge3, expect: false); // Order matters (though for FanIn maybe it shouldn't?)
 
-        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1), TakeEdgeId()));
-        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2), TakeEdgeId()));
+        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1), TakeEdgeId(), null));
+        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge4, expect: false); // Identity matters
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge5, expect: false);
 

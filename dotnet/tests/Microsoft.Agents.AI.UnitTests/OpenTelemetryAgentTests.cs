@@ -45,7 +45,6 @@ public class OpenTelemetryAgentTests
         Assert.Equal("TestAgent", agent.Name);
         Assert.Equal("This is a test agent.", agent.Description);
         Assert.Equal(innerAgent.Id, agent.Id);
-        Assert.Equal(innerAgent.DisplayName, agent.DisplayName);
     }
 
     [Fact]
@@ -80,10 +79,10 @@ public class OpenTelemetryAgentTests
             NameFunc = () => "TestAgent",
             DescriptionFunc = () => "This is a test agent.",
 
-            RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = async (messages, session, options, cancellationToken) =>
             {
                 await Task.Yield();
-                return new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
+                return new AgentResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
                 {
                     ResponseId = "id123",
                     Usage = new UsageDetails
@@ -108,21 +107,21 @@ public class OpenTelemetryAgentTests
                 null,
         };
 
-        async static IAsyncEnumerable<AgentRunResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+        async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
 
             foreach (string text in new[] { "The ", "blue ", "whale,", " ", "", "I", " think." })
             {
                 await Task.Yield();
-                yield return new AgentRunResponseUpdate(ChatRole.Assistant, text)
+                yield return new AgentResponseUpdate(ChatRole.Assistant, text)
                 {
                     ResponseId = "id123",
                 };
             }
 
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new UsageContent(new()
                 {
@@ -170,7 +169,7 @@ public class OpenTelemetryAgentTests
         Assert.Equal("localhost", activity.GetTagItem("server.address"));
         Assert.Equal(12345, (int)activity.GetTagItem("server.port")!);
 
-        Assert.Equal("invoke_agent TestAgent", activity.DisplayName);
+        Assert.Equal($"invoke_agent {agent.Name}({agent.Id})", activity.DisplayName);
         Assert.Equal("invoke_agent", activity.GetTagItem("gen_ai.operation.name"));
         Assert.Equal("TestAgentProviderFromAIAgentMetadata", activity.GetTagItem("gen_ai.provider.name"));
         Assert.Equal(innerAgent.Name, activity.GetTagItem("gen_ai.agent.name"));
@@ -305,10 +304,10 @@ public class OpenTelemetryAgentTests
             NameFunc = () => name,
             DescriptionFunc = () => description,
 
-            RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = async (messages, session, options, cancellationToken) =>
             {
                 await Task.Yield();
-                return new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
+                return new AgentResponse(new ChatMessage(ChatRole.Assistant, "The blue whale, I think."))
                 {
                     ResponseId = "id123",
                     Usage = new UsageDetails
@@ -333,21 +332,21 @@ public class OpenTelemetryAgentTests
                 null,
         };
 
-        async static IAsyncEnumerable<AgentRunResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+        async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
 
             foreach (string text in new[] { "The ", "blue ", "whale,", " ", "", "I", " think." })
             {
                 await Task.Yield();
-                yield return new AgentRunResponseUpdate(ChatRole.Assistant, text)
+                yield return new AgentResponseUpdate(ChatRole.Assistant, text)
                 {
                     ResponseId = "id123",
                 };
             }
 
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new UsageContent(new()
                 {
@@ -431,7 +430,15 @@ public class OpenTelemetryAgentTests
         Assert.Equal("localhost", activity.GetTagItem("server.address"));
         Assert.Equal(12345, (int)activity.GetTagItem("server.port")!);
 
-        Assert.Equal($"invoke_agent {innerAgent.DisplayName}", activity.DisplayName);
+        if (string.IsNullOrWhiteSpace(innerAgent.Name))
+        {
+            Assert.Equal($"invoke_agent {innerAgent.Id}", activity.DisplayName);
+        }
+        else
+        {
+            Assert.Equal($"invoke_agent {innerAgent.Name}({innerAgent.Id})", activity.DisplayName);
+        }
+
         Assert.Equal("invoke_agent", activity.GetTagItem("gen_ai.operation.name"));
         Assert.Equal("TestAgentProviderFromAIAgentMetadata", activity.GetTagItem("gen_ai.provider.name"));
         Assert.Equal(innerAgent.Name, activity.GetTagItem("gen_ai.agent.name"));

@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Azure AI Search Example
 
-This sample demonstrates usage of AzureAIClient with Azure AI Search
+This sample demonstrates usage of AzureAIProjectAgentProvider with Azure AI Search
 to search through indexed data and answer user questions about it.
 
 Prerequisites:
@@ -21,7 +21,9 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MySearchAgent",
             instructions="""You are a helpful assistant. You must always provide citations for
             answers using the tool and render them as: `[message_idx:search_idx†source]`.""",
@@ -38,8 +40,8 @@ async def main() -> None:
                     ]
                 },
             },
-        ) as agent,
-    ):
+        )
+
         query = "Tell me about insurance options"
         print(f"User: {query}")
         result = await agent.run(query)

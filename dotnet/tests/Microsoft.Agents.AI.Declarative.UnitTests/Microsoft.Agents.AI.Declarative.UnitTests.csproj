@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);IDE1006;VSTHRD200</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Declarative\Microsoft.Agents.AI.Declarative.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.ObjectModel" />
+    <PackageReference Include="Microsoft.Agents.ObjectModel.Json" />
+    <PackageReference Include="Microsoft.Agents.ObjectModel.PowerFx" />
+  </ItemGroup>
+
+</Project>

@@ -58,7 +58,7 @@ async def main() -> None:
 
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="CustomBot",
         instructions="You are a helpful assistant that remembers our conversation.",
         # Use custom chat message store.

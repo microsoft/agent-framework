@@ -124,7 +124,7 @@ public abstract class AIContextProvider
     /// that will be used. Context providers can use this information to determine what additional context
     /// should be provided for the invocation.
     /// </remarks>
-    public class InvokingContext
+    public sealed class InvokingContext
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokingContext"/> class with the specified request messages.
@@ -142,7 +142,7 @@ public abstract class AIContextProvider
         /// <value>
         /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
         /// </value>
-        public IEnumerable<ChatMessage> RequestMessages { get; }
+        public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
     }
 
     /// <summary>
@@ -153,7 +153,7 @@ public abstract class AIContextProvider
     /// request messages that were used and the response messages that were generated. It also indicates
     /// whether the invocation succeeded or failed.
     /// </remarks>
-    public class InvokedContext
+    public sealed class InvokedContext
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.
@@ -174,7 +174,7 @@ public abstract class AIContextProvider
         /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
         /// This does not include any <see cref="AIContextProvider"/> supplied messages.
         /// </value>
-        public IEnumerable<ChatMessage> RequestMessages { get; }
+        public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
 
         /// <summary>
         /// Gets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.
@@ -183,7 +183,7 @@ public abstract class AIContextProvider
         /// A collection of <see cref="ChatMessage"/> instances that were provided by the <see cref="AIContextProvider"/>,
         /// and were used by the agent as part of the invocation.
         /// </value>
-        public IEnumerable<ChatMessage>? AIContextProviderMessages { get; }
+        public IEnumerable<ChatMessage>? AIContextProviderMessages { get; set; }
 
         /// <summary>
         /// Gets the collection of response messages generated during this invocation if the invocation succeeded.

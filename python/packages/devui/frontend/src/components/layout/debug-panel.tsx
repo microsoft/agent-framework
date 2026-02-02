@@ -3,7 +3,8 @@
  * Features: Real-time event streaming, trace visualization, tool call details
  */
 
-import { useRef, useState } from "react";
+import { useRef, useState, useMemo } from "react";
+import { useDevUIStore } from "@/stores/devuiStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -19,8 +20,9 @@ import {
   MessageSquare,
   ChevronRight,
   ChevronDown,
-  Info,
+  BarChart3,
 } from "lucide-react";
+import { ContextInspector } from "@/components/features/agent/context-inspector";
 import type { ExtendedResponseStreamEvent } from "@/types";
 
 // Simple visual separator component
@@ -88,7 +90,23 @@ interface TraceEventData extends EventDataBase {
   start_time?: number;
   end_time?: number;
   entity_id?: string;
-  session_id?: string | null;
+  response_id?: string | null;
+}
+
+// Helper type for trace hierarchy
+interface TraceNode {
+  event: ExtendedResponseStreamEvent;
+  data: TraceEventData;
+  children: TraceNode[];
+}
+
+// Helper type for grouped traces by response
+interface TraceGroup {
+  response_id: string;
+  timestamp: number;
+  traces: TraceNode[];
+  totalDuration: number;
+  entity_id?: string;
 }
 
 interface DebugPanelProps {
@@ -149,20 +167,22 @@ function processEventsForDisplay(
       const item = outputEvent.item;
 
       // If it's a function call item, extract metadata
-      if (item.type === "function_call" && item.call_id && item.name) {
-        const callId = item.call_id;
+      if (item.type === "function_call") {
+        // Type assertion for function call
+        const funcCall = item as import("@/types").ResponseFunctionToolCall;
+        const callId = funcCall.call_id;
 
         // Initialize function call tracking with REAL function name from backend!
         functionCalls.set(callId, {
-          name: item.name, // ← REAL NAME! (not "unknown")
+          name: funcCall.name, // ← REAL NAME! (not "unknown")
           arguments: "",
           callId: callId,
-          itemId: item.id, // Track item_id for delta matching
+          itemId: funcCall.id, // Track item_id for delta matching
           timestamp: new Date().toISOString(),
         });
 
         // Also track in callIdToName map for result pairing
-        callIdToName.set(callId, item.name);
+        callIdToName.set(callId, funcCall.name);
       }
 
       // Pass through the event for display
@@ -321,8 +341,7 @@ function processEventsForDisplay(
         } else {
           // Shouldn't happen if output_item.added was emitted first
           console.warn(
-            `Received argument delta for unknown call with item_id: ${
-              "item_id" in event ? event.item_id : "unknown"
+            `Received argument delta for unknown call with item_id: ${"item_id" in event ? event.item_id : "unknown"
             }`
           );
         }
@@ -416,17 +435,15 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
             ? data.arguments.slice(0, 30)
             : JSON.stringify(data.arguments).slice(0, 30)
           : "";
-        return `Calling ${functionName}(${argsStr}${
-          argsStr.length >= 30 ? "..." : ""
-        })`;
+        return `Calling ${functionName}(${argsStr}${argsStr.length >= 30 ? "..." : ""
+          })`;
       }
       return "Function call";
 
     case "response.function_call_arguments.delta":
       if ("delta" in event && event.delta) {
-        return `Function arg delta: ${event.delta.slice(0, 30)}${
-          event.delta.length > 30 ? "..." : ""
-        }`;
+        return `Function arg delta: ${event.delta.slice(0, 30)}${event.delta.length > 30 ? "..." : ""
+          }`;
       }
       return "Function arguments...";
 
@@ -434,9 +451,8 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
       const resultEvent =
         event as import("@/types").ResponseFunctionResultComplete;
       const truncated = resultEvent.output.slice(0, 40);
-      return `Function result: ${truncated}${
-        truncated.length >= 40 ? "..." : ""
-      }`;
+      return `Function result: ${truncated}${truncated.length >= 40 ? "..." : ""
+        }`;
     }
 
     case "response.output_item.added": {
@@ -595,9 +611,8 @@ function EventItem({ event }: EventItemProps) {
 
       <div className="text-sm">
         <div
-          className={`flex items-center gap-2 ${
-            hasExpandableContent ? "cursor-pointer" : ""
-          }`}
+          className={`flex items-center gap-2 ${hasExpandableContent ? "cursor-pointer" : ""
+            }`}
           onClick={() => hasExpandableContent && setIsExpanded(!isExpanded)}
         >
           {hasExpandableContent && (
@@ -757,11 +772,10 @@ function EventExpandedContent({
                 Status:
               </span>
               <span
-                className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                  resultEvent.status === "completed"
+                className={`ml-2 px-2 py-1 rounded text-xs font-medium ${resultEvent.status === "completed"
                     ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                     : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                }`}
+                  }`}
               >
                 {resultEvent.status}
               </span>
@@ -802,11 +816,10 @@ function EventExpandedContent({
                   Status:
                 </span>
                 <span
-                  className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                    result.status === "completed"
+                  className={`ml-2 px-2 py-1 rounded text-xs font-medium ${result.status === "completed"
                       ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                       : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                  }`}
+                    }`}
                 >
                   {result.status}
                 </span>
@@ -936,11 +949,10 @@ function EventExpandedContent({
                     Status:
                   </span>
                   <span
-                    className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                      data.status === "StatusCode.UNSET" || data.status === "OK"
+                    className={`ml-2 px-2 py-1 rounded text-xs font-medium ${data.status === "StatusCode.UNSET" || data.status === "OK"
                         ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                         : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                    }`}
+                      }`}
                   >
                     {data.status || "unknown"}
                   </span>
@@ -963,27 +975,7 @@ function EventExpandedContent({
                   </span>
                   <div className="mt-1 max-h-32 overflow-auto">
                     <pre className="text-xs bg-background border rounded p-2 whitespace-pre-wrap break-all">
-                      {(() => {
-                        try {
-                          // Try to pretty-print JSON, and unescape string values that contain JSON
-                          const attrs = { ...data.attributes };
-                          Object.keys(attrs).forEach((key) => {
-                            if (
-                              typeof attrs[key] === "string" &&
-                              attrs[key].startsWith("[")
-                            ) {
-                              try {
-                                attrs[key] = JSON.parse(attrs[key]);
-                              } catch {
-                                // Keep original if parsing fails
-                              }
-                            }
-                          });
-                          return JSON.stringify(attrs, null, 2);
-                        } catch {
-                          return JSON.stringify(data.attributes, null, 2);
-                        }
-                      })()}
+                      {formatTraceAttributes(data.attributes)}
                     </pre>
                   </div>
                 </div>
@@ -1157,258 +1149,418 @@ function EventsTab({
   );
 }
 
-function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
-  // ONLY show actual trace events - handle both event type formats
-  const traceEvents = events.filter(
-    (e) =>
-      e.type === "response.trace.completed" ||
-      e.type === "response.trace.completed"
-  );
+// Build hierarchical trace structure from flat trace events
+function buildTraceHierarchy(traceEvents: ExtendedResponseStreamEvent[]): TraceGroup[] {
+  // Group by response_id first
+  const groupedByResponse = new Map<string, ExtendedResponseStreamEvent[]>();
 
-  // Add separators between message rounds
-  const tracesWithSeparators = addSeparatorsToEvents(traceEvents);
+  for (const event of traceEvents) {
+    if (!("data" in event)) continue;
+    const data = event.data as TraceEventData;
+    const responseId = data.response_id || "unknown";
 
-  // Reverse to show latest traces at the top
-  const reversedTraceEvents = [...tracesWithSeparators].reverse();
+    if (!groupedByResponse.has(responseId)) {
+      groupedByResponse.set(responseId, []);
+    }
+    groupedByResponse.get(responseId)!.push(event);
+  }
+
+  // Convert each group to hierarchical structure
+  const groups: TraceGroup[] = [];
+
+  for (const [responseId, events] of groupedByResponse) {
+    // Build tree from parent_span_id relationships
+    const nodeMap = new Map<string, TraceNode>();
+    const rootNodes: TraceNode[] = [];
+
+    // First pass: create all nodes
+    for (const event of events) {
+      if (!("data" in event)) continue;
+      const data = (event as { data: TraceEventData }).data;
+      const spanId = data.span_id || `span_${Math.random()}`;
+      nodeMap.set(spanId, {
+        event,
+        data,
+        children: [],
+      });
+    }
+
+    // Second pass: build parent-child relationships
+    for (const event of events) {
+      if (!("data" in event)) continue;
+      const data = (event as { data: TraceEventData }).data;
+      const spanId = data.span_id || "";
+      const parentSpanId = data.parent_span_id;
+      const node = nodeMap.get(spanId);
+
+      if (!node) continue;
+
+      if (parentSpanId && nodeMap.has(parentSpanId)) {
+        // Has a parent in this group
+        nodeMap.get(parentSpanId)!.children.push(node);
+      } else {
+        // Root node (no parent or parent not in this group)
+        rootNodes.push(node);
+      }
+    }
+
+    // Sort root nodes by start_time (earliest first)
+    rootNodes.sort((a, b) => (a.data.start_time || 0) - (b.data.start_time || 0));
+
+    // Sort children recursively by start_time
+    const sortChildren = (node: TraceNode) => {
+      node.children.sort((a, b) => (a.data.start_time || 0) - (b.data.start_time || 0));
+      node.children.forEach(sortChildren);
+    };
+    rootNodes.forEach(sortChildren);
+
+    // Calculate group metadata
+    const firstEvent = events[0];
+    const firstData = firstEvent && "data" in firstEvent ? (firstEvent.data as TraceEventData) : null;
+    const timestamp = Math.min(...events.map(e => {
+      const d = "data" in e ? (e.data as TraceEventData) : null;
+      return d?.start_time || Date.now() / 1000;
+    }));
+    const totalDuration = events.reduce((sum, e) => {
+      const d = "data" in e ? (e.data as TraceEventData) : null;
+      return sum + (d?.duration_ms || 0);
+    }, 0);
+
+    groups.push({
+      response_id: responseId,
+      timestamp,
+      traces: rootNodes,
+      totalDuration,
+      entity_id: firstData?.entity_id,
+    });
+  }
+
+  // Sort groups by timestamp (newest first)
+  groups.sort((a, b) => b.timestamp - a.timestamp);
+
+  return groups;
+}
+
+// Recursively parse escaped JSON strings at any depth
+function parseEscapedJson(value: unknown): unknown {
+  if (typeof value === "string") {
+    // Try to parse JSON strings (arrays or objects)
+    const trimmed = value.trim();
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(value);
+        // Recursively process the parsed result
+        return parseEscapedJson(parsed);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(parseEscapedJson);
+  }
+
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      result[k] = parseEscapedJson(v);
+    }
+    return result;
+  }
+
+  return value;
+}
+
+// Format trace attributes by parsing escaped JSON strings for better readability
+function formatTraceAttributes(attributes: Record<string, unknown>): string {
+  try {
+    const formatted = parseEscapedJson(attributes);
+    return JSON.stringify(formatted, null, 2);
+  } catch {
+    return JSON.stringify(attributes, null, 2);
+  }
+}
+
+// Get operation type badge color
+function getOperationColor(operationName: string): string {
+  if (operationName.includes("invoke_agent") || operationName.includes("Agent")) {
+    return "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200";
+  }
+  if (operationName.includes("chat") || operationName.includes("Chat")) {
+    return "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200";
+  }
+  if (operationName.includes("tool") || operationName.includes("execute")) {
+    return "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200";
+  }
+  return "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200";
+}
+
+// Recursive component for rendering trace tree nodes
+function TraceTreeNode({ node, depth = 0 }: { node: TraceNode; depth?: number }) {
+  const [isExpanded, setIsExpanded] = useState(depth < 2); // Auto-expand first 2 levels
+  const [showDetails, setShowDetails] = useState(false);
+
+  const { data } = node;
+  const operationName = data.operation_name || "Unknown";
+  const duration = data.duration_ms ? `${Number(data.duration_ms).toFixed(1)}ms` : "";
+  const hasChildren = node.children.length > 0;
+
+  // Extract token usage from attributes if available
+  const inputTokens = data.attributes?.["gen_ai.usage.input_tokens"];
+  const outputTokens = data.attributes?.["gen_ai.usage.output_tokens"];
+  const hasTokens = inputTokens !== undefined || outputTokens !== undefined;
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center gap-2 p-3 border-b">
-        <Search className="h-4 w-4" />
-        <span className="font-medium">Traces</span>
-        <Badge variant="outline">{traceEvents.length}</Badge>
+    <div className="relative">
+      {/* Vertical line for tree structure */}
+      {depth > 0 && (
+        <div
+          className="absolute left-0 top-0 bottom-0 border-l-2 border-muted"
+          style={{ marginLeft: `${(depth - 1) * 16 + 8}px` }}
+        />
+      )}
+
+      <div
+        className="flex items-center gap-2 py-1.5 hover:bg-muted/50 rounded transition-colors"
+        style={{ paddingLeft: `${depth * 16}px` }}
+      >
+        {/* Expand/collapse for children OR details */}
+        <button
+          onClick={() => hasChildren ? setIsExpanded(!isExpanded) : setShowDetails(!showDetails)}
+          className="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          {hasChildren ? (
+            isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
+          ) : (
+            showDetails ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
+          )}
+        </button>
+
+        {/* Operation badge */}
+        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${getOperationColor(operationName)}`}>
+          {operationName.replace("ChatAgent.", "").replace("invoke_agent ", "")}
+        </span>
+
+        {/* Duration */}
+        {duration && (
+          <span className="text-xs text-muted-foreground font-mono">
+            {duration}
+          </span>
+        )}
+
+        {/* Token usage */}
+        {hasTokens && (
+          <span className="text-xs text-muted-foreground font-mono">
+            {inputTokens !== undefined && <span>↑{String(inputTokens)}</span>}
+            {inputTokens !== undefined && outputTokens !== undefined && <span className="mx-0.5">/</span>}
+            {outputTokens !== undefined && <span>↓{String(outputTokens)}</span>}
+          </span>
+        )}
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="p-3">
-          {traceEvents.length === 0 ? (
-            <div className="text-center text-muted-foreground text-sm py-8">
-              No trace data available.
-              <br />
-              {events && events.length > 0 && (
-                <div className="mt-3 text-xs border rounded p-2">
-                  {" "}
-                  <Info className="inline h-4 w-4 mr-1  " />
-                  You may have to set the environment variable{" "}
-                  <span className="font-mono bg-accent/10 px-1 rounded">
-                    ENABLE_OTEL=true
-                  </span>{" "}
-                  or restart devui with the tracing flag{" "}
-                  <div className="font-mono bg-accent/10 px-1 rounded">
-                    devui --tracing
-                  </div>
-                  to enable tracing.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {reversedTraceEvents.map((event, index) => {
-                if ('type' in event && event.type === "separator") {
-                  return <MessageSeparator key={(event as { type: "separator"; id: string }).id} />;
-                }
-                return <TraceEventItem key={index} event={event as ExtendedResponseStreamEvent} />;
-              })}
-            </div>
-          )}
+      {/* Details panel */}
+      {showDetails && !hasChildren && (
+        <div
+          className="ml-4 mt-1 mb-2 p-2 bg-muted/30 rounded border text-xs"
+          style={{ marginLeft: `${depth * 16 + 20}px` }}
+        >
+          <div className="space-y-1">
+            {data.span_id && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground w-20">Span ID:</span>
+                <span className="font-mono text-xs break-all">{data.span_id}</span>
+              </div>
+            )}
+            {data.trace_id && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground w-20">Trace ID:</span>
+                <span className="font-mono text-xs break-all">{data.trace_id}</span>
+              </div>
+            )}
+            {data.status && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground w-20">Status:</span>
+                <span className={`px-1.5 py-0.5 rounded text-xs ${
+                  data.status === "StatusCode.UNSET" || data.status === "OK"
+                    ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
+                    : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
+                }`}>
+                  {data.status}
+                </span>
+              </div>
+            )}
+            {data.attributes && Object.keys(data.attributes).length > 0 && (
+              <div className="mt-2">
+                <span className="text-muted-foreground block mb-1">Attributes:</span>
+                <pre className="text-xs bg-background border rounded p-2 overflow-auto max-h-32 whitespace-pre-wrap break-all">
+                  {formatTraceAttributes(data.attributes)}
+                </pre>
+              </div>
+            )}
+          </div>
         </div>
-      </ScrollArea>
+      )}
+
+      {/* Children */}
+      {hasChildren && isExpanded && (
+        <div>
+          {node.children.map((child, idx) => (
+            <TraceTreeNode key={child.data.span_id || idx} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function TraceEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
-  const [isExpanded, setIsExpanded] = useState(false);
+// Component for a single trace group (one response/turn)
+function TraceGroupItem({ group }: { group: TraceGroup }) {
+  const [isExpanded, setIsExpanded] = useState(true);
 
-  if (
-    (event.type !== "response.trace.completed" &&
-      event.type !== "response.trace.completed") ||
-    !("data" in event)
-  ) {
-    return (
-      <div className="border rounded p-3 text-red-600 dark:text-red-400 text-xs">
-        Error: Expected trace event but got {event.type}
-      </div>
-    );
-  }
-
-  const data = event.data as TraceEventData;
-
-  // Use stored UI timestamp first, then trace timestamps, then fallback to current time
-  let timestamp: string;
-  if ('_uiTimestamp' in event && typeof event._uiTimestamp === 'number') {
-    // Use stored UI timestamp from when event was received
-    timestamp = new Date(event._uiTimestamp * 1000).toLocaleTimeString();
-  } else if (data.end_time) {
-    timestamp = new Date(data.end_time * 1000).toLocaleTimeString();
-  } else if (data.start_time) {
-    timestamp = new Date(data.start_time * 1000).toLocaleTimeString();
-  } else if (data.timestamp) {
-    timestamp = new Date(data.timestamp).toLocaleTimeString();
-  } else {
-    timestamp = new Date().toLocaleTimeString();
-  }
-
-  const operationName = data.operation_name || "Unknown Operation";
-  const duration = data.duration_ms
-    ? `${Number(data.duration_ms).toFixed(1)}ms`
-    : "";
-  const entityId = data.entity_id || "";
+  const timestamp = new Date(group.timestamp * 1000).toLocaleTimeString();
+  const duration = group.totalDuration > 0 ? `${group.totalDuration.toFixed(0)}ms` : "";
+  const spanCount = group.traces.reduce((count, node) => {
+    const countNode = (n: TraceNode): number => 1 + n.children.reduce((c, child) => c + countNode(child), 0);
+    return count + countNode(node);
+  }, 0);
 
   return (
-    <div className="border-l-2 border-muted pl-3 py-2 hover:bg-muted/50 transition-colors">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-        <Search className="h-3 w-3 text-orange-600 dark:text-orange-400" />
-        <span className="font-mono">{timestamp}</span>
-        <Badge variant="outline" className="text-xs py-0">
-          trace
-        </Badge>
+    <div className="border rounded-lg overflow-hidden">
+      {/* Group header */}
+      <div
+        className="flex items-center gap-2 p-2 bg-muted/50 cursor-pointer hover:bg-muted/70 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="text-muted-foreground">
+          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </div>
+
+        <span className="font-mono text-xs text-muted-foreground">{timestamp}</span>
+
+        {group.entity_id && (
+          <Badge variant="outline" className="text-xs py-0">
+            {group.entity_id.replace("agent_", "").replace("workflow_", "")}
+          </Badge>
+        )}
+
+        <div className="flex-1" />
+
         {duration && (
           <Badge variant="secondary" className="text-xs py-0">
             {duration}
           </Badge>
         )}
+
+        <span className="text-xs text-muted-foreground">
+          {spanCount} span{spanCount !== 1 ? "s" : ""}
+        </span>
       </div>
 
-      <div className="text-sm">
-        <div
-          className="flex items-center gap-2 cursor-pointer"
-          onClick={() => setIsExpanded(!isExpanded)}
-        >
-          <div className="text-muted-foreground">
-            {isExpanded ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-          </div>
-          <div className="text-muted-foreground flex-1 break-all">
-            <span className="font-medium">{operationName}</span>
-            {entityId && <span className="ml-2 text-xs">({entityId})</span>}
-          </div>
+      {/* Group content - trace tree */}
+      {isExpanded && (
+        <div className="p-2 border-t">
+          {group.traces.map((node, idx) => (
+            <TraceTreeNode key={node.data.span_id || idx} node={node} depth={0} />
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Expandable content */}
-        {isExpanded && (
-          <div className="mt-2 ml-5 p-3 bg-muted/30 rounded border">
-            <div className="space-y-2">
+function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
+  // Use persisted store state instead of local useState
+  const subTab = useDevUIStore((state) => state.debugTraceSubTab);
+  const setSubTab = useDevUIStore((state) => state.setDebugTraceSubTab);
+
+  // ONLY show actual trace events
+  const traceEvents = events.filter(
+    (e) => e.type === "response.trace.completed"
+  );
+
+  // Build hierarchical structure grouped by response_id
+  const traceGroups = buildTraceHierarchy(traceEvents);
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Sub-tab header */}
+      <div className="flex items-center gap-2 p-3 border-b">
+        <Search className="h-4 w-4" />
+        <span className="font-medium">Traces</span>
+        <Badge variant="outline">{traceEvents.length}</Badge>
+
+        {/* Sub-tab toggle */}
+        <div className="flex-1" />
+        <div className="flex items-center bg-muted rounded-md p-1 min-w-0">
+          <button
+            onClick={() => setSubTab("spans")}
+            className={`px-3 py-1.5 text-xs rounded transition-colors truncate ${
+              subTab === "spans"
+                ? "bg-background shadow-sm font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            OTel Spans
+          </button>
+          <button
+            onClick={() => setSubTab("context")}
+            className={`px-3 py-1.5 text-xs rounded transition-colors flex items-center gap-1.5 min-w-0 ${
+              subTab === "context"
+                ? "bg-background shadow-sm font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <BarChart3 className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="truncate">Context Inspector</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-tab content */}
+      {subTab === "spans" ? (
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* OTel Spans header - only show when we have data */}
+          {traceEvents.length > 0 && (
+            <div className="p-3 border-b flex-shrink-0">
               <div className="flex items-center gap-2">
-                <Search className="h-4 w-4 text-orange-500" />
-                <span className="font-semibold text-sm">Trace Details</span>
-              </div>
-              <div className="grid grid-cols-1 gap-2 text-xs">
-                <div>
-                  <span className="font-medium text-muted-foreground">
-                    Operation:
-                  </span>
-                  <span className="ml-2 font-mono bg-orange-100 dark:bg-orange-900 px-2 py-1 rounded">
-                    {operationName}
-                  </span>
-                </div>
-                {data.span_id && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Span ID:
-                    </span>
-                    <span className="ml-2 font-mono text-xs break-all">
-                      {data.span_id}
-                    </span>
-                  </div>
-                )}
-                {data.trace_id && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Trace ID:
-                    </span>
-                    <span className="ml-2 font-mono text-xs break-all">
-                      {data.trace_id}
-                    </span>
-                  </div>
-                )}
-                {data.parent_span_id && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Parent Span:
-                    </span>
-                    <span className="ml-2 font-mono text-xs break-all">
-                      {data.parent_span_id}
-                    </span>
-                  </div>
-                )}
-                {data.duration_ms && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Duration:
-                    </span>
-                    <span className="ml-2 font-mono text-xs">
-                      {Number(data.duration_ms).toFixed(2)}ms
-                    </span>
-                  </div>
-                )}
-                {data.status && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Status:
-                    </span>
-                    <span
-                      className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                        data.status === "StatusCode.UNSET" ||
-                        data.status === "OK"
-                          ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
-                          : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                      }`}
-                    >
-                      {data.status || "unknown"}
-                    </span>
-                  </div>
-                )}
-                {data.entity_id && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Entity:
-                    </span>
-                    <span className="ml-2 font-mono text-xs break-all">
-                      {data.entity_id}
-                    </span>
-                  </div>
-                )}
-                {data.attributes && Object.keys(data.attributes).length > 0 && (
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Attributes:
-                    </span>
-                    <div className="mt-1 max-h-32 overflow-auto">
-                      <pre className="text-xs bg-background border rounded p-2 whitespace-pre-wrap max-w-full break-all">
-                        {(() => {
-                          try {
-                            // Try to pretty-print JSON, and unescape string values that contain JSON
-                            const attrs = { ...data.attributes };
-                            Object.keys(attrs).forEach((key) => {
-                              if (
-                                typeof attrs[key] === "string" &&
-                                attrs[key].startsWith("[")
-                              ) {
-                                try {
-                                  attrs[key] = JSON.parse(attrs[key]);
-                                } catch {
-                                  // Keep original if parsing fails
-                                }
-                              }
-                            });
-                            return JSON.stringify(attrs, null, 2);
-                          } catch {
-                            return JSON.stringify(data.attributes, null, 2);
-                          }
-                        })()}
-                      </pre>
-                    </div>
-                  </div>
-                )}
+                <Search className="h-4 w-4" />
+                <span className="font-medium text-sm">OTel Spans</span>
+                <Badge variant="outline" className="text-xs">
+                  {traceGroups.length} turn{traceGroups.length !== 1 ? "s" : ""}
+                </Badge>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+
+          {traceEvents.length === 0 ? (
+            <div className="flex flex-col items-center text-center p-6 pt-9">
+              <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
+              <div className="text-sm font-medium mb-1">No Data</div>
+              <div className="text-xs text-muted-foreground max-w-[200px]">
+                Run{" "}
+                <span className="font-mono bg-accent/10 px-1 rounded">
+                  devui --instrumentation
+                </span>{" "}
+                and start a conversation.
+              </div>
+            </div>
+          ) : (
+            <ScrollArea className="flex-1">
+              <div className="p-3">
+                <div className="space-y-3">
+                  {traceGroups.map((group) => (
+                    <TraceGroupItem key={group.response_id} group={group} />
+                  ))}
+                </div>
+              </div>
+            </ScrollArea>
+          )}
+        </div>
+      ) : (
+        <ContextInspector events={events} />
+      )}
     </div>
   );
 }
@@ -1599,19 +1751,48 @@ export function DebugPanel({
   isStreaming = false,
   onMinimize,
 }: DebugPanelProps) {
+  // Use persisted store state for active tab
+  const activeTab = useDevUIStore((state) => state.debugPanelTab);
+  const setActiveTab = useDevUIStore((state) => state.setDebugPanelTab);
+
+  // Compute counts once for tab badges (memoized to avoid perf hits)
+  const counts = useMemo(() => {
+    const processedEvents = processEventsForDisplay(events);
+    const eventsCount = processedEvents.length;
+    const tracesCount = events.filter(e => e.type === "response.trace.completed").length;
+    const toolsCount = processedEvents.filter(e => e.type === "response.function_call.complete").length
+      + events.filter(e => getFunctionResultFromEvent(e) !== null).length;
+    return { eventsCount, tracesCount, toolsCount };
+  }, [events]);
+
   return (
     <div className="flex-1 border-l flex flex-col min-h-0">
-      <Tabs defaultValue="events" className="flex-1 flex flex-col min-h-0">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "events" | "traces" | "tools")} className="flex-1 flex flex-col min-h-0">
         <div className="px-3 pt-3 flex items-center gap-2 flex-shrink-0">
           <TabsList className="flex-1">
-            <TabsTrigger value="events" className="flex-1">
+            <TabsTrigger value="events" className="flex-1 gap-1.5">
               Events
+              {counts.eventsCount > 0 && (
+                <span className="text-[10px] bg-muted-foreground/20 text-muted-foreground px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
+                  {counts.eventsCount}
+                </span>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="traces" className="flex-1">
+            <TabsTrigger value="traces" className="flex-1 gap-1.5">
               Traces
+              {counts.tracesCount > 0 && (
+                <span className="text-[10px] bg-muted-foreground/20 text-muted-foreground px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
+                  {counts.tracesCount}
+                </span>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="tools" className="flex-1">
+            <TabsTrigger value="tools" className="flex-1 gap-1.5">
               Tools
+              {counts.toolsCount > 0 && (
+                <span className="text-[10px] bg-muted-foreground/20 text-muted-foreground px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
+                  {counts.toolsCount}
+                </span>
+              )}
             </TabsTrigger>
           </TabsList>
           {onMinimize && (

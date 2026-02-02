@@ -42,43 +42,43 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new CopilotStudioAgentThread();
+    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentSession());
 
     /// <summary>
-    /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
+    /// Get a new <see cref="AgentSession"/> instance using an existing conversation id, to continue that conversation.
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public AgentThread GetNewThread(string conversationId)
-        => new CopilotStudioAgentThread() { ConversationId = conversationId };
+    /// <returns>A new <see cref="AgentSession"/> instance.</returns>
+    public ValueTask<AgentSession> GetNewSessionAsync(string conversationId)
+        => new(new CopilotStudioAgentSession() { ConversationId = conversationId });
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentSession(serializedSession, jsonSerializerOptions));
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messages);
 
-        // Ensure that we have a valid thread to work with.
-        // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
-        if (thread is not CopilotStudioAgentThread typedThread)
+        // Ensure that we have a valid session to work with.
+        // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
+        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
         }
 
-        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: false, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken), streaming: false, this._logger);
         var responseMessagesList = new List<ChatMessage>();
         await foreach (var message in responseMessages.ConfigureAwait(false))
         {
@@ -88,7 +88,7 @@ public class CopilotStudioAgent : AIAgent
         // TODO: Review list of ChatResponse properties to ensure we set all availble values.
         // Setting ResponseId and MessageId end up being particularly important for streaming consumers
         // so that they can tell things like response boundaries.
-        return new AgentRunResponse(responseMessagesList)
+        return new AgentResponse(responseMessagesList)
         {
             AgentId = this.Id,
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
@@ -96,27 +96,28 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messages);
 
-        // Ensure that we have a valid thread to work with.
-        // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= this.GetNewThread();
-        if (thread is not CopilotStudioAgentThread typedThread)
+        // Ensure that we have a valid session to work with.
+        // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
+
+        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
         }
 
-        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: true, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
@@ -124,7 +125,7 @@ public class CopilotStudioAgent : AIAgent
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
-            yield return new AgentRunResponseUpdate(message.Role, message.Contents)
+            yield return new AgentResponseUpdate(message.Role, message.Contents)
             {
                 AgentId = this.Id,
                 AdditionalProperties = message.AdditionalProperties,

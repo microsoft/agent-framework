@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -50,10 +49,10 @@ public sealed class PurviewClientTests : IDisposable
         {
             Id = "test-id-123",
             ProtectionScopeState = ProtectionScopeState.NotModified,
-            PolicyActions = new List<DlpActionInfo>
-            {
+            PolicyActions =
+            [
                 new() { Action = DlpAction.NotifyUser }
-            }
+            ]
         };
 
         this._handler.StatusCodeToReturn = HttpStatusCode.OK;
@@ -220,25 +219,25 @@ public sealed class PurviewClientTests : IDisposable
         var request = new ProtectionScopesRequest("test-user-id", "test-tenant-id")
         {
             Activities = ProtectionScopeActivities.UploadText,
-            Locations = new List<PolicyLocation>
-            {
+            Locations =
+            [
                 new("microsoft.graph.policyLocationApplication", "app-123")
-            }
+            ]
         };
 
         var expectedResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    ]
                 }
-            }
+            ]
         };
 
         this._handler.StatusCodeToReturn = HttpStatusCode.OK;
@@ -264,7 +263,7 @@ public sealed class PurviewClientTests : IDisposable
     {
         // Arrange
         var request = new ProtectionScopesRequest("test-user-id", "test-tenant-id");
-        var expectedResponse = new ProtectionScopesResponse { Scopes = new List<PolicyScopeBase>() };
+        var expectedResponse = new ProtectionScopesResponse { Scopes = [] };
 
         this._handler.StatusCodeToReturn = HttpStatusCode.OK;
         this._handler.ResponseToReturn = JsonSerializer.Serialize(expectedResponse, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProtectionScopesResponse)));
@@ -502,7 +501,7 @@ public sealed class PurviewClientTests : IDisposable
         };
 
         return new ContentToProcess(
-            new List<ProcessContentMetadataBase> { metadata },
+            [metadata],
             activityMetadata,
             deviceMetadata,
             integratedAppMetadata,
@@ -554,9 +553,10 @@ public sealed class PurviewClientTests : IDisposable
                 throw new HttpRequestException("Simulated network error");
             }
 
-            var response = new HttpResponseMessage(this.StatusCodeToReturn);
-
-            response.Content = new StringContent(this.ResponseToReturn ?? string.Empty, Encoding.UTF8, "application/json");
+            var response = new HttpResponseMessage(this.StatusCodeToReturn)
+            {
+                Content = new StringContent(this.ResponseToReturn ?? string.Empty, Encoding.UTF8, "application/json")
+            };
 
             if (!string.IsNullOrEmpty(this.ETagToReturn))
             {

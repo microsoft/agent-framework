@@ -96,7 +96,7 @@ public static class Program
         {
             switch (evt)
             {
-                case AgentRunUpdateEvent agentUpdate:
+                case AgentResponseUpdateEvent agentUpdate:
                     // Stream agent output in real-time
                     if (!string.IsNullOrEmpty(agentUpdate.Update.Text))
                     {
@@ -254,7 +254,7 @@ internal sealed class WriterExecutor : Executor
         Console.WriteLine($"\n=== Writer (Iteration {state.Iteration}) ===\n");
 
         StringBuilder sb = new();
-        await foreach (AgentRunResponseUpdate update in this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken))
+        await foreach (AgentResponseUpdate update in this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken))
         {
             if (!string.IsNullOrEmpty(update.Text))
             {
@@ -285,19 +285,19 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         this._agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
         {
             Name = "Critic",
-            Instructions = """
-                You are a constructive critic. Review the content and provide specific feedback.
-                Always try to provide actionable suggestions for improvement and strive to identify improvement points.
-                Only approve if the content is high quality, clear, and meets the original requirements and you see no improvement points.
-                
-                Provide your decision as structured output with:
-                - approved: true if content is good, false if revisions needed
-                - feedback: specific improvements needed (empty if approved)
-                
-                Be concise but specific in your feedback.
-                """,
             ChatOptions = new()
             {
+                Instructions = """
+                    You are a constructive critic. Review the content and provide specific feedback.
+                    Always try to provide actionable suggestions for improvement and strive to identify improvement points.
+                    Only approve if the content is high quality, clear, and meets the original requirements and you see no improvement points.
+                
+                    Provide your decision as structured output with:
+                    - approved: true if content is good, false if revisions needed
+                    - feedback: specific improvements needed (empty if approved)
+                
+                    Be concise but specific in your feedback.
+                    """,
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<CriticDecision>()
             }
         });
@@ -313,10 +313,10 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         Console.WriteLine($"=== Critic (Iteration {state.Iteration}) ===\n");
 
         // Use RunStreamingAsync to get streaming updates, then deserialize at the end
-        IAsyncEnumerable<AgentRunResponseUpdate> updates = this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> updates = this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken);
 
         // Stream the output in real-time (for any rationale/explanation)
-        await foreach (AgentRunResponseUpdate update in updates)
+        await foreach (AgentResponseUpdate update in updates)
         {
             if (!string.IsNullOrEmpty(update.Text))
             {
@@ -326,7 +326,7 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         Console.WriteLine("\n");
 
         // Convert the stream to a response and deserialize the structured output
-        AgentRunResponse response = await updates.ToAgentRunResponseAsync(cancellationToken);
+        AgentResponse response = await updates.ToAgentResponseAsync(cancellationToken);
         CriticDecision decision = response.Deserialize<CriticDecision>(JsonSerializerOptions.Web);
 
         Console.WriteLine($"Decision: {(decision.Approved ? "✅ APPROVED" : "❌ NEEDS REVISION")}");
@@ -394,7 +394,7 @@ internal sealed class SummaryExecutor : Executor<CriticDecision, ChatMessage>
         string prompt = $"Present this approved content:\n\n{message.Content}";
 
         StringBuilder sb = new();
-        await foreach (AgentRunResponseUpdate update in this._agent.RunStreamingAsync(new ChatMessage(ChatRole.User, prompt), cancellationToken: cancellationToken))
+        await foreach (AgentResponseUpdate update in this._agent.RunStreamingAsync(new ChatMessage(ChatRole.User, prompt), cancellationToken: cancellationToken))
         {
             if (!string.IsNullOrEmpty(update.Text))
             {

@@ -143,7 +143,7 @@ public class ChatClientAgentRunOptionsTests
         var options = new ChatClientAgentRunOptions { ChatClientFactory = ClientFactory };
 
         // Act
-        var responseUpdates = new List<AgentRunResponseUpdate>();
+        var responseUpdates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(messages, null, options, CancellationToken.None))
         {
             responseUpdates.Add(update);
@@ -215,7 +215,7 @@ public class ChatClientAgentRunOptionsTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
 
         // Act - No ChatClientFactory provided
-        var responseUpdates = new List<AgentRunResponseUpdate>();
+        var responseUpdates = new List<AgentResponseUpdate>();
         await foreach (var update in agent.RunStreamingAsync(messages, null, null, CancellationToken.None))
         {
             responseUpdates.Add(update);

@@ -1,0 +1,277 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+import logging
+from typing import Annotated, cast
+
+from agent_framework import (
+    AgentResponse,
+    AgentRunEvent,
+    ChatAgent,
+    ChatMessage,
+    HandoffAgentUserRequest,
+    HandoffBuilder,
+    HandoffSentEvent,
+    RequestInfoEvent,
+    Workflow,
+    WorkflowEvent,
+    WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
+    tool,
+)
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+logging.basicConfig(level=logging.ERROR)
+
+"""Sample: Handoff workflow with participant factories for state isolation.
+
+This sample demonstrates how to use participant factories in HandoffBuilder to create
+agents dynamically.
+
+Using participant factories allows you to set up proper state isolation between workflow
+instances created by the same builder. This is particularly useful when you need to handle
+requests or tasks in parallel with stateful participants.
+
+Routing Pattern:
+    User -> Triage Agent -> Specialist (Refund/Order Status/Return) -> User
+
+Prerequisites:
+    - `az login` (Azure CLI authentication)
+    - Environment variables for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+
+Key Concepts:
+    - Participant factories: create agents via factory functions for isolation
+    - State isolation: each workflow instance gets its own agent instances
+"""
+
+
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
+def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
+    """Simulated function to process a refund for a given order number."""
+    return f"Refund processed successfully for order {order_number}."
+
+
+@tool(approval_mode="never_require")
+def check_order_status(order_number: Annotated[str, "Order number to check status for"]) -> str:
+    """Simulated function to check the status of a given order number."""
+    return f"Order {order_number} is currently being processed and will ship in 2 business days."
+
+
+@tool(approval_mode="never_require")
+def process_return(order_number: Annotated[str, "Order number to process return for"]) -> str:
+    """Simulated function to process a return for a given order number."""
+    return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
+
+
+def create_triage_agent() -> ChatAgent:
+    """Factory function to create a triage agent instance."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions=(
+            "You are frontline support triage. Route customer issues to the appropriate specialist agents "
+            "based on the problem described."
+        ),
+        name="triage_agent",
+    )
+
+
+def create_refund_agent() -> ChatAgent:
+    """Factory function to create a refund agent instance."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions="You process refund requests.",
+        name="refund_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[process_refund],
+    )
+
+
+def create_order_status_agent() -> ChatAgent:
+    """Factory function to create an order status agent instance."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions="You handle order and shipping inquiries.",
+        name="order_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[check_order_status],
+    )
+
+
+def create_return_agent() -> ChatAgent:
+    """Factory function to create a return agent instance."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions="You manage product return requests.",
+        name="return_agent",
+        # In a real application, an agent can have multiple tools; here we keep it simple
+        tools=[process_return],
+    )
+
+
+def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
+    """Process workflow events and extract any pending user input requests.
+
+    This function inspects each event type and:
+    - Prints workflow status changes (IDLE, IDLE_WITH_PENDING_REQUESTS, etc.)
+    - Displays final conversation snapshots when workflow completes
+    - Prints user input request prompts
+    - Collects all RequestInfoEvent instances for response handling
+
+    Args:
+        events: List of WorkflowEvent to process
+
+    Returns:
+        List of RequestInfoEvent representing pending user input requests
+    """
+    requests: list[RequestInfoEvent] = []
+
+    for event in events:
+        # AgentRunEvent: Contains messages generated by agents during their turn
+        if isinstance(event, AgentRunEvent):
+            for message in event.data.messages:
+                if not message.text:
+                    # Skip messages without text (e.g., tool calls)
+                    continue
+                speaker = message.author_name or message.role.value
+                print(f"- {speaker}: {message.text}")
+
+        # HandoffSentEvent: Indicates a handoff has been initiated
+        if isinstance(event, HandoffSentEvent):
+            print(f"\n[Handoff from {event.source} to {event.target} initiated.]")
+
+        # WorkflowStatusEvent: Indicates workflow state changes
+        if isinstance(event, WorkflowStatusEvent) and event.state in {
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        }:
+            print(f"\n[Workflow Status] {event.state.name}")
+
+        # WorkflowOutputEvent: Contains the final conversation when workflow terminates
+        elif isinstance(event, WorkflowOutputEvent):
+            conversation = cast(list[ChatMessage], event.data)
+            if isinstance(conversation, list):
+                print("\n=== Final Conversation Snapshot ===")
+                for message in conversation:
+                    speaker = message.author_name or message.role.value
+                    print(f"- {speaker}: {message.text or [content.type for content in message.contents]}")
+                print("===================================")
+
+        # RequestInfoEvent: Workflow is requesting user input
+        elif isinstance(event, RequestInfoEvent):
+            if isinstance(event.data, HandoffAgentUserRequest):
+                _print_handoff_agent_user_request(event.data.agent_response)
+            requests.append(event)
+
+    return requests
+
+
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
+    """Display the agent's response messages when requesting user input.
+
+    This will happen when an agent generates a response that doesn't trigger
+    a handoff, i.e., the agent is asking the user for more information.
+
+    Args:
+        response: The AgentResponse from the agent requesting user input
+    """
+    if not response.messages:
+        raise RuntimeError("Cannot print agent responses: response has no messages.")
+
+    print("\n[Agent is requesting your input...]")
+
+    # Print agent responses
+    for message in response.messages:
+        if not message.text:
+            # Skip messages without text (e.g., tool calls)
+            continue
+        speaker = message.author_name or message.role.value
+        print(f"- {speaker}: {message.text}")
+
+
+async def _run_workflow(workflow: Workflow, user_inputs: list[str]) -> None:
+    """Run the workflow with the given user input and display events."""
+    print(f"- User: {user_inputs[0]}")
+    workflow_result = await workflow.run(user_inputs[0])
+    pending_requests = _handle_events(workflow_result)
+
+    # Process the request/response cycle
+    # The workflow will continue requesting input until:
+    # 1. The termination condition is met (4 user messages in this case), OR
+    # 2. We run out of scripted responses
+    while pending_requests:
+        if user_inputs[1:]:
+            # Get the next scripted response
+            user_response = user_inputs.pop(1)
+            print(f"\n- User: {user_response}")
+
+            # Send response(s) to all pending requests
+            # In this demo, there's typically one request per cycle, but the API supports multiple
+            responses = {
+                req.request_id: HandoffAgentUserRequest.create_response(user_response) for req in pending_requests
+            }
+        else:
+            # No more scripted responses; terminate the workflow
+            responses = {req.request_id: HandoffAgentUserRequest.terminate() for req in pending_requests}
+
+        # Send responses and get new events
+        # We use send_responses_streaming() to get events as they occur, allowing us to
+        # display agent responses in real-time and handle new requests as they arrive
+        workflow_result = await workflow.send_responses(responses)
+        pending_requests = _handle_events(workflow_result)
+
+
+async def main() -> None:
+    """Run the autonomous handoff workflow with participant factories."""
+    # Build the handoff workflow using participant factories
+    workflow_builder = (
+        HandoffBuilder(
+            name="Autonomous Handoff with Participant Factories",
+            participant_factories={
+                "triage": create_triage_agent,
+                "refund": create_refund_agent,
+                "order_status": create_order_status_agent,
+                "return": create_return_agent,
+            },
+        )
+        .with_start_agent("triage")
+        .with_termination_condition(
+            # Custom termination: Check if the triage agent has provided a closing message.
+            # This looks for the last message being from triage_agent and containing "welcome",
+            # which indicates the conversation has concluded naturally.
+            lambda conversation: len(conversation) > 0
+            and conversation[-1].author_name == "triage_agent"
+            and "welcome" in conversation[-1].text.lower()
+        )
+    )
+
+    # Scripted user responses for reproducible demo
+    # In a console application, replace this with:
+    #   user_input = input("Your response: ")
+    # or integrate with a UI/chat interface
+    user_inputs = [
+        "Hello, I need assistance with my recent purchase.",
+        "My order 1234 arrived damaged and the packaging was destroyed. I'd like to return it.",
+        "Is my return being processed?",
+        "Thanks for resolving this.",
+    ]
+
+    workflow_a = workflow_builder.build()
+    print("=== Running workflow_a ===")
+    await _run_workflow(workflow_a, list(user_inputs))
+
+    workflow_b = workflow_builder.build()
+    print("=== Running workflow_b ===")
+    # Only provide the last two inputs to workflow_b to demonstrate state isolation
+    # The agents in this workflow have no prior context thus should not have knowledge of
+    # order 1234 or previous interactions.
+    await _run_workflow(workflow_b, user_inputs[2:])
+    """
+    Expected behavior:
+    - workflow_a and workflow_b maintain separate states for their participants.
+    - Each workflow processes its requests independently without interference.
+    - workflow_a will answer the follow-up request based on its own conversation history,
+      while workflow_b will provide a general answer without prior context.
+    """
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -39,6 +39,12 @@ public sealed class ChatHistoryMemoryProviderOptions
     public int? MaxResults { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether sensitive data such as user ids and user messages may appear in logs.
+    /// </summary>
+    /// <value>Defaults to <see langword="false"/>.</value>
+    public bool EnableSensitiveTelemetryData { get; set; }
+
+    /// <summary>
     /// Behavior choices for the provider.
     /// </summary>
     public enum SearchBehavior

@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
@@ -30,7 +28,7 @@ public static class AgentHostingServiceCollectionExtensions
         return services.AddAIAgent(name, (sp, key) =>
         {
             var chatClient = sp.GetRequiredService<IChatClient>();
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions, key, tools: tools);
         });
     }
@@ -50,7 +48,7 @@ public static class AgentHostingServiceCollectionExtensions
         Throw.IfNullOrEmpty(name);
         return services.AddAIAgent(name, (sp, key) =>
         {
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions, key, tools: tools);
         });
     }
@@ -71,7 +69,7 @@ public static class AgentHostingServiceCollectionExtensions
         return services.AddAIAgent(name, (sp, key) =>
         {
             var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions, key, tools: tools);
         });
     }
@@ -93,7 +91,7 @@ public static class AgentHostingServiceCollectionExtensions
         return services.AddAIAgent(name, (sp, key) =>
         {
             var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description, tools: tools);
         });
     }
@@ -126,34 +124,6 @@ public static class AgentHostingServiceCollectionExtensions
             return agent;
         });
 
-        // Register the agent by name for discovery.
-        var agentHostBuilder = GetAgentRegistry(services);
-        agentHostBuilder.AgentNames.Add(name);
-
         return new HostedAgentBuilder(name, services);
-    }
-
-    private static LocalAgentRegistry GetAgentRegistry(IServiceCollection services)
-    {
-        var descriptor = services.FirstOrDefault(s => !s.IsKeyedService && s.ServiceType.Equals(typeof(LocalAgentRegistry)));
-        if (descriptor?.ImplementationInstance is not LocalAgentRegistry instance)
-        {
-            instance = new LocalAgentRegistry();
-            ConfigureHostBuilder(services, instance);
-        }
-
-        return instance;
-    }
-
-    private static void ConfigureHostBuilder(IServiceCollection services, LocalAgentRegistry agentHostBuilderContext)
-    {
-        services.Add(ServiceDescriptor.Singleton(agentHostBuilderContext));
-        services.AddSingleton<AgentCatalog, LocalAgentCatalog>();
-    }
-
-    private static IList<AITool> GetRegisteredToolsForAgent(IServiceProvider serviceProvider, string agentName)
-    {
-        var registry = serviceProvider.GetService<LocalAgentToolRegistry>();
-        return registry?.GetTools(agentName) ?? [];
     }
 }

@@ -33,7 +33,7 @@ async def run_agent_framework() -> None:
 
     # AF constructs a lightweight ChatAgent backed by OpenAIChatClient
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="assistant",
         instructions="You are a helpful assistant. Answer in one sentence.",
     )

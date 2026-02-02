@@ -1,21 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import logging
+from typing import cast
 
 from agent_framework import (
+    AgentRunUpdateEvent,
     ChatAgent,
+    ChatMessage,
+    GroupChatRequestSentEvent,
     HostedCodeInterpreterTool,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticFinalResultEvent,
-    MagenticOrchestratorMessageEvent,
+    MagenticOrchestratorEvent,
+    MagenticProgressLedger,
     WorkflowOutputEvent,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 """
@@ -64,17 +68,21 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    print("\nBuilding Magentic Workflow...")
+    # Create a manager agent for orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
+    )
 
-    # State used by on_agent_stream callback
-    last_stream_agent_id: str | None = None
-    stream_line_open: bool = False
+    print("\nBuilding Magentic Workflow...")
 
     workflow = (
         MagenticBuilder()
-        .participants(researcher=researcher_agent, coder=coder_agent)
-        .with_standard_manager(
-            chat_client=OpenAIChatClient(),
+        .participants([researcher_agent, coder_agent])
+        .with_manager(
+            agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
             max_reset_count=2,
@@ -94,48 +102,49 @@ async def main() -> None:
     print(f"\nTask: {task}")
     print("\nStarting workflow execution...")
 
-    try:
-        output: str | None = None
-        async for event in workflow.run_stream(task):
-            if isinstance(event, MagenticOrchestratorMessageEvent):
-                print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-            elif isinstance(event, MagenticAgentDeltaEvent):
-                if last_stream_agent_id != event.agent_id or not stream_line_open:
-                    if stream_line_open:
-                        print()
-                    print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                    last_stream_agent_id = event.agent_id
-                    stream_line_open = True
-                if event.text:
-                    print(event.text, end="", flush=True)
-            elif isinstance(event, MagenticAgentMessageEvent):
-                if stream_line_open:
-                    print(" (final)")
-                    stream_line_open = False
-                    print()
-                msg = event.message
-                if msg is not None:
-                    response_text = (msg.text or "").replace("\n", " ")
-                    print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-            elif isinstance(event, MagenticFinalResultEvent):
-                print("\n" + "=" * 50)
-                print("FINAL RESULT:")
-                print("=" * 50)
-                if event.message is not None:
-                    print(event.message.text)
-                print("=" * 50)
-            elif isinstance(event, WorkflowOutputEvent):
-                output = str(event.data) if event.data is not None else None
+    # Keep track of the last executor to format output nicely in streaming mode
+    last_message_id: str | None = None
+    output_event: WorkflowOutputEvent | None = None
+    async for event in workflow.run_stream(task):
+        if isinstance(event, AgentRunUpdateEvent):
+            message_id = event.data.message_id
+            if message_id != last_message_id:
+                if last_message_id is not None:
+                    print("\n")
+                print(f"- {event.executor_id}:", end=" ", flush=True)
+                last_message_id = message_id
+            print(event.data, end="", flush=True)
 
-        if stream_line_open:
-            print()
-            stream_line_open = False
+        elif isinstance(event, MagenticOrchestratorEvent):
+            print(f"\n[Magentic Orchestrator Event] Type: {event.event_type.name}")
+            if isinstance(event.data, ChatMessage):
+                print(f"Please review the plan:\n{event.data.text}")
+            elif isinstance(event.data, MagenticProgressLedger):
+                print(f"Please review progress ledger:\n{json.dumps(event.data.to_dict(), indent=2)}")
+            else:
+                print(f"Unknown data type in MagenticOrchestratorEvent: {type(event.data)}")
 
-        if output is not None:
-            print(f"Workflow completed with result:\n\n{output}")
+            # Block to allow user to read the plan/progress before continuing
+            # Note: this is for demonstration only and is not the recommended way to handle human interaction.
+            # Please refer to `with_plan_review` for proper human interaction during planning phases.
+            await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
 
-    except Exception as e:
-        print(f"Workflow execution failed: {e}")
+        elif isinstance(event, GroupChatRequestSentEvent):
+            print(f"\n[REQUEST SENT ({event.round_index})] to agent: {event.participant_name}")
+
+        elif isinstance(event, WorkflowOutputEvent):
+            output_event = event
+
+    if not output_event:
+        raise RuntimeError("Workflow did not produce a final output event.")
+    print("\n\nWorkflow completed!")
+    print("Final Output:")
+    # The output of the Magentic workflow is a list of ChatMessages with only one final message
+    # generated by the orchestrator.
+    output_messages = cast(list[ChatMessage], output_event.data)
+    if output_messages:
+        output = output_messages[-1].text
+        print(output)
 
 
 if __name__ == "__main__":

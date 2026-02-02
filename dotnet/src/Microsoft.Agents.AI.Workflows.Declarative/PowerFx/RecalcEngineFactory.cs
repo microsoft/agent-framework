@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx.Functions;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
@@ -38,7 +38,11 @@ internal static class RecalcEngineFactory
             }
 
             config.EnableSetFunction();
+            config.AddFunction(new AgentMessage());
             config.AddFunction(new UserMessage());
+            config.AddFunction(new MessageText.StringInput());
+            config.AddFunction(new MessageText.RecordInput());
+            config.AddFunction(new MessageText.TableInput());
 
             return config;
         }

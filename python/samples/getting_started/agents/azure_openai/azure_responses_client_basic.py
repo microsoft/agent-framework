@@ -7,6 +7,7 @@ from typing import Annotated
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
+from agent_framework import tool
 
 """
 Azure OpenAI Responses Client Basic Example
@@ -15,7 +16,8 @@ This sample demonstrates basic usage of AzureOpenAIResponsesClient for structure
 response generation, showing both streaming and non-streaming responses.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -30,7 +32,7 @@ async def non_streaming_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -47,7 +49,7 @@ async def streaming_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
+    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

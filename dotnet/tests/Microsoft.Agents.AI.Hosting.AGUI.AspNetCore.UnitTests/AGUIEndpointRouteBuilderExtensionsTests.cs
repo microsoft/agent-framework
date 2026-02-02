@@ -38,7 +38,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         AIAgent agent = new TestAgent();
 
         // Act
-        IEndpointConventionBuilder? result = AGUIEndpointRouteBuilderExtensions.MapAGUI(endpointsMock.Object, Pattern, agent);
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(Pattern, agent);
 
         // Assert
         Assert.NotNull(result);
@@ -305,7 +305,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     public async Task MapAGUIAgent_WithCustomAgent_ProducesExpectedStreamStructureAsync()
     {
         // Arrange
-        AIAgent customAgentFactory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        static AIAgent CustomAgentFactory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
         {
             return new MultiResponseAgent();
         }
@@ -322,7 +322,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         MemoryStream responseStream = new();
         httpContext.Response.Body = responseStream;
 
-        RequestDelegate handler = this.CreateRequestDelegate(customAgentFactory);
+        RequestDelegate handler = this.CreateRequestDelegate(CustomAgentFactory);
 
         // Act
         await handler(httpContext);
@@ -332,7 +332,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
 
         List<JsonElement> events = ParseSseEvents(responseContent);
-        List<JsonElement> contentEvents = new();
+        List<JsonElement> contentEvents = [];
         foreach (JsonElement evt in events)
         {
             if (evt.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent)
@@ -355,7 +355,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
-    public async Task MapAGUIAgent_ProducesCorrectThreadAndRunIds_InAllEventsAsync()
+    public async Task MapAGUIAgent_ProducesCorrectSessionAndRunIds_InAllEventsAsync()
     {
         // Arrange
         DefaultHttpContext httpContext = new();
@@ -421,30 +421,31 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
     private sealed class MultiResponseAgent : AIAgent
     {
-        public override string Id => "multi-response-agent";
+        protected override string? IdCore => "multi-response-agent";
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
-            new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession(serializedSession, jsonSerializerOptions));
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
         }
     }
 
@@ -495,43 +496,44 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         };
     }
 
-    private sealed class TestInMemoryAgentThread : InMemoryAgentThread
+    private sealed class TestInMemoryAgentSession : InMemoryAgentSession
     {
-        public TestInMemoryAgentThread()
+        public TestInMemoryAgentSession()
             : base()
         {
         }
 
-        public TestInMemoryAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThreadState, jsonSerializerOptions, null)
+        public TestInMemoryAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
+            : base(serializedSessionState, jsonSerializerOptions, null)
         {
         }
     }
 
     private sealed class TestAgent : AIAgent
     {
-        public override string Id => "test-agent";
+        protected override string? IdCore => "test-agent";
 
         public override string? Description => "Test agent";
 
-        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
-            new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession(serializedSession, jsonSerializerOptions));
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
         }
     }
 }

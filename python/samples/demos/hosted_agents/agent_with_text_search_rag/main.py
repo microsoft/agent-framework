@@ -93,13 +93,13 @@ class TextSearchContextProvider(ContextProvider):
 
 def main():
     # Create an Agent using the Azure OpenAI Chat Client
-    agent = AzureOpenAIChatClient(credential=DefaultAzureCredential()).create_agent(
+    agent = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(
         name="SupportSpecialist",
         instructions=(
             "You are a helpful support specialist for Contoso Outdoors. "
             "Answer questions using the provided context and cite the source document when available."
         ),
-        context_providers=TextSearchContextProvider(),
+        context_provider=TextSearchContextProvider(),
     )
 
     # Run the agent as a hosted agent

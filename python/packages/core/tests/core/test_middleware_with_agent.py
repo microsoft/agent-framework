@@ -6,17 +6,16 @@ from typing import Any
 import pytest
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     ChatAgent,
     ChatContext,
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
+    FunctionTool,
     Role,
-    TextContent,
     agent_middleware,
     chat_middleware,
     function_middleware,
@@ -193,18 +192,22 @@ class TestChatAgentFunctionBasedMiddleware:
         # Create a message to start the conversation
         messages = [ChatMessage(role=Role.USER, text="test message")]
 
-        # Set up chat client to return a function call
+        # Set up chat client to return a function call, then a final response
+        # If terminate works correctly, only the first response should be consumed
         chat_client.responses = [
             ChatResponse(
                 messages=[
                     ChatMessage(
                         role=Role.ASSISTANT,
                         contents=[
-                            FunctionCallContent(call_id="test_call", name="test_function", arguments={"text": "test"})
+                            Content.from_function_call(
+                                call_id="test_call", name="test_function", arguments={"text": "test"}
+                            )
                         ],
                     )
                 ]
-            )
+            ),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="this should not be consumed")]),
         ]
 
         # Create the test function with the expected signature
@@ -212,9 +215,13 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("function_called")
             return "test_result"
 
+        test_function_tool = FunctionTool(
+            func=test_function, name="test_function", description="Test function", approval_mode="never_require"
+        )
+
         # Create ChatAgent with function middleware and test function
         middleware = PreTerminationFunctionMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function_tool])
 
         # Execute the agent
         await agent.run(messages)
@@ -222,7 +229,11 @@ class TestChatAgentFunctionBasedMiddleware:
         # Verify that function was not called and only middleware executed
         assert execution_order == ["middleware_before", "middleware_after"]
         assert "function_called" not in execution_order
-        assert execution_order == ["middleware_before", "middleware_after"]
+
+        # Verify the chat client was only called once (no extra LLM call after termination)
+        assert chat_client.call_count == 1
+        # Verify the second response is still in the queue (wasn't consumed)
+        assert len(chat_client.responses) == 1
 
     async def test_function_middleware_with_post_termination(self, chat_client: "MockChatClient") -> None:
         """Test that function middleware can terminate execution after calling next()."""
@@ -242,18 +253,22 @@ class TestChatAgentFunctionBasedMiddleware:
         # Create a message to start the conversation
         messages = [ChatMessage(role=Role.USER, text="test message")]
 
-        # Set up chat client to return a function call
+        # Set up chat client to return a function call, then a final response
+        # If terminate works correctly, only the first response should be consumed
         chat_client.responses = [
             ChatResponse(
                 messages=[
                     ChatMessage(
                         role=Role.ASSISTANT,
                         contents=[
-                            FunctionCallContent(call_id="test_call", name="test_function", arguments={"text": "test"})
+                            Content.from_function_call(
+                                call_id="test_call", name="test_function", arguments={"text": "test"}
+                            )
                         ],
                     )
                 ]
-            )
+            ),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="this should not be consumed")]),
         ]
 
         # Create the test function with the expected signature
@@ -261,9 +276,13 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("function_called")
             return "test_result"
 
+        test_function_tool = FunctionTool(
+            func=test_function, name="test_function", description="Test function", approval_mode="never_require"
+        )
+
         # Create ChatAgent with function middleware and test function
         middleware = PostTerminationFunctionMiddleware()
-        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function])
+        agent = ChatAgent(chat_client=chat_client, middleware=[middleware], tools=[test_function_tool])
 
         # Execute the agent
         response = await agent.run(messages)
@@ -272,6 +291,11 @@ class TestChatAgentFunctionBasedMiddleware:
         assert response is not None
         assert "function_called" in execution_order
         assert execution_order == ["middleware_before", "function_called", "middleware_after"]
+
+        # Verify the chat client was only called once (no extra LLM call after termination)
+        assert chat_client.call_count == 1
+        # Verify the second response is still in the queue (wasn't consumed)
+        assert len(chat_client.responses) == 1
 
     async def test_function_based_agent_middleware_with_chat_agent(self, chat_client: "MockChatClient") -> None:
         """Test function-based agent middleware with ChatAgent."""
@@ -352,14 +376,14 @@ class TestChatAgentStreamingMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[TextContent(text="Streaming")], role=Role.ASSISTANT),
-                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text="Streaming")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 
@@ -405,7 +429,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
     """Test cases for multiple middleware execution order with ChatAgent."""
 
     async def test_multiple_agent_middleware_execution_order(self, chat_client: "MockChatClient") -> None:
-        """Test that multiple agent middlewares execute in correct order with ChatAgent."""
+        """Test that multiple agent middleware execute in correct order with ChatAgent."""
         execution_order: list[str] = []
 
         class OrderedMiddleware(AgentMiddleware):
@@ -419,12 +443,12 @@ class TestChatAgentMultipleMiddlewareOrdering:
                 await next(context)
                 execution_order.append(f"{self.name}_after")
 
-        # Create multiple middlewares
+        # Create multiple middleware
         middleware1 = OrderedMiddleware("first")
         middleware2 = OrderedMiddleware("second")
         middleware3 = OrderedMiddleware("third")
 
-        # Create ChatAgent with multiple middlewares
+        # Create ChatAgent with multiple middleware
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1, middleware2, middleware3])
 
         # Execute the agent
@@ -440,7 +464,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert execution_order == expected_order
 
     async def test_mixed_middleware_types_with_chat_agent(self, chat_client: "MockChatClient") -> None:
-        """Test mixed class and function-based middlewares with ChatAgent."""
+        """Test mixed class and function-based middleware with ChatAgent."""
         execution_order: list[str] = []
 
         class ClassAgentMiddleware(AgentMiddleware):
@@ -494,8 +518,8 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert response is not None
         assert chat_client.call_count == 1
 
-        # Verify that agent middlewares were executed in correct order
-        # (Function middlewares won't execute since no functions are called)
+        # Verify that agent middleware were executed in correct order
+        # (Function middleware won't execute since no functions are called)
         expected_order = ["class_agent_before", "function_agent_before", "function_agent_after", "class_agent_after"]
         assert execution_order == expected_order
 
@@ -503,9 +527,17 @@ class TestChatAgentMultipleMiddlewareOrdering:
 # region Tool Functions for Testing
 
 
-def sample_tool_function(location: str) -> str:
+def _sample_tool_function_impl(location: str) -> str:
     """A simple tool function for middleware testing."""
     return f"Weather in {location}: sunny"
+
+
+sample_tool_function = FunctionTool(
+    func=_sample_tool_function_impl,
+    name="sample_tool_function",
+    description="A simple tool function for middleware testing.",
+    approval_mode="never_require",
+)
 
 
 # region ChatAgent Function Middleware Tests with Tools
@@ -537,7 +569,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_123",
                             name="sample_tool_function",
                             arguments='{"location": "Seattle"}',
@@ -572,8 +604,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -597,7 +629,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_456",
                             name="sample_tool_function",
                             arguments='{"location": "San Francisco"}',
@@ -631,8 +663,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -669,7 +701,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_789",
                             name="sample_tool_function",
                             arguments='{"location": "New York"}',
@@ -710,8 +742,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -721,7 +753,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
     async def test_function_middleware_can_access_and_override_custom_kwargs(
         self, chat_client: "MockChatClient"
     ) -> None:
-        """Test that function middleware can access and override custom parameters like temperature."""
+        """Test that function middleware can access and override custom parameters."""
         captured_kwargs: dict[str, Any] = {}
         modified_kwargs: dict[str, Any] = {}
         middleware_called = False
@@ -734,37 +766,19 @@ class TestChatAgentFunctionMiddlewareWithTools:
             middleware_called = True
 
             # Capture the original kwargs
-            captured_kwargs["has_chat_options"] = "chat_options" in context.kwargs
             captured_kwargs["has_custom_param"] = "custom_param" in context.kwargs
             captured_kwargs["custom_param"] = context.kwargs.get("custom_param")
-
-            # Capture original chat_options values if present
-            if "chat_options" in context.kwargs:
-                chat_options = context.kwargs["chat_options"]
-                captured_kwargs["original_temperature"] = getattr(chat_options, "temperature", None)
-                captured_kwargs["original_max_tokens"] = getattr(chat_options, "max_tokens", None)
 
             # Modify some kwargs
             context.kwargs["temperature"] = 0.9
             context.kwargs["max_tokens"] = 500
             context.kwargs["new_param"] = "added_by_middleware"
 
-            # Also modify chat_options if present
-            if "chat_options" in context.kwargs:
-                context.kwargs["chat_options"].temperature = 0.9
-                context.kwargs["chat_options"].max_tokens = 500
-
             # Store modified kwargs for verification
             modified_kwargs["temperature"] = context.kwargs.get("temperature")
             modified_kwargs["max_tokens"] = context.kwargs.get("max_tokens")
             modified_kwargs["new_param"] = context.kwargs.get("new_param")
             modified_kwargs["custom_param"] = context.kwargs.get("custom_param")
-
-            # Capture modified chat_options values if present
-            if "chat_options" in context.kwargs:
-                chat_options = context.kwargs["chat_options"]
-                modified_kwargs["chat_options_temperature"] = getattr(chat_options, "temperature", None)
-                modified_kwargs["chat_options_max_tokens"] = getattr(chat_options, "max_tokens", None)
 
             await next(context)
 
@@ -774,22 +788,24 @@ class TestChatAgentFunctionMiddlewareWithTools:
                     ChatMessage(
                         role=Role.ASSISTANT,
                         contents=[
-                            FunctionCallContent(
+                            Content.from_function_call(
                                 call_id="test_call", name="sample_tool_function", arguments={"location": "Seattle"}
                             )
                         ],
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Function completed")])]),
+            ChatResponse(
+                messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("Function completed")])]
+            ),
         ]
 
         # Create ChatAgent with function middleware
         agent = ChatAgent(chat_client=chat_client, middleware=[kwargs_middleware], tools=[sample_tool_function])
 
-        # Execute the agent with custom parameters
+        # Execute the agent with custom parameters passed as kwargs
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        response = await agent.run(messages, temperature=0.7, max_tokens=100, custom_param="test_value")
+        response = await agent.run(messages, custom_param="test_value")
 
         # Verify response
         assert response is not None
@@ -799,19 +815,14 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert middleware_called, "Function middleware was not called"
 
         # Verify middleware captured the original kwargs
-        assert captured_kwargs["has_chat_options"] is True
         assert captured_kwargs["has_custom_param"] is True
         assert captured_kwargs["custom_param"] == "test_value"
-        assert captured_kwargs["original_temperature"] == 0.7
-        assert captured_kwargs["original_max_tokens"] == 100
 
         # Verify middleware could modify the kwargs
         assert modified_kwargs["temperature"] == 0.9
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"
-        assert modified_kwargs["chat_options_temperature"] == 0.9
-        assert modified_kwargs["chat_options_max_tokens"] == 500
 
 
 class TestMiddlewareDynamicRebuild:
@@ -888,7 +899,7 @@ class TestMiddlewareDynamicRebuild:
         agent = ChatAgent(chat_client=chat_client, middleware=[middleware1])
 
         # First streaming execution
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test stream message 1"):
             updates.append(update)
 
@@ -986,7 +997,7 @@ class TestRunLevelMiddleware:
         # Clear execution log
         execution_log.clear()
 
-        # Fourth run with both run middlewares - should see both
+        # Fourth run with both run middleware - should see both
         await agent.run("Test message 4", middleware=[run_middleware1, run_middleware2])
         assert execution_log == ["run1_start", "run2_start", "run2_end", "run1_end"]
 
@@ -1086,8 +1097,8 @@ class TestRunLevelMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[TextContent(text="Stream")], role=Role.ASSISTANT),
-                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
@@ -1095,7 +1106,7 @@ class TestRunLevelMiddleware:
         run_middleware = StreamingTrackingMiddleware("run_stream")
 
         # Execute streaming with run middleware
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream("Test streaming", middleware=[run_middleware]):
             updates.append(update)
 
@@ -1163,13 +1174,17 @@ class TestRunLevelMiddleware:
             execution_log.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1185,7 +1200,7 @@ class TestRunLevelMiddleware:
         agent = ChatAgent(
             chat_client=chat_client,
             middleware=[AgentLevelAgentMiddleware(), AgentLevelFunctionMiddleware()],
-            tools=[custom_tool],
+            tools=[custom_tool_wrapped],
         )
 
         # Execute with run-level middleware
@@ -1214,8 +1229,8 @@ class TestRunLevelMiddleware:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -1252,13 +1267,17 @@ class TestMiddlewareDecoratorLogic:
             execution_order.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1274,7 +1293,7 @@ class TestMiddlewareDecoratorLogic:
         agent = ChatAgent(
             chat_client=chat_client,
             middleware=[matching_agent_middleware, matching_function_middleware],
-            tools=[custom_tool],
+            tools=[custom_tool_wrapped],
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1319,13 +1338,17 @@ class TestMiddlewareDecoratorLogic:
             execution_order.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1339,7 +1362,9 @@ class TestMiddlewareDecoratorLogic:
 
         # Should work - relies on decorator
         agent = ChatAgent(
-            chat_client=chat_client, middleware=[decorator_only_agent, decorator_only_function], tools=[custom_tool]
+            chat_client=chat_client,
+            middleware=[decorator_only_agent, decorator_only_function],
+            tools=[custom_tool_wrapped],
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1369,13 +1394,17 @@ class TestMiddlewareDecoratorLogic:
             execution_order.append("tool_executed")
             return f"Tool response: {message}"
 
+        custom_tool_wrapped = FunctionTool(
+            func=custom_tool, name="custom_tool", description="Custom tool", approval_mode="never_require"
+        )
+
         # Set up mock to return a function call first, then a regular response
         function_call_response = ChatResponse(
             messages=[
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="test_call",
                             name="custom_tool",
                             arguments='{"message": "test"}',
@@ -1389,7 +1418,7 @@ class TestMiddlewareDecoratorLogic:
 
         # Should work - relies on type annotations
         agent = ChatAgent(
-            chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool]
+            chat_client=chat_client, middleware=[type_only_agent, type_only_function], tools=[custom_tool_wrapped]
         )
 
         response = await agent.run([ChatMessage(role=Role.USER, text="test")])
@@ -1714,14 +1743,14 @@ class TestChatAgentChatMiddleware:
         # Set up mock streaming responses
         chat_client.streaming_responses = [
             [
-                ChatResponseUpdate(contents=[TextContent(text="Stream")], role=Role.ASSISTANT),
-                ChatResponseUpdate(contents=[TextContent(text=" response")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
+                ChatResponseUpdate(contents=[Content.from_text(text=" response")], role=Role.ASSISTANT),
             ]
         ]
 
         # Execute streaming
         messages = [ChatMessage(role=Role.USER, text="test message")]
-        updates: list[AgentRunResponseUpdate] = []
+        updates: list[AgentResponseUpdate] = []
         async for update in agent.run_stream(messages):
             updates.append(update)
 
@@ -1816,7 +1845,7 @@ class TestChatAgentChatMiddleware:
                 ChatMessage(
                     role=Role.ASSISTANT,
                     contents=[
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id="call_456",
                             name="sample_tool_function",
                             arguments='{"location": "San Francisco"}',
@@ -1860,8 +1889,8 @@ class TestChatAgentChatMiddleware:
 
         # Verify function call and result are in the response
         all_contents = [content for message in response.messages for content in message.contents]
-        function_calls = [c for c in all_contents if isinstance(c, FunctionCallContent)]
-        function_results = [c for c in all_contents if isinstance(c, FunctionResultContent)]
+        function_calls = [c for c in all_contents if c.type == "function_call"]
+        function_results = [c for c in all_contents if c.type == "function_result"]
 
         assert len(function_calls) == 1
         assert len(function_results) == 1
@@ -1912,3 +1941,59 @@ class TestChatAgentChatMiddleware:
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
+
+
+class TestMiddlewareWithProtocolOnlyAgent:
+    """Test use_agent_middleware with agents implementing only AgentProtocol."""
+
+    async def test_middleware_with_protocol_only_agent(self) -> None:
+        """Verify middleware works without BaseAgent inheritance for both run and run_stream."""
+        from collections.abc import AsyncIterable
+
+        from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate, use_agent_middleware
+
+        execution_order: list[str] = []
+
+        class TrackingMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                execution_order.append("before")
+                await next(context)
+                execution_order.append("after")
+
+        @use_agent_middleware
+        class ProtocolOnlyAgent:
+            """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
+
+            def __init__(self):
+                self.id = "protocol-only-agent"
+                self.name = "Protocol Only Agent"
+                self.description = "Test agent"
+                self.middleware = [TrackingMiddleware()]
+
+            async def run(self, messages=None, *, thread=None, **kwargs) -> AgentResponse:
+                return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+            def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentResponseUpdate]:
+                async def _stream():
+                    yield AgentResponseUpdate()
+
+                return _stream()
+
+            def get_new_thread(self, **kwargs):
+                return None
+
+        agent = ProtocolOnlyAgent()
+        assert isinstance(agent, AgentProtocol)
+
+        # Test run (non-streaming)
+        response = await agent.run("test message")
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
+        # Test run_stream (streaming)
+        execution_order.clear()
+        async for _ in agent.run_stream("test message"):
+            pass
+        assert execution_order == ["before", "after"]

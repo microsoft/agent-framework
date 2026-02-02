@@ -35,11 +35,13 @@ app.MapAGUI("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop())
 
 app.MapAGUI("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
 
-app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI());
-
 var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI(jsonOptions.Value.SerializerOptions));
+
 app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
+
+app.MapAGUI("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates(jsonOptions.Value.SerializerOptions));
 
 await app.RunAsync();
 
-public partial class Program { }
+public partial class Program;

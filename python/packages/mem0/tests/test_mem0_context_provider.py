@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
 
+import importlib
+import os
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Context, Role
+from agent_framework import ChatMessage, Content, Context, Role
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.mem0 import Mem0Provider
 
@@ -338,7 +341,7 @@ class TestMem0ProviderModelInvoking:
         mock_mem0_client.search.assert_called_once()
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["query"] == "What's the weather?"
-        assert call_args.kwargs["user_id"] == "user123"
+        assert call_args.kwargs["filters"] == {"user_id": "user123"}
 
         assert isinstance(context, Context)
         expected_instructions = (
@@ -373,8 +376,7 @@ class TestMem0ProviderModelInvoking:
         await provider.invoking(message)
 
         call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["agent_id"] == "agent123"
-        assert call_args.kwargs["user_id"] is None
+        assert call_args.kwargs["filters"] == {"agent_id": "agent123"}
 
     async def test_model_invoking_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test invoking with scope_to_per_operation_thread_id enabled."""
@@ -392,12 +394,37 @@ class TestMem0ProviderModelInvoking:
         await provider.invoking(message)
 
         call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["run_id"] == "operation_thread"
+        assert call_args.kwargs["filters"] == {"user_id": "user123", "run_id": "operation_thread"}
 
     async def test_model_invoking_no_memories_returns_none_instructions(self, mock_mem0_client: AsyncMock) -> None:
         """Test that no memories returns context with None instructions."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello")
+
+        mock_mem0_client.search.return_value = []
+
+        context = await provider.invoking(message)
+
+        assert isinstance(context, Context)
+        assert not context.messages
+
+    async def test_model_invoking_function_approval_response_returns_none_instructions(
+        self, mock_mem0_client: AsyncMock
+    ) -> None:
+        """Test invoking with function approval response content messages returns context with None instructions."""
+
+        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+        function_call = Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}')
+        message = ChatMessage(
+            role=Role.USER,
+            contents=[
+                Content.from_function_approval_response(
+                    id="approval_1",
+                    function_call=function_call,
+                    approved=True,
+                )
+            ],
+        )
 
         mock_mem0_client.search.return_value = []
 
@@ -484,3 +511,127 @@ class TestMem0ProviderValidation:
 
         # Should not raise exception even with different thread ID
         provider._validate_per_operation_thread_id("different_thread")
+
+
+class TestMem0ProviderBuildFilters:
+    """Test the _build_filters method."""
+
+    def test_build_filters_with_user_id_only(self, mock_mem0_client: AsyncMock) -> None:
+        """Test building filters with only user_id."""
+        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+
+        filters = provider._build_filters()
+        assert filters == {"user_id": "user123"}
+
+    def test_build_filters_with_all_parameters(self, mock_mem0_client: AsyncMock) -> None:
+        """Test building filters with all initialization parameters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id="agent456",
+            thread_id="thread789",
+            application_id="app999",
+            mem0_client=mock_mem0_client,
+        )
+
+        filters = provider._build_filters()
+        assert filters == {
+            "user_id": "user123",
+            "agent_id": "agent456",
+            "run_id": "thread789",
+            "app_id": "app999",
+        }
+
+    def test_build_filters_excludes_none_values(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that None values are excluded from filters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id=None,
+            thread_id=None,
+            application_id=None,
+            mem0_client=mock_mem0_client,
+        )
+
+        filters = provider._build_filters()
+        assert filters == {"user_id": "user123"}
+        assert "agent_id" not in filters
+        assert "run_id" not in filters
+        assert "app_id" not in filters
+
+    def test_build_filters_with_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that per-operation thread ID takes precedence over base thread_id."""
+        provider = Mem0Provider(
+            user_id="user123",
+            thread_id="base_thread",
+            scope_to_per_operation_thread_id=True,
+            mem0_client=mock_mem0_client,
+        )
+        provider._per_operation_thread_id = "operation_thread"
+
+        filters = provider._build_filters()
+        assert filters == {
+            "user_id": "user123",
+            "run_id": "operation_thread",  # Per-operation thread, not base_thread
+        }
+
+    def test_build_filters_uses_base_thread_when_no_per_operation(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that base thread_id is used when per-operation thread is not set."""
+        provider = Mem0Provider(
+            user_id="user123",
+            thread_id="base_thread",
+            scope_to_per_operation_thread_id=True,
+            mem0_client=mock_mem0_client,
+        )
+        # _per_operation_thread_id is None
+
+        filters = provider._build_filters()
+        assert filters == {
+            "user_id": "user123",
+            "run_id": "base_thread",  # Falls back to base thread_id
+        }
+
+    def test_build_filters_returns_empty_dict_when_no_parameters(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that _build_filters returns an empty dict when no parameters are set."""
+        provider = Mem0Provider(mem0_client=mock_mem0_client)
+
+        filters = provider._build_filters()
+        assert filters == {}
+
+
+class TestMem0Telemetry:
+    """Test telemetry configuration for Mem0."""
+
+    def test_mem0_telemetry_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that MEM0_TELEMETRY is set to 'false' by default when importing the package."""
+        # Ensure MEM0_TELEMETRY is not set before importing the module under test
+        monkeypatch.delenv("MEM0_TELEMETRY", raising=False)
+
+        # Remove cached modules to force re-import and trigger module-level initialization
+        modules_to_remove = [key for key in sys.modules if key.startswith("agent_framework_mem0")]
+        for mod in modules_to_remove:
+            del sys.modules[mod]
+
+        # Import (and reload) the module so that it can set MEM0_TELEMETRY when unset
+        import agent_framework_mem0
+
+        importlib.reload(agent_framework_mem0)
+
+        # The environment variable should be set to "false" after importing
+        assert os.environ.get("MEM0_TELEMETRY") == "false"
+
+    def test_mem0_telemetry_respects_user_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that user-set MEM0_TELEMETRY value is not overwritten."""
+        # Remove cached modules to force re-import
+        modules_to_remove = [key for key in sys.modules if key.startswith("agent_framework_mem0")]
+        for mod in modules_to_remove:
+            del sys.modules[mod]
+
+        # Set user preference before import
+        monkeypatch.setenv("MEM0_TELEMETRY", "true")
+
+        # Re-import the module
+        import agent_framework_mem0
+
+        importlib.reload(agent_framework_mem0)
+
+        # User setting should be preserved
+        assert os.environ.get("MEM0_TELEMETRY") == "true"

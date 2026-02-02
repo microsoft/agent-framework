@@ -1,19 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
+    ChatAgent,
     ChatMessage,
     Role,
     WorkflowBuilder,
     WorkflowContext,
     executor,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -116,7 +118,7 @@ async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowCont
     2) Retrieve the current email_id from shared state.
     3) Send a typed DetectionResult for conditional routing.
     """
-    parsed = DetectionResultAgent.model_validate_json(response.agent_run_response.text)
+    parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(is_spam=parsed.is_spam, reason=parsed.reason, email_id=email_id))
 
@@ -141,7 +143,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     """Validate the drafted reply and yield the final output."""
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -154,27 +156,34 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
         raise RuntimeError("This executor should only handle spam messages.")
 
 
-async def main() -> None:
-    # Create chat client and agents. response_format enforces structured JSON from each agent.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    spam_detection_agent = chat_client.create_agent(
+def create_spam_detection_agent() -> ChatAgent:
+    """Creates a spam detection agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        response_format=DetectionResultAgent,
+        default_options={"response_format": DetectionResultAgent},
+        # response_format enforces structured JSON from each agent.
         name="spam_detection_agent",
     )
 
-    email_assistant_agent = chat_client.create_agent(
+
+def create_email_assistant_agent() -> ChatAgent:
+    """Creates an email assistant agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
-        response_format=EmailResponse,
+        # response_format enforces structured JSON from each agent.
+        default_options={"response_format": EmailResponse},
         name="email_assistant_agent",
     )
+
+
+async def main() -> None:
+    """Build and run the shared state with agents and conditional routing workflow."""
 
     # Build the workflow graph with conditional edges.
     # Flow:
@@ -183,25 +192,28 @@ async def main() -> None:
     #     True  -> handle_spam
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(store_email)
-        .add_edge(store_email, spam_detection_agent)
-        .add_edge(spam_detection_agent, to_detection_result)
-        .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))
-        .add_edge(to_detection_result, handle_spam, condition=get_condition(True))
-        .add_edge(submit_to_email_assistant, email_assistant_agent)
-        .add_edge(email_assistant_agent, finalize_and_send)
+        .register_agent(create_spam_detection_agent, name="spam_detection_agent")
+        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
+        .register_executor(lambda: store_email, name="store_email")
+        .register_executor(lambda: to_detection_result, name="to_detection_result")
+        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
+        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
+        .register_executor(lambda: handle_spam, name="handle_spam")
+        .set_start_executor("store_email")
+        .add_edge("store_email", "spam_detection_agent")
+        .add_edge("spam_detection_agent", "to_detection_result")
+        .add_edge("to_detection_result", "submit_to_email_assistant", condition=get_condition(False))
+        .add_edge("to_detection_result", "handle_spam", condition=get_condition(True))
+        .add_edge("submit_to_email_assistant", "email_assistant_agent")
+        .add_edge("email_assistant_agent", "finalize_and_send")
         .build()
     )
 
     # Read an email from resources/spam.txt if available; otherwise use a default sample.
-    resources_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
-        "resources",
-        "spam.txt",
-    )
-    if os.path.exists(resources_path):
-        with open(resources_path, encoding="utf-8") as f:  # noqa: ASYNC230
-            email = f.read()
+    current_file = Path(__file__)
+    resources_path = current_file.parent.parent / "resources" / "spam.txt"
+    if resources_path.exists():
+        email = resources_path.read_text(encoding="utf-8")
     else:
         print("Unable to find resource file, using default text.")
         email = "You are a WINNER! Click here for a free lottery offer!!!"

@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// Derived classes can override specific methods to add custom behavior while maintaining compatibility with the agent interface.
 /// </para>
 /// </remarks>
-public class DelegatingAIAgent : AIAgent
+public abstract class DelegatingAIAgent : AIAgent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAIAgent"/> class with the specified inner agent.
@@ -54,7 +54,7 @@ public class DelegatingAIAgent : AIAgent
     protected AIAgent InnerAgent { get; }
 
     /// <inheritdoc />
-    public override string Id => this.InnerAgent.Id;
+    protected override string? IdCore => this.InnerAgent.Id;
 
     /// <inheritdoc />
     public override string? Name => this.InnerAgent.Name;
@@ -74,25 +74,25 @@ public class DelegatingAIAgent : AIAgent
     }
 
     /// <inheritdoc />
-    public override AgentThread GetNewThread() => this.InnerAgent.GetNewThread();
+    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) => this.InnerAgent.GetNewSessionAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.DeserializeSessionAsync(serializedSession, jsonSerializerOptions, cancellationToken);
 
     /// <inheritdoc />
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-        => this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
+        => this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
 
     /// <inheritdoc />
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-        => this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+        => this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
 }

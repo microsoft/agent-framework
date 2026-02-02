@@ -17,11 +17,18 @@ Design Pattern:
 
 import asyncio
 import inspect
+import sys
+import typing
 from collections.abc import Awaitable, Callable
-from typing import Any, overload
+from typing import Any
 
 from ._executor import Executor
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
+
+if sys.version_info >= (3, 11):
+    from typing import overload  # pragma: no cover
+else:
+    from typing_extensions import overload  # pragma: no cover
 
 
 class FunctionExecutor(Executor):
@@ -218,15 +225,16 @@ def _validate_function_signature(func: Callable[..., Any]) -> tuple[type, Any, l
     if message_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Function instance {func.__name__} must have a type annotation for the message parameter")
 
-    message_type = message_param.annotation
+    type_hints = typing.get_type_hints(func)
+    message_type = type_hints.get(message_param.name, message_param.annotation)
 
     # Check if there's a context parameter
     if len(params) == 2:
         ctx_param = params[1]
+        ctx_annotation = type_hints.get(ctx_param.name, ctx_param.annotation)
         output_types, workflow_output_types = validate_workflow_context_annotation(
-            ctx_param.annotation, f"parameter '{ctx_param.name}'", "Function instance"
+            ctx_annotation, f"parameter '{ctx_param.name}'", "Function instance"
         )
-        ctx_annotation = ctx_param.annotation
     else:
         # No context parameter (only valid for function executors)
         output_types, workflow_output_types = [], []

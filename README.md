@@ -48,6 +48,8 @@ dotnet add package Microsoft.Agents.AI
 - **[Migration from Semantic Kernel](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-semantic-kernel)** - Guide to migrate from Semantic Kernel
 - **[Migration from AutoGen](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-autogen)** - Guide to migrate from AutoGen
 
+Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-community-office-hours) or ask questions in our [Discord channel](https://discord.gg/b5zjErwbQM) to get help from the team and other users.
+
 ### ✨ **Highlights**
 
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
@@ -106,7 +108,7 @@ async def main():
         # api_version=os.environ["AZURE_OPENAI_API_VERSION"],
         # api_key=os.environ["AZURE_OPENAI_API_KEY"],  # Optional if using AzureCliCredential
         credential=AzureCliCredential(), # Optional, if using api_key
-    ).create_agent(
+    ).as_agent(
         name="HaikuBot",
         instructions="You are an upbeat assistant that writes beautifully.",
     )
@@ -129,7 +131,7 @@ using OpenAI;
 // Replace the <apikey> with your OpenAI API key.
 var agent = new OpenAIClient("<apikey>")
     .GetOpenAIResponseClient("gpt-4o-mini")
-    .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
@@ -148,7 +150,7 @@ var agent = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri("https://<resource>.openai.azure.com/openai/v1") })
     .GetOpenAIResponseClient("gpt-4o-mini")
-    .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```

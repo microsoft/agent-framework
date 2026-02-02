@@ -6,7 +6,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
-using OpenAI;
+using OpenAI.Chat;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 
@@ -29,7 +29,7 @@ using var tracerProvider = tracerProviderBuilder.Build();
 // Create the agent, and enable OpenTelemetry instrumentation.
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker")
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker")
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();

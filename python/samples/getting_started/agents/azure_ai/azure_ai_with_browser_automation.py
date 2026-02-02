@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Browser Automation Example
 
-This sample demonstrates usage of AzureAIClient with Browser Automation
+This sample demonstrates usage of AzureAIProjectAgentProvider with Browser Automation
 to perform automated web browsing tasks and provide responses based on web interactions.
 
 Prerequisites:
@@ -21,7 +21,9 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyBrowserAutomationAgent",
             instructions="""You are an Agent helping with browser automation tasks.
             You can answer questions, provide information, and assist with various tasks
@@ -34,8 +36,8 @@ async def main() -> None:
                     }
                 },
             },
-        ) as agent,
-    ):
+        )
+
         query = """Your goal is to report the percent of Microsoft year-to-date stock price change.
         To do that, go to the website finance.yahoo.com.
         At the top of the page, you will find a search bar.

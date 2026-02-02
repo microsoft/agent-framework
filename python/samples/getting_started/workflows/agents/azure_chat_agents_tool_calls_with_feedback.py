@@ -8,20 +8,21 @@ from typing import Annotated
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     AgentRunUpdateEvent,
+    ChatAgent,
     ChatMessage,
     Executor,
     FunctionCallContent,
     FunctionResultContent,
     RequestInfoEvent,
     Role,
-    ToolMode,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
     handler,
     response_handler,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -49,6 +50,8 @@ Prerequisites:
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 
 def fetch_product_brief(
     product_name: Annotated[str, Field(description="Product name to look up.")],
@@ -65,6 +68,7 @@ def fetch_product_brief(
     }
     return briefs.get(product_name.lower(), f"No stored brief for '{product_name}'.")
 
+@tool(approval_mode="never_require")
 
 def get_brand_voice_profile(
     voice_name: Annotated[str, Field(description="Brand or campaign voice to emulate.")],
@@ -102,12 +106,12 @@ class Coordinator(Executor):
     async def on_writer_response(
         self,
         draft: AgentExecutorResponse,
-        ctx: WorkflowContext[Never, AgentRunResponse],
+        ctx: WorkflowContext[Never, AgentResponse],
     ) -> None:
         """Handle responses from the other two agents in the workflow."""
         if draft.executor_id == self.final_editor_id:
             # Final editor response; yield output directly.
-            await ctx.yield_output(draft.agent_run_response)
+            await ctx.yield_output(draft.agent_response)
             return
 
         # Writer agent response; request human feedback.
@@ -117,8 +121,8 @@ class Coordinator(Executor):
         if draft.full_conversation is not None:
             conversation = list(draft.full_conversation)
         else:
-            conversation = list(draft.agent_run_response.messages)
-        draft_text = draft.agent_run_response.text.strip()
+            conversation = list(draft.agent_response.messages)
+        draft_text = draft.agent_response.text.strip()
         if not draft_text:
             draft_text = "No draft text was produced."
 
@@ -166,6 +170,31 @@ class Coordinator(Executor):
         )
 
 
+def create_writer_agent() -> ChatAgent:
+    """Creates a writer agent with tools."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        name="writer_agent",
+        instructions=(
+            "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
+            "Always call both tools once before drafting. Summarize tool outputs as bullet points, then "
+            "produce a 3-sentence draft."
+        ),
+        tools=[fetch_product_brief, get_brand_voice_profile],
+        tool_choice="required",
+    )
+
+
+def create_final_editor_agent() -> ChatAgent:
+    """Creates a final editor agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        name="final_editor_agent",
+        instructions=(
+            "You are an editor who polishes marketing copy after human approval. "
+            "Correct any legal or factual issues. Return the final version even if no changes are made. "
+        ),
+    )
+
+
 def display_agent_run_update(event: AgentRunUpdateEvent, last_executor: str | None) -> None:
     """Display an AgentRunUpdateEvent in a readable format."""
     printed_tool_calls: set[str] = set()
@@ -211,42 +240,25 @@ def display_agent_run_update(event: AgentRunUpdateEvent, last_executor: str | No
 
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
-    # Create agents with tools and instructions.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    writer_agent = chat_client.create_agent(
-        name="writer_agent",
-        instructions=(
-            "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
-            "Always call both tools once before drafting. Summarize tool outputs as bullet points, then "
-            "produce a 3-sentence draft."
-        ),
-        tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice=ToolMode.REQUIRED_ANY,
-    )
-
-    final_editor_agent = chat_client.create_agent(
-        name="final_editor_agent",
-        instructions=(
-            "You are an editor who polishes marketing copy after human approval. "
-            "Correct any legal or factual issues. Return the final version even if no changes are made. "
-        ),
-    )
-
-    coordinator = Coordinator(
-        id="coordinator",
-        writer_id="writer_agent",
-        final_editor_id="final_editor_agent",
-    )
 
     # Build the workflow.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(writer_agent)
-        .add_edge(writer_agent, coordinator)
-        .add_edge(coordinator, writer_agent)
-        .add_edge(final_editor_agent, coordinator)
-        .add_edge(coordinator, final_editor_agent)
+        .register_agent(create_writer_agent, name="writer_agent")
+        .register_agent(create_final_editor_agent, name="final_editor_agent")
+        .register_executor(
+            lambda: Coordinator(
+                id="coordinator",
+                writer_id="writer_agent",
+                final_editor_id="final_editor_agent",
+            ),
+            name="coordinator",
+        )
+        .set_start_executor("writer_agent")
+        .add_edge("writer_agent", "coordinator")
+        .add_edge("coordinator", "writer_agent")
+        .add_edge("final_editor_agent", "coordinator")
+        .add_edge("coordinator", "final_editor_agent")
         .build()
     )
 

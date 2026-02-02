@@ -7,11 +7,20 @@ from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
-from ._checkpoint_encoding import DATACLASS_MARKER, MODEL_MARKER, decode_checkpoint_value
+from ._checkpoint_encoding import (
+    DATACLASS_MARKER,
+    MODEL_MARKER,
+    decode_checkpoint_value,
+)
 from ._const import EXECUTOR_STATE_KEY
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowEvent
+from ._events import SuperStepCompletedEvent, SuperStepStartedEvent, WorkflowEvent
+from ._exceptions import (
+    WorkflowCheckpointException,
+    WorkflowConvergenceException,
+    WorkflowRunnerException,
+)
 from ._executor import Executor
 from ._runner_context import (
     Message,
@@ -72,7 +81,7 @@ class Runner:
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
         if self._running:
-            raise RuntimeError("Runner is already running.")
+            raise WorkflowRunnerException("Runner is already running.")
 
         self._running = True
         try:
@@ -92,6 +101,7 @@ class Runner:
 
             while self._iteration < self._max_iterations:
                 logger.info(f"Starting superstep {self._iteration + 1}")
+                yield SuperStepStartedEvent(iteration=self._iteration + 1)
 
                 # Run iteration concurrently with live event streaming: we poll
                 # for new events while the iteration coroutine progresses.
@@ -126,16 +136,16 @@ class Runner:
                 # Create checkpoint after each superstep iteration
                 await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
 
+                yield SuperStepCompletedEvent(iteration=self._iteration)
+
+                # Check for convergence: no more messages to process
                 if not await self._ctx.has_messages():
                     break
 
             if self._iteration >= self._max_iterations and await self._ctx.has_messages():
-                raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
+                raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
 
             logger.info(f"Workflow completed after {self._iteration} supersteps")
-            # TODO(@taochen): iteration is reset to zero, even in the event of a request info event.
-            # Should iteration be preserved in the event of a request info event?
-            self._iteration = 0
             self._resumed_from_checkpoint = False  # Reset resume flag for next run
         finally:
             self._running = False
@@ -164,7 +174,8 @@ class Runner:
             # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
             if not associated_edge_runners:
-                logger.warning(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
+                # This is expected for terminal nodes (e.g., EndWorkflow, last action in workflow)
+                logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
                 return
 
             for message in messages:
@@ -183,8 +194,8 @@ class Runner:
             return None
 
         try:
-            # Auto-snapshot executor states
-            await self._auto_snapshot_executor_states()
+            # Snapshot executor states
+            await self._save_executor_states()
             checkpoint_category = "initial" if checkpoint_type == "after_initial_execution" else "superstep"
             metadata = {
                 "superstep": self._iteration,
@@ -203,46 +214,11 @@ class Runner:
             logger.warning(f"Failed to create {checkpoint_type} checkpoint: {e}")
             return None
 
-    async def _auto_snapshot_executor_states(self) -> None:
-        """Populate executor state by calling snapshot hooks on executors if available.
-
-        TODO(@taochen#1614): this method is potentially problematic if executors also call
-        set_executor_state on the context directly. We should clarify the intended usage
-        pattern for executor state management.
-
-        Convention:
-          - If an executor defines an async or sync method `snapshot_state(self) -> dict`, use it.
-          - Else if it has a plain attribute `state` that is a dict, use that.
-        Only JSON-serializable dicts should be provided by executors.
-        """
-        for exec_id, executor in self._executors.items():
-            state_dict: dict[str, Any] | None = None
-            snapshot = getattr(executor, "snapshot_state", None)
-            try:
-                if callable(snapshot):
-                    maybe = snapshot()
-                    if asyncio.iscoroutine(maybe):  # type: ignore[arg-type]
-                        maybe = await maybe  # type: ignore[assignment]
-                    if isinstance(maybe, dict):
-                        state_dict = maybe  # type: ignore[assignment]
-                else:
-                    state_attr = getattr(executor, "state", None)
-                    if isinstance(state_attr, dict):
-                        state_dict = state_attr  # type: ignore[assignment]
-            except Exception as ex:  # pragma: no cover
-                logger.debug(f"Executor {exec_id} snapshot_state failed: {ex}")
-
-            if state_dict is not None:
-                try:
-                    await self._set_executor_state(exec_id, state_dict)
-                except Exception as ex:  # pragma: no cover
-                    logger.debug(f"Failed to persist state for executor {exec_id}: {ex}")
-
     async def restore_from_checkpoint(
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
-    ) -> bool:
+    ) -> None:
         """Restore workflow state from a checkpoint.
 
         Args:
@@ -251,7 +227,10 @@ class Runner:
                 runner context itself is not configured with checkpointing.
 
         Returns:
-            True if restoration was successful, False otherwise
+            None on success.
+
+        Raises:
+            WorkflowCheckpointException on failure.
         """
         try:
             # Load the checkpoint
@@ -261,18 +240,19 @@ class Runner:
             elif checkpoint_storage is not None:
                 checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
             else:
-                logger.warning("Context does not support checkpointing and no external storage was provided")
-                return False
+                raise WorkflowCheckpointException(
+                    "Cannot load checkpoint: no checkpointing configured in context or external storage provided."
+                )
 
             if not checkpoint:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
-                return False
+                raise WorkflowCheckpointException(f"Checkpoint {checkpoint_id} not found")
 
             # Validate the loaded checkpoint against the workflow
             graph_hash = getattr(self, "graph_signature_hash", None)
             checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
             if graph_hash and checkpoint_hash and graph_hash != checkpoint_hash:
-                raise ValueError(
+                raise WorkflowCheckpointException(
                     "Workflow graph has changed since the checkpoint was created. "
                     "Please rebuild the original workflow before resuming."
                 )
@@ -293,32 +273,93 @@ class Runner:
             self._mark_resumed(checkpoint.iteration_count)
 
             logger.info(f"Successfully restored workflow from checkpoint: {checkpoint_id}")
-            return True
-        except ValueError:
+        except WorkflowCheckpointException:
             raise
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
-            return False
+            raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint_id}") from e
+
+    async def _save_executor_states(self) -> None:
+        """Populate executor state by calling checkpoint hooks on executors.
+
+        Backward compatibility behavior:
+          - If an executor defines an async or sync method `snapshot_state(self) -> dict`, use it.
+          - Else if it has a plain attribute `state` that is a dict, use that.
+
+        Updated behavior:
+          - Executors should implement `on_checkpoint_save(self) -> dict` to provide state.
+
+        This method will try the backward compatibility behavior first; if that does not yield state,
+        it falls back to the updated behavior.
+
+        Only JSON-serializable dicts should be provided by executors.
+        """
+        for exec_id, executor in self._executors.items():
+            state_dict: dict[str, Any] | None = None
+            # Try backward compatibility behavior first
+            # TODO(@taochen): Remove backward compatibility
+            snapshot = getattr(executor, "snapshot_state", None)
+            try:
+                if callable(snapshot):
+                    maybe = snapshot()
+                    if asyncio.iscoroutine(maybe):  # type: ignore[arg-type]
+                        maybe = await maybe  # type: ignore[assignment]
+                    if isinstance(maybe, dict):
+                        state_dict = maybe  # type: ignore[assignment]
+                else:
+                    state_attr = getattr(executor, "state", None)
+                    if isinstance(state_attr, dict):
+                        state_dict = state_attr  # type: ignore[assignment]
+            except Exception as ex:  # pragma: no cover
+                logger.debug(f"Executor {exec_id} snapshot_state failed: {ex}")
+
+            if state_dict is None:
+                # Try the updated behavior only if backward compatibility did not yield state
+                try:
+                    state_dict = await executor.on_checkpoint_save()
+                except Exception as ex:  # pragma: no cover
+                    raise WorkflowCheckpointException(f"Executor {exec_id} on_checkpoint_save failed") from ex
+
+            try:
+                await self._set_executor_state(exec_id, state_dict)
+            except Exception as ex:  # pragma: no cover
+                logger.debug(f"Failed to persist state for executor {exec_id}: {ex}")
 
     async def _restore_executor_states(self) -> None:
+        """Restore executor state by calling restore hooks on executors.
+
+        Backward compatibility behavior:
+            - If an executor defines an async or sync method `restore_state(self, state: dict)`, use it.
+            - Else, skip restoration for that executor.
+
+        Updated behavior:
+            - Executors should implement `on_checkpoint_restore(self, state: dict)` to restore state.
+
+        This method will try the backward compatibility behavior first; if that does not restore state,
+        it falls back to the updated behavior.
+        """
         has_executor_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
         if not has_executor_states:
             return
 
         executor_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
         if not isinstance(executor_states, dict):
-            raise ValueError("Executor states in shared state is not a dictionary. Unable to restore.")
+            raise WorkflowCheckpointException("Executor states in shared state is not a dictionary. Unable to restore.")
 
-        for executor_id, state in executor_states.items():
+        for executor_id, state in executor_states.items():  # pyright: ignore[reportUnknownVariableType]
             if not isinstance(executor_id, str):
-                raise ValueError("Executor ID in executor states is not a string. Unable to restore.")
-            if not isinstance(state, dict):
-                raise ValueError(f"Executor state for {executor_id} is not a dictionary. Unable to restore.")
+                raise WorkflowCheckpointException("Executor ID in executor states is not a string. Unable to restore.")
+            if not isinstance(state, dict) or not all(isinstance(k, str) for k in state):  # pyright: ignore[reportUnknownVariableType]
+                raise WorkflowCheckpointException(
+                    f"Executor state for {executor_id} is not a dict[str, Any]. Unable to restore."
+                )
 
             executor = self._executors.get(executor_id)
             if not executor:
-                raise ValueError(f"Executor {executor_id} not found during state restoration.")
+                raise WorkflowCheckpointException(f"Executor {executor_id} not found during state restoration.")
 
+            # Try backward compatibility behavior first
+            # TODO(@taochen): Remove backward compatibility
             restored = False
             restore_method = getattr(executor, "restore_state", None)
             try:
@@ -328,7 +369,15 @@ class Runner:
                         await maybe  # type: ignore[arg-type]
                     restored = True
             except Exception as ex:  # pragma: no cover - defensive
-                raise ValueError(f"Executor {executor_id} restore_state failed: {ex}") from ex
+                raise WorkflowCheckpointException(f"Executor {executor_id} restore_state failed") from ex
+
+            if not restored:
+                # Try the updated behavior only if backward compatibility did not restore
+                try:
+                    await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
+                    restored = True
+                except Exception as ex:  # pragma: no cover - defensive
+                    raise WorkflowCheckpointException(f"Executor {executor_id} on_checkpoint_restore failed") from ex
 
             if not restored:
                 logger.debug(f"Executor {executor_id} does not support state restoration; skipping.")
@@ -371,7 +420,7 @@ class Runner:
             existing_states = {}
 
         if not isinstance(existing_states, dict):
-            raise ValueError("Existing executor states in shared state is not a dictionary.")
+            raise WorkflowCheckpointException("Existing executor states in shared state is not a dictionary.")
 
         existing_states[executor_id] = state
         await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)

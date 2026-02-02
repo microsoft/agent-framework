@@ -8,7 +8,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -30,15 +30,15 @@ var mcpTool = new HostedMcpServerTool(
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetOpenAIResponseClient(deploymentName)
-     .CreateAIAgent(
+     .GetResponsesClient(deploymentName)
+     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
         tools: [mcpTool]);
 
 // You can then invoke the agent like any other AIAgent.
-AgentThread thread = agent.GetNewThread();
-Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", thread));
+AgentSession session = await agent.GetNewSessionAsync();
+Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", session));
 
 // **** MCP Tool with Approval Required ****
 // *****************************************
@@ -57,15 +57,15 @@ var mcpToolWithApproval = new HostedMcpServerTool(
 AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-    .GetOpenAIResponseClient(deploymentName)
-    .CreateAIAgent(
+    .GetResponsesClient(deploymentName)
+    .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgentWithApproval",
         tools: [mcpToolWithApproval]);
 
 // You can then invoke the agent like any other AIAgent.
-var threadWithRequiredApproval = agentWithRequiredApproval.GetNewThread();
-var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", threadWithRequiredApproval);
+var sessionWithRequiredApproval = await agentWithRequiredApproval.GetNewSessionAsync();
+var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", sessionWithRequiredApproval);
 var userInputRequests = response.UserInputRequests.ToList();
 
 while (userInputRequests.Count > 0)
@@ -87,7 +87,7 @@ while (userInputRequests.Count > 0)
         .ToList();
 
     // Pass the user input responses back to the agent for further processing.
-    response = await agentWithRequiredApproval.RunAsync(userInputResponses, threadWithRequiredApproval);
+    response = await agentWithRequiredApproval.RunAsync(userInputResponses, sessionWithRequiredApproval);
 
     userInputRequests = response.UserInputRequests.ToList();
 }

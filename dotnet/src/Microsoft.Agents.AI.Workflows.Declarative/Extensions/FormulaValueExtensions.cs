@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
@@ -163,6 +163,24 @@ internal static class FormulaValueExtensions
             }
         }
     }
+
+    public static JsonNode ToJson(this FormulaValue value) =>
+        value switch
+        {
+            BooleanValue booleanValue => JsonValue.Create(booleanValue.Value),
+            DecimalValue decimalValue => JsonValue.Create(decimalValue.Value),
+            NumberValue numberValue => JsonValue.Create(numberValue.Value),
+            DateValue dateValue => JsonValue.Create(dateValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            DateTimeValue datetimeValue => JsonValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            TimeValue timeValue => JsonValue.Create($"{timeValue.Value}"),
+            StringValue stringValue => JsonValue.Create(stringValue.Value),
+            GuidValue guidValue => JsonValue.Create(guidValue.Value),
+            RecordValue recordValue => recordValue.ToJson(),
+            TableValue tableValue => tableValue.ToJson(),
+            BlankValue => JsonValue.Create(string.Empty),
+            _ => $"[{value.GetType().Name}]",
+        };
+
     public static RecordValue ToRecord(this Dictionary<string, PortableValue> value) =>
         FormulaValue.NewRecordFromFields(
             value.Select(
@@ -241,7 +259,7 @@ internal static class FormulaValueExtensions
                         [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]),
                 _ when typeof(ChatMessage).IsAssignableFrom(elementType) =>
                     FormulaValue.NewTable(
-                        TypeSchema.Message.MessageRecordType,
+                        TypeSchema.Message.RecordType,
                         [.. value.OfType<ChatMessage>().Select(message => message.ToRecord())]),
                 _ when typeof(IDictionary).IsAssignableFrom(elementType) => value.ToTableOfRecords(),
                 _ => throw new DeclarativeModelException($"Unsupported element type: {elementType.Name}"),
@@ -255,23 +273,6 @@ internal static class FormulaValueExtensions
     }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
-
-    private static JsonNode ToJson(this FormulaValue value) =>
-        value switch
-        {
-            BooleanValue booleanValue => JsonValue.Create(booleanValue.Value),
-            DecimalValue decimalValue => JsonValue.Create(decimalValue.Value),
-            NumberValue numberValue => JsonValue.Create(numberValue.Value),
-            DateValue dateValue => JsonValue.Create(dateValue.GetConvertedValue(TimeZoneInfo.Utc)),
-            DateTimeValue datetimeValue => JsonValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
-            TimeValue timeValue => JsonValue.Create($"{timeValue.Value}"),
-            StringValue stringValue => JsonValue.Create(stringValue.Value),
-            GuidValue guidValue => JsonValue.Create(guidValue.Value),
-            RecordValue recordValue => recordValue.ToJson(),
-            TableValue tableValue => tableValue.ToJson(),
-            BlankValue => JsonValue.Create(string.Empty),
-            _ => $"[{value.GetType().Name}]",
-        };
 
     private static JsonArray ToJson(this TableValue value)
     {

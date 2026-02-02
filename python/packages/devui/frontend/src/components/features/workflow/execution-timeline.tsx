@@ -7,6 +7,10 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { HilTimelineItem } from "./hil-timeline-item";
+import { RunWorkflowButton } from "./run-workflow-button";
+import { ChatMessageInput } from "@/components/ui/chat-message-input";
+import { isChatMessageSchema } from "@/utils/workflow-utils";
 import {
   Loader2,
   CheckCircle,
@@ -16,8 +20,10 @@ import {
   ChevronRight,
   Copy,
   Check,
+  Square,
 } from "lucide-react";
-import type { ExtendedResponseStreamEvent } from "@/types";
+import type { ExtendedResponseStreamEvent, JSONSchemaProperty } from "@/types";
+import type { ResponseInputContent } from "@/types/agent-framework";
 import type { ExecutorState } from "./executor-node";
 import { truncateText } from "@/utils/workflow-utils";
 
@@ -40,12 +46,30 @@ interface ExecutionTimelineProps {
   onExecutorClick?: (executorId: string) => void;
   selectedExecutorId?: string | null;
   workflowResult?: string;
+  // HIL support
+  pendingHilRequests?: Array<{
+    request_id: string;
+    request_data: Record<string, unknown>;
+    request_schema: import("@/types").JSONSchemaProperty;
+  }>;
+  hilResponses?: Record<string, Record<string, unknown>>;
+  onHilResponseChange?: (requestId: string, values: Record<string, unknown>) => void;
+  onHilSubmit?: () => void;
+  isSubmittingHil?: boolean;
+  // Workflow control props for bottom bar
+  inputSchema?: JSONSchemaProperty;
+  onRun?: (data: Record<string, unknown>, checkpointId?: string) => void;
+  onCancel?: () => void;
+  isCancelling?: boolean;
+  workflowState?: "ready" | "running" | "completed" | "error" | "cancelled";
+  wasCancelled?: boolean;
+  checkpoints?: import("@/types").CheckpointItem[];
 }
 
-function getStateIcon(state: ExecutorState) {
+function getStateIcon(state: ExecutorState, isStreaming: boolean = true) {
   switch (state) {
     case "running":
-      return <Loader2 className="w-4 h-4 text-[#643FB2] dark:text-[#8B5CF6] animate-spin" />;
+      return <Loader2 className={`w-4 h-4 text-[#643FB2] dark:text-[#8B5CF6] ${isStreaming ? 'animate-spin' : ''}`} />;
     case "completed":
       return <CheckCircle className="w-4 h-4 text-green-500 dark:text-green-400" />;
     case "failed":
@@ -78,12 +102,14 @@ function ExecutorRunItem({
   onToggle,
   onClick,
   isSelected,
+  isStreaming,
 }: {
   run: ExecutorRun;
   isExpanded: boolean;
   onToggle: () => void;
   onClick: () => void;
   isSelected: boolean;
+  isStreaming: boolean;
 }) {
   const timestamp = new Date(run.timestamp).toLocaleTimeString();
   const hasOutput = run.output.trim().length > 0;
@@ -125,7 +151,7 @@ function ExecutorRunItem({
               </>
             )}
           </div>
-          <div>{getStateIcon(run.state)}</div>
+          <div>{getStateIcon(run.state, isStreaming)}</div>
           <span className="font-medium text-sm truncate overflow-hidden">
             {run.executorName}
           </span>
@@ -187,12 +213,26 @@ export function ExecutionTimeline({
   onExecutorClick,
   selectedExecutorId,
   workflowResult,
+  pendingHilRequests = [],
+  hilResponses = {},
+  onHilResponseChange,
+  onHilSubmit,
+  isSubmittingHil = false,
+  // New props
+  inputSchema,
+  onRun,
+  onCancel,
+  isCancelling = false,
+  workflowState = "ready",
+  wasCancelled = false,
+  checkpoints = [],
 }: ExecutionTimelineProps) {
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [updateTrigger, setUpdateTrigger] = useState(0);
   const [copied, setCopied] = useState(false);
   const lastScrolledRunRef = useRef<string | null>(null);
   const timelineEndRef = useRef<HTMLDivElement>(null);
+  const hilFormRef = useRef<HTMLDivElement>(null);
 
   // Force re-render when streaming to show updated outputs from itemOutputs ref
   // Note: itemOutputs is a ref (not state), so changes don't trigger re-renders automatically.
@@ -222,11 +262,11 @@ export function ExecutionTimeline({
 
       // Handle new standard OpenAI events
       if (event.type === "response.output_item.added") {
-        const item = (event as { item?: { type?: string; executor_id?: string; id?: string; created_at?: number; metadata?: any } }).item;
+        const item = (event as import("@/types/openai").ResponseOutputItemAddedEvent).item;
 
         // Handle both executor_action items AND message items from Magentic agents
-        if (item && item.type === "executor_action" && item.executor_id && item.id) {
-          const executorId = item.executor_id;
+        if (item && item.type === "executor_action" && "executor_id" in item && item.id) {
+          const executorId = String(item.executor_id);
           const itemId = item.id;
           const runNumber = (runCount.get(executorId) || 0) + 1;
           runCount.set(executorId, runNumber);
@@ -240,31 +280,34 @@ export function ExecutionTimeline({
             timestamp: uiTimestamp,
             runNumber,
           });
-        } else if (item && item.type === "message" && item.metadata?.agent_id && item.metadata?.source === "magentic" && item.id) {
+        } else if (item && item.type === "message" && "metadata" in item && item.id) {
           // Handle message items from Magentic agents
-          const executorId = item.metadata.agent_id;
-          const itemId = item.id;
-          const runNumber = (runCount.get(executorId) || 0) + 1;
-          runCount.set(executorId, runNumber);
+          const metadata = item.metadata as { agent_id?: string; source?: string } | undefined;
+          if (metadata?.agent_id && metadata?.source === "magentic") {
+            const executorId = metadata.agent_id;
+            const itemId = item.id;
+            const runNumber = (runCount.get(executorId) || 0) + 1;
+            runCount.set(executorId, runNumber);
 
-          runs.push({
-            executorId,
-            executorName: truncateText(executorId, 35),
-            itemId,
-            state: "running",
-            output: itemOutputs[itemId] || "",
-            timestamp: uiTimestamp,
-            runNumber,
-          });
+            runs.push({
+              executorId,
+              executorName: truncateText(executorId, 35),
+              itemId,
+              state: "running",
+              output: itemOutputs[itemId] || "",
+              timestamp: uiTimestamp,
+              runNumber,
+            });
+          }
         }
       }
 
       // Handle completion events
       if (event.type === "response.output_item.done") {
-        const item = (event as { item?: { type?: string; executor_id?: string; id?: string; status?: string; error?: string; metadata?: any } }).item;
+        const item = (event as import("@/types/openai").ResponseOutputItemDoneEvent).item;
 
         // Handle both executor_action items AND message items from Magentic agents
-        if (item && item.type === "executor_action" && item.executor_id && item.id) {
+        if (item && item.type === "executor_action" && "executor_id" in item && item.id) {
           const itemId = item.id;
           // Find the run by ITEM ID (not executor ID!) to handle multiple runs correctly
           const existingRun = runs.find((r) => r.itemId === itemId);
@@ -278,18 +321,21 @@ export function ExecutionTimeline({
                 : "completed";
             // Use item-specific output, not executor-wide output
             existingRun.output = itemOutputs[itemId] || "";
-            if (item.status === "failed" && item.error) {
-              existingRun.error = item.error;
+            if (item.status === "failed" && "error" in item && item.error) {
+              existingRun.error = String(item.error);
             }
           }
-        } else if (item && item.type === "message" && item.metadata?.agent_id && item.metadata?.source === "magentic" && item.id) {
+        } else if (item && item.type === "message" && "metadata" in item && item.id) {
           // Handle message completion from Magentic agents
-          const itemId = item.id;
-          const existingRun = runs.find((r) => r.itemId === itemId);
+          const metadata = item.metadata as { agent_id?: string; source?: string } | undefined;
+          if (metadata?.agent_id && metadata?.source === "magentic") {
+            const itemId = item.id;
+            const existingRun = runs.find((r) => r.itemId === itemId);
 
-          if (existingRun) {
-            existingRun.state = item.status === "completed" ? "completed" : "failed";
-            existingRun.output = itemOutputs[itemId] || "";
+            if (existingRun) {
+              existingRun.state = item.status === "completed" ? "completed" : "failed";
+              existingRun.output = itemOutputs[itemId] || "";
+            }
           }
         }
       }
@@ -413,6 +459,39 @@ export function ExecutionTimeline({
     }
   }, [workflowResult, isStreaming]);
 
+  // Auto-scroll when streaming ends to show final executor state
+  // (Ensures last executor's completion is visible, even if no workflow result)
+  useEffect(() => {
+    // Only scroll when streaming ends AND no HIL requests are pending
+    // (HIL has its own scroll handler below)
+    if (!isStreaming && executorRuns.length > 0 && pendingHilRequests.length === 0) {
+      setTimeout(() => {
+        timelineEndRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'end'
+        });
+      }, 100);
+    }
+  }, [isStreaming, pendingHilRequests.length, executorRuns.length]);
+
+  // Auto-scroll to HIL form when it appears
+  useEffect(() => {
+    if (pendingHilRequests.length > 0 && hilFormRef.current) {
+      // Small delay to ensure the form is rendered
+      setTimeout(() => {
+        hilFormRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'end'
+        });
+        // Add highlight animation
+        hilFormRef.current?.classList.add('highlight-attention');
+        setTimeout(() => {
+          hilFormRef.current?.classList.remove('highlight-attention');
+        }, 1000);
+      }, 100);
+    }
+  }, [pendingHilRequests.length]);
+
   const handleCopyAll = () => {
     const text = executorRuns
       .map((run) => {
@@ -471,35 +550,54 @@ export function ExecutionTimeline({
         <div className="p-3 space-y-2">
           {executorRuns.length === 0 ? (
             <div className="text-center text-muted-foreground text-sm py-8">
-              No executor runs yet. Start the workflow to see execution timeline.
+              {isStreaming ? "Workflow is running..." : "Ready to run workflow"}
             </div>
           ) : (
-            executorRuns.map((run, index) => {
-              const runKey = `${run.executorId}-${run.runNumber}`;
-              return (
-                <ExecutorRunItem
-                  key={`${runKey}-${index}`}
-                  run={run}
-                  isExpanded={expandedRuns.has(runKey)}
-                  onToggle={() => {
-                    setExpandedRuns((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(runKey)) {
-                        next.delete(runKey);
-                      } else {
-                        next.add(runKey);
-                      }
-                      return next;
-                    });
-                  }}
-                  onClick={() => onExecutorClick?.(run.executorId)}
-                  isSelected={selectedExecutorId === run.executorId}
-                />
-              );
-            })
+            <>
+              {executorRuns.map((run, index) => {
+                const runKey = `${run.executorId}-${run.runNumber}`;
+                return (
+                  <ExecutorRunItem
+                    key={`${runKey}-${index}`}
+                    run={run}
+                    isExpanded={expandedRuns.has(runKey)}
+                    onToggle={() => {
+                      setExpandedRuns((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(runKey)) {
+                          next.delete(runKey);
+                        } else {
+                          next.add(runKey);
+                        }
+                        return next;
+                      });
+                    }}
+                    onClick={() => onExecutorClick?.(run.executorId)}
+                    isSelected={selectedExecutorId === run.executorId}
+                    isStreaming={isStreaming}
+                  />
+                );
+              })}
+
+              {/* HIL Request Items */}
+              {pendingHilRequests.length > 0 && (
+                <div ref={hilFormRef} data-hil-form className="transition-all duration-300">
+                  {pendingHilRequests.map((request) => (
+                    <HilTimelineItem
+                      key={request.request_id}
+                      request={request}
+                      response={hilResponses[request.request_id] || {}}
+                      onResponseChange={(values) => onHilResponseChange?.(request.request_id, values)}
+                      onSubmit={() => onHilSubmit?.()}
+                      isSubmitting={isSubmittingHil}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
           {/* Workflow final output card */}
-          {workflowResult && workflowResult.trim().length > 0 && !isStreaming && (
+          {workflowResult && workflowResult.trim().length > 0 && !isStreaming && !wasCancelled && (
             <div className="border rounded-lg border-green-500/40 bg-green-500/5 dark:bg-green-500/10">
               <div className="p-3 bg-green-500/10 border-b border-green-500/20">
                 <div className="flex items-center gap-2 mb-1">
@@ -519,10 +617,55 @@ export function ExecutionTimeline({
               </div>
             </div>
           )}
+          {/* Workflow cancelled card */}
+          {wasCancelled && !isStreaming && (
+            <div className="border rounded-lg border-orange-500/40 bg-orange-500/5 dark:bg-orange-500/10">
+              <div className="px-4 py-3 flex items-center gap-2">
+                <Square className="w-4 h-4 text-orange-500 dark:text-orange-400 fill-current" />
+                <span className="font-medium text-sm text-orange-700 dark:text-orange-300">Execution stopped by user</span>
+              </div>
+            </div>
+          )}
           {/* Invisible element at the end for scroll target */}
           <div ref={timelineEndRef} />
         </div>
       </ScrollArea>
+
+      {/* Bottom Control Bar - Sticky (hidden when HIL is active) */}
+      {(onRun || onCancel) && pendingHilRequests.length === 0 && (
+        <div className="border-t p-3 bg-background flex-shrink-0">
+          {inputSchema && isChatMessageSchema(inputSchema) ? (
+            <ChatMessageInput
+              onSubmit={async (content: ResponseInputContent[]) => {
+                // Wrap in OpenAI message format (same as run-workflow-button modal)
+                const openaiInput = [
+                  { type: "message", role: "user", content },
+                ];
+                onRun?.(openaiInput as unknown as Record<string, unknown>);
+              }}
+              isSubmitting={workflowState === "running"}
+              isStreaming={workflowState === "running"}
+              onCancel={onCancel}
+              isCancelling={isCancelling}
+              placeholder="Message workflow..."
+              showFileUpload={true}
+              entityName="workflow"
+            />
+          ) : (
+            <RunWorkflowButton
+              inputSchema={inputSchema}
+              onRun={onRun || (() => {})}
+              onCancel={onCancel}
+              isSubmitting={workflowState === "running"}
+              isCancelling={isCancelling}
+              workflowState={workflowState}
+              checkpoints={checkpoints}
+              showCheckpoints={false}
+            />
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

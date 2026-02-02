@@ -41,7 +41,7 @@ public static class PurviewExtensions
         services.AddSingleton<PurviewWrapper>();
         services.AddSingleton(Channel.CreateBounded<BackgroundJobBase>(purviewSettings.PendingBackgroundJobLimit));
         services.AddSingleton<IChannelHandler, ChannelHandler>();
-        services.AddSingleton<BackgroundJobRunner>();
+        services.AddSingleton<IBackgroundJobRunner, BackgroundJobRunner>();
         ServiceProvider serviceProvider = services.BuildServiceProvider();
 
         return serviceProvider.GetRequiredService<PurviewWrapper>();
@@ -112,11 +112,7 @@ public static class PurviewExtensions
     /// <param name="userId">The id of the owner of the message.</param>
     public static void SetUserId(this ChatMessage message, Guid userId)
     {
-        if (message.AdditionalProperties == null)
-        {
-            message.AdditionalProperties = new AdditionalPropertiesDictionary();
-        }
-
+        message.AdditionalProperties ??= [];
         message.AdditionalProperties[Constants.UserId] = userId.ToString();
     }
 }

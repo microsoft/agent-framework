@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
 {
     using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
     using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
-    using Microsoft.Bot.ObjectModel;
+    using Microsoft.Agents.ObjectModel;
     using Microsoft.Extensions.AI;
     using System.Collections.Generic;
     using System;
@@ -61,23 +61,21 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
         EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
-        EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");
             this.Write(@"
         
-        AgentRunResponse agentResponse =
+        AgentResponse agentResponse =
             await InvokeAgentAsync(
                 context,
                 agentName,
                 conversationId, 
                 autoSend, 
-                additionalInstructions, 
                 inputMessages, 
                 cancellationToken).ConfigureAwait(false);
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
         ");
 

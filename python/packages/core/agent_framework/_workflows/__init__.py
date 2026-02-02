@@ -6,6 +6,13 @@ from ._agent_executor import (
     AgentExecutorRequest,
     AgentExecutorResponse,
 )
+from ._agent_utils import resolve_agent_id
+from ._base_group_chat_orchestrator import (
+    BaseGroupChatOrchestrator,
+    GroupChatRequestMessage,
+    GroupChatRequestSentEvent,
+    GroupChatResponseReceivedEvent,
+)
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -21,6 +28,7 @@ from ._edge import (
     Case,
     Default,
     Edge,
+    EdgeCondition,
     FanInEdgeGroup,
     FanOutEdgeGroup,
     SingleEdgeGroup,
@@ -37,6 +45,8 @@ from ._events import (
     ExecutorFailedEvent,
     ExecutorInvokedEvent,
     RequestInfoEvent,
+    SuperStepCompletedEvent,
+    SuperStepStartedEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowEventSource,
@@ -47,33 +57,42 @@ from ._events import (
     WorkflowStartedEvent,
     WorkflowStatusEvent,
 )
+from ._exceptions import (
+    WorkflowCheckpointException,
+    WorkflowConvergenceException,
+    WorkflowException,
+    WorkflowRunnerException,
+)
 from ._executor import (
     Executor,
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
 from ._group_chat import (
-    DEFAULT_MANAGER_INSTRUCTIONS,
-    DEFAULT_MANAGER_STRUCTURED_OUTPUT_PROMPT,
+    AgentBasedGroupChatOrchestrator,
     GroupChatBuilder,
-    GroupChatDirective,
-    GroupChatStateSnapshot,
-    ManagerDirectiveModel,
+    GroupChatState,
 )
-from ._handoff import HandoffBuilder, HandoffUserInputRequest
+from ._handoff import HandoffAgentUserRequest, HandoffBuilder, HandoffSentEvent
 from ._magentic import (
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
+    ORCH_MSG_KIND_INSTRUCTION,
+    ORCH_MSG_KIND_NOTICE,
+    ORCH_MSG_KIND_TASK_LEDGER,
+    ORCH_MSG_KIND_USER_TASK,
     MagenticBuilder,
     MagenticContext,
-    MagenticFinalResultEvent,
     MagenticManagerBase,
-    MagenticOrchestratorMessageEvent,
-    MagenticPlanReviewDecision,
-    MagenticPlanReviewReply,
+    MagenticOrchestrator,
+    MagenticOrchestratorEvent,
+    MagenticOrchestratorEventType,
     MagenticPlanReviewRequest,
+    MagenticPlanReviewResponse,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+    MagenticResetSignal,
     StandardMagenticManager,
 )
+from ._orchestration_request_info import AgentRequestInfoResponse
 from ._orchestration_state import OrchestrationState
 from ._request_info_mixin import response_handler
 from ._runner import Runner
@@ -96,22 +115,32 @@ from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
-from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
+from ._workflow_executor import (
+    SubWorkflowRequestMessage,
+    SubWorkflowResponseMessage,
+    WorkflowExecutor,
+)
 
 __all__ = [
-    "DEFAULT_MANAGER_INSTRUCTIONS",
-    "DEFAULT_MANAGER_STRUCTURED_OUTPUT_PROMPT",
     "DEFAULT_MAX_ITERATIONS",
+    "ORCH_MSG_KIND_INSTRUCTION",
+    "ORCH_MSG_KIND_NOTICE",
+    "ORCH_MSG_KIND_TASK_LEDGER",
+    "ORCH_MSG_KIND_USER_TASK",
+    "AgentBasedGroupChatOrchestrator",
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
+    "AgentRequestInfoResponse",
     "AgentRunEvent",
     "AgentRunUpdateEvent",
+    "BaseGroupChatOrchestrator",
     "Case",
     "CheckpointStorage",
     "ConcurrentBuilder",
     "Default",
     "Edge",
+    "EdgeCondition",
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
@@ -124,23 +153,26 @@ __all__ = [
     "FunctionExecutor",
     "GraphConnectivityError",
     "GroupChatBuilder",
-    "GroupChatDirective",
-    "GroupChatStateSnapshot",
+    "GroupChatRequestMessage",
+    "GroupChatRequestSentEvent",
+    "GroupChatResponseReceivedEvent",
+    "GroupChatState",
+    "HandoffAgentUserRequest",
     "HandoffBuilder",
-    "HandoffUserInputRequest",
+    "HandoffSentEvent",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
-    "MagenticAgentDeltaEvent",
-    "MagenticAgentMessageEvent",
     "MagenticBuilder",
     "MagenticContext",
-    "MagenticFinalResultEvent",
     "MagenticManagerBase",
-    "MagenticOrchestratorMessageEvent",
-    "MagenticPlanReviewDecision",
-    "MagenticPlanReviewReply",
+    "MagenticOrchestrator",
+    "MagenticOrchestratorEvent",
+    "MagenticOrchestratorEventType",
     "MagenticPlanReviewRequest",
-    "ManagerDirectiveModel",
+    "MagenticPlanReviewResponse",
+    "MagenticProgressLedger",
+    "MagenticProgressLedgerItem",
+    "MagenticResetSignal",
     "Message",
     "OrchestrationState",
     "RequestInfoEvent",
@@ -152,6 +184,8 @@ __all__ = [
     "StandardMagenticManager",
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",
+    "SuperStepCompletedEvent",
+    "SuperStepStartedEvent",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
@@ -161,17 +195,21 @@ __all__ = [
     "WorkflowAgent",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
+    "WorkflowCheckpointException",
     "WorkflowCheckpointSummary",
     "WorkflowContext",
+    "WorkflowConvergenceException",
     "WorkflowErrorDetails",
     "WorkflowEvent",
     "WorkflowEventSource",
+    "WorkflowException",
     "WorkflowExecutor",
     "WorkflowFailedEvent",
     "WorkflowLifecycleEvent",
     "WorkflowOutputEvent",
     "WorkflowRunResult",
     "WorkflowRunState",
+    "WorkflowRunnerException",
     "WorkflowStartedEvent",
     "WorkflowStatusEvent",
     "WorkflowValidationError",
@@ -180,6 +218,7 @@ __all__ = [
     "executor",
     "get_checkpoint_summary",
     "handler",
+    "resolve_agent_id",
     "response_handler",
     "validate_workflow_graph",
 ]

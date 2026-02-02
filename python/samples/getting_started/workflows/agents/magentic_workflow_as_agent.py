@@ -1,22 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import logging
 
 from agent_framework import (
     ChatAgent,
     HostedCodeInterpreterTool,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticFinalResultEvent,
-    MagenticOrchestratorMessageEvent,
-    WorkflowOutputEvent,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
@@ -51,13 +43,21 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
+    # Create a manager agent for orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
+    )
+
     print("\nBuilding Magentic Workflow...")
 
     workflow = (
         MagenticBuilder()
-        .participants(researcher=researcher_agent, coder=coder_agent)
-        .with_standard_manager(
-            chat_client=OpenAIChatClient(),
+        .participants([researcher_agent, coder_agent])
+        .with_manager(
+            agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
             max_reset_count=2,
@@ -78,58 +78,12 @@ async def main() -> None:
     print("\nStarting workflow execution...")
 
     try:
-        last_stream_agent_id: str | None = None
-        stream_line_open: bool = False
-        final_output: str | None = None
-
-        async for event in workflow.run_stream(task):
-            if isinstance(event, MagenticOrchestratorMessageEvent):
-                print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-            elif isinstance(event, MagenticAgentDeltaEvent):
-                if last_stream_agent_id != event.agent_id or not stream_line_open:
-                    if stream_line_open:
-                        print()
-                    print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                    last_stream_agent_id = event.agent_id
-                    stream_line_open = True
-                if event.text:
-                    print(event.text, end="", flush=True)
-            elif isinstance(event, MagenticAgentMessageEvent):
-                if stream_line_open:
-                    print(" (final)")
-                    stream_line_open = False
-                    print()
-                msg = event.message
-                if msg is not None:
-                    response_text = (msg.text or "").replace("\n", " ")
-                    print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-            elif isinstance(event, MagenticFinalResultEvent):
-                print("\n" + "=" * 50)
-                print("FINAL RESULT:")
-                print("=" * 50)
-                if event.message is not None:
-                    print(event.message.text)
-                print("=" * 50)
-            elif isinstance(event, WorkflowOutputEvent):
-                final_output = str(event.data) if event.data is not None else None
-
-        if stream_line_open:
-            print()
-            stream_line_open = False
-
-        if final_output is not None:
-            print(f"\nWorkflow completed with result:\n\n{final_output}\n")
-
         # Wrap the workflow as an agent for composition scenarios
+        print("\nWrapping workflow as an agent and running...")
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
-        agent_result = await workflow_agent.run(task)
-
-        if agent_result.messages:
-            print("\n===== as_agent() Transcript =====")
-            for i, msg in enumerate(agent_result.messages, start=1):
-                role_value = getattr(msg.role, "value", msg.role)
-                speaker = msg.author_name or role_value
-                print(f"{'-' * 50}\n{i:02d} [{speaker}]\n{msg.text}")
+        async for response in workflow_agent.run_stream(task):
+            # Fallback for any other events with text
+            print(response.text, end="", flush=True)
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")

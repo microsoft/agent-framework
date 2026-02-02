@@ -7,7 +7,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
@@ -210,9 +210,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     protected override void Visit(Question item)
     {
         this.NotSupported(item);
-        //this.Trace(item);
+    }
 
-        //this.ContinueWith(new QuestionTemplate(item));
+    protected override void Visit(RequestExternalInput item)
+    {
+        this.NotSupported(item);
     }
 
     protected override void Visit(EndDialog item)
@@ -230,6 +232,24 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
+        // Represent action with default executor
+        DefaultTemplate action = new(item, this._rootId);
+        this.ContinueWith(action);
+        // Define a clean-start to ensure "end" is not a source for any edge
+        this.RestartAfter(action.Id, action.ParentId);
+    }
+
+    protected override void Visit(CancelAllDialogs item)
+    {
+        // Represent action with default executor
+        DefaultTemplate action = new(item, this._rootId);
+        this.ContinueWith(action);
+        // Define a clean-start to ensure "end" is not a source for any edge
+        this.RestartAfter(action.Id, action.ParentId);
+    }
+
+    protected override void Visit(CancelDialog item)
+    {
         // Represent action with default executor
         DefaultTemplate action = new(item, this._rootId);
         this.ContinueWith(action);
@@ -263,6 +283,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         this.Trace(item);
 
         this.ContinueWith(new InvokeAzureAgentTemplate(item));
+    }
+
+    protected override void Visit(InvokeAzureResponse item)
+    {
+        this.NotSupported(item);
     }
 
     protected override void Visit(RetrieveConversationMessage item)
@@ -317,17 +342,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     protected override void Visit(EditTable item)
     {
         this.NotSupported(item);
-        //this.Trace(item);
-
-        //this.ContinueWith(new EditTableTemplate(item));
     }
 
     protected override void Visit(EditTableV2 item)
     {
         this.NotSupported(item);
-        //this.Trace(item);
-
-        //this.ContinueWith(new EditTableV2Template(item));
     }
 
     protected override void Visit(ParseValue item)
@@ -383,10 +402,6 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 
     protected override void Visit(ReplaceDialog item) => this.NotSupported(item);
-
-    protected override void Visit(CancelAllDialogs item) => this.NotSupported(item);
-
-    protected override void Visit(CancelDialog item) => this.NotSupported(item);
 
     protected override void Visit(EmitEvent item) => this.NotSupported(item);
 

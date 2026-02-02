@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from __future__ import annotations
 
 import asyncio
 import uuid
@@ -212,9 +211,8 @@ class ScopedContentProcessor:
         cache_key = create_protection_scopes_cache_key(ps_req)
         cached_ps_resp = await self._cache.get(cache_key)
 
-        if cached_ps_resp is not None:
-            if isinstance(cached_ps_resp, ProtectionScopesResponse):
-                ps_resp = cached_ps_resp
+        if cached_ps_resp is not None and isinstance(cached_ps_resp, ProtectionScopesResponse):
+            ps_resp = cached_ps_resp
         else:
             try:
                 ps_resp = await self._client.get_protection_scopes(ps_req)

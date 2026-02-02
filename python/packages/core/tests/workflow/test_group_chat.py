@@ -1,42 +1,36 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Callable
-from typing import Any
+from collections.abc import AsyncIterable, Callable, Sequence
+from typing import Any, cast
 
 import pytest
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentExecutorResponse,
+    AgentRequestInfoResponse,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
+    BaseGroupChatOrchestrator,
+    ChatAgent,
     ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
     GroupChatBuilder,
-    GroupChatDirective,
-    GroupChatStateSnapshot,
-    MagenticAgentMessageEvent,
-    MagenticBuilder,
+    GroupChatState,
     MagenticContext,
     MagenticManagerBase,
-    MagenticOrchestratorMessageEvent,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+    RequestInfoEvent,
     Role,
-    TextContent,
-    Workflow,
     WorkflowOutputEvent,
+    WorkflowRunState,
+    WorkflowStatusEvent,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._group_chat import (
-    GroupChatOrchestratorExecutor,
-    _default_orchestrator_factory,  # type: ignore
-    _GroupChatConfig,  # type: ignore
-    _PromptBasedGroupChatManager,  # type: ignore
-    _SpeakerSelectorAdapter,  # type: ignore
-)
-from agent_framework._workflows._magentic import (
-    _MagenticProgressLedger,  # type: ignore
-    _MagenticProgressLedgerItem,  # type: ignore
-    _MagenticStartMessage,  # type: ignore
-)
 
 
 class StubAgent(BaseAgent):
@@ -46,44 +40,149 @@ class StubAgent(BaseAgent):
 
     async def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
-        return AgentRunResponse(messages=[response])
+        return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        async def _stream() -> AsyncIterable[AgentRunResponseUpdate]:
-            yield AgentRunResponseUpdate(
-                contents=[TextContent(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
             )
 
         return _stream()
 
 
-def make_sequence_selector() -> Callable[[GroupChatStateSnapshot], Any]:
+class MockChatClient:
+    """Mock chat client that raises NotImplementedError for all methods."""
+
+    additional_properties: dict[str, Any]
+
+    async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
+        raise NotImplementedError
+
+    def get_streaming_response(self, messages: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+        raise NotImplementedError
+
+
+class StubManagerAgent(ChatAgent):
+    def __init__(self) -> None:
+        super().__init__(chat_client=MockChatClient(), name="manager_agent", description="Stub manager")
+        self._call_count = 0
+
+    async def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        if self._call_count == 0:
+            self._call_count += 1
+            # First call: select the agent (using AgentOrchestrationOutput format)
+            payload = {"terminate": False, "reason": "Selecting agent", "next_speaker": "agent", "final_message": None}
+            return AgentResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        text=(
+                            '{"terminate": false, "reason": "Selecting agent", '
+                            '"next_speaker": "agent", "final_message": null}'
+                        ),
+                        author_name=self.name,
+                    )
+                ],
+                value=payload,
+            )
+
+        # Second call: terminate
+        payload = {
+            "terminate": True,
+            "reason": "Task complete",
+            "next_speaker": None,
+            "final_message": "agent manager final",
+        }
+        return AgentResponse(
+            messages=[
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    text=(
+                        '{"terminate": true, "reason": "Task complete", '
+                        '"next_speaker": null, "final_message": "agent manager final"}'
+                    ),
+                    author_name=self.name,
+                )
+            ],
+            value=payload,
+        )
+
+    def run_stream(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        if self._call_count == 0:
+            self._call_count += 1
+
+            async def _stream_initial() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            text=(
+                                '{"terminate": false, "reason": "Selecting agent", '
+                                '"next_speaker": "agent", "final_message": null}'
+                            )
+                        )
+                    ],
+                    role=Role.ASSISTANT,
+                    author_name=self.name,
+                )
+
+            return _stream_initial()
+
+        async def _stream_final() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(
+                        text=(
+                            '{"terminate": true, "reason": "Task complete", '
+                            '"next_speaker": null, "final_message": "agent manager final"}'
+                        )
+                    )
+                ],
+                role=Role.ASSISTANT,
+                author_name=self.name,
+            )
+
+        return _stream_final()
+
+
+def make_sequence_selector() -> Callable[[GroupChatState], str]:
     state_counter = {"value": 0}
 
-    async def _selector(state: GroupChatStateSnapshot) -> str | None:
-        participants = list(state["participants"].keys())
+    def _selector(state: GroupChatState) -> str:
+        participants = list(state.participants.keys())
         step = state_counter["value"]
+        state_counter["value"] = step + 1
         if step == 0:
-            state_counter["value"] = step + 1
             return participants[0]
         if step == 1 and len(participants) > 1:
-            state_counter["value"] = step + 1
             return participants[1]
-        return None
+        # Return first participant to continue (will be limited by max_rounds in tests)
+        return participants[0]
 
-    _selector.name = "manager"  # type: ignore[attr-defined]
     return _selector
 
 
@@ -98,24 +197,24 @@ class StubMagenticManager(MagenticManagerBase):
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return await self.plan(magentic_context)
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         participants = list(magentic_context.participant_descriptions.keys())
         target = participants[0] if participants else "agent"
         if self._round == 0:
             self._round += 1
-            return _MagenticProgressLedger(
-                is_request_satisfied=_MagenticProgressLedgerItem(reason="", answer=False),
-                is_in_loop=_MagenticProgressLedgerItem(reason="", answer=False),
-                is_progress_being_made=_MagenticProgressLedgerItem(reason="", answer=True),
-                next_speaker=_MagenticProgressLedgerItem(reason="", answer=target),
-                instruction_or_question=_MagenticProgressLedgerItem(reason="", answer="respond"),
+            return MagenticProgressLedger(
+                is_request_satisfied=MagenticProgressLedgerItem(reason="", answer=False),
+                is_in_loop=MagenticProgressLedgerItem(reason="", answer=False),
+                is_progress_being_made=MagenticProgressLedgerItem(reason="", answer=True),
+                next_speaker=MagenticProgressLedgerItem(reason="", answer=target),
+                instruction_or_question=MagenticProgressLedgerItem(reason="", answer="respond"),
             )
-        return _MagenticProgressLedger(
-            is_request_satisfied=_MagenticProgressLedgerItem(reason="", answer=True),
-            is_in_loop=_MagenticProgressLedgerItem(reason="", answer=False),
-            is_progress_being_made=_MagenticProgressLedgerItem(reason="", answer=True),
-            next_speaker=_MagenticProgressLedgerItem(reason="", answer=target),
-            instruction_or_question=_MagenticProgressLedgerItem(reason="", answer=""),
+        return MagenticProgressLedger(
+            is_request_satisfied=MagenticProgressLedgerItem(reason="", answer=True),
+            is_in_loop=MagenticProgressLedgerItem(reason="", answer=False),
+            is_progress_being_made=MagenticProgressLedgerItem(reason="", answer=True),
+            next_speaker=MagenticProgressLedgerItem(reason="", answer=target),
+            instruction_or_question=MagenticProgressLedgerItem(reason="", answer=""),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -129,51 +228,24 @@ async def test_group_chat_builder_basic_flow() -> None:
 
     workflow = (
         GroupChatBuilder()
-        .select_speakers(selector, display_name="manager", final_message="done")
-        .participants(alpha=alpha, beta=beta)
+        .with_orchestrator(selection_func=selector, orchestrator_name="manager")
+        .participants([alpha, beta])
+        .with_max_rounds(2)  # Limit rounds to prevent infinite loop
         .build()
     )
 
-    outputs: list[ChatMessage] = []
+    outputs: list[list[ChatMessage]] = []
     async for event in workflow.run_stream("coordinate task"):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
-            if isinstance(data, ChatMessage):
-                outputs.append(data)
+            if isinstance(data, list):
+                outputs.append(cast(list[ChatMessage], data))
 
     assert len(outputs) == 1
-    assert outputs[0].text == "done"
-    assert outputs[0].author_name == "manager"
-
-
-async def test_magentic_builder_returns_workflow_and_runs() -> None:
-    manager = StubMagenticManager()
-    agent = StubAgent("writer", "first draft")
-
-    workflow = MagenticBuilder().participants(writer=agent).with_standard_manager(manager=manager).build()
-
-    assert isinstance(workflow, Workflow)
-
-    outputs: list[ChatMessage] = []
-    orchestrator_events: list[MagenticOrchestratorMessageEvent] = []
-    agent_events: list[MagenticAgentMessageEvent] = []
-    start_message = _MagenticStartMessage.from_string("compose summary")
-    async for event in workflow.run_stream(start_message):
-        if isinstance(event, MagenticOrchestratorMessageEvent):
-            orchestrator_events.append(event)
-        if isinstance(event, MagenticAgentMessageEvent):
-            agent_events.append(event)
-        if isinstance(event, WorkflowOutputEvent):
-            msg = event.data
-            if isinstance(msg, ChatMessage):
-                outputs.append(msg)
-
-    assert outputs, "Expected a final output message"
-    final = outputs[-1]
-    assert final.text == "final"
-    assert final.author_name == "magentic_manager"
-    assert orchestrator_events, "Expected orchestrator events to be emitted"
-    assert agent_events, "Expected agent message events to be emitted"
+    assert len(outputs[0]) >= 1
+    # Check that both agents contributed
+    authors = {msg.author_name for msg in outputs[0] if msg.author_name in ["alpha", "beta"]}
+    assert len(authors) == 2
 
 
 async def test_group_chat_as_agent_accepts_conversation() -> None:
@@ -183,8 +255,9 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
 
     workflow = (
         GroupChatBuilder()
-        .select_speakers(selector, display_name="manager", final_message="done")
-        .participants(alpha=alpha, beta=beta)
+        .with_orchestrator(selection_func=selector, orchestrator_name="manager")
+        .participants([alpha, beta])
+        .with_max_rounds(2)  # Limit rounds to prevent infinite loop
         .build()
     )
 
@@ -196,22 +269,6 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
     response = await agent.run(conversation)
 
     assert response.messages, "Expected agent conversation output"
-
-
-async def test_magentic_as_agent_accepts_conversation() -> None:
-    manager = StubMagenticManager()
-    writer = StubAgent("writer", "draft")
-
-    workflow = MagenticBuilder().participants(writer=writer).with_standard_manager(manager=manager).build()
-
-    agent = workflow.as_agent(name="magentic-agent")
-    conversation = [
-        ChatMessage(role=Role.SYSTEM, text="Guidelines", author_name="system"),
-        ChatMessage(role=Role.USER, text="Summarize the findings", author_name="requester"),
-    ]
-    response = await agent.run(conversation)
-
-    assert isinstance(response, AgentRunResponse)
 
 
 # Comprehensive tests for group chat functionality
@@ -226,38 +283,46 @@ class TestGroupChatBuilder:
 
         builder = GroupChatBuilder().participants([agent])
 
-        with pytest.raises(ValueError, match="manager must be configured before build"):
+        with pytest.raises(
+            ValueError, match=r"No orchestrator has been configured\. Call with_orchestrator\(\) to set one\."
+        ):
             builder.build()
 
     def test_build_without_participants_raises_error(self) -> None:
         """Test that building without participants raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
-        builder = GroupChatBuilder().select_speakers(selector)
+        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
-        with pytest.raises(ValueError, match="participants must be configured before build"):
+        with pytest.raises(
+            ValueError,
+            match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\.",
+        ):
             builder.build()
 
     def test_duplicate_manager_configuration_raises_error(self) -> None:
         """Test that configuring multiple managers raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
-        builder = GroupChatBuilder().select_speakers(selector)
+        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
-        with pytest.raises(ValueError, match="already has a manager configured"):
-            builder.select_speakers(selector)
+        with pytest.raises(
+            ValueError,
+            match=r"A selection function has already been configured\. Call with_orchestrator\(\.\.\.\) once only\.",
+        ):
+            builder.with_orchestrator(selection_func=selector)
 
     def test_empty_participants_raises_error(self) -> None:
         """Test that empty participants list raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
-        builder = GroupChatBuilder().select_speakers(selector)
+        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
         with pytest.raises(ValueError, match="participants cannot be empty"):
             builder.participants([])
@@ -267,10 +332,10 @@ class TestGroupChatBuilder:
         agent1 = StubAgent("test", "response1")
         agent2 = StubAgent("test", "response2")
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
-        builder = GroupChatBuilder().select_speakers(selector)
+        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
         with pytest.raises(ValueError, match="Duplicate participant name 'test'"):
             builder.participants([agent1, agent2])
@@ -282,48 +347,48 @@ class TestGroupChatBuilder:
             def __init__(self) -> None:
                 super().__init__(name="", description="test")
 
-            async def run(self, messages: Any = None, *, thread: Any = None, **kwargs: Any) -> AgentRunResponse:
-                return AgentRunResponse(messages=[])
+            async def run(self, messages: Any = None, *, thread: Any = None, **kwargs: Any) -> AgentResponse:
+                return AgentResponse(messages=[])
 
             def run_stream(
                 self, messages: Any = None, *, thread: Any = None, **kwargs: Any
-            ) -> AsyncIterable[AgentRunResponseUpdate]:
-                async def _stream() -> AsyncIterable[AgentRunResponseUpdate]:
-                    yield AgentRunResponseUpdate(contents=[])
+            ) -> AsyncIterable[AgentResponseUpdate]:
+                async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(contents=[])
 
                 return _stream()
 
         agent = AgentWithoutName()
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
-        builder = GroupChatBuilder().select_speakers(selector)
+        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
-        with pytest.raises(ValueError, match="must define a non-empty 'name' attribute"):
+        with pytest.raises(ValueError, match="AgentProtocol participants must have a non-empty name"):
             builder.participants([agent])
 
     def test_empty_participant_name_raises_error(self) -> None:
         """Test that empty participant name raises ValueError."""
-        agent = StubAgent("test", "response")
+        agent = StubAgent("", "response")  # Agent with empty name
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
-        builder = GroupChatBuilder().select_speakers(selector)
+        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
-        with pytest.raises(ValueError, match="participant names must be non-empty strings"):
-            builder.participants({"": agent})
+        with pytest.raises(ValueError, match="AgentProtocol participants must have a non-empty name"):
+            builder.participants([agent])
 
 
-class TestGroupChatOrchestrator:
-    """Tests for GroupChatOrchestratorExecutor core functionality."""
+class TestGroupChatWorkflow:
+    """Tests for GroupChat workflow functionality."""
 
     async def test_max_rounds_enforcement(self) -> None:
         """Test that max_rounds properly limits conversation rounds."""
         call_count = {"value": 0}
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str:
             call_count["value"] += 1
             # Always return the agent name to try to continue indefinitely
             return "agent"
@@ -332,182 +397,100 @@ class TestGroupChatOrchestrator:
 
         workflow = (
             GroupChatBuilder()
-            .select_speakers(selector)
+            .with_orchestrator(selection_func=selector)
             .participants([agent])
             .with_max_rounds(2)  # Limit to 2 rounds
             .build()
         )
 
-        outputs: list[ChatMessage] = []
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream("test task"):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         # Should have terminated due to max_rounds, expect at least one output
         assert len(outputs) >= 1
-        # The final message should be about round limit
-        final_output = outputs[-1]
-        assert "round limit" in final_output.text.lower()
+        # The final message in the conversation should be about round limit
+        conversation = outputs[-1]
+        assert len(conversation) >= 1
+        final_output = conversation[-1]
+        assert "maximum number of rounds" in final_output.text.lower()
+
+    async def test_termination_condition_halts_conversation(self) -> None:
+        """Test that a custom termination condition stops the workflow."""
+
+        def selector(state: GroupChatState) -> str:
+            return "agent"
+
+        def termination_condition(conversation: list[ChatMessage]) -> bool:
+            replies = [msg for msg in conversation if msg.role == Role.ASSISTANT and msg.author_name == "agent"]
+            return len(replies) >= 2
+
+        agent = StubAgent("agent", "response")
+
+        workflow = (
+            GroupChatBuilder()
+            .with_orchestrator(selection_func=selector)
+            .participants([agent])
+            .with_termination_condition(termination_condition)
+            .build()
+        )
+
+        outputs: list[list[ChatMessage]] = []
+        async for event in workflow.run_stream("test task"):
+            if isinstance(event, WorkflowOutputEvent):
+                data = event.data
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
+
+        assert outputs, "Expected termination to yield output"
+        conversation = outputs[-1]
+        agent_replies = [msg for msg in conversation if msg.author_name == "agent" and msg.role == Role.ASSISTANT]
+        assert len(agent_replies) == 2
+        final_output = conversation[-1]
+        # The orchestrator uses its ID as author_name by default
+        assert "termination condition" in final_output.text.lower()
+
+    async def test_termination_condition_agent_manager_finalizes(self) -> None:
+        """Test that termination condition with agent orchestrator produces default termination message."""
+        manager = StubManagerAgent()
+        worker = StubAgent("agent", "response")
+
+        workflow = (
+            GroupChatBuilder()
+            .with_orchestrator(agent=manager)
+            .participants([worker])
+            .with_termination_condition(lambda conv: any(msg.author_name == "agent" for msg in conv))
+            .build()
+        )
+
+        outputs: list[list[ChatMessage]] = []
+        async for event in workflow.run_stream("test task"):
+            if isinstance(event, WorkflowOutputEvent):
+                data = event.data
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
+
+        assert outputs, "Expected termination to yield output"
+        conversation = outputs[-1]
+        assert conversation[-1].text == BaseGroupChatOrchestrator.TERMINATION_CONDITION_MET_MESSAGE
+        assert conversation[-1].author_name == manager.name
 
     async def test_unknown_participant_error(self) -> None:
-        """Test that _apply_directive raises error for unknown participants."""
+        """Test that unknown participant selection raises error."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str:
             return "unknown_agent"  # Return non-existent participant
 
         agent = StubAgent("agent", "response")
 
-        workflow = GroupChatBuilder().select_speakers(selector).participants([agent]).build()
+        workflow = GroupChatBuilder().with_orchestrator(selection_func=selector).participants([agent]).build()
 
-        with pytest.raises(ValueError, match="Manager selected unknown participant 'unknown_agent'"):
+        with pytest.raises(RuntimeError, match="Selection function returned unknown participant 'unknown_agent'"):
             async for _ in workflow.run_stream("test task"):
                 pass
-
-    async def test_directive_without_agent_name_raises_error(self) -> None:
-        """Test that directive without agent_name raises error when finish=False."""
-
-        def bad_selector(state: GroupChatStateSnapshot) -> GroupChatDirective:
-            # Return a GroupChatDirective object instead of string to trigger error
-            return GroupChatDirective(finish=False, agent_name=None)  # type: ignore
-
-        agent = StubAgent("agent", "response")
-
-        # The _SpeakerSelectorAdapter will catch this and raise TypeError
-        workflow = GroupChatBuilder().select_speakers(bad_selector).participants([agent]).build()  # type: ignore
-
-        # This should raise a TypeError because selector doesn't return str or None
-        with pytest.raises(TypeError, match="must return a participant name \\(str\\) or None"):
-            async for _ in workflow.run_stream("test"):
-                pass
-
-    async def test_handle_empty_conversation_raises_error(self) -> None:
-        """Test that empty conversation list raises ValueError."""
-
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
-
-        agent = StubAgent("agent", "response")
-
-        workflow = GroupChatBuilder().select_speakers(selector).participants([agent]).build()
-
-        with pytest.raises(ValueError, match="requires at least one chat message"):
-            async for _ in workflow.run_stream([]):
-                pass
-
-    async def test_unknown_participant_response_raises_error(self) -> None:
-        """Test that responses from unknown participants raise errors."""
-
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return "agent"
-
-        # Create orchestrator to test _ingest_participant_message directly
-        orchestrator = GroupChatOrchestratorExecutor(
-            manager=selector,  # type: ignore
-            participants={"agent": "test agent"},
-            manager_name="test_manager",  # type: ignore
-        )
-
-        # Mock the workflow context
-        class MockContext:
-            async def yield_output(self, message: ChatMessage) -> None:
-                pass
-
-        ctx = MockContext()
-
-        # Initialize orchestrator state
-        orchestrator._task_message = ChatMessage(role=Role.USER, text="test")  # type: ignore
-        orchestrator._conversation = [orchestrator._task_message]  # type: ignore
-        orchestrator._history = []  # type: ignore
-        orchestrator._pending_agent = None  # type: ignore
-        orchestrator._round_index = 0  # type: ignore
-
-        # Test with unknown participant
-        message = ChatMessage(role=Role.ASSISTANT, text="response")
-
-        with pytest.raises(ValueError, match="Received response from unknown participant 'unknown'"):
-            await orchestrator._ingest_participant_message("unknown", message, ctx)  # type: ignore
-
-    async def test_state_build_before_initialization_raises_error(self) -> None:
-        """Test that _build_state raises error before task message initialization."""
-
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            return None
-
-        orchestrator = GroupChatOrchestratorExecutor(
-            manager=selector,  # type: ignore
-            participants={"agent": "test agent"},
-            manager_name="test_manager",  # type: ignore
-        )
-
-        with pytest.raises(RuntimeError, match="state not initialized with task message"):
-            orchestrator._build_state()  # type: ignore
-
-
-class TestSpeakerSelectorAdapter:
-    """Tests for _SpeakerSelectorAdapter functionality."""
-
-    async def test_selector_returning_list_with_multiple_items_raises_error(self) -> None:
-        """Test that selector returning list with multiple items raises error."""
-
-        def bad_selector(state: GroupChatStateSnapshot) -> list[str]:
-            return ["agent1", "agent2"]  # Multiple items
-
-        adapter = _SpeakerSelectorAdapter(bad_selector, manager_name="manager")
-
-        state = {
-            "participants": {"agent1": "desc1", "agent2": "desc2"},
-            "task": ChatMessage(role=Role.USER, text="test"),
-            "conversation": (),
-            "history": (),
-            "round_index": 0,
-            "pending_agent": None,
-        }
-
-        with pytest.raises(ValueError, match="must return a single participant name"):
-            await adapter(state)
-
-    async def test_selector_returning_non_string_raises_error(self) -> None:
-        """Test that selector returning non-string raises TypeError."""
-
-        def bad_selector(state: GroupChatStateSnapshot) -> int:
-            return 42  # Not a string
-
-        adapter = _SpeakerSelectorAdapter(bad_selector, manager_name="manager")
-
-        state = {
-            "participants": {"agent": "desc"},
-            "task": ChatMessage(role=Role.USER, text="test"),
-            "conversation": (),
-            "history": (),
-            "round_index": 0,
-            "pending_agent": None,
-        }
-
-        with pytest.raises(TypeError, match="must return a participant name \\(str\\) or None"):
-            await adapter(state)
-
-    async def test_selector_returning_empty_list_finishes(self) -> None:
-        """Test that selector returning empty list finishes conversation."""
-
-        def empty_selector(state: GroupChatStateSnapshot) -> list[str]:
-            return []  # Empty list should finish
-
-        adapter = _SpeakerSelectorAdapter(empty_selector, manager_name="manager")
-
-        state = {
-            "participants": {"agent": "desc"},
-            "task": ChatMessage(role=Role.USER, text="test"),
-            "conversation": (),
-            "history": (),
-            "round_index": 0,
-            "pending_agent": None,
-        }
-
-        directive = await adapter(state)
-        assert directive.finish is True
-        assert directive.final_message is not None
 
 
 class TestCheckpointing:
@@ -516,113 +499,80 @@ class TestCheckpointing:
     async def test_workflow_with_checkpointing(self) -> None:
         """Test that workflow works with checkpointing enabled."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            if state["round_index"] >= 1:
-                return None
+        def selector(state: GroupChatState) -> str:
             return "agent"
 
         agent = StubAgent("agent", "response")
         storage = InMemoryCheckpointStorage()
 
         workflow = (
-            GroupChatBuilder().select_speakers(selector).participants([agent]).with_checkpointing(storage).build()
+            GroupChatBuilder()
+            .with_orchestrator(selection_func=selector)
+            .participants([agent])
+            .with_max_rounds(1)
+            .with_checkpointing(storage)
+            .build()
         )
 
-        outputs: list[ChatMessage] = []
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream("test task"):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         assert len(outputs) == 1  # Should complete normally
-
-
-class TestPromptBasedManager:
-    """Tests for _PromptBasedGroupChatManager."""
-
-    async def test_manager_with_missing_next_agent_raises_error(self) -> None:
-        """Test that manager directive without next_agent raises RuntimeError."""
-
-        class MockChatClient:
-            async def get_response(self, messages: Any, response_format: Any = None) -> Any:
-                # Return response that has finish=False but no next_agent
-                class MockResponse:
-                    def __init__(self) -> None:
-                        self.value = {"finish": False, "next_agent": None}
-                        self.messages: list[Any] = []
-
-                return MockResponse()
-
-        manager = _PromptBasedGroupChatManager(MockChatClient())  # type: ignore
-
-        state = {
-            "participants": {"agent": "desc"},
-            "task": ChatMessage(role=Role.USER, text="test"),
-            "conversation": (),
-        }
-
-        with pytest.raises(RuntimeError, match="missing next_agent while finish is False"):
-            await manager(state)
-
-    async def test_manager_with_unknown_participant_raises_error(self) -> None:
-        """Test that manager selecting unknown participant raises RuntimeError."""
-
-        class MockChatClient:
-            async def get_response(self, messages: Any, response_format: Any = None) -> Any:
-                # Return response selecting unknown participant
-                class MockResponse:
-                    def __init__(self) -> None:
-                        self.value = {"finish": False, "next_agent": "unknown"}
-                        self.messages: list[Any] = []
-
-                return MockResponse()
-
-        manager = _PromptBasedGroupChatManager(MockChatClient())  # type: ignore
-
-        state = {
-            "participants": {"agent": "desc"},
-            "task": ChatMessage(role=Role.USER, text="test"),
-            "conversation": (),
-        }
-
-        with pytest.raises(RuntimeError, match="Manager selected unknown participant 'unknown'"):
-            await manager(state)
-
-
-class TestFactoryFunctions:
-    """Tests for factory functions."""
-
-    def test_default_orchestrator_factory_without_manager_raises_error(self) -> None:
-        """Test that default factory requires manager to be set."""
-        config = _GroupChatConfig(manager=None, manager_name="test", participants={})
-
-        with pytest.raises(RuntimeError, match="requires a manager to be set"):
-            _default_orchestrator_factory(config)
 
 
 class TestConversationHandling:
     """Tests for different conversation input types."""
 
-    async def test_handle_string_input(self) -> None:
-        """Test handling string input creates proper ChatMessage."""
+    async def test_handle_empty_conversation_raises_error(self) -> None:
+        """Test that empty conversation list raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            # Verify the task was properly converted
-            assert state["task"].role == Role.USER
-            assert state["task"].text == "test string"
-            return None
+        def selector(state: GroupChatState) -> str:
+            return "agent"
 
         agent = StubAgent("agent", "response")
 
-        workflow = GroupChatBuilder().select_speakers(selector).participants([agent]).build()
+        workflow = (
+            GroupChatBuilder()
+            .with_orchestrator(selection_func=selector)
+            .participants([agent])
+            .with_max_rounds(1)
+            .build()
+        )
 
-        outputs: list[ChatMessage] = []
+        with pytest.raises(ValueError, match="At least one ChatMessage is required to start the group chat workflow."):
+            async for _ in workflow.run_stream([]):
+                pass
+
+    async def test_handle_string_input(self) -> None:
+        """Test handling string input creates proper ChatMessage."""
+
+        def selector(state: GroupChatState) -> str:
+            # Verify the conversation has the user message
+            assert len(state.conversation) > 0
+            assert state.conversation[0].role == Role.USER
+            assert state.conversation[0].text == "test string"
+            return "agent"
+
+        agent = StubAgent("agent", "response")
+
+        workflow = (
+            GroupChatBuilder()
+            .with_orchestrator(selection_func=selector)
+            .participants([agent])
+            .with_max_rounds(1)
+            .build()
+        )
+
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream("test string"):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         assert len(outputs) == 1
 
@@ -630,21 +580,28 @@ class TestConversationHandling:
         """Test handling ChatMessage input directly."""
         task_message = ChatMessage(role=Role.USER, text="test message")
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
-            # Verify the task message was preserved
-            assert state["task"] == task_message
-            return None
+        def selector(state: GroupChatState) -> str:
+            # Verify the task message was preserved in conversation
+            assert len(state.conversation) > 0
+            assert state.conversation[0] == task_message
+            return "agent"
 
         agent = StubAgent("agent", "response")
 
-        workflow = GroupChatBuilder().select_speakers(selector).participants([agent]).build()
+        workflow = (
+            GroupChatBuilder()
+            .with_orchestrator(selection_func=selector)
+            .participants([agent])
+            .with_max_rounds(1)
+            .build()
+        )
 
-        outputs: list[ChatMessage] = []
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream(task_message):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         assert len(outputs) == 1
 
@@ -655,22 +612,28 @@ class TestConversationHandling:
             ChatMessage(role=Role.USER, text="user message"),
         ]
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str:
             # Verify conversation context is preserved
-            assert len(state["conversation"]) == 2
-            assert state["task"].text == "user message"
-            return None
+            assert len(state.conversation) >= 2
+            assert state.conversation[-1].text == "user message"
+            return "agent"
 
         agent = StubAgent("agent", "response")
 
-        workflow = GroupChatBuilder().select_speakers(selector).participants([agent]).build()
+        workflow = (
+            GroupChatBuilder()
+            .with_orchestrator(selection_func=selector)
+            .participants([agent])
+            .with_max_rounds(1)
+            .build()
+        )
 
-        outputs: list[ChatMessage] = []
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream(conversation):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         assert len(outputs) == 1
 
@@ -679,10 +642,10 @@ class TestRoundLimitEnforcement:
     """Tests for round limit checking functionality."""
 
     async def test_round_limit_in_apply_directive(self) -> None:
-        """Test round limit enforcement in _apply_directive."""
+        """Test round limit enforcement."""
         rounds_called = {"count": 0}
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str:
             rounds_called["count"] += 1
             # Keep trying to select agent to test limit enforcement
             return "agent"
@@ -691,30 +654,32 @@ class TestRoundLimitEnforcement:
 
         workflow = (
             GroupChatBuilder()
-            .select_speakers(selector)
+            .with_orchestrator(selection_func=selector)
             .participants([agent])
             .with_max_rounds(1)  # Very low limit
             .build()
         )
 
-        outputs: list[ChatMessage] = []
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream("test"):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         # Should have at least one output (the round limit message)
         assert len(outputs) >= 1
-        # The last message should be about round limit
-        final_output = outputs[-1]
-        assert "round limit" in final_output.text.lower()
+        # The last message in the conversation should be about round limit
+        conversation = outputs[-1]
+        assert len(conversation) >= 1
+        final_output = conversation[-1]
+        assert "maximum number of rounds" in final_output.text.lower()
 
     async def test_round_limit_in_ingest_participant_message(self) -> None:
         """Test round limit enforcement after participant response."""
         responses_received = {"count": 0}
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str:
             responses_received["count"] += 1
             if responses_received["count"] == 1:
                 return "agent"  # First call selects agent
@@ -724,42 +689,48 @@ class TestRoundLimitEnforcement:
 
         workflow = (
             GroupChatBuilder()
-            .select_speakers(selector)
+            .with_orchestrator(selection_func=selector)
             .participants([agent])
             .with_max_rounds(1)  # Hit limit after first response
             .build()
         )
 
-        outputs: list[ChatMessage] = []
+        outputs: list[list[ChatMessage]] = []
         async for event in workflow.run_stream("test"):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
-                if isinstance(data, ChatMessage):
-                    outputs.append(data)
+                if isinstance(data, list):
+                    outputs.append(cast(list[ChatMessage], data))
 
         # Should have at least one output (the round limit message)
         assert len(outputs) >= 1
-        # The last message should be about round limit
-        final_output = outputs[-1]
-        assert "round limit" in final_output.text.lower()
+        # The last message in the conversation should be about round limit
+        conversation = outputs[-1]
+        assert len(conversation) >= 1
+        final_output = conversation[-1]
+        assert "maximum number of rounds" in final_output.text.lower()
 
 
 async def test_group_chat_checkpoint_runtime_only() -> None:
     """Test checkpointing configured ONLY at runtime, not at build time."""
-    from agent_framework import WorkflowRunState, WorkflowStatusEvent
-
     storage = InMemoryCheckpointStorage()
 
     agent_a = StubAgent("agentA", "Reply from A")
     agent_b = StubAgent("agentB", "Reply from B")
     selector = make_sequence_selector()
 
-    wf = GroupChatBuilder().participants([agent_a, agent_b]).select_speakers(selector).build()
+    wf = (
+        GroupChatBuilder()
+        .participants([agent_a, agent_b])
+        .with_orchestrator(selection_func=selector)
+        .with_max_rounds(2)
+        .build()
+    )
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
         if isinstance(ev, WorkflowOutputEvent):
-            baseline_output = ev.data  # type: ignore[assignment]
+            baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
@@ -777,7 +748,6 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
     import tempfile
 
     with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
-        from agent_framework import WorkflowRunState, WorkflowStatusEvent
         from agent_framework._workflows._checkpoint import FileCheckpointStorage
 
         buildtime_storage = FileCheckpointStorage(temp_dir1)
@@ -790,15 +760,15 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
         wf = (
             GroupChatBuilder()
             .participants([agent_a, agent_b])
-            .select_speakers(selector)
+            .with_orchestrator(selection_func=selector)
+            .with_max_rounds(2)
             .with_checkpointing(buildtime_storage)
             .build()
         )
-
         baseline_output: list[ChatMessage] | None = None
         async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
             if isinstance(ev, WorkflowOutputEvent):
-                baseline_output = ev.data  # type: ignore[assignment]
+                baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
             if isinstance(ev, WorkflowStatusEvent) and ev.state in (
                 WorkflowRunState.IDLE,
                 WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
@@ -812,3 +782,554 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
+
+
+async def test_group_chat_with_request_info_filtering():
+    """Test that with_request_info(agents=[...]) only pauses before specified agents run."""
+    # Create agents - we want to verify only beta triggers pause
+    alpha = StubAgent("alpha", "response from alpha")
+    beta = StubAgent("beta", "response from beta")
+
+    # Manager that selects alpha first, then beta, then finishes
+    call_count = 0
+
+    async def selector(state: GroupChatState) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "alpha"
+        if call_count == 2:
+            return "beta"
+        # Return to alpha to continue
+        return "alpha"
+
+    workflow = (
+        GroupChatBuilder()
+        .with_orchestrator(selection_func=selector, orchestrator_name="manager")
+        .participants([alpha, beta])
+        .with_max_rounds(2)
+        .with_request_info(agents=["beta"])  # Only pause before beta runs
+        .build()
+    )
+
+    # Run until we get a request info event (should be before beta, not alpha)
+    request_events: list[RequestInfoEvent] = []
+    async for event in workflow.run_stream("test task"):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+            request_events.append(event)
+            # Don't break - let stream complete naturally when paused
+
+    # Should have exactly one request event before beta
+    assert len(request_events) == 1
+    request_event = request_events[0]
+
+    # The target agent should be beta's executor ID
+    assert isinstance(request_event.data, AgentExecutorResponse)
+    assert request_event.source_executor_id == "beta"
+
+    # Continue the workflow with a response
+    outputs: list[WorkflowOutputEvent] = []
+    async for event in workflow.send_responses_streaming({
+        request_event.request_id: AgentRequestInfoResponse.approve()
+    }):
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(event)
+
+    # Workflow should complete
+    assert len(outputs) == 1
+
+
+async def test_group_chat_with_request_info_no_filter_pauses_all():
+    """Test that with_request_info() without agents pauses before all participants."""
+    # Create agents
+    alpha = StubAgent("alpha", "response from alpha")
+
+    # Manager selects alpha then finishes
+    call_count = 0
+
+    async def selector(state: GroupChatState) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "alpha"
+        # Keep returning alpha to continue
+        return "alpha"
+
+    workflow = (
+        GroupChatBuilder()
+        .with_orchestrator(selection_func=selector, orchestrator_name="manager")
+        .participants([alpha])
+        .with_max_rounds(1)
+        .with_request_info()  # No filter - pause for all
+        .build()
+    )
+
+    # Run until we get a request info event
+    request_events: list[RequestInfoEvent] = []
+    async for event in workflow.run_stream("test task"):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+            request_events.append(event)
+            break
+
+    # Should pause before alpha
+    assert len(request_events) == 1
+    assert request_events[0].source_executor_id == "alpha"
+
+
+def test_group_chat_builder_with_request_info_returns_self():
+    """Test that with_request_info() returns self for method chaining."""
+    builder = GroupChatBuilder()
+    result = builder.with_request_info()
+    assert result is builder
+
+    # Also test with agents parameter
+    builder2 = GroupChatBuilder()
+    result2 = builder2.with_request_info(agents=["test"])
+    assert result2 is builder2
+
+
+# region Participant Factory Tests
+
+
+def test_group_chat_builder_rejects_empty_participant_factories():
+    """Test that GroupChatBuilder rejects empty participant_factories list."""
+
+    def selector(state: GroupChatState) -> str:
+        return list(state.participants.keys())[0]
+
+    with pytest.raises(ValueError, match=r"participant_factories cannot be empty"):
+        GroupChatBuilder().register_participants([])
+
+    with pytest.raises(
+        ValueError,
+        match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\.",
+    ):
+        GroupChatBuilder().with_orchestrator(selection_func=selector).build()
+
+
+def test_group_chat_builder_rejects_mixing_participants_and_factories():
+    """Test that mixing .participants() and .register_participants() raises an error."""
+    alpha = StubAgent("alpha", "reply from alpha")
+
+    # Case 1: participants first, then register_participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        GroupChatBuilder().participants([alpha]).register_participants([lambda: StubAgent("beta", "reply from beta")])
+
+    # Case 2: register_participants first, then participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        GroupChatBuilder().register_participants([lambda: alpha]).participants([StubAgent("beta", "reply from beta")])
+
+
+def test_group_chat_builder_rejects_multiple_calls_to_register_participants():
+    """Test that multiple calls to .register_participants() raises an error."""
+    with pytest.raises(
+        ValueError, match=r"register_participants\(\) has already been called on this builder instance."
+    ):
+        (
+            GroupChatBuilder()
+            .register_participants([lambda: StubAgent("alpha", "reply from alpha")])
+            .register_participants([lambda: StubAgent("beta", "reply from beta")])
+        )
+
+
+def test_group_chat_builder_rejects_multiple_calls_to_participants():
+    """Test that multiple calls to .participants() raises an error."""
+    with pytest.raises(ValueError, match="participants have already been set"):
+        (
+            GroupChatBuilder()
+            .participants([StubAgent("alpha", "reply from alpha")])
+            .participants([StubAgent("beta", "reply from beta")])
+        )
+
+
+async def test_group_chat_with_participant_factories():
+    """Test workflow creation using participant_factories."""
+    call_count = 0
+
+    def create_alpha() -> StubAgent:
+        nonlocal call_count
+        call_count += 1
+        return StubAgent("alpha", "reply from alpha")
+
+    def create_beta() -> StubAgent:
+        nonlocal call_count
+        call_count += 1
+        return StubAgent("beta", "reply from beta")
+
+    selector = make_sequence_selector()
+
+    workflow = (
+        GroupChatBuilder()
+        .register_participants([create_alpha, create_beta])
+        .with_orchestrator(selection_func=selector)
+        .with_max_rounds(2)
+        .build()
+    )
+
+    # Factories should be called during build
+    assert call_count == 2
+
+    outputs: list[WorkflowOutputEvent] = []
+    async for event in workflow.run_stream("coordinate task"):
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(event)
+
+    assert len(outputs) == 1
+
+
+async def test_group_chat_participant_factories_reusable_builder():
+    """Test that the builder can be reused to build multiple workflows with factories."""
+    call_count = 0
+
+    def create_alpha() -> StubAgent:
+        nonlocal call_count
+        call_count += 1
+        return StubAgent("alpha", "reply from alpha")
+
+    def create_beta() -> StubAgent:
+        nonlocal call_count
+        call_count += 1
+        return StubAgent("beta", "reply from beta")
+
+    selector = make_sequence_selector()
+
+    builder = (
+        GroupChatBuilder()
+        .register_participants([create_alpha, create_beta])
+        .with_orchestrator(selection_func=selector)
+        .with_max_rounds(2)
+    )
+
+    # Build first workflow
+    wf1 = builder.build()
+    assert call_count == 2
+
+    # Build second workflow
+    wf2 = builder.build()
+    assert call_count == 4
+
+    # Verify that the two workflows have different agent instances
+    assert wf1.executors["alpha"] is not wf2.executors["alpha"]
+    assert wf1.executors["beta"] is not wf2.executors["beta"]
+
+
+async def test_group_chat_participant_factories_with_checkpointing():
+    """Test checkpointing with participant_factories."""
+    storage = InMemoryCheckpointStorage()
+
+    def create_alpha() -> StubAgent:
+        return StubAgent("alpha", "reply from alpha")
+
+    def create_beta() -> StubAgent:
+        return StubAgent("beta", "reply from beta")
+
+    selector = make_sequence_selector()
+
+    workflow = (
+        GroupChatBuilder()
+        .register_participants([create_alpha, create_beta])
+        .with_orchestrator(selection_func=selector)
+        .with_checkpointing(storage)
+        .with_max_rounds(2)
+        .build()
+    )
+
+    outputs: list[WorkflowOutputEvent] = []
+    async for event in workflow.run_stream("checkpoint test"):
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(event)
+
+    assert outputs, "Should have workflow output"
+
+    checkpoints = await storage.list_checkpoints()
+    assert checkpoints, "Checkpoints should be created during workflow execution"
+
+
+# endregion
+
+# region Orchestrator Factory Tests
+
+
+def test_group_chat_builder_rejects_multiple_orchestrator_configurations():
+    """Test that configuring multiple orchestrators raises ValueError."""
+
+    def selector(state: GroupChatState) -> str:
+        return list(state.participants.keys())[0]
+
+    def agent_factory() -> ChatAgent:
+        return cast(ChatAgent, StubManagerAgent())
+
+    builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
+
+    # Already has a selection_func, should fail on second call
+    with pytest.raises(ValueError, match=r"A selection function has already been configured"):
+        builder.with_orchestrator(selection_func=selector)
+
+    # Test with agent_factory
+    builder2 = GroupChatBuilder().with_orchestrator(agent=agent_factory)
+    with pytest.raises(ValueError, match=r"A factory has already been configured"):
+        builder2.with_orchestrator(agent=agent_factory)
+
+
+def test_group_chat_builder_requires_exactly_one_orchestrator_option():
+    """Test that exactly one orchestrator option must be provided."""
+
+    def selector(state: GroupChatState) -> str:
+        return list(state.participants.keys())[0]
+
+    def agent_factory() -> ChatAgent:
+        return cast(ChatAgent, StubManagerAgent())
+
+    # No options provided
+    with pytest.raises(ValueError, match="Exactly one of"):
+        GroupChatBuilder().with_orchestrator()  # type: ignore
+
+    # Multiple options provided
+    with pytest.raises(ValueError, match="Exactly one of"):
+        GroupChatBuilder().with_orchestrator(selection_func=selector, agent=agent_factory)  # type: ignore
+
+
+async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
+    """Test workflow creation using orchestrator_factory that returns ChatAgent."""
+    factory_call_count = 0
+
+    class DynamicManagerAgent(ChatAgent):
+        """Manager agent that dynamically selects from available participants."""
+
+        def __init__(self) -> None:
+            super().__init__(chat_client=MockChatClient(), name="dynamic_manager", description="Dynamic manager")
+            self._call_count = 0
+
+        async def run(
+            self,
+            messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+            *,
+            thread: AgentThread | None = None,
+            **kwargs: Any,
+        ) -> AgentResponse:
+            if self._call_count == 0:
+                self._call_count += 1
+                payload = {
+                    "terminate": False,
+                    "reason": "Selecting alpha",
+                    "next_speaker": "alpha",
+                    "final_message": None,
+                }
+                return AgentResponse(
+                    messages=[
+                        ChatMessage(
+                            role=Role.ASSISTANT,
+                            text=(
+                                '{"terminate": false, "reason": "Selecting alpha", '
+                                '"next_speaker": "alpha", "final_message": null}'
+                            ),
+                            author_name=self.name,
+                        )
+                    ],
+                    value=payload,
+                )
+
+            payload = {
+                "terminate": True,
+                "reason": "Task complete",
+                "next_speaker": None,
+                "final_message": "dynamic manager final",
+            }
+            return AgentResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        text=(
+                            '{"terminate": true, "reason": "Task complete", '
+                            '"next_speaker": null, "final_message": "dynamic manager final"}'
+                        ),
+                        author_name=self.name,
+                    )
+                ],
+                value=payload,
+            )
+
+    def agent_factory() -> ChatAgent:
+        nonlocal factory_call_count
+        factory_call_count += 1
+        return cast(ChatAgent, DynamicManagerAgent())
+
+    alpha = StubAgent("alpha", "reply from alpha")
+    beta = StubAgent("beta", "reply from beta")
+
+    workflow = GroupChatBuilder().participants([alpha, beta]).with_orchestrator(agent=agent_factory).build()
+
+    # Factory should be called during build
+    assert factory_call_count == 1
+
+    outputs: list[WorkflowOutputEvent] = []
+    async for event in workflow.run_stream("coordinate task"):
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(event)
+
+    assert len(outputs) == 1
+    # The DynamicManagerAgent terminates after second call with final_message
+    final_messages = outputs[0].data
+    assert isinstance(final_messages, list)
+    assert any(
+        msg.text == "dynamic manager final"
+        for msg in cast(list[ChatMessage], final_messages)
+        if msg.author_name == "dynamic_manager"
+    )
+
+
+def test_group_chat_with_orchestrator_factory_returning_base_orchestrator():
+    """Test that orchestrator_factory returning BaseGroupChatOrchestrator is used as-is."""
+    factory_call_count = 0
+    selector = make_sequence_selector()
+
+    def orchestrator_factory() -> BaseGroupChatOrchestrator:
+        nonlocal factory_call_count
+        factory_call_count += 1
+        from agent_framework._workflows._base_group_chat_orchestrator import ParticipantRegistry
+        from agent_framework._workflows._group_chat import GroupChatOrchestrator
+
+        # Create a custom orchestrator; when returning BaseGroupChatOrchestrator,
+        # the builder uses it as-is without modifying its participant registry
+        return GroupChatOrchestrator(
+            id="custom_orchestrator",
+            participant_registry=ParticipantRegistry([]),
+            selection_func=selector,
+            max_rounds=2,
+        )
+
+    alpha = StubAgent("alpha", "reply from alpha")
+
+    workflow = GroupChatBuilder().participants([alpha]).with_orchestrator(orchestrator=orchestrator_factory).build()
+
+    # Factory should be called during build
+    assert factory_call_count == 1
+    # Verify the custom orchestrator is in the workflow
+    assert "custom_orchestrator" in workflow.executors
+
+
+async def test_group_chat_orchestrator_factory_reusable_builder():
+    """Test that the builder can be reused to build multiple workflows with orchestrator factory."""
+    factory_call_count = 0
+
+    def agent_factory() -> ChatAgent:
+        nonlocal factory_call_count
+        factory_call_count += 1
+        return cast(ChatAgent, StubManagerAgent())
+
+    alpha = StubAgent("alpha", "reply from alpha")
+    beta = StubAgent("beta", "reply from beta")
+
+    builder = GroupChatBuilder().participants([alpha, beta]).with_orchestrator(agent=agent_factory)
+
+    # Build first workflow
+    wf1 = builder.build()
+    assert factory_call_count == 1
+
+    # Build second workflow
+    wf2 = builder.build()
+    assert factory_call_count == 2
+
+    # Verify that the two workflows have different orchestrator instances
+    assert wf1.executors["manager_agent"] is not wf2.executors["manager_agent"]
+
+
+def test_group_chat_orchestrator_factory_invalid_return_type():
+    """Test that orchestrator_factory raising error for invalid return type."""
+
+    def invalid_factory() -> Any:
+        return "invalid type"
+
+    alpha = StubAgent("alpha", "reply from alpha")
+
+    with pytest.raises(
+        TypeError,
+        match=r"Orchestrator factory must return ChatAgent or BaseGroupChatOrchestrator instance",
+    ):
+        (GroupChatBuilder().participants([alpha]).with_orchestrator(orchestrator=invalid_factory).build())
+
+    with pytest.raises(
+        TypeError,
+        match=r"Orchestrator factory must return ChatAgent or BaseGroupChatOrchestrator instance",
+    ):
+        (GroupChatBuilder().participants([alpha]).with_orchestrator(agent=invalid_factory).build())
+
+
+def test_group_chat_with_both_participant_and_orchestrator_factories():
+    """Test workflow creation using both participant_factories and orchestrator_factory."""
+    participant_factory_call_count = 0
+    agent_factory_call_count = 0
+
+    def create_alpha() -> StubAgent:
+        nonlocal participant_factory_call_count
+        participant_factory_call_count += 1
+        return StubAgent("alpha", "reply from alpha")
+
+    def create_beta() -> StubAgent:
+        nonlocal participant_factory_call_count
+        participant_factory_call_count += 1
+        return StubAgent("beta", "reply from beta")
+
+    def agent_factory() -> ChatAgent:
+        nonlocal agent_factory_call_count
+        agent_factory_call_count += 1
+        return cast(ChatAgent, StubManagerAgent())
+
+    workflow = (
+        GroupChatBuilder()
+        .register_participants([create_alpha, create_beta])
+        .with_orchestrator(agent=agent_factory)
+        .build()
+    )
+
+    # All factories should be called during build
+    assert participant_factory_call_count == 2
+    assert agent_factory_call_count == 1
+
+    # Verify all executors are present in the workflow
+    assert "alpha" in workflow.executors
+    assert "beta" in workflow.executors
+    assert "manager_agent" in workflow.executors
+
+
+async def test_group_chat_factories_reusable_for_multiple_workflows():
+    """Test that both factories are reused correctly for multiple workflow builds."""
+    participant_factory_call_count = 0
+    agent_factory_call_count = 0
+
+    def create_alpha() -> StubAgent:
+        nonlocal participant_factory_call_count
+        participant_factory_call_count += 1
+        return StubAgent("alpha", "reply from alpha")
+
+    def create_beta() -> StubAgent:
+        nonlocal participant_factory_call_count
+        participant_factory_call_count += 1
+        return StubAgent("beta", "reply from beta")
+
+    def agent_factory() -> ChatAgent:
+        nonlocal agent_factory_call_count
+        agent_factory_call_count += 1
+        return cast(ChatAgent, StubManagerAgent())
+
+    builder = (
+        GroupChatBuilder().register_participants([create_alpha, create_beta]).with_orchestrator(agent=agent_factory)
+    )
+
+    # Build first workflow
+    wf1 = builder.build()
+    assert participant_factory_call_count == 2
+    assert agent_factory_call_count == 1
+
+    # Build second workflow
+    wf2 = builder.build()
+    assert participant_factory_call_count == 4
+    assert agent_factory_call_count == 2
+
+    # Verify that the workflows have different agent and orchestrator instances
+    assert wf1.executors["alpha"] is not wf2.executors["alpha"]
+    assert wf1.executors["beta"] is not wf2.executors["beta"]
+    assert wf1.executors["manager_agent"] is not wf2.executors["manager_agent"]
+
+
+# endregion

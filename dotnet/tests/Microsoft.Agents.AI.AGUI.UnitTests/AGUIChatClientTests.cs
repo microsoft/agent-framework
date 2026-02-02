@@ -19,22 +19,22 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_AggregatesStreamingUpdates_ReturnsCompleteMessagesAsync()
     {
         // Arrange
-        using HttpClient httpClient = this.CreateMockHttpClient(new BaseEvent[]
-        {
+        using HttpClient httpClient = this.CreateMockHttpClient(
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageContentEvent { MessageId = "msg1", Delta = " World" },
             new TextMessageEndEvent { MessageId = "msg1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        });
+        ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages);
+        AgentResponse response = await agent.RunAsync(messages);
 
         // Assert
         Assert.NotNull(response);
@@ -55,11 +55,11 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages);
+        AgentResponse response = await agent.RunAsync(messages);
 
         // Assert
         Assert.NotNull(response);
@@ -74,14 +74,14 @@ public sealed class AGUIAgentTests
         // Arrange
         using HttpClient httpClient = new();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => agent.RunAsync(messages: null!));
     }
 
     [Fact]
-    public async Task RunAsync_WithNullThread_CreatesNewThreadAsync()
+    public async Task RunAsync_WithNullSession_CreatesNewSessionAsync()
     {
         // Arrange
         using HttpClient httpClient = this.CreateMockHttpClient(
@@ -91,11 +91,11 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentRunResponse response = await agent.RunAsync(messages, thread: null);
+        AgentResponse response = await agent.RunAsync(messages, session: null);
 
         // Assert
         Assert.NotNull(response);
@@ -115,12 +115,12 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             // Consume the stream
             updates.Add(update);
@@ -139,7 +139,7 @@ public sealed class AGUIAgentTests
         // Arrange
         using HttpClient httpClient = new();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -152,7 +152,7 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithNullThread_CreatesNewThreadAsync()
+    public async Task RunStreamingAsync_WithNullSession_CreatesNewSessionAsync()
     {
         // Arrange
         using HttpClient httpClient = this.CreateMockHttpClient(
@@ -162,12 +162,12 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: "Test agent", name: "agent1");
+        AIAgent agent = chatClient.AsAIAgent(instructions: "Test agent", name: "agent1");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session: null))
         {
             // Consume the stream
             updates.Add(update);
@@ -182,20 +182,20 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         var handler = new TestDelegatingHandler();
-        handler.AddResponseWithCapture(new BaseEvent[]
-        {
+        handler.AddResponseWithCapture(
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        });
-        handler.AddResponseWithCapture(new BaseEvent[]
-        {
+        ]);
+        handler.AddResponseWithCapture(
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run2" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run2" }
-        });
+        ]);
         using HttpClient httpClient = new(handler);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -227,13 +227,13 @@ public sealed class AGUIAgentTests
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AgentSession session = await agent.GetNewSessionAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (var update in agent.RunStreamingAsync(messages, thread))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (var update in agent.RunStreamingAsync(messages, session))
         {
             updates.Add(update);
         }
@@ -244,21 +244,21 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public void DeserializeThread_WithValidState_ReturnsChatClientAgentThread()
+    public async Task DeserializeSession_WithValidState_ReturnsChatClientAgentSessionAsync()
     {
         // Arrange
         using var httpClient = new HttpClient();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread originalThread = agent.GetNewThread();
-        JsonElement serialized = originalThread.Serialize();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AgentSession originalSession = await agent.GetNewSessionAsync();
+        JsonElement serialized = originalSession.Serialize();
 
         // Act
-        AgentThread deserialized = agent.DeserializeThread(serialized);
+        AgentSession deserialized = await agent.DeserializeSessionAsync(serialized);
 
         // Assert
         Assert.NotNull(deserialized);
-        Assert.IsType<ChatClientAgentThread>(deserialized);
+        Assert.IsType<ChatClientAgentSession>(deserialized);
     }
 
     private HttpClient CreateMockHttpClient(BaseEvent[] events)
@@ -301,12 +301,12 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "What's the weather?")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -353,12 +353,12 @@ public sealed class AGUIAgentTests
         using HttpClient httpClient = new(handler);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1]); // Only tool1, not tool2
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1]); // Only tool1, not tool2
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -403,12 +403,12 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [faultyTool]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [faultyTool]);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> allUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
+        List<AgentResponseUpdate> allUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages))
         {
             allUpdates.Add(update);
         }
@@ -448,7 +448,7 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1, tool2]);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [tool1, tool2]);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -462,7 +462,7 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_UpdatesThreadWithToolMessages_AfterCompletionAsync()
+    public async Task RunStreamingAsync_UpdatesSessionWithToolMessages_AfterCompletionAsync()
     {
         // Arrange
         AIFunction testTool = AIFunctionFactory.Create(() => "Result", "TestTool");
@@ -486,13 +486,13 @@ public sealed class AGUIAgentTests
             ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
-        AgentThread thread = agent.GetNewThread();
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
+        AgentSession session = await agent.GetNewSessionAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (var update in agent.RunStreamingAsync(messages, thread))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (var update in agent.RunStreamingAsync(messages, session))
         {
             updates.Add(update);
         }
@@ -682,11 +682,11 @@ public sealed class AGUIAgentTests
         // Arrange
         using HttpClient httpClient = this.CreateMockHttpClient(
         [
-            new RunStartedEvent { ThreadId = "server-thread-456", RunId = "run1" },
+            new RunStartedEvent { ThreadId = "server-session-456", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageEndEvent { MessageId = "msg1" },
-            new RunFinishedEvent { ThreadId = "server-thread-456", RunId = "run1" }
+            new RunFinishedEvent { ThreadId = "server-session-456", RunId = "run1" }
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
@@ -700,8 +700,8 @@ public sealed class AGUIAgentTests
             updates.Add(update);
         }
 
-        // Assert - Should use thread ID from server
-        Assert.All(updates, u => Assert.Equal("server-thread-456", u.ConversationId));
+        // Assert - Should use session ID from server
+        Assert.All(updates, u => Assert.Equal("server-session-456", u.ConversationId));
     }
 
     [Fact]
@@ -802,18 +802,18 @@ public sealed class AGUIAgentTests
     [Fact]
     public async Task GetStreamingResponseAsync_UsesServerThreadId_WhenDifferentFromClientAsync()
     {
-        // Arrange - Server returns different thread ID
+        // Arrange - Server returns different session ID
         using HttpClient httpClient = this.CreateMockHttpClient(
         [
-            new RunStartedEvent { ThreadId = "server-generated-thread", RunId = "run1" },
+            new RunStartedEvent { ThreadId = "server-generated-session", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageEndEvent { MessageId = "msg1" },
-            new RunFinishedEvent { ThreadId = "server-generated-thread", RunId = "run1" }
+            new RunFinishedEvent { ThreadId = "server-generated-session", RunId = "run1" }
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        var options = new ChatOptions { ConversationId = "client-thread-123" };
+        var options = new ChatOptions { ConversationId = "client-session-123" };
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -824,7 +824,7 @@ public sealed class AGUIAgentTests
         }
 
         // Assert - Should use client's conversation ID (we provided it explicitly)
-        Assert.All(updates, u => Assert.Equal("client-thread-123", u.ConversationId));
+        Assert.All(updates, u => Assert.Equal("client-session-123", u.ConversationId));
     }
 
     [Fact]
@@ -919,7 +919,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act - First turn
-        List<ChatMessage> conversation = new(messages);
+        List<ChatMessage> conversation = [.. messages];
         string? conversationId = null;
         await foreach (var update in chatClient.GetStreamingResponseAsync(conversation, options))
         {
@@ -947,7 +947,7 @@ public sealed class AGUIAgentTests
         }
 
         // Act - Second turn with conversation history including function call
-        // The thread ID should be extracted from the function call in the conversation history
+        // The session ID should be extracted from the function call in the conversation history
         options.ConversationId = conversationId;
         List<ChatResponseUpdate> secondTurnUpdates = [];
         await foreach (var update in chatClient.GetStreamingResponseAsync(conversation, options))
@@ -1017,7 +1017,7 @@ public sealed class AGUIAgentTests
     [Fact]
     public async Task GetStreamingResponseAsync_HandlesEmptyThreadId_GracefullyAsync()
     {
-        // Arrange - Server returns empty thread ID
+        // Arrange - Server returns empty session ID
         using HttpClient httpClient = this.CreateMockHttpClient(
         [
             new RunStartedEvent { ThreadId = string.Empty, RunId = "run1" },
@@ -1037,7 +1037,7 @@ public sealed class AGUIAgentTests
             updates.Add(update);
         }
 
-        // Assert - Should generate a conversation ID even with empty server thread ID
+        // Assert - Should generate a conversation ID even with empty server session ID
         Assert.NotEmpty(updates);
         Assert.All(updates, u => Assert.NotNull(u.ConversationId));
         Assert.All(updates, u => Assert.NotEmpty(u.ConversationId!));
@@ -1048,23 +1048,23 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         var handler = new TestDelegatingHandler();
-        // First turn: server returns thread-A
+        // First turn: server returns session-A
         handler.AddResponse(
         [
-            new RunStartedEvent { ThreadId = "thread-A", RunId = "run1" },
+            new RunStartedEvent { ThreadId = "session-A", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "First" },
             new TextMessageEndEvent { MessageId = "msg1" },
-            new RunFinishedEvent { ThreadId = "thread-A", RunId = "run1" }
+            new RunFinishedEvent { ThreadId = "session-A", RunId = "run1" }
         ]);
-        // Second turn: provide thread-A but server returns thread-B
+        // Second turn: provide session-A but server returns session-B
         handler.AddResponse(
         [
-            new RunStartedEvent { ThreadId = "thread-B", RunId = "run2" },
+            new RunStartedEvent { ThreadId = "session-B", RunId = "run2" },
             new TextMessageStartEvent { MessageId = "msg2", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg2", Delta = "Second" },
             new TextMessageEndEvent { MessageId = "msg2" },
-            new RunFinishedEvent { ThreadId = "thread-B", RunId = "run2" }
+            new RunFinishedEvent { ThreadId = "session-B", RunId = "run2" }
         ]);
         using HttpClient httpClient = new(handler);
 
@@ -1087,8 +1087,8 @@ public sealed class AGUIAgentTests
         }
 
         // Assert - Should use client-provided conversation ID, not server's changed ID
-        Assert.Equal("thread-A", firstConversationId);
-        Assert.Equal("thread-A", secondConversationId); // Client overrides server's thread-B
+        Assert.Equal("session-A", firstConversationId);
+        Assert.Equal("session-A", secondConversationId); // Client overrides server's session-B
     }
 
     [Fact]
@@ -1584,7 +1584,7 @@ public sealed class AGUIAgentTests
         Assert.Equal("application/json", dataContent.MediaType);
 
         string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
-        JsonElement deserializedState = JsonSerializer.Deserialize<JsonElement>(jsonText);
+        JsonElement deserializedState = JsonElement.Parse(jsonText);
         Assert.Equal("abc123", deserializedState.GetProperty("sessionId").GetString());
         Assert.Equal(5, deserializedState.GetProperty("step").GetInt32());
     }
@@ -1593,7 +1593,7 @@ public sealed class AGUIAgentTests
 internal sealed class TestDelegatingHandler : DelegatingHandler
 {
     private readonly Queue<Func<HttpRequestMessage, Task<HttpResponseMessage>>> _responseFactories = new();
-    private readonly List<string> _capturedRunIds = new();
+    private readonly List<string> _capturedRunIds = [];
 
     public IReadOnlyList<string> CapturedRunIds => this._capturedRunIds;
 
@@ -1701,7 +1701,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
         this.RequestWasMade = true;
 
         // Capture the state and message count from the request
-#if NET472 || NETSTANDARD2_0
+#if !NET
         string requestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
 #else
         string requestBody = await request.Content!.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -1709,7 +1709,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
         RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
         if (input != null)
         {
-            if (input.State.ValueKind != JsonValueKind.Undefined && input.State.ValueKind != JsonValueKind.Null)
+            if (input.State.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             {
                 this.CapturedState = input.State;
             }

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
+import copy
 import functools
 import inspect
 import logging
@@ -155,6 +156,11 @@ class Executor(RequestInfoMixin, DictConvertible):
     that parent workflows can intercept. See WorkflowExecutor documentation for details on
     workflow composition patterns and request/response handling.
 
+    ## State Management
+    Executors can contain states that persist across workflow runs and checkpoints. Override the
+    `on_checkpoint_save` and `on_checkpoint_restore` methods to implement custom state
+    serialization and restoration logic.
+
     ## Implementation Notes
     - Do not call `execute()` directly - it's invoked by the workflow engine
     - Do not override `execute()` - define handlers using decorators instead
@@ -244,6 +250,8 @@ class Executor(RequestInfoMixin, DictConvertible):
         ):
             # Find the handler and handler spec that matches the message type.
             handler = self._find_handler(message)
+
+            original_message = message
             if isinstance(message, Message):
                 # Unwrap raw data for handler call
                 message = message.data
@@ -255,11 +263,15 @@ class Executor(RequestInfoMixin, DictConvertible):
                 runner_context=runner_context,
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
+                request_id=original_message.original_request_info_event.request_id
+                if isinstance(original_message, Message) and original_message.original_request_info_event
+                else None,
             )
 
             # Invoke the handler with the message and context
+            # Use deepcopy to capture original input state before handler can mutate it
             with _framework_event_origin():
-                invoke_event = ExecutorInvokedEvent(self.id)
+                invoke_event = ExecutorInvokedEvent(self.id, copy.deepcopy(message))
             await context.add_event(invoke_event)
             try:
                 await handler(message, context)
@@ -270,7 +282,11 @@ class Executor(RequestInfoMixin, DictConvertible):
                 await context.add_event(failure_event)
                 raise
             with _framework_event_origin():
-                completed_event = ExecutorCompletedEvent(self.id)
+                # Include sent messages and yielded outputs as the completion data
+                sent_messages = context.get_sent_messages()
+                yielded_outputs = context.get_yielded_outputs()
+                completion_data = sent_messages + yielded_outputs
+                completed_event = ExecutorCompletedEvent(self.id, completion_data if completion_data else None)
             await context.add_event(completed_event)
 
     def _create_context_for_handler(
@@ -280,6 +296,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         runner_context: RunnerContext,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
+        request_id: str | None = None,
     ) -> WorkflowContext[Any]:
         """Create the appropriate WorkflowContext based on the handler's context annotation.
 
@@ -289,6 +306,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
+            request_id: Optional request ID if this context is for a `handle_response` handler.
 
         Returns:
             WorkflowContext[Any] based on the handler's context annotation.
@@ -301,6 +319,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             runner_context=runner_context,
             trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
+            request_id=request_id,
         )
 
     def _discover_handlers(self) -> None:
@@ -345,7 +364,17 @@ class Executor(RequestInfoMixin, DictConvertible):
             True if the executor can handle the message type, False otherwise.
         """
         if message.type == MessageType.RESPONSE:
-            return any(is_instance_of(message.data, message_type) for message_type in self._response_handlers)
+            if message.original_request_info_event is None:
+                logger.warning(
+                    f"Executor {self.__class__.__name__} received a response message without an original request event."
+                )
+                return False
+
+            return any(
+                is_instance_of(message.original_request_info_event.data, message_type[0])
+                and is_instance_of(message.data, message_type[1])
+                for message_type in self._response_handlers
+            )
 
         return any(is_instance_of(message.data, message_type) for message_type in self._handlers)
 
@@ -416,7 +445,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         output_types: set[type[Any]] = set()
 
         # Collect workflow output types from all handlers
-        for handler_spec in self._handler_specs:
+        for handler_spec in self._handler_specs + self._response_handler_specs:
             handler_workflow_output_types = handler_spec.get("workflow_output_types", [])
             output_types.update(handler_workflow_output_types)
 
@@ -446,11 +475,15 @@ class Executor(RequestInfoMixin, DictConvertible):
                     f"Executor {self.__class__.__name__} cannot handle message of type {type(message.data)}."
                 )
             # Response message case - find response handler based on original request and response types
-            handler = self._find_response_handler(message.original_request, message.data)
+            if message.original_request_info_event is None:
+                raise RuntimeError(
+                    f"Executor {self.__class__.__name__} received a response message without an original request event."
+                )
+            handler = self._find_response_handler(message.original_request_info_event.data, message.data)
             if not handler:
                 raise RuntimeError(
                     f"Executor {self.__class__.__name__} cannot handle request of type "
-                    f"{type(message.original_request)} and response of type {type(message.data)}."
+                    f"{type(message.original_request_info_event.data)} and response of type {type(message.data)}."
                 )
             return handler
 
@@ -459,6 +492,32 @@ class Executor(RequestInfoMixin, DictConvertible):
             if is_instance_of(message, message_type):
                 return self._handlers[message_type]
         raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        """Hook called when the workflow is being saved to a checkpoint.
+
+        Override this method in subclasses to implement custom logic that should
+        return state to be saved in the checkpoint.
+
+        The returned state dictionary will be passed to `on_checkpoint_restore`
+        when the workflow is restored from the checkpoint. The dictionary should
+        only contain JSON-serializable data.
+
+        Returns:
+            A state dictionary to be saved during checkpointing.
+        """
+        return {}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Hook called when the workflow is restored from a checkpoint.
+
+        Override this method in subclasses to implement custom logic that should
+        run when the workflow is restored from a checkpoint.
+
+        Args:
+            state: The state dictionary that was saved during checkpointing.
+        """
+        ...
 
 
 # endregion: Executor

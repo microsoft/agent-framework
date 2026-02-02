@@ -2,8 +2,6 @@
 
 """Discovery API models for entity information."""
 
-from __future__ import annotations
-
 import re
 from typing import Any
 
@@ -45,7 +43,7 @@ class EntityInfo(BaseModel):
     instructions: str | None = None
     model_id: str | None = None
     chat_client_type: str | None = None
-    context_providers: list[str] | None = None
+    context_provider: list[str] | None = None
     middleware: list[str] | None = None
 
     # Workflow-specific fields (populated only for detailed info requests)

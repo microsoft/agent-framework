@@ -63,14 +63,14 @@ async def main() -> None:
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = client.create_agent(
+    agent = client.as_agent(
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_providers=provider,
+        context_provider=provider,
         chat_message_store_factory=chat_message_store_factory,
     )
 
@@ -91,7 +91,7 @@ async def main() -> None:
     print("User: ", query)
     print("Agent: ", result)
 
-    query = "Remember that anyone who does not clean shrimp will be eaten by a shark"
+    query = "Remember that I have a meeting at 3pm tomorro"
     result = await agent.run(query)
     print("User: ", query)
     print("Agent: ", result)

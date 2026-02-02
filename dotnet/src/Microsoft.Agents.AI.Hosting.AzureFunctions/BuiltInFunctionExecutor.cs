@@ -22,11 +22,8 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         ArgumentNullException.ThrowIfNull(context);
 
         // Acquire the input binding feature (fail fast if missing rather than null-forgiving operator).
-        IFunctionInputBindingFeature? functionInputBindingFeature = context.Features.Get<IFunctionInputBindingFeature>();
-        if (functionInputBindingFeature == null)
-        {
+        IFunctionInputBindingFeature? functionInputBindingFeature = context.Features.Get<IFunctionInputBindingFeature>() ??
             throw new InvalidOperationException("Function input binding feature is not available on the current context.");
-        }
 
         FunctionInputBindingResult? inputBindingResults = await functionInputBindingFeature.BindFunctionInputAsync(context);
         if (inputBindingResults is not { Values: { } values })
@@ -35,7 +32,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         }
 
         HttpRequestData? httpRequestData = null;
-        TaskEntityDispatcher? dispatcher = null;
+        string? encodedEntityRequest = null;
         DurableTaskClient? durableTaskClient = null;
         ToolInvocationContext? mcpToolInvocationContext = null;
 
@@ -46,8 +43,8 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 case HttpRequestData request:
                     httpRequestData = request;
                     break;
-                case TaskEntityDispatcher entityDispatcher:
-                    dispatcher = entityDispatcher;
+                case string entityRequest:
+                    encodedEntityRequest = entityRequest;
                     break;
                 case DurableTaskClient client:
                     durableTaskClient = client;
@@ -81,14 +78,14 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
 
         if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunAgentEntityFunctionEntryPoint)
         {
-            if (dispatcher is null)
+            if (encodedEntityRequest is null)
             {
                 throw new InvalidOperationException($"Task entity dispatcher binding is missing for the invocation {context.InvocationId}.");
             }
 
-            await BuiltInFunctions.InvokeAgentAsync(
-                dispatcher,
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeAgentAsync(
                 durableTaskClient,
+                encodedEntityRequest,
                 context);
             return;
         }

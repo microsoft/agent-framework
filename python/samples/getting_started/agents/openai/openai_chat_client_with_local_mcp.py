@@ -10,6 +10,10 @@ OpenAI Chat Client with Local MCP Example
 
 This sample demonstrates integrating Model Context Protocol (MCP) tools with
 OpenAI Chat Client for extended functionality and external service access.
+
+The Agent Framework now supports enhanced metadata extraction from MCP tool
+results, including error states, token usage, costs, and other arbitrary
+metadata through the _meta field of CallToolResult objects.
 """
 
 
@@ -51,7 +55,7 @@ async def mcp_tools_on_agent_level() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     # The agent will connect to the MCP server through its context manager.
-    async with OpenAIChatClient().create_agent(
+    async with OpenAIChatClient().as_agent(
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=MCPStreamableHTTPTool(  # Tools defined at agent creation

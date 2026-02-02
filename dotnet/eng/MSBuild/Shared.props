@@ -11,4 +11,13 @@
   <ItemGroup Condition="'$(InjectSharedBuildTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\CodeTests\*.cs" LinkBase="Shared\CodeTests" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedWorkflowsExecution)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Workflows\Execution\*.cs" LinkBase="Shared\Workflows" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedWorkflowsSettings)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Workflows\Settings\*.cs" LinkBase="Shared\Workflows" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedFoundryAgents)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Foundry\Agents\*.cs" LinkBase="Shared\Foundry" />
+  </ItemGroup>
 </Project>

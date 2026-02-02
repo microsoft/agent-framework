@@ -4,6 +4,7 @@ using System.Collections.Frozen;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
@@ -13,8 +14,11 @@ namespace Microsoft.Agents.AI.DevUI;
 /// <summary>
 /// Handler that serves embedded DevUI resource files from the 'resources' directory.
 /// </summary>
-internal sealed class DevUIMiddleware
+internal sealed partial class DevUIMiddleware
 {
+    [GeneratedRegex(@"[\r\n]+")]
+    private static partial Regex NewlineRegex();
+
     private const string GZipEncodingValue = "gzip";
     private static readonly StringValues s_gzipEncodingHeader = new(GZipEncodingValue);
     private static readonly Assembly s_assembly = typeof(DevUIMiddleware).Assembly;
@@ -70,15 +74,20 @@ internal sealed class DevUIMiddleware
         // This ensures relative URLs in the HTML work correctly
         if (string.Equals(path, this._basePath, StringComparison.OrdinalIgnoreCase) && !path.EndsWith('/'))
         {
-            var redirectUrl = $"{path}/";
+            var redirectUrl = this._basePath + "/";
             if (context.Request.QueryString.HasValue)
             {
                 redirectUrl += context.Request.QueryString.Value;
             }
 
             context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
-            context.Response.Headers.Location = redirectUrl;
-            this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", path, redirectUrl);
+            context.Response.Headers.Location = redirectUrl; // CodeQL [SM04598] justification: The redirect URL is constructed from a server-configured base path (_basePath), not user input. The query string is only appended as parameters and cannot change the redirect destination since this is a relative URL.
+
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", NewlineRegex().Replace(path, ""), NewlineRegex().Replace(redirectUrl, ""));
+            }
+
             return;
         }
 
@@ -118,7 +127,11 @@ internal sealed class DevUIMiddleware
         {
             if (!this._resourceCache.TryGetValue(resourcePath.Replace('.', '/'), out var cacheEntry))
             {
-                this._logger.LogDebug("Embedded resource not found: {ResourcePath}", resourcePath);
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug("Embedded resource not found: {ResourcePath}", resourcePath);
+                }
+
                 return false;
             }
 
@@ -128,7 +141,12 @@ internal sealed class DevUIMiddleware
             if (context.Request.Headers.IfNoneMatch == cacheEntry.ETag)
             {
                 response.StatusCode = StatusCodes.Status304NotModified;
-                this._logger.LogDebug("Resource not modified (304): {ResourcePath}", resourcePath);
+
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug("Resource not modified (304): {ResourcePath}", resourcePath);
+                }
+
                 return true;
             }
 
@@ -156,12 +174,20 @@ internal sealed class DevUIMiddleware
 
             await response.Body.WriteAsync(content, context.RequestAborted).ConfigureAwait(false);
 
-            this._logger.LogDebug("Served embedded resource: {ResourcePath} (compressed: {Compressed})", resourcePath, serveCompressed);
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug("Served embedded resource: {ResourcePath} (compressed: {Compressed})", resourcePath, serveCompressed);
+            }
+
             return true;
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error serving embedded resource: {ResourcePath}", resourcePath);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(ex, "Error serving embedded resource: {ResourcePath}", resourcePath);
+            }
+
             return false;
         }
     }

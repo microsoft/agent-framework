@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, TypeAlias
 
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+from agent_framework import AgentResponse, AgentResponseUpdate
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._typing_utils import deserialize_type, serialize_type
@@ -278,20 +278,50 @@ class WorkflowOutputEvent(WorkflowEvent):
     def __init__(
         self,
         data: Any,
-        source_executor_id: str,
+        executor_id: str,
     ):
         """Initialize the workflow output event.
 
         Args:
             data: The output yielded by the executor.
-            source_executor_id: ID of the executor that yielded the output.
+            executor_id: ID of the executor that yielded the output.
         """
         super().__init__(data)
-        self.source_executor_id = source_executor_id
+        self.executor_id = executor_id
 
     def __repr__(self) -> str:
         """Return a string representation of the workflow output event."""
-        return f"{self.__class__.__name__}(data={self.data}, source_executor_id={self.source_executor_id})"
+        return f"{self.__class__.__name__}(data={self.data}, executor_id={self.executor_id})"
+
+
+class SuperStepEvent(WorkflowEvent):
+    """Event triggered when a superstep starts or ends."""
+
+    def __init__(self, iteration: int, data: Any | None = None):
+        """Initialize the superstep event.
+
+        Args:
+            iteration: The number of the superstep (1-based index).
+            data: Optional data associated with the superstep event.
+        """
+        super().__init__(data)
+        self.iteration = iteration
+
+    def __repr__(self) -> str:
+        """Return a string representation of the superstep event."""
+        return f"{self.__class__.__name__}(iteration={self.iteration}, data={self.data})"
+
+
+class SuperStepStartedEvent(SuperStepEvent):
+    """Event triggered when a superstep starts."""
+
+    ...
+
+
+class SuperStepCompletedEvent(SuperStepEvent):
+    """Event triggered when a superstep ends."""
+
+    ...
 
 
 class ExecutorEvent(WorkflowEvent):
@@ -310,17 +340,13 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokedEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler invoke event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler complete event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorFailedEvent(ExecutorEvent):
@@ -341,7 +367,9 @@ class ExecutorFailedEvent(ExecutorEvent):
 class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
-    def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
+    data: AgentResponseUpdate
+
+    def __init__(self, executor_id: str, data: AgentResponseUpdate):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
 
@@ -353,7 +381,9 @@ class AgentRunUpdateEvent(ExecutorEvent):
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
 
-    def __init__(self, executor_id: str, data: AgentRunResponse | None = None):
+    data: AgentResponse
+
+    def __init__(self, executor_id: str, data: AgentResponse):
         """Initialize the agent run event."""
         super().__init__(executor_id, data)
 
