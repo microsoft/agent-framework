@@ -33,7 +33,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from agent_framework_azurefunctions import AgentFunctionApp
 from typing_extensions import Never
 
@@ -120,8 +120,12 @@ class SpamHandlerExecutor(Executor):
         ctx: WorkflowContext[Never, str],
     ) -> None:
         """Mark email as spam and log the reason."""
-        text = agent_response.agent_run_response.text
-        spam_result = SpamDetectionResult.model_validate_json(text)
+        text = agent_response.agent_response.text
+        try:
+            spam_result = SpamDetectionResult.model_validate_json(text)
+        except ValidationError:
+            spam_result = SpamDetectionResult(is_spam=True, reason="Invalid JSON from agent")
+        
         message = f"Email marked as spam: {spam_result.reason}"
         await ctx.yield_output(message)
 
@@ -136,8 +140,12 @@ class EmailSenderExecutor(Executor):
         ctx: WorkflowContext[Never, str],
     ) -> None:
         """Send the drafted email response."""
-        text = agent_response.agent_run_response.text
-        email_response = EmailResponse.model_validate_json(text)
+        text = agent_response.agent_response.text
+        try:
+            email_response = EmailResponse.model_validate_json(text)
+        except ValidationError:
+            email_response = EmailResponse(response="Error generating response.")
+            
         message = f"Email sent: {email_response.response}"
         await ctx.yield_output(message)
 
@@ -148,7 +156,7 @@ def is_spam_detected(message: Any) -> bool:
     if not isinstance(message, AgentExecutorResponse):
         return False
     try:
-        result = SpamDetectionResult.model_validate_json(message.agent_run_response.text)
+        result = SpamDetectionResult.model_validate_json(message.agent_response.text)
         return result.is_spam
     except Exception:
         return False
@@ -159,16 +167,16 @@ def _create_workflow() -> Workflow:
     client_kwargs = _build_client_kwargs()
     chat_client = AzureOpenAIChatClient(**client_kwargs)
 
-    spam_agent = chat_client.create_agent(
+    spam_agent = chat_client.as_agent(
         name=SPAM_AGENT_NAME,
         instructions=SPAM_DETECTION_INSTRUCTIONS,
-        response_format=SpamDetectionResult,
+        default_options={"response_format": SpamDetectionResult},
     )
 
-    email_agent = chat_client.create_agent(
+    email_agent = chat_client.as_agent(
         name=EMAIL_AGENT_NAME,
         instructions=EMAIL_ASSISTANT_INSTRUCTIONS,
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
     )
 
     # Executors

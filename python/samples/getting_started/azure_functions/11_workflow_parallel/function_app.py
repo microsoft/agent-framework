@@ -250,7 +250,7 @@ async def prepare_for_mixed(
     
     for analysis in analyses:
         executor_id = analysis.executor_id
-        text = analysis.agent_run_response.text if analysis.agent_run_response else ""
+        text = analysis.agent_response.text if analysis.agent_response else ""
             
         if executor_id == SENTIMENT_AGENT_NAME:
             sentiment_text = text
@@ -303,7 +303,7 @@ class FinalReportExecutor(Executor):
         for analysis in analyses:
             if isinstance(analysis, AgentExecutorResponse):
                 agent_name = analysis.executor_id
-                text = analysis.agent_run_response.text if analysis.agent_run_response else "No response"
+                text = analysis.agent_response.text if analysis.agent_response else "No response"
             elif isinstance(analysis, ProcessorResult):
                 agent_name = f"Processor: {analysis.processor_name}"
                 text = f"Words: {analysis.word_count}, Chars: {analysis.char_count}"
@@ -334,7 +334,7 @@ class MixedResultCollector(Executor):
         for result in results:
             if isinstance(result, AgentExecutorResponse):
                 output_parts.append(f"[Agent: {result.executor_id}]")
-                output_parts.append(result.agent_run_response.text if result.agent_run_response else "No response")
+                output_parts.append(result.agent_response.text if result.agent_response else "No response")
             elif isinstance(result, ProcessorResult):
                 output_parts.append(f"[Processor: {result.processor_name}]")
                 output_parts.append(f"  Words: {result.word_count}, Chars: {result.char_count}")
@@ -398,35 +398,35 @@ def _create_workflow() -> Workflow:
     chat_client = AzureOpenAIChatClient(**client_kwargs)
 
     # Create agents for parallel analysis
-    sentiment_agent = chat_client.create_agent(
+    sentiment_agent = chat_client.as_agent(
         name=SENTIMENT_AGENT_NAME,
         instructions=(
             "You are a sentiment analysis expert. Analyze the sentiment of the given text. "
             "Return JSON with fields: sentiment (positive/negative/neutral), "
             "confidence (0.0-1.0), and explanation (brief reasoning)."
         ),
-        response_format=SentimentResult,
+        default_options={"response_format": SentimentResult},
     )
 
-    keyword_agent = chat_client.create_agent(
+    keyword_agent = chat_client.as_agent(
         name=KEYWORD_AGENT_NAME,
         instructions=(
             "You are a keyword extraction expert. Extract important keywords and categories "
             "from the given text. Return JSON with fields: keywords (list of strings), "
             "and categories (list of topic categories)."
         ),
-        response_format=KeywordResult,
+        default_options={"response_format": KeywordResult},
     )
 
     # Create summary agent for Pattern 3 (mixed parallel)
-    summary_agent = chat_client.create_agent(
+    summary_agent = chat_client.as_agent(
         name=SUMMARY_AGENT_NAME,
         instructions=(
             "You are a summarization expert. Given analysis results (sentiment and keywords), "
             "provide a concise summary. Return JSON with fields: summary (brief text), "
             "and key_points (list of main takeaways)."
         ),
-        response_format=SummaryResult,
+        default_options={"response_format": SummaryResult},
     )
 
     # Create executor instances

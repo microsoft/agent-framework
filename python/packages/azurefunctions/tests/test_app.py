@@ -1357,8 +1357,12 @@ class TestAgentFunctionAppWorkflow:
 
     def test_init_with_workflow_calls_setup_methods(self) -> None:
         """Test that workflow setup methods are called."""
+        mock_executor = Mock()
+        mock_executor.id = "TestExecutor"
+
         mock_workflow = Mock()
-        mock_workflow.executors = {}
+        # Include a non-AgentExecutor so _setup_executor_activity is called
+        mock_workflow.executors = {"TestExecutor": mock_executor}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,

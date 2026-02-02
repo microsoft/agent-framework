@@ -9,7 +9,7 @@ from typing import Any
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentRunResponse,
+    AgentResponse,
     ChatMessage,
 )
 from agent_framework._workflows._edge import (
@@ -142,7 +142,7 @@ class TestBuildAgentExecutorResponse:
         )
 
         assert response.executor_id == "my_executor"
-        assert response.agent_run_response.text == "Hello, world!"
+        assert response.agent_response.text == "Hello, world!"
         assert len(response.full_conversation) == 2  # User + Assistant
 
     def test_builds_response_with_structured_response(self) -> None:
@@ -157,7 +157,7 @@ class TestBuildAgentExecutorResponse:
         )
 
         # Structured response overrides text
-        assert response.agent_run_response.text == json.dumps(structured)
+        assert response.agent_response.text == json.dumps(structured)
 
     def test_conversation_includes_previous_string_message(self) -> None:
         """Test that string previous_message is included in conversation."""
@@ -178,7 +178,7 @@ class TestBuildAgentExecutorResponse:
         # Create a previous response with conversation history
         previous = AgentExecutorResponse(
             executor_id="prev",
-            agent_run_response=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Previous")]),
+            agent_response=AgentResponse(messages=[ChatMessage(role="assistant", text="Previous")]),
             full_conversation=[
                 ChatMessage(role="user", text="First"),
                 ChatMessage(role="assistant", text="Previous"),
@@ -212,7 +212,7 @@ class TestExtractMessageContent:
         """Test extracting from AgentExecutorResponse with text."""
         response = AgentExecutorResponse(
             executor_id="exec",
-            agent_run_response=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response text")]),
+            agent_response=AgentResponse(messages=[ChatMessage(role="assistant", text="Response text")]),
         )
 
         result = _extract_message_content(response)
@@ -223,7 +223,7 @@ class TestExtractMessageContent:
         """Test extracting from AgentExecutorResponse with messages."""
         response = AgentExecutorResponse(
             executor_id="exec",
-            agent_run_response=AgentRunResponse(
+            agent_response=AgentResponse(
                 messages=[
                     ChatMessage(role="user", text="First"),
                     ChatMessage(role="assistant", text="Last message"),
@@ -233,7 +233,7 @@ class TestExtractMessageContent:
 
         result = _extract_message_content(response)
 
-        # AgentRunResponse.text concatenates all message texts
+        # AgentResponse.text concatenates all message texts
         assert result == "FirstLast message"
 
     def test_extract_from_agent_executor_request(self) -> None:
@@ -290,17 +290,17 @@ class TestExtractMessageContentFromDict:
 
         assert result == "Direct text"
 
-    def test_extract_from_agent_run_response(self) -> None:
-        """Test extracting from agent_run_response dict."""
-        msg_dict = {"agent_run_response": {"text": "Response text"}}
+    def test_extract_from_agent_response(self) -> None:
+        """Test extracting from agent_response dict."""
+        msg_dict = {"agent_response": {"text": "Response text"}}
 
         result = _extract_message_content_from_dict(msg_dict)
 
         assert result == "Response text"
 
-    def test_extract_from_agent_run_response_with_messages(self) -> None:
-        """Test extracting from agent_run_response with messages."""
-        msg_dict = {"agent_run_response": {"messages": [{"contents": [{"type": "text", "text": "Nested content"}]}]}}
+    def test_extract_from_agent_response_with_messages(self) -> None:
+        """Test extracting from agent_response with messages."""
+        msg_dict = {"agent_response": {"messages": [{"contents": [{"type": "text", "text": "Nested content"}]}]}}
 
         result = _extract_message_content_from_dict(msg_dict)
 

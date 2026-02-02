@@ -36,7 +36,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
 
 from agent_framework_azurefunctions import AgentFunctionApp
@@ -125,7 +125,12 @@ async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowCont
     2) Retrieve the current email_id from shared state.
     3) Send a typed DetectionResult for conditional routing.
     """
-    parsed = DetectionResultAgent.model_validate_json(response.agent_run_response.text)
+    try:
+        parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
+    except ValidationError:
+        # Fallback for empty or invalid response (e.g. due to content filtering)
+        parsed = DetectionResultAgent(is_spam=True, reason="Agent execution failed or yielded invalid JSON.")
+
     email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(is_spam=parsed.is_spam, reason=parsed.reason, email_id=email_id))
 
@@ -150,7 +155,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     """Validate the drafted reply and yield the final output."""
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -197,21 +202,21 @@ def _create_workflow() -> Workflow:
     client_kwargs = _build_client_kwargs()
     chat_client = AzureOpenAIChatClient(**client_kwargs)
 
-    spam_detection_agent = chat_client.create_agent(
+    spam_detection_agent = chat_client.as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        response_format=DetectionResultAgent,
+        default_options={"response_format": DetectionResultAgent},
         name="spam_detection_agent",
     )
 
-    email_assistant_agent = chat_client.create_agent(
+    email_assistant_agent = chat_client.as_agent(
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
-        response_format=EmailResponse,
+        default_options={"response_format": EmailResponse},
         name="email_assistant_agent",
     )
 
