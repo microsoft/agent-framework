@@ -420,6 +420,9 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
     @override
     def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        # Skip model check for application endpoints - model is pre-configured on server
+        if self._is_application_endpoint:
+            return
         if not run_options.get("model"):
             if not self.model_id:
                 raise ValueError("model_deployment_name must be a non-empty string")
