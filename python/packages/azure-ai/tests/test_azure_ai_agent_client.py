@@ -851,26 +851,19 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_custom
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_file_search_with_vector_stores(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with file_search dict tool using vector stores."""
+    """Test _prepare_tools_for_azure_ai with FileSearchTool from get_file_search_tool()."""
 
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
+    # get_file_search_tool() now returns a FileSearchTool instance directly
     file_search_tool = AzureAIAgentClient.get_file_search_tool(vector_store_ids=["vs-123"])
 
-    # Mock FileSearchTool
-    with patch("agent_framework_azure_ai._chat_client.FileSearchTool") as mock_file_search:
-        mock_file_tool = MagicMock()
-        mock_file_tool.definitions = [{"type": "file_search"}]
-        mock_file_tool.resources = {"vector_store_ids": ["vs-123"]}
-        mock_file_search.return_value = mock_file_tool
+    run_options: dict[str, Any] = {}
+    result = await chat_client._prepare_tools_for_azure_ai([file_search_tool], run_options)  # type: ignore
 
-        run_options = {}
-        result = await chat_client._prepare_tools_for_azure_ai([file_search_tool], run_options)  # type: ignore
-
-        assert len(result) == 1
-        assert result[0] == {"type": "file_search"}
-        assert run_options["tool_resources"] == {"vector_store_ids": ["vs-123"]}
-        mock_file_search.assert_called_once_with(vector_store_ids=["vs-123"])
+    assert len(result) == 1
+    assert result[0] == {"type": "file_search"}
+    assert run_options["tool_resources"] == {"file_search": {"vector_store_ids": ["vs-123"]}}
 
 
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(

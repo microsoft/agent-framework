@@ -29,15 +29,12 @@ async def main() -> None:
     for skill in skills.data:
         print(f"{skill.source}: {skill.id} (version: {skill.latest_version})")
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AnthropicClient.get_code_interpreter_tool()
-
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
     agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
-        tools=code_interpreter_tool,
+        tools=AnthropicClient.get_code_interpreter_tool(),
         default_options={
             "max_tokens": 20000,
             "thinking": {"type": "enabled", "budget_tokens": 10000},

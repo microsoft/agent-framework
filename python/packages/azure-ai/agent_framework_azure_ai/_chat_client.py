@@ -206,11 +206,11 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
     # region Hosted Tool Factory Methods
 
     @staticmethod
-    def get_code_interpreter_tool() -> dict[str, Any]:
+    def get_code_interpreter_tool() -> Any:
         """Create a code interpreter tool configuration for Azure AI Agents.
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            A CodeInterpreterToolDefinition ready to pass to ChatAgent.
 
         Examples:
             .. code-block:: python
@@ -220,20 +220,20 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 tool = AzureAIAgentClient.get_code_interpreter_tool()
                 agent = ChatAgent(client, tools=[tool])
         """
-        return {"type": "code_interpreter"}
+        return CodeInterpreterToolDefinition()
 
     @staticmethod
     def get_file_search_tool(
         *,
         vector_store_ids: list[str],
-    ) -> dict[str, Any]:
+    ) -> FileSearchTool:
         """Create a file search tool configuration for Azure AI Agents.
 
         Keyword Args:
             vector_store_ids: List of vector store IDs to search within.
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            A FileSearchTool instance ready to pass to ChatAgent.
 
         Examples:
             .. code-block:: python
@@ -245,7 +245,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
-        return {"type": "file_search", "vector_store_ids": vector_store_ids}
+        return FileSearchTool(vector_store_ids=vector_store_ids)
 
     @staticmethod
     def get_web_search_tool(
@@ -333,7 +333,15 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         allowed_tools: list[str] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Create an MCP tool configuration for Azure AI Agents.
+        """Create a hosted MCP tool configuration for Azure AI Agents.
+
+        This configures an MCP (Model Context Protocol) server that will be called
+        by Azure AI's service. The tools from this MCP server are executed remotely
+        by Azure AI, not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
 
         Keyword Args:
             name: A label/name for the MCP server.
@@ -1312,22 +1320,17 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                 tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
             elif isinstance(tool, ToolDefinition):
                 tool_definitions.append(tool)
+            elif isinstance(tool, FileSearchTool):
+                # Handle FileSearchTool from get_file_search_tool()
+                tool_definitions.extend(tool.definitions)
+                if run_options is not None and "tool_resources" not in run_options:
+                    run_options["tool_resources"] = tool.resources
             elif isinstance(tool, (dict, MutableMapping)):
                 # Handle dict-based tools from static factory methods
                 tool_dict = tool if isinstance(tool, dict) else dict(tool)
                 tool_type = tool_dict.get("type")
 
-                if tool_type == "code_interpreter":
-                    tool_definitions.append(CodeInterpreterToolDefinition())
-                elif tool_type == "file_search":
-                    vector_store_ids = tool_dict.get("vector_store_ids", [])
-                    if vector_store_ids:
-                        file_search = FileSearchTool(vector_store_ids=vector_store_ids)
-                        tool_definitions.extend(file_search.definitions)
-                        # Set tool_resources for file search to work properly with Azure AI
-                        if run_options is not None and "tool_resources" not in run_options:
-                            run_options["tool_resources"] = file_search.resources
-                elif tool_type == "bing_grounding":
+                if tool_type == "bing_grounding":
                     connection_id = tool_dict.get("connection_id")
                     if not connection_id:
                         raise ServiceInitializationError("Bing grounding tool requires 'connection_id'.")

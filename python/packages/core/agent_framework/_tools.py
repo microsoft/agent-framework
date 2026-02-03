@@ -65,10 +65,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-if sys.version_info >= (3, 11):
-    pass  # type: ignore # pragma: no cover
-else:
-    pass  # type: ignore # pragma: no cover
 
 
 logger = get_logger()

@@ -14,6 +14,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
@@ -134,7 +135,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
     @staticmethod
     def get_web_search_tool(
         *,
-        user_location: dict[str, str] | None = None,
+        web_search_options: WebSearchOptions | None = None,
     ) -> dict[str, Any]:
         """Create a web search tool configuration for the Chat Completions API.
 
@@ -143,8 +144,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         passed as a tool to ChatAgent, which will handle it appropriately.
 
         Keyword Args:
-            user_location: Location context for search results. Dict with keys like
-                "city", "country", "region", "timezone".
+            web_search_options: The full WebSearchOptions configuration. This TypedDict includes:
+                - user_location: Location context with "type" and "approximate" containing
+                  "city", "country", "region", "timezone".
+                - search_context_size: One of "low", "medium", "high".
 
         Returns:
             A dict configuration that enables web search when passed to ChatAgent.
@@ -159,23 +162,21 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
                 # With location context
                 tool = OpenAIChatClient.get_web_search_tool(
-                    user_location={"city": "Seattle", "country": "US"},
+                    web_search_options={
+                        "user_location": {
+                            "type": "approximate",
+                            "approximate": {"city": "Seattle", "country": "US"},
+                        },
+                        "search_context_size": "medium",
+                    }
                 )
 
                 agent = ChatAgent(client, tools=[tool])
         """
         tool: dict[str, Any] = {"type": "web_search"}
 
-        if user_location:
-            tool["user_location"] = {
-                "type": "approximate",
-                "approximate": {
-                    "city": user_location.get("city"),
-                    "country": user_location.get("country"),
-                    "region": user_location.get("region"),
-                    "timezone": user_location.get("timezone"),
-                },
-            }
+        if web_search_options:
+            tool.update(web_search_options)
 
         return tool
 

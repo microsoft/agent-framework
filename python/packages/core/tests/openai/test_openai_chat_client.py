@@ -1093,7 +1093,12 @@ async def test_integration_web_search() -> None:
 
         # Test that the client will use the web search tool with location
         web_search_tool_with_location = OpenAIChatClient.get_web_search_tool(
-            user_location={"country": "US", "city": "Seattle"}
+            web_search_options={
+                "user_location": {
+                    "type": "approximate",
+                    "approximate": {"country": "US", "city": "Seattle"},
+                },
+            }
         )
         content = {
             "messages": "What is the current weather? Do not ask for my current location.",

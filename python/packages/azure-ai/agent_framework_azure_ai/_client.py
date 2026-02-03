@@ -519,7 +519,15 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         headers: dict[str, str] | None = None,
         project_connection_id: str | None = None,
     ) -> Any:
-        """Create an MCP tool configuration for Azure AI.
+        """Create a hosted MCP tool configuration for Azure AI.
+
+        This configures an MCP (Model Context Protocol) server that will be called
+        by Azure AI's service. The tools from this MCP server are executed remotely
+        by Azure AI, not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
 
         Keyword Args:
             name: A label/name for the MCP server.

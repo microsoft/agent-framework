@@ -140,6 +140,11 @@ def to_azure_ai_agent_tools(
             tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
         elif isinstance(tool, ToolDefinition):
             tool_definitions.append(tool)
+        elif isinstance(tool, AgentsFileSearchTool):
+            # Handle FileSearchTool from get_file_search_tool()
+            tool_definitions.extend(tool.definitions)
+            if run_options is not None and "tool_resources" not in run_options:
+                run_options["tool_resources"] = tool.resources
         elif isinstance(tool, (dict, MutableMapping)):
             # Handle dict-based tools from static factory methods
             tool_dict = tool if isinstance(tool, dict) else dict(tool)
@@ -147,13 +152,6 @@ def to_azure_ai_agent_tools(
 
             if tool_type == "code_interpreter":
                 tool_definitions.append(CodeInterpreterToolDefinition())
-            elif tool_type == "file_search":
-                vector_store_ids = tool_dict.get("vector_store_ids", [])
-                if vector_store_ids:
-                    file_search = AgentsFileSearchTool(vector_store_ids=vector_store_ids)
-                    tool_definitions.extend(file_search.definitions)
-                    if run_options is not None and "tool_resources" not in run_options:
-                        run_options["tool_resources"] = file_search.resources
             elif tool_type == "bing_grounding":
                 connection_id = tool_dict.get("connection_id")
                 if not connection_id:

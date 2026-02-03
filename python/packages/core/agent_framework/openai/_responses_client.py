@@ -408,17 +408,17 @@ class OpenAIBaseResponsesClient(
     def get_code_interpreter_tool(
         *,
         file_ids: list[str] | None = None,
-        container: Literal["auto"] | dict[str, Any] = "auto",
+        container: Literal["auto"] | CodeInterpreterContainerCodeInterpreterToolAuto = "auto",
     ) -> Any:
         """Create a code interpreter tool configuration for the Responses API.
 
         Keyword Args:
             file_ids: List of file IDs to make available to the code interpreter.
             container: Container configuration. Use "auto" for automatic container management,
-                or provide a dict with custom container settings.
+                or provide a TypedDict with custom container settings.
 
         Returns:
-            A CodeInterpreter tool parameter dict ready to pass to ChatAgent.
+            A CodeInterpreter tool parameter ready to pass to ChatAgent.
 
         Examples:
             .. code-block:: python
@@ -434,11 +434,9 @@ class OpenAIBaseResponsesClient(
                 # Use with agent
                 agent = ChatAgent(client, tools=[tool])
         """
-        container_config: CodeInterpreterContainerCodeInterpreterToolAuto
-        if isinstance(container, dict):
-            container_config = cast(CodeInterpreterContainerCodeInterpreterToolAuto, container)
-        else:
-            container_config = {"type": "auto"}
+        container_config: CodeInterpreterContainerCodeInterpreterToolAuto = (
+            container if isinstance(container, dict) else {"type": "auto"}
+        )
 
         if file_ids:
             container_config["file_ids"] = file_ids
@@ -574,7 +572,15 @@ class OpenAIBaseResponsesClient(
         allowed_tools: list[str] | None = None,
         headers: dict[str, str] | None = None,
     ) -> Any:
-        """Create an MCP (Model Context Protocol) tool configuration for the Responses API.
+        """Create a hosted MCP (Model Context Protocol) tool configuration for the Responses API.
+
+        This configures an MCP server that will be called by OpenAI's service.
+        The tools from this MCP server are executed remotely by OpenAI,
+        not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
 
         Keyword Args:
             name: A label/name for the MCP server.

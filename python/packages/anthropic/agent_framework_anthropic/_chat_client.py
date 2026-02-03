@@ -333,8 +333,14 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
     # region Static factory methods for hosted tools
 
     @staticmethod
-    def get_code_interpreter_tool() -> dict[str, Any]:
+    def get_code_interpreter_tool(
+        *,
+        type_name: str | None = None,
+    ) -> dict[str, Any]:
         """Create a code interpreter tool configuration for Anthropic.
+
+        Keyword Args:
+            type_name: Override the tool type name. Defaults to "code_execution_20250825".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -347,11 +353,17 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 tool = AnthropicClient.get_code_interpreter_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": "code_execution_20250825"}
+        return {"type": type_name or "code_execution_20250825"}
 
     @staticmethod
-    def get_web_search_tool() -> dict[str, Any]:
+    def get_web_search_tool(
+        *,
+        type_name: str | None = None,
+    ) -> dict[str, Any]:
         """Create a web search tool configuration for Anthropic.
+
+        Keyword Args:
+            type_name: Override the tool type name. Defaults to "web_search_20250305".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -364,7 +376,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 tool = AnthropicClient.get_web_search_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": "web_search_20250305"}
+        return {"type": type_name or "web_search_20250305"}
 
     @staticmethod
     def get_mcp_tool(
@@ -374,7 +386,15 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         allowed_tools: list[str] | None = None,
         authorization_token: str | None = None,
     ) -> dict[str, Any]:
-        """Create an MCP tool configuration for Anthropic.
+        """Create a hosted MCP tool configuration for Anthropic.
+
+        This configures an MCP (Model Context Protocol) server that will be called
+        by Anthropic's service. The tools from this MCP server are executed remotely
+        by Anthropic, not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
 
         Keyword Args:
             name: A label/name for the MCP server.
@@ -675,16 +695,9 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 elif isinstance(tool, MutableMapping):
                     # Handle dict-based tools from static factory methods
                     tool_dict = tool if isinstance(tool, dict) else dict(tool)
-                    tool_type = tool_dict.get("type")
 
-                    if tool_type == "web_search_20250305":
-                        # Pass through Anthropic web search tool directly
-                        tool_list.append(tool_dict)
-                    elif tool_type == "code_execution_20250825":
-                        # Pass through Anthropic code execution tool directly
-                        tool_list.append(tool_dict)
-                    elif tool_type == "mcp":
-                        # Convert to Anthropic MCP server format
+                    if tool_dict.get("type") == "mcp":
+                        # MCP servers must be routed to separate mcp_servers parameter
                         server_def: dict[str, Any] = {
                             "type": "url",
                             "name": tool_dict.get("server_label", ""),
@@ -697,7 +710,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                             server_def["authorization_token"] = auth
                         mcp_server_list.append(server_def)
                     else:
-                        # Pass through other dict-based tools directly
+                        # Pass through all other dict-based tools directly
+                        # (e.g., web_search_20250305, code_execution_20250825)
                         tool_list.append(tool_dict)
                 else:
                     logger.debug(f"Ignoring unsupported tool type: {type(tool)} for now")
