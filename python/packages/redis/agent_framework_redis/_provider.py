@@ -503,11 +503,7 @@ class RedisProvider(ContextProvider):
 
         messages: list[dict[str, Any]] = []
         for message in messages_list:
-            if (
-                message.role in {"user".value, "assistant".value, "system".value}
-                and message.text
-                and message.text.strip()
-            ):
+            if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
                 shaped: dict[str, Any] = {
                     "role": message.role,
                     "content": message.text,
