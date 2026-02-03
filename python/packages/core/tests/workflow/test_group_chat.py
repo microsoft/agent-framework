@@ -44,7 +44,7 @@ class StubAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        response = ChatMessage(role="assistant", text=self._reply_text, author_name=self.name)
+        response = ChatMessage("assistant", [self._reply_text], author_name=self.name)
         return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
@@ -191,7 +191,7 @@ class StubMagenticManager(MagenticManagerBase):
         self._round = 0
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="plan", author_name="magentic_manager")
+        return ChatMessage("assistant", ["plan"], author_name="magentic_manager")
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return await self.plan(magentic_context)
@@ -217,7 +217,7 @@ class StubMagenticManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="final", author_name="magentic_manager")
+        return ChatMessage("assistant", ["final"], author_name="magentic_manager")
 
 
 async def test_group_chat_builder_basic_flow() -> None:
@@ -262,8 +262,8 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
 
     agent = workflow.as_agent(name="group-chat-agent")
     conversation = [
-        ChatMessage(role="user", text="kickoff", author_name="user"),
-        ChatMessage(role="assistant", text="noted", author_name="alpha"),
+        ChatMessage("user", ["kickoff"], author_name="user"),
+        ChatMessage("assistant", ["noted"], author_name="alpha"),
     ]
     response = await agent.run(conversation)
 
@@ -577,7 +577,7 @@ class TestConversationHandling:
 
     async def test_handle_chat_message_input(self) -> None:
         """Test handling ChatMessage input directly."""
-        task_message = ChatMessage(role="user", text="test message")
+        task_message = ChatMessage("user", ["test message"])
 
         def selector(state: GroupChatState) -> str:
             # Verify the task message was preserved in conversation
@@ -607,8 +607,8 @@ class TestConversationHandling:
     async def test_handle_conversation_list_input(self) -> None:
         """Test handling conversation list preserves context."""
         conversation = [
-            ChatMessage(role="system", text="system message"),
-            ChatMessage(role="user", text="user message"),
+            ChatMessage("system", ["system message"]),
+            ChatMessage("user", ["user message"]),
         ]
 
         def selector(state: GroupChatState) -> str:

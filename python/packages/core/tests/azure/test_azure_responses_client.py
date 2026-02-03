@@ -221,14 +221,14 @@ async def test_integration_options(
         # Prepare test message
         if option_name == "tools" or option_name == "tool_choice":
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+            messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
         elif option_name == "response_format":
             # Use prompt that works well with structured output
-            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+            messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
+            messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+            messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}

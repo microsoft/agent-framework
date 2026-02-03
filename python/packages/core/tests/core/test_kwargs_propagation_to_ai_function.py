@@ -49,7 +49,7 @@ class TestKwargsPropagationToFunctionTool:
                     ]
                 )
             # Second call: return final response
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="Done!")])
+            return ChatResponse(messages=[ChatMessage("assistant", ["Done!"])])
 
         # Wrap the function with function invocation decorator
         wrapped = _handle_function_calls_response(mock_get_response)
@@ -101,7 +101,7 @@ class TestKwargsPropagationToFunctionTool:
                         )
                     ]
                 )
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="Completed!")])
+            return ChatResponse(messages=[ChatMessage("assistant", ["Completed!"])])
 
         wrapped = _handle_function_calls_response(mock_get_response)
 
@@ -149,7 +149,7 @@ class TestKwargsPropagationToFunctionTool:
                         )
                     ]
                 )
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="All done!")])
+            return ChatResponse(messages=[ChatMessage("assistant", ["All done!"])])
 
         wrapped = _handle_function_calls_response(mock_get_response)
 

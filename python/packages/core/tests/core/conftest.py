@@ -94,7 +94,7 @@ class MockChatClient:
         self.call_count += 1
         if self.responses:
             return self.responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+        return ChatResponse(messages=ChatMessage("assistant", ["test response"]))
 
     async def get_streaming_response(
         self,
@@ -142,7 +142,7 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[-1].text}"))
+            return ChatResponse(messages=ChatMessage("assistant", [f"test response - {messages[-1].text}"]))
 
         response = self.run_responses.pop(0)
 
@@ -236,7 +236,7 @@ class MockAgent(AgentProtocol):
         **kwargs: Any,
     ) -> AgentResponse:
         logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text("Response")])])
+        return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text("Response")])])
 
     async def run_stream(
         self,

@@ -39,7 +39,7 @@ class _SimpleAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage(role="assistant", text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -115,9 +115,9 @@ class _CaptureAgent(BaseAgent):
                 if isinstance(m, ChatMessage):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage(role="user", text=m))
+                    norm.append(ChatMessage("user", [m]))
         self._last_messages = norm
-        return AgentResponse(messages=[ChatMessage(role="assistant", text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -133,7 +133,7 @@ class _CaptureAgent(BaseAgent):
                 if isinstance(m, ChatMessage):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage(role="user", text=m))
+                    norm.append(ChatMessage("user", [m]))
         self._last_messages = norm
         yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
 

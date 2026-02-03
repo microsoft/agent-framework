@@ -64,10 +64,10 @@ logger = get_logger("agent_framework")
 
 
 def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
-    """Parse a list of content data dictionaries into appropriate Content objects.
+    """Parse a list of content data into appropriate Content objects.
 
     Args:
-        contents_data: List of content data (dicts or already constructed objects)
+        contents_data: List of content data (strings, dicts, or already constructed objects)
 
     Returns:
         List of Content objects with unknown types logged and ignored
@@ -76,6 +76,9 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
     for content_data in contents_data:
         if isinstance(content_data, Content):
             contents.append(content_data)
+            continue
+        if isinstance(content_data, str):
+            contents.append(Content.from_text(text=content_data))
             continue
         try:
             contents.append(Content.from_dict(content_data))
@@ -1413,11 +1416,11 @@ Examples:
         from agent_framework import ChatMessage
 
         # Use string values directly
-        user_msg = ChatMessage(role="user", text="Hello")
-        assistant_msg = ChatMessage(role="assistant", text="Hi there!")
+        user_msg = ChatMessage("user", ["Hello"])
+        assistant_msg = ChatMessage("assistant", ["Hi there!"])
 
         # Custom roles are also supported
-        custom_msg = ChatMessage(role="custom", text="Custom role message")
+        custom_msg = ChatMessage("custom", ["Custom role message"])
 
         # Compare roles directly as strings
         if user_msg.role == "user":
@@ -1469,32 +1472,32 @@ class ChatMessage(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMessage, TextContent
+            from agent_framework import ChatMessage, Content
 
-            # Create a message with text
-            user_msg = ChatMessage(role="user", text="What's the weather?")
+            # Create a message with text content
+            user_msg = ChatMessage("user", ["What's the weather?"])
             print(user_msg.text)  # "What's the weather?"
 
-            # Create a message with role string
-            system_msg = ChatMessage(role="system", text="You are a helpful assistant.")
+            # Create a system message
+            system_msg = ChatMessage("system", ["You are a helpful assistant."])
 
-            # Create a message with contents
+            # Create a message with mixed content types
             assistant_msg = ChatMessage(
-                role="assistant",
-                contents=[Content.from_text(text="The weather is sunny!")],
+                "assistant",
+                ["The weather is sunny!", Content.from_image_uri("https://...")],
             )
             print(assistant_msg.text)  # "The weather is sunny!"
 
             # Serialization - to_dict and from_dict
             msg_dict = user_msg.to_dict()
-            # {'type': 'chat_message', 'role': {'type': 'role', 'value': 'user'},
+            # {'type': 'chat_message', 'role': 'user',
             #  'contents': [{'type': 'text', 'text': "What's the weather?"}], 'additional_properties': {}}
             restored_msg = ChatMessage.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather?"
 
             # Serialization - to_json and from_json
             msg_json = user_msg.to_json()
-            # '{"type": "chat_message", "role": {"type": "role", "value": "user"}, "contents": [...], ...}'
+            # '{"type": "chat_message", "role": "user", "contents": [...], ...}'
             restored_from_json = ChatMessage.from_json(msg_json)
             print(restored_from_json.role)  # "user"
 
@@ -1502,86 +1505,32 @@ class ChatMessage(SerializationMixin):
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
 
-    @overload
     def __init__(
         self,
         role: RoleLiteral | str,
-        *,
-        text: str,
-        author_name: str | None = None,
-        message_id: str | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatMessage with a role and text content.
-
-        Args:
-            role: The role of the author of the message.
-
-        Keyword Args:
-            text: The text content of the message.
-            author_name: Optional name of the author of the message.
-            message_id: Optional ID of the chat message.
-            additional_properties: Optional additional properties associated with the chat message.
-                Additional properties are used within Agent Framework, they are not sent to services.
-            raw_representation: Optional raw representation of the chat message.
-            **kwargs: Additional keyword arguments.
-        """
-
-    @overload
-    def __init__(
-        self,
-        role: RoleLiteral | str,
-        *,
-        contents: "Sequence[Content | Mapping[str, Any]]",
-        author_name: str | None = None,
-        message_id: str | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatMessage with a role and optional contents.
-
-        Args:
-            role: The role of the author of the message.
-
-        Keyword Args:
-            contents: Optional list of BaseContent items to include in the message.
-            author_name: Optional name of the author of the message.
-            message_id: Optional ID of the chat message.
-            additional_properties: Optional additional properties associated with the chat message.
-                Additional properties are used within Agent Framework, they are not sent to services.
-            raw_representation: Optional raw representation of the chat message.
-            **kwargs: Additional keyword arguments.
-        """
-
-    def __init__(
-        self,
-        role: RoleLiteral | str,
+        contents: "Sequence[Content | str | Mapping[str, Any]] | None" = None,
         *,
         text: str | None = None,
-        contents: "Sequence[Content | Mapping[str, Any]] | None" = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize ChatMessage.
 
         Args:
             role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
+            contents: A sequence of content items. Can be Content objects, strings (auto-converted
+                to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
 
         Keyword Args:
-            text: Optional text content of the message.
-            contents: Optional list of BaseContent items or dicts to include in the message.
+            text: Deprecated. Text content of the message. Use contents instead.
+                This parameter is kept for backward compatibility with serialization.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
-            kwargs: will be combined with additional_properties if provided.
         """
         # Handle role conversion from legacy dict format
         if isinstance(role, dict) and "value" in role:
@@ -1590,6 +1539,7 @@ class ChatMessage(SerializationMixin):
         # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
 
+        # Handle text for backward compatibility (from serialization)
         if text is not None:
             parsed_contents.append(Content.from_text(text=text))
 
@@ -1598,7 +1548,6 @@ class ChatMessage(SerializationMixin):
         self.author_name = author_name
         self.message_id = message_id
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs or {})
         self.raw_representation = raw_representation
 
     @property
@@ -1626,19 +1575,19 @@ def prepare_messages(
     if system_instructions is not None:
         if isinstance(system_instructions, str):
             system_instructions = [system_instructions]
-        system_instruction_messages = [ChatMessage(role="system", text=instr) for instr in system_instructions]
+        system_instruction_messages = [ChatMessage("system", [instr]) for instr in system_instructions]
     else:
         system_instruction_messages = []
 
     if isinstance(messages, str):
-        return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
+        return [*system_instruction_messages, ChatMessage("user", [messages])]
     if isinstance(messages, ChatMessage):
         return [*system_instruction_messages, messages]
 
     return_messages: list[ChatMessage] = system_instruction_messages
     for msg in messages:
         if isinstance(msg, str):
-            msg = ChatMessage(role="user", text=msg)
+            msg = ChatMessage("user", [msg])
         return_messages.append(msg)
     return return_messages
 
@@ -1651,12 +1600,12 @@ def normalize_messages(
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
+        return [ChatMessage("user", [messages])]
 
     if isinstance(messages, ChatMessage):
         return [messages]
 
-    return [ChatMessage(role="user", text=msg) if isinstance(msg, str) else msg for msg in messages]
+    return [ChatMessage("user", [msg]) if isinstance(msg, str) else msg for msg in messages]
 
 
 def prepend_instructions_to_messages(
@@ -1683,7 +1632,7 @@ def prepend_instructions_to_messages(
 
             from agent_framework import prepend_instructions_to_messages, ChatMessage
 
-            messages = [ChatMessage(role="user", text="Hello")]
+            messages = [ChatMessage("user", ["Hello"])]
             instructions = "You are a helpful assistant"
 
             # Prepend as system message (default)
@@ -1698,7 +1647,7 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    instruction_messages = [ChatMessage(role=role, text=instr) for instr in instructions]
+    instruction_messages = [ChatMessage(role, [instr]) for instr in instructions]
     return [*instruction_messages, *messages]
 
 
@@ -1722,7 +1671,7 @@ def _process_update(
         is_new_message = True
 
     if is_new_message:
-        message = ChatMessage(role="assistant", contents=[])
+        message = ChatMessage("assistant", [])
         response.messages.append(message)
     else:
         message = response.messages[-1]
@@ -1841,7 +1790,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
             from agent_framework import ChatResponse, ChatMessage
 
             # Create a response with messages
-            msg = ChatMessage(role="assistant", text="The weather is sunny.")
+            msg = ChatMessage("assistant", ["The weather is sunny."])
             response = ChatResponse(
                 messages=[msg],
                 finish_reason="stop",
@@ -2206,7 +2155,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
             from agent_framework import AgentResponse, ChatMessage
 
             # Create agent response
-            msg = ChatMessage(role="assistant", text="Task completed successfully.")
+            msg = ChatMessage("assistant", ["Task completed successfully."])
             response = AgentResponse(messages=[msg], response_id="run_123")
             print(response.text)  # "Task completed successfully."
 

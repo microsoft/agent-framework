@@ -571,7 +571,7 @@ def test_ai_content_serialization(args: dict):
 def test_chat_message_text():
     """Test the ChatMessage class to ensure it initializes correctly with text content."""
     # Create a ChatMessage with a role and text content
-    message = ChatMessage(role="user", text="Hello, how are you?")
+    message = ChatMessage("user", ["Hello, how are you?"])
 
     # Check the type and content
     assert message.role == "user"
@@ -589,7 +589,7 @@ def test_chat_message_contents():
     # Create a ChatMessage with a role and multiple contents
     content1 = Content.from_text("Hello, how are you?")
     content2 = Content.from_text("I'm fine, thank you!")
-    message = ChatMessage(role="user", contents=[content1, content2])
+    message = ChatMessage("user", [content1, content2])
 
     # Check the type and content
     assert message.role == "user"
@@ -602,7 +602,7 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = ChatMessage(role="user", text="hi")
+    m = ChatMessage("user", ["hi"])
     assert m.role == "user"
     assert m.text == "hi"
 
@@ -613,7 +613,7 @@ def test_chat_message_with_chatrole_instance():
 def test_chat_response():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a ChatMessage
-    message = ChatMessage(role="assistant", text="I'm doing well, thank you!")
+    message = ChatMessage("assistant", ["I'm doing well, thank you!"])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message)
@@ -633,7 +633,7 @@ class OutputModel(BaseModel):
 def test_chat_response_with_format():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a ChatMessage
-    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
+    message = ChatMessage("assistant", ['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message)
@@ -650,7 +650,7 @@ def test_chat_response_with_format():
 def test_chat_response_with_format_init():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a ChatMessage
-    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
+    message = ChatMessage("assistant", ['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
@@ -672,7 +672,7 @@ def test_chat_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = ChatMessage("assistant", ['{"id": 1, "name": "test", "score": -5}'])
     response = ChatResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -692,7 +692,7 @@ def test_chat_response_value_with_valid_schema():
         name: str = Field(min_length=3)
         score: int = Field(ge=0, le=100)
 
-    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
+    message = ChatMessage("assistant", ['{"name": "test", "score": 85}'])
     response = ChatResponse(messages=message, response_format=MySchema)
 
     result = response.value
@@ -709,7 +709,7 @@ def test_agent_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = ChatMessage("assistant", ['{"id": 1, "name": "test", "score": -5}'])
     response = AgentResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -729,7 +729,7 @@ def test_agent_response_value_with_valid_schema():
         name: str = Field(min_length=3)
         score: int = Field(ge=0, le=100)
 
-    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
+    message = ChatMessage("assistant", ['{"name": "test", "score": 85}'])
     response = AgentResponse(messages=message, response_format=MySchema)
 
     result = response.value
@@ -1044,7 +1044,7 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 @fixture
 def chat_message() -> ChatMessage:
-    return ChatMessage(role="user", text="Hello")
+    return ChatMessage("user", ["Hello"])
 
 
 @fixture
@@ -1161,7 +1161,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[ChatMessage(role="assistant", text="Hello")],
+        messages=[ChatMessage("assistant", ["Hello"])],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1171,7 +1171,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[ChatMessage(role="assistant", text="Hello")],
+        messages=[ChatMessage("assistant", ["Hello"])],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1328,7 +1328,7 @@ def test_chat_tool_mode_eq_with_string():
 
 @fixture
 def agent_run_response_async() -> AgentResponse:
-    return AgentResponse(messages=[ChatMessage(role="user", text="Hello")])
+    return AgentResponse(messages=[ChatMessage("user", ["Hello"])])
 
 
 async def test_agent_run_response_from_async_generator():
@@ -1556,7 +1556,7 @@ def test_chat_message_complex_content_serialization():
         Content.from_function_result(call_id="call1", result="success"),
     ]
 
-    message = ChatMessage(role="assistant", contents=contents)
+    message = ChatMessage("assistant", contents)
 
     # Test to_dict
     message_dict = message.to_dict()

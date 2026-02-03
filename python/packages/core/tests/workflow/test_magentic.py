@@ -52,7 +52,7 @@ def test_magentic_context_reset_behavior():
         participant_descriptions={"Alice": "Researcher"},
     )
     # seed context state
-    ctx.chat_history.append(ChatMessage(role="assistant", text="draft"))
+    ctx.chat_history.append(ChatMessage("assistant", ["draft"]))
     ctx.stall_count = 2
     prev_reset = ctx.reset_count
 
@@ -119,18 +119,18 @@ class FakeManager(MagenticManagerBase):
                     pass
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        facts = ChatMessage(role="assistant", text="GIVEN OR VERIFIED FACTS\n- A\n")
-        plan = ChatMessage(role="assistant", text="- Do X\n- Do Y\n")
+        facts = ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- A\n"])
+        plan = ChatMessage("assistant", ["- Do X\n- Do Y\n"])
         self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
         combined = f"Task: {magentic_context.task}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
-        return ChatMessage(role="assistant", text=combined, author_name=self.name)
+        return ChatMessage("assistant", [combined], author_name=self.name)
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        facts = ChatMessage(role="assistant", text="GIVEN OR VERIFIED FACTS\n- A2\n")
-        plan = ChatMessage(role="assistant", text="- Do Z\n")
+        facts = ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- A2\n"])
+        plan = ChatMessage("assistant", ["- Do Z\n"])
         self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
         combined = f"Task: {magentic_context.task}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
-        return ChatMessage(role="assistant", text=combined, author_name=self.name)
+        return ChatMessage("assistant", [combined], author_name=self.name)
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         # At least two messages in chat history means request is satisfied for testing
@@ -144,7 +144,7 @@ class FakeManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text=self.FINAL_ANSWER, author_name=self.name)
+        return ChatMessage("assistant", [self.FINAL_ANSWER], author_name=self.name)
 
 
 class StubAgent(BaseAgent):
@@ -159,7 +159,7 @@ class StubAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        response = ChatMessage(role="assistant", text=self._reply_text, author_name=self.name)
+        response = ChatMessage("assistant", [self._reply_text], author_name=self.name)
         return AgentResponse(messages=[response])
 
     def run_stream(  # type: ignore[override]
@@ -222,8 +222,8 @@ async def test_magentic_as_agent_does_not_accept_conversation() -> None:
 
     agent = workflow.as_agent(name="magentic-agent")
     conversation = [
-        ChatMessage(role="system", text="Guidelines", author_name="system"),
-        ChatMessage(role="user", text="Summarize the findings", author_name="requester"),
+        ChatMessage("system", ["Guidelines"], author_name="system"),
+        ChatMessage("user", ["Summarize the findings"], author_name="requester"),
     ]
     with pytest.raises(ValueError, match="Magentic only support a single task message to start the workflow."):
         await agent.run(conversation)
@@ -426,7 +426,7 @@ class StubManagerAgent(BaseAgent):
         thread: Any = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="ok")])
+        return AgentResponse(messages=[ChatMessage("assistant", ["ok"])])
 
     def run_stream(
         self,
@@ -436,7 +436,7 @@ class StubManagerAgent(BaseAgent):
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         async def _gen() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(message_deltas=[ChatMessage(role="assistant", text="ok")])
+            yield AgentResponseUpdate(message_deltas=[ChatMessage("assistant", ["ok"])])
 
         return _gen()
 
@@ -447,8 +447,8 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     async def fake_complete_plan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         # Return a different response depending on call order length
         if any("FACTS" in (m.text or "") for m in messages):
-            return ChatMessage(role="assistant", text="- step A\n- step B")
-        return ChatMessage(role="assistant", text="GIVEN OR VERIFIED FACTS\n- fact1")
+            return ChatMessage("assistant", ["- step A\n- step B"])
+        return ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
 
     # First, patch to produce facts then plan
     mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
@@ -463,8 +463,8 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     # Now replan with new outputs
     async def fake_complete_replan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         if any("Please briefly explain" in (m.text or "") for m in messages):
-            return ChatMessage(role="assistant", text="- new step")
-        return ChatMessage(role="assistant", text="GIVEN OR VERIFIED FACTS\n- updated")
+            return ChatMessage("assistant", ["- new step"])
+        return ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
 
     mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
     combined2 = await mgr.replan(ctx.clone())
@@ -484,7 +484,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
             '"next_speaker": {"reason": "r", "answer": "alice"}, '
             '"instruction_or_question": {"reason": "r", "answer": "do"}}'
         )
-        return ChatMessage(role="assistant", text=json_text)
+        return ChatMessage("assistant", [json_text])
 
     mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
     ledger = await mgr.create_progress_ledger(ctx.clone())
@@ -492,7 +492,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
 
     # Error path: invalid JSON now raises to avoid emitting planner-oriented instructions to agents
     async def fake_complete_bad(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
-        return ChatMessage(role="assistant", text="not-json")
+        return ChatMessage("assistant", ["not-json"])
 
     mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError):
@@ -505,10 +505,10 @@ class InvokeOnceManager(MagenticManagerBase):
         self._invoked = False
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="ledger")
+        return ChatMessage("assistant", ["ledger"])
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="re-ledger")
+        return ChatMessage("assistant", ["re-ledger"])
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         if not self._invoked:
@@ -531,7 +531,7 @@ class InvokeOnceManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="final")
+        return ChatMessage("assistant", ["final"])
 
 
 class StubThreadAgent(BaseAgent):
@@ -546,7 +546,7 @@ class StubThreadAgent(BaseAgent):
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="thread-ok", author_name=self.name)])
+        return AgentResponse(messages=[ChatMessage("assistant", ["thread-ok"], author_name=self.name)])
 
 
 class StubAssistantsClient:
@@ -568,7 +568,7 @@ class StubAssistantsAgent(BaseAgent):
         )
 
     async def run(self, messages=None, *, thread=None, **kwargs):  # type: ignore[override]
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="assistants-ok", author_name=self.name)])
+        return AgentResponse(messages=[ChatMessage("assistant", ["assistants-ok"], author_name=self.name)])
 
 
 async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[ChatMessage]:
@@ -737,10 +737,10 @@ class NotProgressingManager(MagenticManagerBase):
     """
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="ledger")
+        return ChatMessage("assistant", ["ledger"])
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="re-ledger")
+        return ChatMessage("assistant", ["re-ledger"])
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         return MagenticProgressLedger(
@@ -752,7 +752,7 @@ class NotProgressingManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role="assistant", text="final")
+        return ChatMessage("assistant", ["final"])
 
 
 async def test_magentic_stall_and_reset_reach_limits():
@@ -850,8 +850,8 @@ async def test_magentic_context_no_duplicate_on_reset():
     ctx = MagenticContext(task="task", participant_descriptions={"Alice": "Researcher"})
 
     # Add some history
-    ctx.chat_history.append(ChatMessage(role="assistant", text="response1"))
-    ctx.chat_history.append(ChatMessage(role="assistant", text="response2"))
+    ctx.chat_history.append(ChatMessage("assistant", ["response1"]))
+    ctx.chat_history.append(ChatMessage("assistant", ["response2"]))
     assert len(ctx.chat_history) == 2
 
     # Reset
@@ -861,7 +861,7 @@ async def test_magentic_context_no_duplicate_on_reset():
     assert len(ctx.chat_history) == 0, "chat_history should be empty after reset"
 
     # Add new history
-    ctx.chat_history.append(ChatMessage(role="assistant", text="new_response"))
+    ctx.chat_history.append(ChatMessage("assistant", ["new_response"]))
     assert len(ctx.chat_history) == 1, "Should have exactly 1 message after adding to reset context"
 
 
@@ -880,7 +880,7 @@ async def test_magentic_checkpoint_restore_no_duplicate_history():
 
     # Run with conversation history to create initial checkpoint
     conversation: list[ChatMessage] = [
-        ChatMessage(role="user", text="task_msg"),
+        ChatMessage("user", ["task_msg"]),
     ]
 
     async for event in wf.run_stream(conversation):
@@ -1247,8 +1247,8 @@ def test_magentic_agent_factory_with_standard_manager_options():
     from agent_framework._workflows._magentic import _MagenticTaskLedger  # type: ignore
 
     custom_task_ledger = _MagenticTaskLedger(
-        facts=ChatMessage(role="assistant", text="Custom facts"),
-        plan=ChatMessage(role="assistant", text="Custom plan"),
+        facts=ChatMessage("assistant", ["Custom facts"]),
+        plan=ChatMessage("assistant", ["Custom plan"]),
     )
 
     participant = StubAgent("agentA", "reply from agentA")

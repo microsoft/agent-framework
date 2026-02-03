@@ -424,7 +424,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(ChatMessage(role="user", text=instruction))
+        current_conversation.append(ChatMessage("user", [instruction]))
 
         retry_attempts = self._retry_attempts
         while True:

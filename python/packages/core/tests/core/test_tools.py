@@ -959,7 +959,7 @@ def mock_chat_client():
                 return response
             # Default response
             return ChatResponse(
-                messages=[ChatMessage(role="assistant", contents=["Default response"])],
+                messages=[ChatMessage("assistant", ["Default response"])],
             )
 
         async def get_streaming_response(self, messages, **kwargs):
@@ -1015,7 +1015,7 @@ async def test_non_streaming_single_function_no_approval():
             )
         ]
     )
-    final_response = ChatResponse(messages=[ChatMessage(role="assistant", text="The result is 10")])
+    final_response = ChatResponse(messages=[ChatMessage("assistant", ["The result is 10"])])
 
     call_count = [0]
     responses = [initial_response, final_response]
@@ -1100,7 +1100,7 @@ async def test_non_streaming_two_functions_both_no_approval():
             )
         ]
     )
-    final_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Both tools executed successfully")])
+    final_response = ChatResponse(messages=[ChatMessage("assistant", ["Both tools executed successfully"])])
 
     call_count = [0]
     responses = [initial_response, final_response]

@@ -40,7 +40,7 @@ class SimpleExecutor(Executor):
         response_text = f"{self.response_text}: {input_text}"
 
         # Create response message for both streaming and non-streaming cases
-        response_message = ChatMessage(role="assistant", contents=[Content.from_text(text=response_text)])
+        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
 
         # Emit update event.
         streaming_update = AgentResponseUpdate(
@@ -89,7 +89,7 @@ class ConversationHistoryCapturingExecutor(Executor):
         message_count = len(messages)
         response_text = f"Received {message_count} messages"
 
-        response_message = ChatMessage(role="assistant", contents=[Content.from_text(text=response_text)])
+        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
 
         streaming_update = AgentResponseUpdate(
             contents=[Content.from_text(text=response_text)], role="assistant", message_id=str(uuid.uuid4())
@@ -231,7 +231,7 @@ class TestWorkflowAgent:
             ),
         )
 
-        response_message = ChatMessage(role="user", contents=[approval_response])
+        response_message = ChatMessage("user", [approval_response])
 
         # Continue the workflow with the response
         continuation_result = await agent.run(response_message)
@@ -294,7 +294,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
 
         # Run directly - should return WorkflowOutputEvent in result
-        direct_result = await workflow.run([ChatMessage(role="user", contents=[Content.from_text(text="hello")])])
+        direct_result = await workflow.run([ChatMessage("user", [Content.from_text(text="hello")])])
         direct_outputs = direct_result.get_outputs()
         assert len(direct_outputs) == 1
         assert direct_outputs[0] == "processed: hello"
@@ -424,8 +424,8 @@ class TestWorkflowAgent:
         async def list_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
             # Yield a list of ChatMessages (as SequentialBuilder does)
             msg_list = [
-                ChatMessage(role="user", contents=[Content.from_text(text="first message")]),
-                ChatMessage(role="assistant", contents=[Content.from_text(text="second message")]),
+                ChatMessage("user", [Content.from_text(text="first message")]),
+                ChatMessage("assistant", [Content.from_text(text="second message")]),
                 ChatMessage(
                     role="assistant",
                     contents=[Content.from_text(text="third"), Content.from_text(text="fourth")],
@@ -468,8 +468,8 @@ class TestWorkflowAgent:
 
         # Create a thread with existing conversation history
         history_messages = [
-            ChatMessage(role="user", text="Previous user message"),
-            ChatMessage(role="assistant", text="Previous assistant response"),
+            ChatMessage("user", ["Previous user message"]),
+            ChatMessage("assistant", ["Previous assistant response"]),
         ]
         message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
@@ -498,9 +498,9 @@ class TestWorkflowAgent:
 
         # Create a thread with existing conversation history
         history_messages = [
-            ChatMessage(role="system", text="You are a helpful assistant"),
-            ChatMessage(role="user", text="Hello"),
-            ChatMessage(role="assistant", text="Hi there!"),
+            ChatMessage("system", ["You are a helpful assistant"]),
+            ChatMessage("user", ["Hello"]),
+            ChatMessage("assistant", ["Hi there!"]),
         ]
         message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
@@ -578,7 +578,7 @@ class TestWorkflowAgent:
 
             async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
                 return AgentResponse(
-                    messages=[ChatMessage(role="assistant", text=self._response_text)],
+                    messages=[ChatMessage("assistant", [self._response_text])],
                     text=self._response_text,
                 )
 
@@ -652,7 +652,7 @@ class TestWorkflowAgent:
 
             async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
                 return AgentResponse(
-                    messages=[ChatMessage(role="assistant", text=self._response_text)],
+                    messages=[ChatMessage("assistant", [self._response_text])],
                     text=self._response_text,
                 )
 

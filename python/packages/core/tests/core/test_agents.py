@@ -103,12 +103,12 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClientProtocol)
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
-    message = ChatMessage(role="user", text="Hello")
+    message = ChatMessage("user", ["Hello"])
     thread = AgentThread(message_store=ChatMessageStore(messages=[message]))
 
     _, _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,
-        input_messages=[ChatMessage(role="user", text="Test")],
+        input_messages=[ChatMessage("user", ["Test"])],
     )
 
     assert len(result_messages) == 2
@@ -126,7 +126,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
 
     _, prepared_chat_options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,
-        input_messages=[ChatMessage(role="user", text="Test")],
+        input_messages=[ChatMessage("user", ["Test"])],
     )
 
     assert prepared_chat_options.get("tools") is not None
@@ -138,7 +138,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
 
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
     mock_response = ChatResponse(
-        messages=[ChatMessage(role="assistant", contents=[Content.from_text("test response")])],
+        messages=[ChatMessage("assistant", [Content.from_text("test response")])],
         conversation_id="123",
     )
     chat_client_base.run_responses = [mock_response]
@@ -201,9 +201,7 @@ async def test_chat_client_agent_author_name_as_agent_name(chat_client: ChatClie
 async def test_chat_client_agent_author_name_is_used_from_response(chat_client_base: ChatClientProtocol) -> None:
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[
-                ChatMessage(role="assistant", contents=[Content.from_text("test response")], author_name="TestAuthor")
-            ]
+            messages=[ChatMessage("assistant", [Content.from_text("test response")], author_name="TestAuthor")]
         )
     ]
 
@@ -253,7 +251,7 @@ class MockContextProvider(ContextProvider):
 
 async def test_chat_agent_context_providers_model_invoking(chat_client: ChatClientProtocol) -> None:
     """Test that context providers' invoking is called during agent run."""
-    mock_provider = MockContextProvider(messages=[ChatMessage(role="system", text="Test context instructions")])
+    mock_provider = MockContextProvider(messages=[ChatMessage("system", ["Test context instructions"])])
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
     await agent.run("Hello")
@@ -266,7 +264,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=[Content.from_text("test response")])],
+            messages=[ChatMessage("assistant", [Content.from_text("test response")])],
             conversation_id="test-thread-id",
         )
     ]
@@ -293,12 +291,12 @@ async def test_chat_agent_context_providers_messages_adding(chat_client: ChatCli
 
 async def test_chat_agent_context_instructions_in_messages(chat_client: ChatClientProtocol) -> None:
     """Test that AI context instructions are included in messages."""
-    mock_provider = MockContextProvider(messages=[ChatMessage(role="system", text="Context-specific instructions")])
+    mock_provider = MockContextProvider(messages=[ChatMessage("system", ["Context-specific instructions"])])
     agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_provider=mock_provider)
 
     # We need to test the _prepare_thread_and_messages method directly
     _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
+        thread=None, input_messages=[ChatMessage("user", ["Hello"])]
     )
 
     # Should have context instructions, and user message
@@ -316,7 +314,7 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
     agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_provider=mock_provider)
 
     _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
+        thread=None, input_messages=[ChatMessage("user", ["Hello"])]
     )
 
     # Should have agent instructions and user message only
@@ -327,7 +325,7 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
 
 async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientProtocol) -> None:
     """Test that context providers work with run_stream method."""
-    mock_provider = MockContextProvider(messages=[ChatMessage(role="system", text="Stream context instructions")])
+    mock_provider = MockContextProvider(messages=[ChatMessage("system", ["Stream context instructions"])])
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
     # Collect all stream updates
@@ -347,7 +345,7 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=[Content.from_text("test response")])],
+            messages=[ChatMessage("assistant", [Content.from_text("test response")])],
             conversation_id="service-thread-123",
         )
     ]
@@ -582,7 +580,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=ChatMessage("assistant", ["done"])),
     ]
 
     agent = ChatAgent(
@@ -925,7 +923,7 @@ async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(chat_c
 
     # Run the agent and verify context tools are added
     _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
+        thread=None, input_messages=[ChatMessage("user", ["Hello"])]
     )
 
     # The context tools should now be in the options
@@ -949,7 +947,7 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
 
     # Run the agent and verify context instructions are available
     _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
+        thread=None, input_messages=[ChatMessage("user", ["Hello"])]
     )
 
     # The context instructions should now be in the options
@@ -969,7 +967,7 @@ async def test_chat_agent_raises_on_conversation_id_mismatch(chat_client_base: C
 
     with pytest.raises(AgentExecutionException, match="conversation_id set on the agent is different"):
         await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-            thread=thread, input_messages=[ChatMessage(role="user", text="Hello")]
+            thread=thread, input_messages=[ChatMessage("user", ["Hello"])]
         )
 
 

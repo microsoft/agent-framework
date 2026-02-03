@@ -44,7 +44,7 @@ class _ToolCallingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - not used in this test."""
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="done")])
+        return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
 
     async def run_stream(
         self,
@@ -178,7 +178,7 @@ class MockChatClient:
                     )
                 )
         else:
-            response = ChatResponse(messages=ChatMessage(role="assistant", text="Tool executed successfully."))
+            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
 
         self._iteration += 1
         return response

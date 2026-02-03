@@ -665,7 +665,7 @@ async def test_azure_openai_chat_client_response() -> None:
             "of climate change.",
         )
     )
-    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+    messages.append(ChatMessage("user", ["who are Emily and David?"]))
 
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(messages=messages)
@@ -686,7 +686,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
-    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+    messages.append(ChatMessage("user", ["who are Emily and David?"]))
 
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(
@@ -716,7 +716,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
             "of climate change.",
         )
     )
-    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+    messages.append(ChatMessage("user", ["who are Emily and David?"]))
 
     # Test that the client can be used to get a response
     response = azure_chat_client.get_streaming_response(messages=messages)
@@ -742,7 +742,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
-    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+    messages.append(ChatMessage("user", ["who are Emily and David?"]))
 
     # Test that the client can be used to get a response
     response = azure_chat_client.get_streaming_response(

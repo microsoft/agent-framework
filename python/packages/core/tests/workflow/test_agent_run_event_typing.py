@@ -8,7 +8,7 @@ from agent_framework._workflows._events import AgentRunEvent, AgentRunUpdateEven
 
 def test_agent_run_event_data_type() -> None:
     """Verify AgentRunEvent.data is typed as AgentResponse | None."""
-    response = AgentResponse(messages=[ChatMessage(role="assistant", text="Hello")])
+    response = AgentResponse(messages=[ChatMessage("assistant", ["Hello"])])
     event = AgentRunEvent(executor_id="test", data=response)
 
     # This assignment should pass type checking without a cast

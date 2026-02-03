@@ -219,9 +219,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             class CustomChatClient(BaseChatClient):
                 async def _inner_get_response(self, *, messages, options, **kwargs):
                     # Your custom implementation
-                    return ChatResponse(
-                        messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
-                    )
+                    return ChatResponse(messages=[ChatMessage("assistant", ["Hello!"])], response_id="custom-response")
 
                 async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
                     # Your custom streaming implementation

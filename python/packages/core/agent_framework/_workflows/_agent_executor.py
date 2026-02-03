@@ -198,7 +198,7 @@ class AgentExecutor(Executor):
 
         if not self._pending_agent_requests:
             # All pending requests have been resolved; resume agent execution
-            self._cache = normalize_messages_input(ChatMessage(role="user", contents=self._pending_responses_to_agent))
+            self._cache = normalize_messages_input(ChatMessage("user", self._pending_responses_to_agent))
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
 

@@ -72,7 +72,7 @@ class TestAgentRequestInfoResponse:
 
     def test_create_response_with_messages(self):
         """Test creating an AgentRequestInfoResponse with messages."""
-        messages = [ChatMessage(role="user", text="Additional info")]
+        messages = [ChatMessage("user", ["Additional info"])]
         response = AgentRequestInfoResponse(messages=messages)
 
         assert response.messages == messages
@@ -80,8 +80,8 @@ class TestAgentRequestInfoResponse:
     def test_from_messages_factory(self):
         """Test creating response from ChatMessage list."""
         messages = [
-            ChatMessage(role="user", text="Message 1"),
-            ChatMessage(role="user", text="Message 2"),
+            ChatMessage("user", ["Message 1"]),
+            ChatMessage("user", ["Message 2"]),
         ]
         response = AgentRequestInfoResponse.from_messages(messages)
 
@@ -113,7 +113,7 @@ class TestAgentRequestInfoExecutor:
         """Test that request_info handler calls ctx.request_info."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[ChatMessage(role="assistant", text="Agent response")])
+        agent_response = AgentResponse(messages=[ChatMessage("assistant", ["Agent response"])])
         agent_response = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
@@ -131,7 +131,7 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user provides additional messages."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[ChatMessage(role="assistant", text="Original")])
+        agent_response = AgentResponse(messages=[ChatMessage("assistant", ["Original"])])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
@@ -157,7 +157,7 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user approves (no additional messages)."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[ChatMessage(role="assistant", text="Original")])
+        agent_response = AgentResponse(messages=[ChatMessage("assistant", ["Original"])])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
@@ -206,7 +206,7 @@ class _TestAgent:
         **kwargs: Any,
     ) -> AgentResponse:
         """Dummy run method."""
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")])
+        return AgentResponse(messages=[ChatMessage("assistant", ["Test response"])])
 
     def run_stream(
         self,
@@ -218,7 +218,7 @@ class _TestAgent:
         """Dummy run_stream method."""
 
         async def generator():
-            yield AgentResponseUpdate(messages=[ChatMessage(role="assistant", text="Test response stream")])
+            yield AgentResponseUpdate(messages=[ChatMessage("assistant", ["Test response stream"])])
 
         return generator()
 

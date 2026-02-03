@@ -35,7 +35,7 @@ class _EchoAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage(role="assistant", text=f"{self.name} reply")])
+        return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} reply"])])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -56,7 +56,7 @@ class _SummarizerExec(Executor):
         conversation = agent_response.full_conversation or []
         user_texts = [m.text for m in conversation if m.role == "user"]
         agents = [m.author_name or m.role for m in conversation if m.role == "assistant"]
-        summary = ChatMessage(role="assistant", text=f"Summary of users:{len(user_texts)} agents:{len(agents)}")
+        summary = ChatMessage("assistant", [f"Summary of users:{len(user_texts)} agents:{len(agents)}"])
         await ctx.send_message(list(conversation) + [summary])
 
 

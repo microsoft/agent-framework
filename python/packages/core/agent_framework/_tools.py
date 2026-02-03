@@ -1992,7 +1992,7 @@ def _handle_function_calls_response(
                             response.messages[0].contents.extend(function_call_results)
                         else:
                             # Fallback: create new assistant message (shouldn't normally happen)
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            result_message = ChatMessage("assistant", function_call_results)
                             response.messages.append(result_message)
                         return response
                     if any(fccr.type == "function_call" for fccr in function_call_results):
@@ -2003,7 +2003,7 @@ def _handle_function_calls_response(
                     # This allows middleware to short-circuit the tool loop without another LLM call
                     if should_terminate:
                         # Add tool results to response and return immediately without calling LLM again
-                        result_message = ChatMessage(role="tool", contents=function_call_results)
+                        result_message = ChatMessage("tool", function_call_results)
                         response.messages.append(result_message)
                         if fcc_messages:
                             for msg in reversed(fcc_messages):
@@ -2024,7 +2024,7 @@ def _handle_function_calls_response(
                         errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage(role="tool", contents=function_call_results)
+                    result_message = ChatMessage("tool", function_call_results)
                     response.messages.append(result_message)
                     # response should contain 2 messages after this,
                     # one with function call contents
@@ -2211,7 +2211,7 @@ def _handle_function_calls_streaming_response(
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                         else:
                             # Fallback: create new assistant message (shouldn't normally happen)
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            result_message = ChatMessage("assistant", function_call_results)
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                             response.messages.append(result_message)
                         return
@@ -2240,7 +2240,7 @@ def _handle_function_calls_streaming_response(
                         errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage(role="tool", contents=function_call_results)
+                    result_message = ChatMessage("tool", function_call_results)
                     yield ChatResponseUpdate(contents=function_call_results, role="tool")
                     response.messages.append(result_message)
                     # response should contain 2 messages after this,
