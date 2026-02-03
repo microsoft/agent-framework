@@ -74,6 +74,8 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
     """
     contents: list["Content"] = []
     for content_data in contents_data:
+        if content_data is None:
+            continue
         if isinstance(content_data, Content):
             contents.append(content_data)
             continue
