@@ -102,9 +102,10 @@ def spam_detection_orchestration(context: DurableOrchestrationContext) -> Genera
         options={"response_format": SpamDetectionResult},
     )
 
-    spam_result = spam_result_raw.try_parse_value(SpamDetectionResult)
-    if spam_result is None:
-        raise ValueError("Failed to parse spam detection result")
+    try:
+        spam_result = spam_result_raw.value
+    except Exception as ex:
+        raise ValueError("Failed to parse spam detection result") from ex
 
     if spam_result.is_spam:
         result = yield context.call_activity("handle_spam_email", spam_result.reason)  # type: ignore[misc]
@@ -125,9 +126,10 @@ def spam_detection_orchestration(context: DurableOrchestrationContext) -> Genera
         options={"response_format": EmailResponse},
     )
 
-    email_result = email_result_raw.try_parse_value(EmailResponse)
-    if email_result is None:
-        raise ValueError("Failed to parse email response")
+    try:
+        email_result = email_result_raw.value
+    except Exception as ex:
+        raise ValueError("Failed to parse email response") from ex
 
     result = yield context.call_activity("send_email", email_result.response)  # type: ignore[misc]
     return result

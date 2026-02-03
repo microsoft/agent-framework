@@ -52,11 +52,14 @@ class UserInfoMemory(ContextProvider):
                 )
 
                 # Update user info with extracted data
-                if extracted := result.try_parse_value(UserInfo):
+                try:
+                    extracted = result.value
                     if self.user_info.name is None and extracted.name:
                         self.user_info.name = extracted.name
                     if self.user_info.age is None and extracted.age:
                         self.user_info.age = extracted.age
+                except Exception:
+                    pass  # Failed to extract, continue without updating
 
             except Exception:
                 pass  # Failed to extract, continue without updating

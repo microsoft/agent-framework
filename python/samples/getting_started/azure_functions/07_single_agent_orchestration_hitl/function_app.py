@@ -152,9 +152,10 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
                 options={"response_format": GeneratedContent},
             )
 
-            content = rewritten_raw.try_parse_value(GeneratedContent)
-            if content is None:
-                raise ValueError("Agent returned no content after rewrite.")
+            try:
+                content = rewritten_raw.value
+            except Exception as ex:
+                raise ValueError("Agent returned no content after rewrite.") from ex
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."

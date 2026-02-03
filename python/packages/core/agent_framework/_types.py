@@ -13,7 +13,7 @@ from collections.abc import (
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -1968,12 +1968,11 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        response_format = output_format_type if isinstance(output_format_type, type) else None
+        msg = cls(messages=[], response_format=response_format)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
-            msg.try_parse_value(output_format_type)
         return msg
 
     @overload
@@ -2025,8 +2024,6 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if response_format and issubclass(response_format, BaseModel):
-            msg.try_parse_value(response_format)
         return msg
 
     @property
@@ -2057,47 +2054,6 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
     def __str__(self) -> str:
         return self.text
-
-    @overload
-    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
-
-    @overload
-    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
-
-    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
-        """Try to parse the text into a typed value.
-
-        This is the safe alternative to accessing the value property directly.
-        Returns the parsed value on success, or None on failure.
-
-        Args:
-            output_format_type: The Pydantic model type to parse into.
-                               If None, uses the response_format from initialization.
-
-        Returns:
-            The parsed value as the specified type, or None if parsing fails.
-        """
-        format_type = output_format_type or self._response_format
-        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
-            return None
-
-        # Cache the result unless a different schema than the configured response_format is requested.
-        # This prevents calls with a different schema from polluting the cached value.
-        use_cache = (
-            self._response_format is None or output_format_type is None or output_format_type is self._response_format
-        )
-
-        if use_cache and self._value_parsed and self._value is not None:
-            return self._value  # type: ignore[return-value, no-any-return]
-        try:
-            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            if use_cache:
-                self._value = cast(TResponseModel, parsed_value)
-                self._value_parsed = True
-            return parsed_value  # type: ignore[return-value]
-        except ValidationError as ex:
-            logger.warning("Failed to parse value from chat response text: %s", ex)
-            return None
 
 
 # region ChatResponseUpdate
@@ -2386,8 +2342,6 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
-            msg.try_parse_value(output_format_type)
         return msg
 
     @overload
@@ -2427,53 +2381,10 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
-            msg.try_parse_value(output_format_type)
         return msg
 
     def __str__(self) -> str:
         return self.text
-
-    @overload
-    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
-
-    @overload
-    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
-
-    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
-        """Try to parse the text into a typed value.
-
-        This is the safe alternative when you need to parse the response text into a typed value.
-        Returns the parsed value on success, or None on failure.
-
-        Args:
-            output_format_type: The Pydantic model type to parse into.
-                               If None, uses the response_format from initialization.
-
-        Returns:
-            The parsed value as the specified type, or None if parsing fails.
-        """
-        format_type = output_format_type or self._response_format
-        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
-            return None
-
-        # Cache the result unless a different schema than the configured response_format is requested.
-        # This prevents calls with a different schema from polluting the cached value.
-        use_cache = (
-            self._response_format is None or output_format_type is None or output_format_type is self._response_format
-        )
-
-        if use_cache and self._value_parsed and self._value is not None:
-            return self._value  # type: ignore[return-value, no-any-return]
-        try:
-            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            if use_cache:
-                self._value = cast(TResponseModel, parsed_value)
-                self._value_parsed = True
-            return parsed_value  # type: ignore[return-value]
-        except ValidationError as ex:
-            logger.warning("Failed to parse value from agent run response text: %s", ex)
-            return None
 
 
 # region AgentResponseUpdate

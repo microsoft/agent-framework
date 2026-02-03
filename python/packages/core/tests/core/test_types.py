@@ -643,10 +643,8 @@ def test_chat_response_with_format():
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
+    # Since no response_format was provided, value is None and accessing it returns None
     assert response.value is None
-    response.try_parse_value(OutputModel)
-    assert response.value is not None
-    assert response.value.response == "Hello"
 
 
 def test_chat_response_with_format_init():
@@ -687,32 +685,17 @@ def test_chat_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_chat_response_try_parse_value_returns_none_on_invalid():
-    """Test that try_parse_value returns None on validation failure with Field constraints."""
-
-    class StrictSchema(BaseModel):
-        id: Literal[5]
-        name: str = Field(min_length=10)
-        score: int = Field(gt=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
-    response = ChatResponse(messages=message)
-
-    result = response.try_parse_value(StrictSchema)
-    assert result is None
-
-
-def test_chat_response_try_parse_value_returns_value_on_success():
-    """Test that try_parse_value returns parsed value when all constraints pass."""
+def test_chat_response_value_with_valid_schema():
+    """Test that value property returns parsed value when all constraints pass."""
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
         score: int = Field(ge=0, le=100)
 
     message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
-    response = ChatResponse(messages=message)
+    response = ChatResponse(messages=message, response_format=MySchema)
 
-    result = response.try_parse_value(MySchema)
+    result = response.value
     assert result is not None
     assert result.name == "test"
     assert result.score == 85
@@ -739,32 +722,17 @@ def test_agent_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_agent_response_try_parse_value_returns_none_on_invalid():
-    """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-
-    class StrictSchema(BaseModel):
-        id: Literal[5]
-        name: str = Field(min_length=10)
-        score: int = Field(gt=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
-    response = AgentResponse(messages=message)
-
-    result = response.try_parse_value(StrictSchema)
-    assert result is None
-
-
-def test_agent_response_try_parse_value_returns_value_on_success():
-    """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
+def test_agent_response_value_with_valid_schema():
+    """Test that AgentResponse.value property returns parsed value when all constraints pass."""
 
     class MySchema(BaseModel):
         name: str = Field(min_length=3)
         score: int = Field(ge=0, le=100)
 
     message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
-    response = AgentResponse(messages=message)
+    response = AgentResponse(messages=message, response_format=MySchema)
 
-    result = response.try_parse_value(MySchema)
+    result = response.value
     assert result is not None
     assert result.name == "test"
     assert result.score == 85
@@ -907,12 +875,10 @@ async def test_chat_response_from_async_generator_output_format():
         yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
         yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
 
+    # Note: Without output_format_type, value is None and we cannot parse
     resp = await ChatResponse.from_update_generator(gen())
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is None
-    resp.try_parse_value(OutputModel)
-    assert resp.value is not None
-    assert resp.value.response == "Hello"
 
 
 async def test_chat_response_from_async_generator_output_format_in_method():

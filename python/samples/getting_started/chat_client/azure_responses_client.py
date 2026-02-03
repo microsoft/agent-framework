@@ -46,15 +46,17 @@ async def main() -> None:
             client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
             output_format_type=OutputStruct,
         )
-        if result := response.try_parse_value(OutputStruct):
+        try:
+            result = response.value
             print(f"Assistant: {result}")
-        else:
+        except Exception:
             print(f"Assistant: {response.text}")
     else:
         response = await client.get_response(message, tools=get_weather, options={"response_format": OutputStruct})
-        if result := response.try_parse_value(OutputStruct):
+        try:
+            result = response.value
             print(f"Assistant: {result}")
-        else:
+        except Exception:
             print(f"Assistant: {response.text}")
 
 
