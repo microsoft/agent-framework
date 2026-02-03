@@ -110,20 +110,25 @@ The `.map()` and `.with_finalizer()` methods solve this by creating new Response
 
 **`.with_finalizer(finalizer)`**: Creates a new stream with a different finalizer.
 - Returns a new ResponseStream with the new final type
-- The inner stream's finalizer and result_hooks are NOT called
+- The inner stream's finalizer and result_hooks ARE still called (see below)
 
-**IMPORTANT**: When chaining these methods:
-- Inner stream's `result_hooks` are NOT called - they are bypassed entirely
-- If the outer stream has a finalizer, it is used
-- If no outer finalizer, the inner stream's finalizer is used as fallback
+**IMPORTANT**: When chaining these methods via `get_final_response()`:
+1. The inner stream's finalizer runs first (on the original updates)
+2. The inner stream's result_hooks run (on the inner final result)
+3. The outer stream's finalizer runs (on the transformed updates)
+4. The outer stream's result_hooks run (on the outer final result)
+
+This ensures that post-processing hooks registered on the inner stream (e.g., context
+provider notifications, telemetry, thread updates) are still executed even when the
+stream is wrapped/mapped.
 
 ```python
 # ChatAgent does something like this internally:
 chat_stream = chat_client.get_response(messages, stream=True)
 agent_stream = (
     chat_stream
-    .map(_to_agent_update)
-    .with_finalizer(_to_agent_response)
+    .map(_to_agent_update, _to_agent_response)
+    .with_result_hook(_notify_thread)  # Outer hook runs AFTER inner hooks
 )
 ```
 
@@ -131,6 +136,7 @@ This ensures:
 - The underlying ChatClient stream is only consumed once
 - The agent can add its own transform hooks, result hooks, and cleanup logic
 - Each layer (ChatClient, ChatAgent, middleware) can add independent behavior
+- Inner stream post-processing (like context provider notification) still runs
 - Types flow naturally through the chain
 """
 

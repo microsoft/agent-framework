@@ -2515,6 +2515,15 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
         the transformed update type. The inner stream's finalizer cannot be used as it
         expects the original update type.
 
+        When ``get_final_response()`` is called on the mapped stream:
+        1. The inner stream's finalizer runs first (on the original updates)
+        2. The inner stream's result_hooks run (on the inner final result)
+        3. The outer stream's finalizer runs (on the transformed updates)
+        4. The outer stream's result_hooks run (on the outer final result)
+
+        This ensures that post-processing hooks registered on the inner stream (e.g.,
+        context provider notifications, telemetry) are still executed.
+
         Args:
             transform: Function to transform each update to a new type.
             finalizer: Function to convert collected (transformed) updates to the final type.
@@ -2648,12 +2657,14 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
 
         If no finalizer is configured, returns the collected updates as Sequence[TUpdate].
 
-        For wrapped streams:
-        - The inner stream's finalizer is NOT called - it is bypassed entirely.
-        - The inner stream's result_hooks are NOT called - they are bypassed entirely.
-        - The outer stream's finalizer (if provided) is called to convert updates to the final type.
-        - If no outer finalizer is provided, the inner stream's finalizer is used instead.
-        - The outer stream's result_hooks are then applied to transform the result.
+        For wrapped streams (created via .map() or .from_awaitable()):
+        - The inner stream's finalizer is called first to produce the inner final result.
+        - The inner stream's result_hooks are then applied to that inner result.
+        - The outer stream's finalizer is called to convert the outer (mapped) updates to the final type.
+        - The outer stream's result_hooks are then applied to transform the outer result.
+
+        This ensures that post-processing hooks registered on the inner stream (e.g., context
+        provider notifications) are still executed even when the stream is wrapped/mapped.
         """
         if self._wrap_inner:
             if self._inner_stream is None:
@@ -2668,15 +2679,35 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
                 if not self._consumed:
                     async for _ in self:
                         pass
-                # Use outer's finalizer if configured, otherwise fall back to inner's finalizer
-                finalizer = self._finalizer if self._finalizer is not None else self._inner_stream._finalizer
-                if finalizer is not None:
-                    result: Any = finalizer(self._updates)
+
+                # First, finalize the inner stream and run its result hooks
+                # This ensures inner post-processing (e.g., context provider notifications) runs
+                if self._inner_stream._finalizer is not None:
+                    inner_result: Any = self._inner_stream._finalizer(self._inner_stream._updates)
+                    if isinstance(inner_result, Awaitable):
+                        inner_result = await inner_result
+                else:
+                    inner_result = self._inner_stream._updates
+                # Run inner stream's result hooks
+                for hook in self._inner_stream._result_hooks:
+                    hooked = hook(inner_result)
+                    if isinstance(hooked, Awaitable):
+                        hooked = await hooked
+                    if hooked is not None:
+                        inner_result = hooked
+                self._inner_stream._final_result = inner_result
+                self._inner_stream._finalized = True
+
+                # Now finalize the outer stream with its own finalizer
+                # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
+                if self._finalizer is not None:
+                    result: Any = self._finalizer(self._updates)
                     if isinstance(result, Awaitable):
                         result = await result
                 else:
-                    result = self._updates
-                # Apply outer's result_hooks (inner's result_hooks are NOT called)
+                    # No outer finalizer - use inner's finalized result
+                    result = inner_result
+                # Apply outer's result_hooks
                 for hook in self._result_hooks:
                     hooked = hook(result)
                     if isinstance(hooked, Awaitable):

@@ -3009,8 +3009,8 @@ class TestResponseStreamMapAndWithFinalizer:
         final = await outer.get_final_response()
         assert final.text == "update_0update_1"
 
-    async def test_map_bypasses_inner_result_hooks(self) -> None:
-        """map() bypasses inner's result hooks."""
+    async def test_map_calls_inner_result_hooks(self) -> None:
+        """map() calls inner's result hooks when get_final_response() is called."""
         inner_result_hook_called = {"value": False}
 
         def inner_result_hook(response: ChatResponse) -> ChatResponse:
@@ -3026,11 +3026,11 @@ class TestResponseStreamMapAndWithFinalizer:
 
         await outer.get_final_response()
 
-        # Inner's result_hooks are NOT called - they are bypassed
-        assert inner_result_hook_called["value"] is False
+        # Inner's result_hooks ARE called when get_final_response() is invoked
+        assert inner_result_hook_called["value"] is True
 
-    async def test_with_finalizer_overrides_inner(self) -> None:
-        """with_finalizer() overrides inner's finalizer."""
+    async def test_with_finalizer_calls_inner_finalizer(self) -> None:
+        """with_finalizer() still calls inner's finalizer first."""
         inner_finalizer_called = {"value": False}
 
         def inner_finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
@@ -3045,9 +3045,9 @@ class TestResponseStreamMapAndWithFinalizer:
 
         final = await outer.get_final_response()
 
-        # Inner's finalizer is NOT called - outer's takes precedence
-        assert inner_finalizer_called["value"] is False
-        # Result is from outer's finalizer
+        # Inner's finalizer IS called first
+        assert inner_finalizer_called["value"] is True
+        # But the outer result is from outer's finalizer (working on outer's updates)
         assert final.text == "update_0update_1"
 
     async def test_with_finalizer_plus_result_hooks(self) -> None:
