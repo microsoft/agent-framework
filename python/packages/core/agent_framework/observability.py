@@ -1374,12 +1374,7 @@ class AgentTelemetryLayer:
                 finally:
                     _close_span()
 
-            return (
-                result_stream
-                .with_cleanup_hook(_record_duration)
-                .with_cleanup_hook(_finalize_stream)
-                .with_cleanup_hook(_close_span)
-            )
+            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
 
         async def _run() -> "AgentResponse":
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
