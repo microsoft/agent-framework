@@ -1666,7 +1666,6 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
         ):
             return AgentResponse(
                 messages=[ChatMessage(role="assistant", text="Test response")],
-                thread=thread,
             )
 
         async def run_stream(
@@ -1779,7 +1778,6 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
                 messages=[ChatMessage(role="assistant", text="Test")],
-                thread=thread,
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
@@ -1893,7 +1891,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
             return self._default_options
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[], thread=thread)
+            return AgentResponse(messages=[])
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             yield AgentResponseUpdate(text="Starting", role="assistant")
@@ -1977,7 +1975,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
             return self._default_options
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[], thread=thread)
+            return AgentResponse(messages=[])
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             from agent_framework import AgentResponseUpdate
@@ -2026,7 +2024,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
             return self._default_options
 
         async def run(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[], thread=thread)
+            return AgentResponse(messages=[])
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             yield AgentResponseUpdate(text="test", role="assistant")

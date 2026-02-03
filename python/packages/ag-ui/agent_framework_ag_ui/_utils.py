@@ -10,10 +10,10 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool, Role, ToolProtocol
+from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool, ToolProtocol
 
 # Role mapping constants
-AGUI_TO_FRAMEWORK_ROLE: dict[str, Role] = {
+AGUI_TO_FRAMEWORK_ROLE: dict[str, str] = {
     "user": "user",
     "assistant": "assistant",
     "system": "system",

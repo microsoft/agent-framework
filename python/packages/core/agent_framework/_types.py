@@ -8,7 +8,6 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from copy import deepcopy
@@ -1836,10 +1835,6 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
             from agent_framework import ChatResponse, ChatMessage
 
-            # Create a simple text response
-            response = ChatResponse(text="Hello, how can I help you?")
-            print(response.text)  # "Hello, how can I help you?"
-
             # Create a response with messages
             msg = ChatMessage(role="assistant", text="The weather is sunny.")
             response = ChatResponse(
@@ -1847,15 +1842,15 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
                 finish_reason="stop",
                 model_id="gpt-4",
             )
+            print(response.text)  # "The weather is sunny."
 
             # Combine streaming updates
             updates = [...]  # List of ChatResponseUpdate objects
-            response = ChatResponse.from_chat_response_updates(updates)
+            response = ChatResponse.from_updates(updates)
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
-            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4',
-            #  'finish_reason': {'type': 'finish_reason', 'value': 'stop'}}
+            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4', 'finish_reason': 'stop'}
             restored_response = ChatResponse.from_dict(response_dict)
             print(restored_response.model_id)  # "gpt-4"
 
@@ -1868,11 +1863,10 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
 
-    @overload
     def __init__(
         self,
         *,
-        messages: ChatMessage | MutableSequence[ChatMessage],
+        messages: ChatMessage | Sequence[ChatMessage] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -1883,123 +1877,37 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
         Keyword Args:
-            messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
+            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
             model_id: Optional model ID used in the creation of the chat response.
             created_at: Optional timestamp for the chat response.
-            finish_reason: Optional reason for the chat response.
-            usage_details: Optional usage details for the chat response.
-            value: Optional value of the structured output.
-            response_format: Optional response format for the chat response.
-            messages: List of ChatMessage objects to include in the response.
-            additional_properties: Optional additional properties associated with the chat response.
-            raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
-        """
-
-    @overload
-    def __init__(
-        self,
-        *,
-        text: Content | str,
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: FinishReasonLiteral | str | None = None,
-        usage_details: UsageDetails | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatResponse with the provided parameters.
-
-        Keyword Args:
-            text: The text content to include in the response. If provided, it will be added as a ChatMessage.
-            response_id: Optional ID of the chat response.
-            conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
-            finish_reason: Optional reason for the chat response.
+            finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
             response_format: Optional response format for the chat response.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
-
         """
-
-    def __init__(
-        self,
-        *,
-        messages: ChatMessage | MutableSequence[ChatMessage] | list[dict[str, Any]] | None = None,
-        text: Content | str | None = None,
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: FinishReasonLiteral | str | None = None,
-        usage_details: UsageDetails | dict[str, Any] | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatResponse with the provided parameters.
-
-        Keyword Args:
-            messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
-            text: The text content to include in the response. If provided, it will be added as a ChatMessage.
-            response_id: Optional ID of the chat response.
-            conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
-            finish_reason: Optional reason for the chat response.
-            usage_details: Optional usage details for the chat response.
-            value: Optional value of the structured output.
-            response_format: Optional response format for the chat response.
-            additional_properties: Optional additional properties associated with the chat response.
-            raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
-        """
-        # Handle messages conversion
         if messages is None:
-            messages = []
-        elif not isinstance(messages, MutableSequence):
-            messages = [messages]
+            self.messages: list[ChatMessage] = []
+        elif isinstance(messages, ChatMessage):
+            self.messages = [messages]
         else:
-            # Convert any dicts in messages list to ChatMessage objects
-            converted_messages: list[ChatMessage] = []
+            # Handle both ChatMessage objects and dicts (for from_dict support)
+            processed_messages: list[ChatMessage] = []
             for msg in messages:
-                if isinstance(msg, dict):
-                    converted_messages.append(ChatMessage.from_dict(msg))
+                if isinstance(msg, ChatMessage):
+                    processed_messages.append(msg)
+                elif isinstance(msg, dict):
+                    processed_messages.append(ChatMessage.from_dict(msg))
                 else:
-                    converted_messages.append(msg)
-            messages = converted_messages
-
-        if text is not None:
-            if isinstance(text, str):
-                text = Content.from_text(text=text)
-            messages.append(ChatMessage(role="assistant", contents=[text]))
-
-        # Handle finish_reason - convert legacy dict format to string
-        if isinstance(finish_reason, dict) and "value" in finish_reason:
-            finish_reason = finish_reason["value"]
-
-        # Handle usage_details - UsageDetails is now a TypedDict, so dict is already the right type
-        # No conversion needed
-
-        self.messages = list(messages)
+                    processed_messages.append(msg)
+            self.messages = processed_messages
         self.response_id = response_id
         self.conversation_id = conversation_id
         self.model_id = model_id
@@ -2010,7 +1918,6 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @overload
@@ -2363,24 +2270,19 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     def __init__(
         self,
         *,
-        messages: ChatMessage
-        | list[ChatMessage]
-        | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
-        | None = None,
+        messages: ChatMessage | Sequence[ChatMessage] | None = None,
         response_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
+        usage_details: UsageDetails | None = None,
         value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an AgentResponse.
 
         Keyword Args:
-            messages: The list of chat messages in the response.
+            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
             response_id: The ID of the chat response.
             created_at: A timestamp for the chat response.
             usage_details: The usage details for the chat response.
@@ -2388,27 +2290,22 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
             response_format: Optional response format for the agent response.
             additional_properties: Any additional properties associated with the chat response.
             raw_representation: The raw representation of the chat response from an underlying implementation.
-            **kwargs: Additional properties to set on the response.
         """
-        processed_messages: list[ChatMessage] = []
-        if messages is not None:
-            if isinstance(messages, ChatMessage):
-                processed_messages.append(messages)
-            elif isinstance(messages, list):
-                for message_data in messages:
-                    if isinstance(message_data, ChatMessage):
-                        processed_messages.append(message_data)
-                    elif isinstance(message_data, MutableMapping):
-                        processed_messages.append(ChatMessage.from_dict(message_data))
-                    else:
-                        logger.warning(f"Unknown message content: {message_data}")
-            elif isinstance(messages, MutableMapping):
-                processed_messages.append(ChatMessage.from_dict(messages))
-
-        # Convert usage_details from dict if needed (for SerializationMixin support)
-        # UsageDetails is now a TypedDict, so dict is already the right type
-
-        self.messages = processed_messages
+        if messages is None:
+            self.messages: list[ChatMessage] = []
+        elif isinstance(messages, ChatMessage):
+            self.messages = [messages]
+        else:
+            # Handle both ChatMessage objects and dicts (for from_dict support)
+            processed_messages: list[ChatMessage] = []
+            for msg in messages:
+                if isinstance(msg, ChatMessage):
+                    processed_messages.append(msg)
+                elif isinstance(msg, dict):
+                    processed_messages.append(ChatMessage.from_dict(msg))
+                else:
+                    processed_messages.append(msg)
+            self.messages = processed_messages
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
@@ -2416,7 +2313,6 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs or {})
         self.raw_representation = raw_representation
 
     @property
