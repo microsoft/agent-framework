@@ -495,7 +495,7 @@ class OpenAIBaseResponsesClient(
             web_search_tool["search_context_size"] = search_context_size
 
         if filters:
-            web_search_tool["filters"] = filters
+            web_search_tool["filters"] = filters  # type: ignore[typeddict-item]
 
         return web_search_tool
 
