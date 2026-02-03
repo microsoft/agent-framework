@@ -1344,10 +1344,10 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
                     config_args = {
                         k: v for k, v in tool_dict.items() if k not in ("type", "connection_id", "instance_name") and v
                     }
-                    bing_search = BingCustomSearchTool(
+                    bing_custom_search = BingCustomSearchTool(
                         connection_id=connection_id, instance_name=instance_name, **config_args
                     )
-                    tool_definitions.extend(bing_search.definitions)
+                    tool_definitions.extend(bing_custom_search.definitions)
                 elif tool_type == "mcp":
                     server_label = tool_dict.get("server_label")
                     server_url = tool_dict.get("server_url")

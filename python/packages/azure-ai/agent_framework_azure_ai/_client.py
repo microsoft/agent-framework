@@ -21,7 +21,7 @@ from agent_framework.observability import use_instrumentation
 from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import MCPTool, PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
+from azure.ai.projects.models import PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
@@ -556,7 +556,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
                 agent = ChatAgent(client, tools=[tool])
         """
-        mcp = MCPTool(server_label=name.replace(" ", "_"))
+        mcp: dict[str, Any] = {"type": "mcp", "server_label": name.replace(" ", "_")}
 
         if url:
             mcp["server_url"] = url
