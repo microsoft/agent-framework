@@ -831,6 +831,91 @@ def test_create_resource_with_custom_attributes(monkeypatch):
     assert resource.attributes["another_attr"] == 123
 
 
+# region Test Streaming Metrics
+
+
+@pytest.fixture
+def mock_timed_streaming_chat_client():
+    """Create a mock chat client for streaming testing with timing."""
+
+    class MockTimedStreamingChatClient(BaseChatClient):
+        def service_url(self):
+            return "https://test.example.com"
+
+        async def _inner_get_response(self, **kwargs):
+            pass
+
+        async def _inner_get_streaming_response(
+            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+        ):
+            import asyncio
+
+            # Simulate delays to ensure timing metrics are non-zero
+            await asyncio.sleep(0.01)
+            yield ChatResponseUpdate(text="Chunk 1", role=Role.ASSISTANT)
+            await asyncio.sleep(0.01)
+            yield ChatResponseUpdate(text="Chunk 2", role=Role.ASSISTANT)
+            await asyncio.sleep(0.01)
+            yield ChatResponseUpdate(text="Chunk 3", role=Role.ASSISTANT)
+
+    return MockTimedStreamingChatClient
+
+
+async def test_streaming_metrics_recorded(mock_timed_streaming_chat_client, span_exporter: InMemorySpanExporter):
+    """Test that streaming specific metrics are recorded correctly."""
+    client = use_instrumentation(mock_timed_streaming_chat_client)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    span_exporter.clear()
+
+    updates = []
+    async for update in client.get_streaming_response(messages=messages, model_id="TestStreaming"):
+        updates.append(update)
+
+    assert len(updates) == 3
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    # Check that execution completed successfully and span was created
+    assert span.name == "chat TestStreaming"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+@pytest.fixture
+def mock_error_streaming_chat_client():
+    """Create a mock chat client that fails during streaming."""
+
+    class MockErrorStreamingChatClient(BaseChatClient):
+        def service_url(self):
+            return "https://test.example.com"
+
+        async def _inner_get_response(self, **kwargs):
+            pass
+
+        async def _inner_get_streaming_response(
+            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+        ):
+            yield ChatResponseUpdate(text="Chunk 1", role=Role.ASSISTANT)
+            raise ValueError("Stream interrupted")
+
+    return MockErrorStreamingChatClient
+
+
+async def test_streaming_metrics_with_error(mock_error_streaming_chat_client, span_exporter: InMemorySpanExporter):
+    """Test that metrics are recorded even if the stream fails after the first chunk."""
+    client = use_instrumentation(mock_error_streaming_chat_client)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="Stream interrupted"):
+        async for _ in client.get_streaming_response(messages=messages, model_id="TestError"):
+            pass
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
 # region Test _create_otlp_exporters
 
 
