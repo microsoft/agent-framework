@@ -1128,7 +1128,6 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
         if stream:
             from ._types import ResponseStream
 
-            # TODO(teams): figure out what happens when the stream is NOT consumed
             stream_result = super_get_response(messages=messages, stream=True, options=opts, **kwargs)
             if isinstance(stream_result, ResponseStream):
                 result_stream = stream_result
@@ -1190,12 +1189,11 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 finally:
                     _close_span()
 
-            return (
-                result_stream
-                .with_cleanup_hook(_record_duration)
-                .with_cleanup_hook(_finalize_stream)
-                .with_cleanup_hook(_close_span)
-            )
+            # Note: cleanup hooks run after stream iteration completes (before finalizer).
+            # _record_duration captures the elapsed time, then _finalize_stream captures
+            # telemetry and closes the span. If stream is not fully consumed, cleanup
+            # hooks won't run and the span remains open until garbage collected.
+            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
 
         async def _get_response() -> "ChatResponse":
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
