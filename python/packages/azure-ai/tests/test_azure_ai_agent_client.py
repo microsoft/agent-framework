@@ -467,6 +467,56 @@ async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_cl
     assert len(run_options["additional_messages"]) == 1  # Only user message
 
 
+async def test_azure_ai_chat_client_prepare_options_with_instructions_from_options(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _prepare_options includes instructions passed via options.
+
+    This verifies that agent instructions set via as_agent(instructions=...)
+    are properly included in the API call.
+    """
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    mock_agents_client.get_agent = AsyncMock(return_value=None)
+
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    chat_options: ChatOptions = {
+        "instructions": "You are a thoughtful reviewer. Give brief feedback.",
+    }
+
+    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+
+    assert "instructions" in run_options
+    assert "reviewer" in run_options["instructions"].lower()
+
+
+async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_messages_and_options(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _prepare_options merges instructions from both system messages and options.
+
+    When instructions come from both system/developer messages AND from options,
+    both should be included in the final instructions.
+    """
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    mock_agents_client.get_agent = AsyncMock(return_value=None)
+
+    messages = [
+        ChatMessage(role=Role.SYSTEM, text="Context: You are reviewing marketing copy."),
+        ChatMessage(role=Role.USER, text="Review this tagline"),
+    ]
+    chat_options: ChatOptions = {
+        "instructions": "Be concise and constructive in your feedback.",
+    }
+
+    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+
+    assert "instructions" in run_options
+    instructions_text = run_options["instructions"]
+    # Both instruction sources should be present
+    assert "marketing" in instructions_text.lower()
+    assert "concise" in instructions_text.lower()
+
+
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")

@@ -5,7 +5,7 @@ from typing import Annotated
 
 from agent_framework import (
     ChatMessage,
-    FunctionApprovalRequestContent,
+    Content,
     RequestInfoEvent,
     SequentialBuilder,
     WorkflowOutputEvent,
@@ -23,7 +23,7 @@ with approval_mode="always_require" to trigger human-in-the-loop interactions.
 This sample works as follows:
 1. A SequentialBuilder workflow is created with a single agent that has tools requiring approval.
 2. The agent receives a user task and determines it needs to call a sensitive tool.
-3. The tool call triggers a FunctionApprovalRequestContent, pausing the workflow.
+3. The tool call triggers a function_approval_request Content, pausing the workflow.
 4. The sample simulates human approval by responding to the RequestInfoEvent.
 5. Once approved, the tool executes and the agent completes its response.
 6. The workflow outputs the final conversation with all messages.
@@ -34,7 +34,7 @@ requiring any additional builder configuration.
 
 Demonstrate:
 - Using @tool(approval_mode="always_require") for sensitive operations.
-- Handling RequestInfoEvent with FunctionApprovalRequestContent in sequential workflows.
+- Handling RequestInfoEvent with function_approval_request Content in sequential workflows.
 - Resuming workflow execution after approval via send_responses_streaming.
 
 Prerequisites:
@@ -92,19 +92,19 @@ async def main() -> None:
     ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
-            if isinstance(event.data, FunctionApprovalRequestContent):
+            if isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 print(f"\nApproval requested for tool: {event.data.function_call.name}")
                 print(f"  Arguments: {event.data.function_call.arguments}")
 
     # 5. Handle approval requests
     if request_info_events:
         for request_event in request_info_events:
-            if isinstance(request_event.data, FunctionApprovalRequestContent):
+            if isinstance(request_event.data, Content) and request_event.data.type == "function_approval_request":
                 # In a real application, you would prompt the user here
                 print("\nSimulating human approval (auto-approving for demo)...")
 
                 # Create approval response
-                approval_response = request_event.data.create_response(approved=True)
+                approval_response = request_event.data.to_function_approval_response(approved=True)
 
                 # Phase 2: Send approval and continue workflow
                 output: list[ChatMessage] | None = None

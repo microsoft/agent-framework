@@ -119,6 +119,25 @@ class TestInMemoryCacheProvider:
 
         assert result == obj
 
+    async def test_estimate_size_conservative_fallback_when_all_size_methods_fail(self, monkeypatch) -> None:
+        """Test that the cache returns a conservative size estimate when all strategies fail."""
+        cache = InMemoryCacheProvider()
+
+        class BadString:
+            def __str__(self) -> str:
+                raise RuntimeError("boom")
+
+        def raise_getsizeof(_: object) -> int:
+            raise RuntimeError("no sizeof")
+
+        monkeypatch.setattr("agent_framework_purview._cache.sys.getsizeof", raise_getsizeof)
+
+        # Arrange/Act
+        size = cache._estimate_size(BadString())
+
+        # Assert
+        assert size == 1024
+
     async def test_cache_multiple_updates(self) -> None:
         """Test that updating a key multiple times maintains correct size tracking."""
         cache = InMemoryCacheProvider(max_size_bytes=1000)

@@ -204,6 +204,39 @@ class TestPurviewChatPolicyMiddleware:
             with pytest.raises(PurviewPaymentRequiredError):
                 await middleware.process(context, mock_next)
 
+    async def test_chat_middleware_handles_payment_required_post_check(self, mock_credential: AsyncMock) -> None:
+        """Test that 402 in post-check is raised when ignore_payment_required=False."""
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        settings = PurviewSettings(app_name="Test App", ignore_payment_required=False)
+        middleware = PurviewChatPolicyMiddleware(mock_credential, settings)
+
+        chat_client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        context = ChatContext(
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
+        )
+
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (False, "user-123")
+            raise PurviewPaymentRequiredError("Payment required")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                result = MagicMock()
+                result.messages = [ChatMessage(role=Role.ASSISTANT, text="OK")]
+                ctx.result = result
+
+            with pytest.raises(PurviewPaymentRequiredError):
+                await middleware.process(context, mock_next)
+
     async def test_chat_middleware_ignores_payment_required_when_configured(self, mock_credential: AsyncMock) -> None:
         """Test that 402 is ignored when ignore_payment_required=True."""
         from agent_framework_purview._exceptions import PurviewPaymentRequiredError
@@ -274,3 +307,58 @@ class TestPurviewChatPolicyMiddleware:
             await middleware.process(context, mock_next)
             # Next should have been called
             assert context.result is not None
+
+    async def test_chat_middleware_raises_on_pre_check_exception_when_ignore_exceptions_false(
+        self, mock_credential: AsyncMock
+    ) -> None:
+        """Test that exceptions are propagated by default when ignore_exceptions=False."""
+        settings = PurviewSettings(app_name="Test App", ignore_exceptions=False)
+        middleware = PurviewChatPolicyMiddleware(mock_credential, settings)
+
+        chat_client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        context = ChatContext(
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
+        )
+
+        with patch.object(middleware._processor, "process_messages", side_effect=ValueError("boom")):
+
+            async def mock_next(_: ChatContext) -> None:
+                raise AssertionError("next should not be called")
+
+            with pytest.raises(ValueError, match="boom"):
+                await middleware.process(context, mock_next)
+
+    async def test_chat_middleware_raises_on_post_check_exception_when_ignore_exceptions_false(
+        self, mock_credential: AsyncMock
+    ) -> None:
+        """Test that post-check exceptions are propagated by default."""
+        settings = PurviewSettings(app_name="Test App", ignore_exceptions=False)
+        middleware = PurviewChatPolicyMiddleware(mock_credential, settings)
+
+        chat_client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        context = ChatContext(
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], options=chat_options
+        )
+
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (False, "user-123")
+            raise ValueError("post")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                result = MagicMock()
+                result.messages = [ChatMessage(role=Role.ASSISTANT, text="OK")]
+                ctx.result = result
+
+            with pytest.raises(ValueError, match="post"):
+                await middleware.process(context, mock_next)

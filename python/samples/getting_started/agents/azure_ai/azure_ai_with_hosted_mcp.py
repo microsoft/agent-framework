@@ -28,7 +28,7 @@ async def handle_approvals_without_thread(query: str, agent: "AgentProtocol") ->
             new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         result = await agent.run(new_inputs, store=False)
@@ -50,7 +50,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
             new_input.append(
                 ChatMessage(
                     role="user",
-                    contents=[user_input_needed.create_response(user_approval.lower() == "y")],
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
         result = await agent.run(new_input, thread=thread)
