@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
@@ -1190,11 +1191,11 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 finally:
                     _close_span()
 
-            # Note: cleanup hooks run after stream iteration completes (before finalizer).
-            # _record_duration captures the elapsed time, then _finalize_stream captures
-            # telemetry and closes the span. If stream is not fully consumed, cleanup
-            # hooks won't run and the span remains open until garbage collected.
-            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            # Register a weak reference callback to close the span if stream is garbage collected
+            # without being consumed. This ensures spans don't leak if users don't consume streams.
+            wrapped_stream = result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            weakref.finalize(wrapped_stream, _close_span)
+            return wrapped_stream
 
         async def _get_response() -> "ChatResponse":
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
@@ -1374,7 +1375,11 @@ class AgentTelemetryLayer:
                 finally:
                     _close_span()
 
-            return result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            # Register a weak reference callback to close the span if stream is garbage collected
+            # without being consumed. This ensures spans don't leak if users don't consume streams.
+            wrapped_stream = result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            weakref.finalize(wrapped_stream, _close_span)
+            return wrapped_stream
 
         async def _run() -> "AgentResponse":
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
