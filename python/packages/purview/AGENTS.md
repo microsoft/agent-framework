@@ -28,7 +28,7 @@ Integration with Microsoft Purview for data governance and policy enforcement.
 ## Usage
 
 ```python
-from agent_framework.purview import PurviewPolicyMiddleware, PurviewSettings
+from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 
 settings = PurviewSettings(...)
 middleware = PurviewPolicyMiddleware(settings=settings)
@@ -38,7 +38,7 @@ agent = ChatAgent(..., middleware=[middleware])
 ## Import Path
 
 ```python
-from agent_framework.purview import PurviewPolicyMiddleware
+from agent_framework.microsoft import PurviewPolicyMiddleware
 # or directly:
 from agent_framework_purview import PurviewPolicyMiddleware
 ```
