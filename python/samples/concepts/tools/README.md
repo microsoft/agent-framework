@@ -30,19 +30,19 @@ sequenceDiagram
     participant Tool as FunctionTool.invoke()
 
     User->>Agent: run(messages, thread, options, middleware)
-    
+
     Note over Agent,AML: Agent Middleware Layer
     Agent->>AML: run() with middleware param
     AML->>AML: categorize_middleware() → split by type
     AML->>AMP: execute(AgentRunContext)
-    
+
     loop Agent Middleware Chain
         AMP->>AMP: middleware[i].process(context, next)
         Note right of AMP: Can modify: messages, options, thread
     end
-    
+
     AMP->>RawAgent: run() via final_handler
-    
+
     alt Non-Streaming (stream=False)
         RawAgent->>RawAgent: _prepare_run_context() [async]
         Note right of RawAgent: Builds: thread_messages, chat_options, tools
@@ -55,28 +55,28 @@ sequenceDiagram
         RawAgent->>RawAgent: _prepare_run_context() [deferred]
         RawAgent->>CML: chat_client.get_response(stream=True)
     end
-    
+
     Note over CML,CMP: Chat Middleware Layer
     CML->>CMP: execute(ChatContext)
-    
+
     loop Chat Middleware Chain
         CMP->>CMP: middleware[i].process(context, next)
         Note right of CMP: Can modify: messages, options
     end
-    
+
     CMP->>FIL: get_response() via final_handler
-    
+
     Note over FIL,Tool: Function Invocation Loop
     loop Max Iterations (default: 40)
         FIL->>Client: _inner_get_response(messages, options)
         Client->>LLM: API Call
         LLM-->>Client: Response (may include tool_calls)
         Client-->>FIL: ChatResponse
-        
+
         alt Response has function_calls
             FIL->>FIL: _extract_function_calls()
             FIL->>FIL: _try_execute_function_calls()
-            
+
             Note over FIL,Tool: Function Middleware Layer
             loop For each function_call
                 FIL->>FMP: execute(FunctionInvocationContext)
@@ -88,25 +88,25 @@ sequenceDiagram
                 Tool-->>FMP: result
                 FMP-->>FIL: Content.from_function_result()
             end
-            
+
             FIL->>FIL: Append tool results to messages
         else No function_calls
             FIL-->>CMP: ChatResponse
         end
     end
-    
+
     CMP-->>CML: ChatResponse
     Note right of CMP: Can observe/modify result
-    
+
     CML-->>RawAgent: ChatResponse / ResponseStream
-    
+
     alt Non-Streaming
         RawAgent->>RawAgent: _finalize_response_and_update_thread()
     else Streaming
         Note right of RawAgent: .map() transforms updates
         Note right of RawAgent: .with_result_hook() runs post-processing
     end
-    
+
     RawAgent-->>AMP: AgentResponse / ResponseStream
     Note right of AMP: Can observe/modify result
     AMP-->>AML: AgentResponse
@@ -374,7 +374,7 @@ async def process(self, context, next):
 ```
 
 - Downstream middleware: ❌ NOT executed
-- Actual operation (LLM call, function invocation): ❌ NOT executed  
+- Actual operation (LLM call, function invocation): ❌ NOT executed
 - Upstream middleware post-processing: ✅ Still runs (unless `MiddlewareTermination` raised)
 - Result: Whatever you set in `context.result`
 
@@ -397,11 +397,13 @@ async def process(self, context, next):
 
 | Exit Method | Call `next()`? | Downstream Executes? | Actual Op Executes? | Upstream Post-Processing? |
 |-------------|----------------|---------------------|---------------------|--------------------------|
+| `return` (or implicit) | Yes | ✅ | ✅ | ✅ Yes |
 | `return` | No | ❌ | ❌ | ✅ Yes |
-| `return` | Yes | ✅ | ✅ | ✅ Yes |
 | `raise MiddlewareTermination` | No | ❌ | ❌ | ❌ No |
 | `raise MiddlewareTermination` | Yes | ✅ | ✅ | ❌ No |
 | `raise OtherException` | Either | Depends | Depends | ❌ No (exception propagates) |
+
+> **Note:** The first row (`return` after calling `next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await next(context)` without an explicit `return` statement achieves this pattern.
 
 ## Streaming vs Non-Streaming
 
@@ -448,4 +450,3 @@ Key points:
 
 - [Middleware Samples](../../getting_started/middleware/) - Examples of custom middleware
 - [Function Tool Samples](../../getting_started/tools/) - Creating and using tools
-- [MCP Tools with Azure OpenAI](../../getting_started/agents/azure_openai/azure_responses_client_with_hosted_mcp.py) - Model Context Protocol tools example
