@@ -511,6 +511,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             "properties": schema.get("properties", {}),
             "required": schema.get("required", []),
         }
+        # Preserve $defs for nested type references (Pydantic uses $defs for nested models)
+        if "$defs" in schema:
+            input_schema["$defs"] = schema["$defs"]
 
         return SdkMcpTool(
             name=func_tool.name,
